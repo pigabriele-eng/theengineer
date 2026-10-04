@@ -60,7 +60,7 @@ export default function SessionScreen() {
       </View>
 
       <Pressable style={[styles.button, { backgroundColor: tint }]} onPress={upload} disabled={busy}>
-        {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Upload MoTeC .ld file</Text>}
+        {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Upload MoTeC .ld or .ldx file</Text>}
       </Pressable>
       {error && <Text style={styles.error}>{error}</Text>}
 

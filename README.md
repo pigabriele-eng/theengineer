@@ -47,6 +47,8 @@ The app talks to `http://localhost:8000` unless `EXPO_PUBLIC_API_URL` is set. On
 ## What works now
 
 - Create sessions, upload a MoTeC `.ld` file, and see laps, best lap, theoretical best and per-corner metrics (brake point, minimum speed, throttle pickup, full throttle).
+- Lap timing works even when a log has no lap marker: the start/finish line is learned from the first log at a track that has one, and other logs are timed by GPS line crossing (within about 0.03 s of the dash on the Hockenheim test data). Uploading the `.ldx` that i2 saves next to a log uses its beacons instead.
+- `server/scripts/event_report.py <folder> <out.json>` summarises a folder of runs from one track: every run's best and theoretical best, corner-by-corner time against the fastest lap, the ideal lap from the best corners of all runs, tyre pressures and temperatures, brake temperatures, ABS and TC activity.
 - Compare any lap with the reference lap: running time gained or lost, speed, throttle and brake on one distance axis, with corner markers. Drag across a chart to read both laps at the same point.
 - Voice debriefs: record on the iPhone or in the browser (or upload a recording), pick one driver or group and the language (English, Italian, German or mixed). The server transcribes with speaker separation, then Claude sorts each statement into the report sections and tags the corner and phase when they're said. Each point links back to the moment in the recording.
 - When a session has logger data, each debrief point about a corner shows what the logger recorded there: brake point, minimum speed, full throttle and section time on the reference lap, and the best lap through that corner.
