@@ -11,7 +11,9 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.theengineer.app",
       "infoPlist": {
-        "UIBackgroundModes": ["audio"]
+        "UIBackgroundModes": [
+          "audio"
+        ]
       }
     },
     "android": {
@@ -36,6 +38,12 @@
           "image": "./assets/images/splash-icon.png",
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "The Engineer records your debriefs so they can be transcribed into a report."
         }
       ]
     ],

@@ -1,8 +1,9 @@
 import datetime as dt
+from typing import Self
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models import CornerPhase, DebriefMode, SessionKind
+from app.models import CornerPhase, DebriefMode, DebriefStatus, SessionKind
 
 
 class Orm(BaseModel):
@@ -108,6 +109,8 @@ class DebriefPointIn(BaseModel):
 
 class DebriefPointOut(DebriefPointIn, Orm):
     id: int
+    speaker: str | None = None
+    corner_code: str | None = None
 
 
 class DebriefIn(BaseModel):
@@ -122,6 +125,18 @@ class DebriefOut(Orm):
     session_id: int
     mode: DebriefMode
     language: str
+    status: DebriefStatus
+    error: str | None
+    summary: str | None
+    speakers: dict | None
     transcript: str | None
+    segments: list | None
+    has_audio: bool = False
     created_at: dt.datetime
     points: list[DebriefPointOut]
+
+    @classmethod
+    def of(cls, d) -> Self:
+        out = cls.model_validate(d)
+        out.has_audio = d.audio_path is not None
+        return out
