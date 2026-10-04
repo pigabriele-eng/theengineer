@@ -1,25 +1,3 @@
-import pytest
-from fastapi.testclient import TestClient
-
-
-@pytest.fixture()
-def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/test.db")
-    monkeypatch.setenv("STORAGE_DIR", str(tmp_path / "storage"))
-    import importlib
-
-    import app.db
-    import app.main
-    import app.routers.sessions
-    importlib.reload(app.db)
-    importlib.reload(app.models)
-    importlib.reload(app.routers.catalog)
-    importlib.reload(app.routers.sessions)
-    importlib.reload(app.main)
-    with TestClient(app.main.app) as c:
-        yield c
-
-
 def test_session_upload_analysis_and_debrief(client):
     from tests.synthetic import simulate, write_ld
 

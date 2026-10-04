@@ -22,6 +22,15 @@ uvicorn app.main:app --reload        # http://localhost:8000, API docs at /docs
 pytest                               # tests use synthetic .ld files, no real data needed
 ```
 
+Voice debriefs need two keys in the server's environment:
+
+| Variable | What it's for | Where to get it |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | Structuring the transcript into report points (Claude) | console.anthropic.com, API Keys |
+| `DEEPGRAM_API_KEY` | Speech to text with speaker separation | console.deepgram.com, API Keys |
+
+Without them, recordings are still saved, and the report screen offers to process them again once the keys are set.
+
 By default the server uses SQLite (`theengineer.db`) and stores uploads in `./storage`. Set `DATABASE_URL` (for example a PostgreSQL URL) and `STORAGE_DIR` to change that.
 
 App:
@@ -38,5 +47,6 @@ The app talks to `http://localhost:8000` unless `EXPO_PUBLIC_API_URL` is set. On
 ## What works now
 
 - Create sessions, upload a MoTeC `.ld` file, and see laps, best lap, theoretical best and per-corner metrics (brake point, minimum speed, throttle pickup, full throttle).
-- Typed debrief points saved against a session, using the standard GT report sections. Voice recording and AI structuring are the next step.
+- Voice debriefs: record on the iPhone or in the browser (or upload a recording), pick one driver or group and the language (English, Italian, German or mixed). The server transcribes with speaker separation, then Claude sorts each statement into the report sections and tags the corner and phase when they're said. Each point links back to the moment in the recording.
+- Typed debrief points are still available for quick notes.
 - Car-specific channel maps: a car can override which logger channels fill speed, throttle, brake and steering (for example brake pressure instead of brake torque).

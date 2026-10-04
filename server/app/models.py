@@ -30,6 +30,13 @@ class DebriefMode(enum.StrEnum):
     group = "group"
 
 
+class DebriefStatus(enum.StrEnum):
+    ready = "ready"  # typed debriefs, and voice debriefs once structured
+    queued = "queued"  # audio saved, waiting to be processed
+    processing = "processing"
+    failed = "failed"  # see Debrief.error; the audio is kept so it can be processed again
+
+
 class CornerPhase(enum.StrEnum):
     braking = "braking"
     entry = "entry"
@@ -133,7 +140,14 @@ class Debrief(Base):
     session_id: Mapped[int] = mapped_column(ForeignKey("run_sessions.id"))
     mode: Mapped[DebriefMode] = mapped_column(Enum(DebriefMode), default=DebriefMode.individual)
     language: Mapped[str] = mapped_column(String(8), default="en")
+    status: Mapped[DebriefStatus] = mapped_column(Enum(DebriefStatus), default=DebriefStatus.ready)
+    error: Mapped[str | None] = mapped_column(Text)
     transcript: Mapped[str | None] = mapped_column(Text)
+    # timestamped, speaker-labelled transcript segments: [{"speaker", "start", "end", "text"}]
+    segments: Mapped[list | None] = mapped_column(JSON)
+    # who each speaker label is: {"S0": {"role": "driver", "name": "Gabriele"}}
+    speakers: Mapped[dict | None] = mapped_column(JSON)
+    summary: Mapped[str | None] = mapped_column(Text)
     audio_path: Mapped[str | None] = mapped_column(String(512))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     session: Mapped[RunSession] = relationship(back_populates="debriefs")
@@ -148,6 +162,8 @@ class DebriefPoint(Base):
     section: Mapped[str] = mapped_column(String(40))  # balance, tyres, brakes, ... (report sections)
     text: Mapped[str] = mapped_column(Text)
     speaker_driver_id: Mapped[int | None] = mapped_column(ForeignKey("drivers.id"))
+    speaker: Mapped[str | None] = mapped_column(String(16))  # transcript speaker label, e.g. S0
+    corner_code: Mapped[str | None] = mapped_column(String(16))  # as said or matched, even without a track map
     corner_id: Mapped[int | None] = mapped_column(ForeignKey("corners.id"))
     phase: Mapped[CornerPhase | None] = mapped_column(Enum(CornerPhase))
     audio_start_s: Mapped[float | None] = mapped_column(Float)

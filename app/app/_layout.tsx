@@ -50,6 +50,7 @@ function RootLayoutNav() {
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="session/[id]" options={{ title: 'Session' }} />
+        <Stack.Screen name="debrief/[id]" options={{ title: 'Debrief report' }} />
       </Stack>
     </ThemeProvider>
   );

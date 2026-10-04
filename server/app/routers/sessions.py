@@ -99,18 +99,3 @@ def session_analysis(session_id: int, file_id: int | None = None, reference_lap:
     f = max(files, key=lambda f: f.meta.get("duration_s", 0))
     data = load_session(read_ld(f.path), _channel_map(s))
     return {"file_id": f.id, **analyze(data, reference_lap)}
-
-
-@router.post("/{session_id}/debriefs", response_model=schemas.DebriefOut, status_code=201)
-def create_debrief(session_id: int, body: schemas.DebriefIn, db: Session = Depends(get_db)):
-    s = _get(db, session_id)
-    d = models.Debrief(session=s, mode=body.mode, language=body.language, transcript=body.transcript,
-                       points=[models.DebriefPoint(**p.model_dump()) for p in body.points])
-    db.add(d)
-    db.commit()
-    return d
-
-
-@router.get("/{session_id}/debriefs", response_model=list[schemas.DebriefOut])
-def list_debriefs(session_id: int, db: Session = Depends(get_db)):
-    return _get(db, session_id).debriefs

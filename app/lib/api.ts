@@ -40,6 +40,56 @@ export type Analysis = {
 
 export type DebriefPointIn = { section: string; text: string };
 
+export type DebriefMode = 'individual' | 'group';
+export type DebriefLanguage = 'en' | 'it' | 'de' | 'multi';
+export type DebriefStatus = 'ready' | 'queued' | 'processing' | 'failed';
+export type CornerPhase = 'braking' | 'entry' | 'mid' | 'exit';
+
+export type DebriefPoint = DebriefPointIn & {
+  id: number;
+  speaker: string | null;
+  corner_code: string | null;
+  phase: CornerPhase | null;
+  audio_start_s: number | null;
+};
+
+export type Debrief = {
+  id: number;
+  session_id: number;
+  mode: DebriefMode;
+  language: DebriefLanguage;
+  status: DebriefStatus;
+  error: string | null;
+  summary: string | null;
+  speakers: Record<string, { role: string; name: string | null }> | null;
+  transcript: string | null;
+  has_audio: boolean;
+  created_at: string;
+  points: DebriefPoint[];
+};
+
+// The report sections from the debrief concept, in report order (the server uses the same keys).
+export const SECTIONS: [string, string][] = [
+  ['balance', 'Car balance'],
+  ['corners', 'Corner by corner'],
+  ['tyres', 'Tyres'],
+  ['brakes', 'Brakes and ABS'],
+  ['electronics', 'Electronics'],
+  ['traction', 'Traction and power'],
+  ['ride', 'Ride and kerbs'],
+  ['setup', 'Setup changes'],
+  ['issues', 'Issues'],
+  ['priorities', 'Driver priorities'],
+];
+export const sectionName = (key: string) => SECTIONS.find(([k]) => k === key)?.[1] ?? key;
+
+type PickedFile = { uri: string; name: string; file?: File | Blob };
+
+// On web we have a File or Blob; on iOS FormData takes a { uri, name, type } descriptor.
+const formFile = (f: PickedFile, type: string) =>
+  f.file ? (f.file instanceof File ? f.file : new File([f.file], f.name, { type: f.file.type || type }))
+    : ({ uri: f.uri, name: f.name, type } as any);
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, init);
   if (!res.ok) {
@@ -60,14 +110,24 @@ export const api = {
   session: (id: number) => request<SessionDetail>(`/sessions/${id}`),
   createSession: (body: { name: string; kind: SessionKind }) => request<Session>('/sessions', json(body)),
   analysis: (id: number) => request<Analysis>(`/sessions/${id}/analysis`),
-  uploadFile: (id: number, file: { uri: string; name: string; file?: File }) => {
+  uploadFile: (id: number, file: PickedFile) => {
     const form = new FormData();
-    // On web the picker hands us a File; on iOS FormData takes a { uri, name, type } descriptor.
-    form.append('file', file.file ?? ({ uri: file.uri, name: file.name, type: 'application/octet-stream' } as any));
+    form.append('file', formFile(file, 'application/octet-stream'));
     return request<SessionDetail>(`/sessions/${id}/files`, { method: 'POST', body: form });
   },
   createDebrief: (id: number, points: DebriefPointIn[]) =>
-    request(`/sessions/${id}/debriefs`, json({ mode: 'individual', points })),
+    request<Debrief>(`/sessions/${id}/debriefs`, json({ mode: 'individual', points })),
+  recordDebrief: (id: number, audio: PickedFile, mode: DebriefMode, language: DebriefLanguage) => {
+    const form = new FormData();
+    form.append('audio', formFile(audio, 'audio/mp4'));
+    form.append('mode', mode);
+    form.append('language', language);
+    return request<Debrief>(`/sessions/${id}/debriefs/audio`, { method: 'POST', body: form });
+  },
+  debriefs: (sessionId: number) => request<Debrief[]>(`/sessions/${sessionId}/debriefs`),
+  debrief: (id: number) => request<Debrief>(`/debriefs/${id}`),
+  processDebrief: (id: number) => request<Debrief>(`/debriefs/${id}/process`, { method: 'POST' }),
+  debriefAudioUrl: (id: number) => `${API_URL}/debriefs/${id}/audio`,
 };
 
 export const formatLap = (s: number | null | undefined) => {

@@ -1,16 +1,17 @@
 import * as DocumentPicker from 'expo-document-picker';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Link, Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
 
 import { Text, View, useThemeColor } from '@/components/Themed';
-import { Analysis, api, formatLap, SessionDetail } from '@/lib/api';
+import { Analysis, api, Debrief, formatLap, SessionDetail } from '@/lib/api';
 
 export default function SessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const sessionId = Number(id);
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [debriefs, setDebriefs] = useState<Debrief[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tint = useThemeColor({}, 'tint');
@@ -20,6 +21,7 @@ export default function SessionScreen() {
     try {
       const s = await api.session(sessionId);
       setSession(s);
+      setDebriefs(await api.debriefs(sessionId));
       setAnalysis(s.files.length ? await api.analysis(sessionId) : null);
     } catch (e) {
       setError((e as Error).message);
@@ -60,6 +62,28 @@ export default function SessionScreen() {
         {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Upload MoTeC .ld file</Text>}
       </Pressable>
       {error && <Text style={styles.error}>{error}</Text>}
+
+      {debriefs.length > 0 && (
+        <View style={styles.section}>
+          <Text style={styles.h2}>Debriefs</Text>
+          {debriefs.map((d) => (
+            <Link key={d.id} href={{ pathname: '/debrief/[id]', params: { id: d.id } }} asChild>
+              <Pressable style={styles.corner}>
+                <Text style={styles.cornerTitle}>
+                  {new Date(d.created_at).toLocaleString()} · {d.mode === 'group' ? 'group' : 'driver'}
+                </Text>
+                <Text style={styles.sub} numberOfLines={2}>
+                  {d.status === 'ready'
+                    ? d.summary || `${d.points.length} points`
+                    : d.status === 'failed'
+                      ? 'Not processed yet'
+                      : 'Processing…'}
+                </Text>
+              </Pressable>
+            </Link>
+          ))}
+        </View>
+      )}
 
       {analysis && (
         <View style={styles.section}>
