@@ -12,8 +12,13 @@ def speed_at(d: np.ndarray, pace: float) -> np.ndarray:
     return v * pace
 
 
-def simulate(paces=(0.9, 1.0, 0.97, 0.99), hz: int = 100) -> tuple[dict[str, tuple[int, str, np.ndarray]], list[float]]:
-    """An out-lap at 0.6 pace, then one lap per pace, then a slow in-lap. Returns (name -> (freq, unit, data), lap times)."""
+def simulate(
+    paces=(0.9, 1.0, 0.97, 0.99), hz: int = 100
+) -> tuple[dict[str, tuple[int, str, np.ndarray]], list[float]]:
+    """An out-lap at 0.6 pace, then one lap per pace, then a slow in-lap.
+
+    Returns (name -> (freq, unit, data), lap times).
+    """
     laps = [0.6, *paces, 0.6]
     dt = 1.0 / hz
     v_out, lap_idx, lap_times = [], [], []
@@ -42,7 +47,8 @@ def simulate(paces=(0.9, 1.0, 0.97, 0.99), hz: int = 100) -> tuple[dict[str, tup
     # 1 Hz lap time channel holding the last completed lap time
     t1 = np.arange(0, n / hz, 1.0)
     lt = np.zeros_like(t1)
-    for c, time in zip(crossings, lap_times):
+    # each crossing completes the lap before it; the in-lap after the last crossing never completes
+    for c, time in zip(crossings, lap_times, strict=False):
         lt[t1 >= c / hz] = time
     return {
         "vCar": (hz, "km/h", v),

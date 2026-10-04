@@ -6,7 +6,7 @@ debrief and the logger files for the same run always meet in one place.
 from __future__ import annotations
 
 import enum
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from sqlalchemy import JSON, Date, DateTime, Enum, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -15,22 +15,22 @@ from app.db import Base
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
-class SessionKind(str, enum.Enum):
+class SessionKind(enum.StrEnum):
     test = "test"
     practice = "practice"
     qualifying = "qualifying"
     race = "race"
 
 
-class DebriefMode(str, enum.Enum):
+class DebriefMode(enum.StrEnum):
     individual = "individual"
     group = "group"
 
 
-class CornerPhase(str, enum.Enum):
+class CornerPhase(enum.StrEnum):
     braking = "braking"
     entry = "entry"
     mid = "mid"

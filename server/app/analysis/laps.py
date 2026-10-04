@@ -5,6 +5,7 @@ Works on any logger once its channels are mapped to the standard roles below.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from itertools import pairwise
 
 import numpy as np
 
@@ -103,7 +104,7 @@ def split_laps(ld: LdFile) -> list[Lap]:
 
 def lap_trace(data: SessionData, lap: Lap, length: float, step: float = 1.0) -> dict[str, np.ndarray]:
     """One lap resampled on a common distance grid, stretched to the reference length."""
-    i0, i1 = int(round(lap.start * MASTER_HZ)), int(round(lap.end * MASTER_HZ))
+    i0, i1 = round(lap.start * MASTER_HZ), round(lap.end * MASTER_HZ)
     i1 = min(i1, len(data.t) - 1)
     d = data.distance[i0:i1 + 1] - data.distance[i0]
     d = d / d[-1] * length
@@ -117,7 +118,7 @@ def lap_trace(data: SessionData, lap: Lap, length: float, step: float = 1.0) -> 
 
 
 def lap_length(data: SessionData, lap: Lap) -> float:
-    i0, i1 = int(round(lap.start * MASTER_HZ)), min(int(round(lap.end * MASTER_HZ)), len(data.t) - 1)
+    i0, i1 = round(lap.start * MASTER_HZ), min(round(lap.end * MASTER_HZ), len(data.t) - 1)
     return float(data.distance[i1] - data.distance[i0])
 
 
@@ -141,7 +142,7 @@ def detect_corners(ref: dict[str, np.ndarray], min_drop_kmh: float = 15.0) -> li
     apexes = [i for i in range(60, n - 60)
               if v[i] == v[i - 60:i + 61].min() and v[max(0, i - 150):i + 151].max() - v[i] > min_drop_kmh]
     bounds = [0]
-    for a, b in zip(apexes[:-1], apexes[1:]):
+    for a, b in pairwise(apexes):
         bounds.append(max(bounds[-1] + 1, a + int(np.argmax(v[a:b])) - 40))
     bounds.append(n - 1)
     return [Corner(f"T{i + 1}", a, bounds[i], bounds[i + 1]) for i, a in enumerate(apexes)]
@@ -168,7 +169,8 @@ def corner_metrics(tr: dict[str, np.ndarray], c: Corner, brake_on: float | None 
     if throttle is not None:
         b0 = bp if bp is not None else lo
         released = brake[b0:hi] <= 0.3 * threshold if brake is not None else np.ones(hi - b0, bool)
-        on = next((b0 + i for i, (x, r) in enumerate(zip(throttle[b0:hi], released)) if x > 20 and r), None)
+        pairs = enumerate(zip(throttle[b0:hi], released, strict=True))
+        on = next((b0 + i for i, (x, r) in pairs if x > 20 and r), None)
         full = next((on + i for i, x in enumerate(throttle[on:hi]) if x > 95), None) if on is not None else None
         out["throttle_on"] = int(tr["distance"][on]) if on is not None else None
         out["full_throttle"] = int(tr["distance"][full]) if full is not None else None
