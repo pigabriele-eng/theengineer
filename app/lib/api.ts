@@ -32,10 +32,23 @@ export type CornerMetrics = {
 };
 
 export type Analysis = {
+  file_id: number;
   reference_lap: number;
   length_m: number;
   theoretical_best: number;
   corners: { code: string; apex_m: number; best_lap: number; laps: Record<string, CornerMetrics> }[];
+};
+
+type Trace = { speed?: number[]; throttle?: number[]; brake?: number[]; steer?: number[]; gear?: number[] };
+
+export type LapCompare = {
+  reference_lap: number;
+  lap: number;
+  length_m: number;
+  distance: number[];
+  reference: Trace;
+  compare: Trace;
+  delta: number[];
 };
 
 export type DebriefPointIn = { section: string; text: string };
@@ -110,6 +123,8 @@ export const api = {
   session: (id: number) => request<SessionDetail>(`/sessions/${id}`),
   createSession: (body: { name: string; kind: SessionKind }) => request<Session>('/sessions', json(body)),
   analysis: (id: number) => request<Analysis>(`/sessions/${id}/analysis`),
+  compare: (id: number, lap: number, reference?: number) =>
+    request<LapCompare>(`/sessions/${id}/compare?lap=${lap}${reference != null ? `&reference_lap=${reference}` : ''}`),
   uploadFile: (id: number, file: PickedFile) => {
     const form = new FormData();
     form.append('file', formFile(file, 'application/octet-stream'));

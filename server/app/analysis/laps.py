@@ -205,3 +205,30 @@ def analyze(data: SessionData, ref_number: int | None = None) -> dict:
         "corners": result_corners,
         "channels": data.sources,
     }
+
+
+TRACE_ROLES = ("speed", "throttle", "brake", "steer", "gear", "rpm")
+
+
+def compare_laps(data: SessionData, lap_number: int, ref_number: int | None = None, step: float = 5.0) -> dict:
+    """Two laps on one distance grid for charting, with the running time gained or lost against the reference.
+
+    delta > 0 means the lap is behind the reference at that point.
+    """
+    clean = [l for l in data.laps if l.clean]
+    ref = next((l for l in data.laps if l.number == ref_number), None) or min(clean or data.laps, key=lambda l: l.time)
+    lap = next((l for l in data.laps if l.number == lap_number), None)
+    if lap is None:
+        raise ValueError(f"No lap {lap_number} in this file")
+    length = round(lap_length(data, ref))
+    a, b = lap_trace(data, ref, length, step), lap_trace(data, lap, length, step)
+
+    def pack(tr: dict[str, np.ndarray]) -> dict[str, list[float]]:
+        return {r: np.round(tr[r], 2).tolist() for r in TRACE_ROLES if r in tr}
+
+    return {
+        "reference_lap": ref.number, "lap": lap.number, "length_m": length, "step_m": step,
+        "distance": a["distance"].round(1).tolist(),
+        "reference": pack(a), "compare": pack(b),
+        "delta": np.round(b["t"] - a["t"], 3).tolist(),
+    }
