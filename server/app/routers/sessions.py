@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app import models, schemas
-from app.analysis.laps import analyze, compare_laps, load_session
+from app.analysis.laps import SessionData, analyze, compare_laps, load_session
 from app.db import STORAGE_DIR, get_db
 from app.importers.motec import LdFormatError, read_ld
 
@@ -89,15 +89,19 @@ def _channel_map(s: models.RunSession) -> dict[str, tuple[str, ...]] | None:
     return None
 
 
-@router.get("/{session_id}/analysis")
-def session_analysis(session_id: int, file_id: int | None = None, reference_lap: int | None = None,
-                     db: Session = Depends(get_db)):
-    s = _get(db, session_id)
+def load_main_file(s: models.RunSession, file_id: int | None = None) -> tuple[models.LoggerFile, SessionData]:
+    """The session's logger file to analyse: the one asked for, else the longest."""
     files = [f for f in s.files if file_id is None or f.id == file_id]
     if not files:
         raise HTTPException(404, "No logger file uploaded for this session")
     f = max(files, key=lambda f: f.meta.get("duration_s", 0))
-    data = load_session(read_ld(f.path), _channel_map(s))
+    return f, load_session(read_ld(f.path), _channel_map(s))
+
+
+@router.get("/{session_id}/analysis")
+def session_analysis(session_id: int, file_id: int | None = None, reference_lap: int | None = None,
+                     db: Session = Depends(get_db)):
+    f, data = load_main_file(_get(db, session_id), file_id)
     return {"file_id": f.id, **analyze(data, reference_lap)}
 
 
@@ -105,12 +109,7 @@ def session_analysis(session_id: int, file_id: int | None = None, reference_lap:
 def session_compare(session_id: int, lap: int, reference_lap: int | None = None, file_id: int | None = None,
                     step: float = 5.0, db: Session = Depends(get_db)):
     """Speed, throttle, brake and time delta of one lap against the reference lap, for charts."""
-    s = _get(db, session_id)
-    files = [f for f in s.files if file_id is None or f.id == file_id]
-    if not files:
-        raise HTTPException(404, "No logger file uploaded for this session")
-    f = max(files, key=lambda f: f.meta.get("duration_s", 0))
-    data = load_session(read_ld(f.path), _channel_map(s))
+    f, data = load_main_file(_get(db, session_id), file_id)
     try:
         return {"file_id": f.id, **compare_laps(data, lap, reference_lap, max(1.0, min(step, 50.0)))}
     except ValueError as e:

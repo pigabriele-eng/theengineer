@@ -96,6 +96,16 @@ export const SECTIONS: [string, string][] = [
 ];
 export const sectionName = (key: string) => SECTIONS.find(([k]) => k === key)?.[1] ?? key;
 
+export type DebriefCorner = {
+  detected_code: string;
+  apex_m: number;
+  reference_lap: number;
+  reference: CornerMetrics | null;
+  best_lap: number;
+  best: CornerMetrics | null;
+  spread_s: number;
+};
+
 type PickedFile = { uri: string; name: string; file?: File | Blob };
 
 // On web we have a File or Blob; on iOS FormData takes a { uri, name, type } descriptor.
@@ -141,6 +151,8 @@ export const api = {
   },
   debriefs: (sessionId: number) => request<Debrief[]>(`/sessions/${sessionId}/debriefs`),
   debrief: (id: number) => request<Debrief>(`/debriefs/${id}`),
+  debriefCorners: (id: number) =>
+    request<{ corners: Record<string, DebriefCorner> }>(`/debriefs/${id}/corners`),
   processDebrief: (id: number) => request<Debrief>(`/debriefs/${id}/process`, { method: 'POST' }),
   debriefAudioUrl: (id: number) => `${API_URL}/debriefs/${id}/audio`,
 };

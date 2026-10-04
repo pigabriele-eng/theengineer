@@ -105,12 +105,12 @@ class DebriefPointIn(BaseModel):
     corner_id: int | None = None
     phase: CornerPhase | None = None
     audio_start_s: float | None = None
+    speaker: str | None = None
+    corner_code: str | None = None
 
 
 class DebriefPointOut(DebriefPointIn, Orm):
     id: int
-    speaker: str | None = None
-    corner_code: str | None = None
 
 
 class DebriefIn(BaseModel):

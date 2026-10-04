@@ -49,5 +49,6 @@ The app talks to `http://localhost:8000` unless `EXPO_PUBLIC_API_URL` is set. On
 - Create sessions, upload a MoTeC `.ld` file, and see laps, best lap, theoretical best and per-corner metrics (brake point, minimum speed, throttle pickup, full throttle).
 - Compare any lap with the reference lap: running time gained or lost, speed, throttle and brake on one distance axis, with corner markers. Drag across a chart to read both laps at the same point.
 - Voice debriefs: record on the iPhone or in the browser (or upload a recording), pick one driver or group and the language (English, Italian, German or mixed). The server transcribes with speaker separation, then Claude sorts each statement into the report sections and tags the corner and phase when they're said. Each point links back to the moment in the recording.
+- When a session has logger data, each debrief point about a corner shows what the logger recorded there: brake point, minimum speed, full throttle and section time on the reference lap, and the best lap through that corner.
 - Typed debrief points are still available for quick notes.
 - Car-specific channel maps: a car can override which logger channels fill speed, throttle, brake and steering (for example brake pressure instead of brake torque).

@@ -8,9 +8,12 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.db import STORAGE_DIR, get_db
+from app.analysis.laps import analyze
+from app.debrief.corners import corner_data
 from app.debrief.pipeline import process_debrief
 from app.debrief.transcribe import LANGUAGES
 from app.routers.sessions import _get as get_session
+from app.routers.sessions import load_main_file
 
 router = APIRouter()
 
@@ -89,3 +92,17 @@ def debrief_audio(debrief_id: int, db: Session = Depends(get_db)):
     if d.audio_path is None or not Path(d.audio_path).exists():
         raise HTTPException(404, "No recording for this debrief")
     return FileResponse(d.audio_path)
+
+
+@router.get("/debriefs/{debrief_id}/corners")
+def debrief_corners(debrief_id: int, db: Session = Depends(get_db)):
+    """Logged data for each corner the debrief mentions, keyed by the corner as tagged on the points."""
+    d = _get(db, debrief_id)
+    s = d.session
+    if not s.files or not any(p.corner_code for p in d.points):
+        return {"corners": {}}
+    f, data = load_main_file(s)
+    track = s.event.track if s.event else None
+    analysis = analyze(data)
+    return {"file_id": f.id, "reference_lap": analysis.get("reference_lap"),
+            "corners": corner_data(d.points, track.corners if track else [], analysis)}
