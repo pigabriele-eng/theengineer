@@ -3,6 +3,7 @@ import { Link, Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
 
+import { LapCompare } from '@/components/LapCompare';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { Analysis, api, Debrief, formatLap, SessionDetail } from '@/lib/api';
 
@@ -83,6 +84,10 @@ export default function SessionScreen() {
             </Link>
           ))}
         </View>
+      )}
+
+      {analysis && session && analysis.corners.length > 0 && (
+        <LapCompare sessionId={sessionId} analysis={analysis} laps={session.laps} />
       )}
 
       {analysis && (

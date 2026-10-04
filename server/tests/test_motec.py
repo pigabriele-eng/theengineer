@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from app.analysis.laps import analyze, load_session
+from app.analysis.laps import analyze, compare_laps, load_session
 from app.importers.motec import LdFormatError, read_ld
 from tests.synthetic import TRACK_M, simulate, write_ld
 
@@ -56,3 +56,13 @@ def test_analysis_finds_both_corners(session):
     assert t1[2]["min_speed"] > t1[3]["min_speed"]  # faster lap carries more speed
     assert t1[2]["brake_point"] is not None and t1[2]["brake_point"] < 300
     assert result["theoretical_best"] <= min(lap_times[1:5]) + 0.05
+
+
+def test_compare_laps_delta_ends_at_lap_time_difference():
+    channels, _ = simulate()
+    data = load_session(read_ld(write_ld(channels)))
+    by_number = {l.number: l for l in data.laps}
+    c = compare_laps(data, lap_number=3, ref_number=2)
+    assert c["reference_lap"] == 2 and len(c["distance"]) == len(c["delta"]) == len(c["compare"]["speed"])
+    assert c["delta"][0] == 0
+    assert abs(c["delta"][-1] - (by_number[3].time - by_number[2].time)) < 0.1
