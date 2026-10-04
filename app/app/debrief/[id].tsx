@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
 
 import { Text, View, useThemeColor } from '@/components/Themed';
-import { api, Debrief, DebriefPoint, SECTIONS } from '@/lib/api';
+import { api, Debrief, DebriefCorner, DebriefPoint, SECTIONS } from '@/lib/api';
 
 const POLL_MS = 3000;
 
@@ -16,6 +16,7 @@ export default function DebriefReport() {
   const [d, setD] = useState<Debrief | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showTranscript, setShowTranscript] = useState(false);
+  const [corners, setCorners] = useState<Record<string, DebriefCorner>>({});
   const player = useAudioPlayer(d?.has_audio ? api.debriefAudioUrl(debriefId) : null);
   const tint = useThemeColor({}, 'tint');
   const background = useThemeColor({}, 'background');
@@ -33,6 +34,13 @@ export default function DebriefReport() {
     const t = setInterval(load, POLL_MS);
     return () => clearInterval(t);
   }, [pending, load]);
+
+  // Once the points exist, fetch what the logger recorded at each corner they mention.
+  const ready = d?.status === 'ready';
+  useEffect(() => {
+    if (!ready) return;
+    api.debriefCorners(debriefId).then((r) => setCorners(r.corners), () => setCorners({}));
+  }, [ready, debriefId]);
 
   const retry = async () => {
     setError(null);
@@ -99,6 +107,7 @@ export default function DebriefReport() {
                       </Pressable>
                     )}
                   </View>
+                  {p.corner_code && corners[p.corner_code] && <CornerLine c={corners[p.corner_code]} />}
                 </View>
               ))}
             </View>
@@ -123,6 +132,27 @@ function named(transcript: string, speakers: Debrief['speakers']) {
     const sp = speakers?.[key];
     return sp ? `${sp.name ?? sp.role}:` : label;
   });
+}
+
+// What the logger recorded at the corner: the reference lap, and the best lap through it if different.
+function CornerLine({ c }: { c: DebriefCorner }) {
+  const r = c.reference;
+  if (!r) return null;
+  const parts = [
+    r.brake_point != null ? `brake ${r.brake_point} m` : null,
+    `min ${r.min_speed.toFixed(1)} km/h`,
+    r.full_throttle != null ? `full throttle ${r.full_throttle} m` : null,
+    `section ${r.time.toFixed(2)} s`,
+  ].filter(Boolean);
+  const best = c.best && c.best_lap !== c.reference_lap
+    ? ` · best L${c.best_lap} ${c.best.time.toFixed(2)} s, min ${c.best.min_speed.toFixed(1)}`
+    : '';
+  return (
+    <Text style={styles.data}>
+      Data L{c.reference_lap}: {parts.join(' · ')}
+      {best}
+    </Text>
+  );
 }
 
 function Tag({ text }: { text: string }) {
@@ -150,4 +180,5 @@ const styles = StyleSheet.create({
   meta: { fontSize: 13, opacity: 0.7, fontVariant: ['tabular-nums'] },
   link: { fontWeight: '600' },
   transcript: { opacity: 0.8, lineHeight: 20 },
+  data: { fontSize: 13, opacity: 0.75, fontVariant: ['tabular-nums'] },
 });

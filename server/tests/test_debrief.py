@@ -104,3 +104,25 @@ def test_rejects_non_audio(client):
     s = client.post("/sessions", json={}).json()
     r = client.post(f"/sessions/{s['id']}/debriefs/audio", files={"audio": ("notes.txt", b"x")})
     assert r.status_code == 415
+
+
+def test_debrief_corners_line_up_with_logged_corners(client):
+    from tests.synthetic import simulate, write_ld
+
+    track = client.post("/tracks", json={"name": "Test ring", "corners": [
+        {"code": "T1", "name": "Hairpin"}, {"code": "T2", "name": "Fast left", "apex_m": 690}]}).json()
+    event = client.post("/events", json={"name": "Test day", "track_id": track["id"]}).json()
+    s = client.post("/sessions", json={"event_id": event["id"]}).json()
+    channels, _ = simulate()
+    assert client.post(f"/sessions/{s['id']}/files", files={"file": ("run.ld", write_ld(channels))}).status_code == 201
+    d = client.post(f"/sessions/{s['id']}/debriefs", json={"points": [
+        {"section": "balance", "text": "Understeer in the hairpin", "corner_code": "T1"},
+        {"section": "balance", "text": "Loose in the fast left", "corner_code": "T2", "phase": "exit"},
+        {"section": "issues", "text": "Kerb at T9 is broken", "corner_code": "T9"},
+    ]}).json()
+
+    corners = client.get(f"/debriefs/{d['id']}/corners").json()["corners"]
+    assert set(corners) == {"T1", "T2"}
+    assert abs(corners["T1"]["apex_m"] - 300) < 40
+    assert abs(corners["T2"]["apex_m"] - 700) < 40
+    assert corners["T1"]["reference"]["min_speed"] > 0 and corners["T1"]["best"]["time"] > 0
