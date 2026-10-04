@@ -132,3 +132,20 @@ def read_ld(source: bytes | str | Path) -> LdFile:
         venue=_text(h[16]), comment=_text(h[18]), device_serial=h[7], device_type=_text(h[8]),
         device_version=h[9], event_name=event_name, event_session=event_session, channels=channels,
     )
+
+
+def read_ldx_beacons(source: bytes | str | Path) -> list[float]:
+    """Beacon (start/finish) times in seconds from the .ldx file i2 saves next to a .ld log.
+
+    i2 stores them in microseconds from the start of the log. These are what i2 uses for lap
+    boundaries, and they are far more precise than a 1 Hz lap counter.
+    """
+    import xml.etree.ElementTree as ET
+
+    raw = source if isinstance(source, bytes) else Path(source).read_bytes()
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError as e:
+        raise LdFormatError(f"Not a MoTeC .ldx file: {e}") from e
+    times = [float(m.get("Time", "nan")) / 1e6 for m in root.iter("Marker") if m.get("ClassName") == "BCN"]
+    return sorted(t for t in times if t == t)

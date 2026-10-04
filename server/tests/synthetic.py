@@ -5,6 +5,7 @@ from app.importers.motec import CHANNEL, EVENT, HEADER, LD_MARKER
 
 TRACK_M = 1000.0
 CORNERS_M = (300.0, 700.0)
+ORIGIN = (49.3276, 8.5659)  # the track is a circle with start/finish at its southern point
 
 
 def speed_at(d: np.ndarray, pace: float) -> np.ndarray:
@@ -21,13 +22,14 @@ def simulate(
     """
     laps = [0.6, *paces, 0.6]
     dt = 1.0 / hz
-    v_out, lap_idx, lap_times = [], [], []
+    v_out, lap_idx, lap_times, dist = [], [], [], []
     for i, pace in enumerate(laps):
         d, elapsed = 0.0, 0.0
         while d < TRACK_M:
             v = float(speed_at(np.array([d]), pace)[0])
             v_out.append(v)
             lap_idx.append(i)
+            dist.append(d)
             d += v / 3.6 * dt
             elapsed += dt
         lap_times.append(elapsed)
@@ -50,7 +52,15 @@ def simulate(
     # each crossing completes the lap before it; the in-lap after the last crossing never completes
     for c, time in zip(crossings, lap_times, strict=False):
         lt[t1 >= c / hz] = time
+    # 20 Hz GPS on a circle, driven anticlockwise from the southern point
+    r = TRACK_M / (2 * np.pi)
+    ang = 2 * np.pi * np.array(dist)[:: hz // 20] / TRACK_M
+    x, y = r * np.sin(ang), r - r * np.cos(ang)
+    lat = ORIGIN[0] + np.degrees(y / 6_371_000.0)
+    lon = ORIGIN[1] + np.degrees(x / (6_371_000.0 * np.cos(np.radians(ORIGIN[0]))))
     return {
+        "GPS Latitude": (20, "deg", lat),
+        "GPS Longitude": (20, "deg", lon),
         "vCar": (hz, "km/h", v),
         "rThrottlePedal": (50, "%", throttle[:: hz // 50]),
         "Brake Torque": (50, "Nm", -brake[:: hz // 50]),

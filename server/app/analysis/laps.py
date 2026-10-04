@@ -17,7 +17,7 @@ DEFAULT_CHANNEL_MAP: dict[str, tuple[str, ...]] = {
     "throttle": ("rThrottlePedal", "Throttle Pedal", "Throttle Pos", "TPS", "rThrottle"),
     "brake": ("Brake Pressure Front", "pBrakeF", "Brake Press Front", "Brake Torque", "Brake Pressure"),
     "steer": ("aSteer", "Steered Angle", "Steering Angle", "Steering"),
-    "gear": ("nGear", "Gear"),
+    "gear": ("nGear", "NGearPos", "Gear"),
     "rpm": ("nEngine", "Engine Speed", "RPM"),
     "lat": ("GPS Latitude",),
     "lon": ("GPS Longitude",),
@@ -27,6 +27,17 @@ DEFAULT_CHANNEL_MAP: dict[str, tuple[str, ...]] = {
 
 MASTER_HZ = 100
 CLEAN_LAP_MARGIN = 1.05  # a clean lap is within 5 % of the session's best
+PIT_SPEED_KMH = 70  # below this for PIT_SECONDS in one lap means pit lane or a slow lap, not a clean lap
+PIT_SECONDS = 8
+TIMING_LINE_WIDTH_M = 40  # how far either side of the start/finish point a GPS crossing still counts
+
+
+@dataclass
+class TimingLine:
+    """The start/finish line as a GPS point and the direction of travel through it."""
+    lat: float
+    lon: float
+    heading: float  # degrees clockwise from north
 
 
 @dataclass
@@ -45,9 +56,12 @@ class SessionData:
     channels: dict[str, np.ndarray]
     sources: dict[str, str]
     laps: list[Lap] = field(default_factory=list)
+    lap_source: str = ""  # beacons, marker, gps or counter
+    timing_line: TimingLine | None = None
 
 
-def load_session(ld: LdFile, channel_map: dict[str, tuple[str, ...]] | None = None) -> SessionData:
+def load_session(ld: LdFile, channel_map: dict[str, tuple[str, ...]] | None = None,
+                 beacons: list[float] | None = None, line: TimingLine | None = None) -> SessionData:
     cmap = {**DEFAULT_CHANNEL_MAP, **(channel_map or {})}
     speed = ld.channel(*cmap["speed"])
     if speed is None:
@@ -66,24 +80,97 @@ def load_session(ld: LdFile, channel_map: dict[str, tuple[str, ...]] | None = No
         channels[role], sources[role] = v, ch.name
     distance = np.concatenate([[0.0], np.cumsum(channels["speed"][1:] / 3.6 / MASTER_HZ)])
     data = SessionData(t=t, distance=distance, channels=channels, sources=sources)
-    data.laps = split_laps(ld)
+    data.laps, data.lap_source = split_laps(ld, beacons, line)
+    if data.lap_source in ("beacons", "marker"):
+        data.timing_line = timing_line_at(ld, [l.start for l in data.laps])
+    else:
+        data.timing_line = line
     return data
 
 
-def split_laps(ld: LdFile) -> list[Lap]:
-    """Lap boundaries from the start/finish marker, falling back to the lap counter."""
-    starts: np.ndarray | None = None
+def _gps(ld: LdFile):
+    lat, lon = ld.channel("GPS Latitude"), ld.channel("GPS Longitude")
+    if lat is None or lon is None:
+        return None
+    t = lat.times()
+    la, lo = lat.values().astype(float), np.interp(t, lon.times(), lon.values()).astype(float)
+    ok = (np.abs(la) > 0.1) & (np.abs(lo) > 0.1)  # no fix logs as zeros
+    return t[ok], la[ok], lo[ok]
+
+
+def _local_m(la: np.ndarray, lo: np.ndarray, lat0: float, lon0: float) -> tuple[np.ndarray, np.ndarray]:
+    r = 6_371_000.0
+    return (np.radians(lo - lon0) * r * np.cos(np.radians(lat0)), np.radians(la - lat0) * r)
+
+
+def timing_line_at(ld: LdFile, times: list[float]) -> TimingLine | None:
+    """Where the car was at known line-crossing times: the start/finish line for GPS lap timing."""
+    g = _gps(ld)
+    if g is None or len(times) < 2 or len(g[0]) < 10:
+        return None
+    t, la, lo = g
+    lats, lons = np.interp(times, t, la), np.interp(times, t, lo)
+    lat0, lon0 = float(np.median(lats)), float(np.median(lons))
+    x, y = _local_m(la, lo, lat0, lon0)
+    heads = []
+    for c in times:
+        i = int(np.searchsorted(t, c))
+        if 1 <= i < len(t) - 1:
+            heads.append(np.arctan2(x[i + 1] - x[i - 1], y[i + 1] - y[i - 1]))
+    if not heads:
+        return None
+    heading = float(np.degrees(np.arctan2(np.mean(np.sin(heads)), np.mean(np.cos(heads))))) % 360
+    return TimingLine(lat0, lon0, heading)
+
+
+def gps_crossings(ld: LdFile, line: TimingLine, min_gap_s: float = 10.0) -> np.ndarray:
+    """Times the car crossed the timing line in the direction of travel, interpolated between GPS samples."""
+    g = _gps(ld)
+    if g is None:
+        return np.array([])
+    t, la, lo = g
+    x, y = _local_m(la, lo, line.lat, line.lon)
+    h = np.radians(line.heading)
+    along = x * np.sin(h) + y * np.cos(h)
+    across = x * np.cos(h) - y * np.sin(h)
+    out: list[float] = []
+    for i in np.nonzero((along[:-1] < 0) & (along[1:] >= 0))[0]:
+        if abs(across[i]) > TIMING_LINE_WIDTH_M or along[i + 1] - along[i] > 50:  # off the line, or a GPS jump
+            continue
+        tc = t[i] + (t[i + 1] - t[i]) * (-along[i]) / (along[i + 1] - along[i])
+        if not out or tc - out[-1] >= min_gap_s:
+            out.append(float(tc))
+    return np.array(out)
+
+
+def lap_starts(ld: LdFile, beacons: list[float] | None = None,
+               line: TimingLine | None = None) -> tuple[np.ndarray, str]:
+    """Line-crossing times, from the most precise source the log offers."""
+    if beacons and len(beacons) >= 2:
+        return np.asarray(beacons, float), "beacons"
     sf = ld.channel("S/F Marker", "Start Finish", "SF Marker")
     if sf is not None:
-        v = sf.values()
-        starts = sf.times()[1:][np.diff(v) > 0]
-    if starts is None or len(starts) < 2:
-        ln = ld.channel("Lap Number", "Lap")
-        if ln is None:
-            return []
-        v = ln.values()
-        starts = ln.times()[1:][np.diff(v) != 0]
+        starts = sf.times()[1:][np.diff(sf.values()) > 0]
+        if len(starts) >= 2:
+            return starts, "marker"
+    if line is not None:
+        starts = gps_crossings(ld, line)
+        if len(starts) >= 2:
+            return starts, "gps"
+    ln = ld.channel("Lap Number", "Lap")
+    if ln is not None:
+        starts = ln.times()[1:][np.diff(ln.values()) != 0]
+        if len(starts) >= 2:
+            return starts, "counter"
+    return np.array([]), ""
+
+
+def split_laps(ld: LdFile, beacons: list[float] | None = None,
+               line: TimingLine | None = None) -> tuple[list[Lap], str]:
+    """Laps between consecutive line crossings, with the dash's own lap time where it agrees."""
+    starts, source = lap_starts(ld, beacons, line)
     lap_time = ld.channel("Lap Time")
+    speed = ld.channel(*DEFAULT_CHANNEL_MAP["speed"])
     laps = []
     for i in range(len(starts) - 1):
         a, b = float(starts[i]), float(starts[i + 1])
@@ -92,14 +179,26 @@ def split_laps(ld: LdFile) -> list[Lap]:
             # the dash publishes the completed lap's time shortly after the line
             k = min(np.searchsorted(lap_time.times(), b + 1.5), lap_time.count - 1)
             logged = float(lap_time.values()[k])
-            if abs(logged - time) < 1.0:
+            if abs(logged - time) < (1.0 if source == "counter" else 0.25):
                 time = logged
         laps.append(Lap(number=i + 1, start=a, end=b, time=round(time, 3)))
     if laps:
         best = min(l.time for l in laps)
         for l in laps:
-            l.clean = l.time <= best * CLEAN_LAP_MARGIN
-    return laps
+            l.clean = l.time <= best * CLEAN_LAP_MARGIN and not _has_slow_section(speed, l)
+        clean = [l.time for l in laps if l.clean]
+        if clean and min(clean) > best:  # the fastest "lap" was not a real lap; judge against the best clean one
+            for l in laps:
+                l.clean = l.clean and l.time <= min(clean) * CLEAN_LAP_MARGIN
+    return laps, source
+
+
+def _has_slow_section(speed, lap: Lap) -> bool:
+    if speed is None:
+        return False
+    t = speed.times()
+    v = speed.values()[(t >= lap.start) & (t < lap.end)]
+    return len(v) > 0 and np.count_nonzero(v < PIT_SPEED_KMH) / speed.freq > PIT_SECONDS
 
 
 def lap_trace(data: SessionData, lap: Lap, length: float, step: float = 1.0) -> dict[str, np.ndarray]:

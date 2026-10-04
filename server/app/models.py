@@ -49,6 +49,8 @@ class Track(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(120), unique=True)
     length_m: Mapped[float | None] = mapped_column(Float)
+    # start/finish line for GPS lap timing, learned from the first log with a lap marker: {lat, lon, heading}
+    timing_line: Mapped[dict | None] = mapped_column(JSON)
     corners: Mapped[list[Corner]] = relationship(back_populates="track", order_by="Corner.apex_m",
                                                  cascade="all, delete-orphan")
 

@@ -66,3 +66,45 @@ def test_compare_laps_delta_ends_at_lap_time_difference():
     assert c["reference_lap"] == 2 and len(c["distance"]) == len(c["delta"]) == len(c["compare"]["speed"])
     assert c["delta"][0] == 0
     assert abs(c["delta"][-1] - (by_number[3].time - by_number[2].time)) < 0.1
+
+
+LDX = b"""<?xml version="1.0"?>
+<LDXFile Version="1.6"><Layers><Layer><MarkerBlock><MarkerGroup Name="Beacons" Index="1">
+<Marker Version="100" ClassName="BCN" Name="Auto GPS 2" Flags="77" Time="6.62360432425654292e+08"/>
+<Marker Version="100" ClassName="BCN" Name="Auto GPS 1" Flags="77" Time="2.58129811370032370e+08"/>
+</MarkerGroup></MarkerBlock></Layer></Layers></LDXFile>"""
+
+
+def test_reads_ldx_beacons_in_seconds():
+    from app.importers.motec import read_ldx_beacons
+
+    assert [round(t, 3) for t in read_ldx_beacons(LDX)] == [258.13, 662.36]
+    with pytest.raises(LdFormatError):
+        read_ldx_beacons(b"not xml")
+
+
+def test_gps_timing_matches_the_lap_marker():
+    from app.analysis.laps import lap_starts, split_laps, timing_line_at
+
+    channels, lap_times = simulate()
+    marked = read_ld(write_ld(channels))
+    starts, source = lap_starts(marked)
+    assert source == "marker"
+    line = timing_line_at(marked, list(starts))
+
+    unmarked = read_ld(write_ld({k: v for k, v in channels.items() if k not in ("S/F Marker", "Lap Time")}))
+    laps, source = split_laps(unmarked, line=line)
+    assert source == "gps"
+    flying = [l.time for l in laps][1:5]
+    assert np.allclose(flying, lap_times[1:5], atol=0.05)
+    assert [l.clean for l in laps][1:5] == [False, True, True, True]
+
+
+def test_beacons_win_over_other_lap_sources():
+    from app.analysis.laps import split_laps
+
+    channels, lap_times = simulate()
+    ld = read_ld(write_ld(channels))
+    starts = np.cumsum([0, *lap_times])[1:-1] + 0.0
+    laps, source = split_laps(ld, beacons=list(starts))
+    assert source == "beacons" and len(laps) == 4

@@ -101,7 +101,7 @@ def debrief_corners(debrief_id: int, db: Session = Depends(get_db)):
     s = d.session
     if not s.files or not any(p.corner_code for p in d.points):
         return {"corners": {}}
-    f, data = load_main_file(s)
+    f, data = load_main_file(db, s)
     track = s.event.track if s.event else None
     analysis = analyze(data)
     return {"file_id": f.id, "reference_lap": analysis.get("reference_lap"),
