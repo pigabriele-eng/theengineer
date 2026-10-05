@@ -13,6 +13,7 @@ from app.analysis.laps import load_session
 from app.analysis.stint import stint_analysis
 from app.db import get_db
 from app.debrief.check import check_debrief
+from app.heavy import one_at_a_time
 from app.routers.sessions import _channel_map, _get, _line, _track_for, official_corners, read_file
 
 router = APIRouter()
@@ -47,6 +48,7 @@ def _runs(db: Session, session_ids: list[int]) -> tuple[list[RunInput], models.T
 
 
 @router.get("/sessions/{session_id}/insights")
+@one_at_a_time
 def session_insights(session_id: int, db: Session = Depends(get_db)):
     """Lap time opportunities, driving trends, setup checks and driver scores for one session."""
     runs, track = _runs(db, [session_id])
@@ -54,6 +56,7 @@ def session_insights(session_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/sessions/{session_id}/stint")
+@one_at_a_time
 def session_stint(session_id: int, db: Session = Depends(get_db)):
     """Each stint (split at pit stops) lap by lap: grip in use, lateral g, balance by corner phase, TC and ABS,
     tyres; and how the car fades through it (seconds and grip per lap) with the understeer gradient."""
@@ -66,6 +69,7 @@ class InsightsIn(BaseModel):
 
 
 @router.post("/insights")
+@one_at_a_time
 def multi_insights(body: InsightsIn, db: Session = Depends(get_db)):
     """The same across several sessions at one track (a test day, an event): the car's limits come from all."""
     runs, track = _runs(db, body.session_ids)
@@ -89,6 +93,7 @@ class CompareIn(BaseModel):
 
 
 @router.post("/compare/drivers")
+@one_at_a_time
 def compare_drivers(body: CompareIn, db: Session = Depends(get_db)):
     """Two drivers or two stints on one car and track: where the time goes and which technique explains it."""
     if body.a.label == body.b.label:
@@ -120,6 +125,7 @@ def compare_drivers(body: CompareIn, db: Session = Depends(get_db)):
 
 
 @router.get("/debriefs/{debrief_id}/check")
+@one_at_a_time
 def debrief_check(debrief_id: int, db: Session = Depends(get_db)):
     """Each debrief point against the session's data: confirmed, partly, not seen, contradicted or cannot check."""
     d = db.get(models.Debrief, debrief_id)

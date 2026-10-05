@@ -7,9 +7,9 @@ when a log is uploaded or an import finishes, every POLL_S seconds anyway, and w
 in the logs uploaded before it existed.
 
 Memory: a summary reads only the channels it needs (speed, accelerations, yaw rate, steering, TPMS): about 80 MB
-on top of the server for a 90 MB Hockenheim log, freed before the next. It never runs alongside an import (they
-take turns through HEAVY), and starts a log only when no request has been in flight for QUIET_S (an analysis
-request can hold 300 MB), so it fills the gaps while the app is idle.
+on top of the server for a 90 MB Hockenheim log, freed before the next. It reads a log only under heavy.lock, taken
+per log, so imports and analysis requests take turns with it, and starts one only when no request has been in
+flight for QUIET_S, so it fills the gaps while the app is idle.
 """
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import db as dbmod
+from app import heavy
 from app import models
 from app.analysis.laps import DEFAULT_CHANNEL_MAP, load_session
 from app.routers.sessions import LOG_FILES, _channel_map, _line, _track_for, read_file
@@ -51,8 +52,6 @@ ROLES = {"speed", "g_lat", "g_long", "yaw", "steer", "steer_wheel",
 NOT_A_CHANNEL = ("\0",)
 
 OK, NONE, FAILED = "ok", "none", "failed"  # TyreData.status: summarised, no steady cornering, unreadable
-
-HEAVY = threading.Lock()  # one log open at a time: imports, uploads and this job take turns
 
 
 def version(preset: str = PRESET) -> str:
@@ -222,7 +221,7 @@ def process_next(quiet: bool = False) -> bool:
         _wait_for_quiet()
         if _stop.is_set():
             return False
-    with HEAVY, dbmod.SessionLocal() as db:
+    with heavy.lock, dbmod.SessionLocal() as db:  # one log in memory at a time, across the server
         todo = _todo(db)
         if not todo:
             return False

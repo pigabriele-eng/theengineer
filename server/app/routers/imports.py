@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy import inspect, select, update
 from sqlalchemy.orm import Session
 
-from app import models, schemas, storage
+from app import heavy, models, schemas, storage
 from app.db import SessionLocal, get_db
 from app.importers import archive
 from app.importers.motec import read_ldx_beacons
@@ -104,14 +104,13 @@ def _work() -> None:
     while True:
         job_id, folder, uploads = _jobs.get()
         try:
-            with tyre_store.HEAVY:  # the tyre data job waits: one log in memory at a time
-                run_import(job_id, folder, uploads)
+            run_import(job_id, folder, uploads)
         except Exception:
             log.exception("Import %s failed", job_id)
         finally:
             shutil.rmtree(folder, ignore_errors=True)
             _jobs.task_done()
-            tyre_store.kick()
+            tyre_store.kick()  # summarise the new logs for the tyre model
 
 
 def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]]) -> None:
@@ -133,7 +132,8 @@ def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]]) -> No
                 db.commit()
                 run = _Run(db, job, found.archives, folder)
                 for i, item in enumerate(found.logs):
-                    run.add(item, ldx_for.get(i))
+                    with heavy.lock:  # one log in memory at a time, across imports and requests
+                        run.add(item, ldx_for.get(i))
                     job.done = i + 1
                     db.commit()
                 run.finish_events()
