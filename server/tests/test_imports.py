@@ -86,8 +86,15 @@ def test_a_zip_of_a_test_gives_a_session_per_run(client):
     assert r.status_code == 200, r.text
 
 
+@cache
+def unmarked_log_bytes() -> bytes:
+    from tests.synthetic import simulate, write_ld
+
+    return write_ld({k: v for k, v in simulate()[0].items() if k not in ("S/F Marker", "Lap Time")})
+
+
 def test_an_ldx_in_the_zip_gives_its_log_beacon_lap_times(client):
-    job = upload(client, ("day.zip", make_zip({"run/x.ld": log_bytes(), "run/x.ldx": ldx_bytes()})))
+    job = upload(client, ("day.zip", make_zip({"run/x.ld": unmarked_log_bytes(), "run/x.ldx": ldx_bytes()})))
     (s,) = sessions_by_name(client, job).values()
     assert s["name"] == "run"
     assert s["files"][0]["meta"]["lap_source"] == "beacons"
@@ -129,7 +136,7 @@ def test_loose_logs_and_a_zip_in_one_upload(client):
     runs = sessions_by_name(client, job)
     # loose logs carry no folder: named from the header's session name
     assert set(runs) == {"Session 1", "Session 1 (2)", "Run1", "Run2"}
-    assert runs["Run1"]["files"][0]["meta"]["lap_source"] == "beacons"  # the loose .ldx found its log in the zip
+    assert len(runs["Run1"]["files"][0]["meta"]["beacons"]) == 5  # the loose .ldx found its log in the zip
     assert job["skipped"] == [{"file": "notes.pdf", "reason": "not a logger file"}]
     (event,) = client.get("/events").json()
     assert event["name"] == "Test"

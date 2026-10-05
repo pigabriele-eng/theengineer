@@ -5,11 +5,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import DataError, IntegrityError
 
-from app import storage
+from app import storage, timing
 from app.auth import check_settings, require_user, require_user_or_query_token
 from app.db import create_tables
 from app.routers import catalog, debriefs, imports, insights, sessions, trackmap, tyres, vehicle
 from app.routers import report_grip
+from app.routers import balance as report_balance
 from app.routers import tyreprep
 
 
@@ -19,6 +20,7 @@ async def lifespan(_: FastAPI):
     create_tables()
     imports.fail_interrupted()
     storage.backend().setup()
+    timing.check_all_tracks()  # in the background: logs timed from an older start/finish line are re-timed
     yield
 
 
@@ -31,6 +33,7 @@ for r in (catalog.router, sessions.router, imports.router, debriefs.router, insi
     app.include_router(r, dependencies=signed_in)
 app.include_router(trackmap.router, dependencies=signed_in)
 app.include_router(report_grip.router, dependencies=signed_in)
+app.include_router(report_balance.router, dependencies=signed_in)
 app.include_router(tyreprep.router, dependencies=signed_in)
 app.include_router(debriefs.media_router, dependencies=[Depends(require_user_or_query_token)])
 

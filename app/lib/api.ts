@@ -35,6 +35,8 @@ export type Session = {
   kind: SessionKind;
   created_at: string;
   best_lap_s: number | null;
+  event_name?: string | null;
+  track_name?: string | null; // where it was driven: the event's track, else the venue in the log header
 };
 
 export type SessionDetail = Session & { files: LoggerFile[]; laps: Lap[] };
