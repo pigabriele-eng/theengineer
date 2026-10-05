@@ -293,3 +293,38 @@ def test_an_unreadable_log_is_left_out_of_an_event(client, monkeypatch):
         body["sessions"]
     with pytest.raises(ValueError):  # one session asked for on its own: the error is not hidden
         client.get(f"/report/balance?session={broken}")
+
+
+def test_the_report_is_built_under_the_shared_log_lock_and_served_from_cache_without_it(client, monkeypatch):
+    import threading
+
+    import app.routers.balance as router
+    from app import heavy
+
+    event = client.post("/events", json={"name": "Test day"}).json()
+    _upload(client, "Run 1", event["id"], (0.97, 1.0, 0.98))
+    held: list[bool] = []
+    real = router._build
+
+    def probe():  # from another thread: is the shared lock taken?
+        got = heavy.lock.acquire(blocking=False)
+        if got:
+            heavy.lock.release()
+        held.append(not got)
+
+    def spy(*args, **kwargs):
+        t = threading.Thread(target=probe)
+        t.start()
+        t.join()
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(router, "_build", spy)
+    assert client.get(f"/report/balance?event={event['id']}").status_code == 200
+    assert held == [True]
+    with heavy.lock:  # another job is reading a log: a cached report doesn't wait for it
+        done = []
+        t = threading.Thread(target=lambda: done.append(client.get(f"/report/balance?event={event['id']}")))
+        t.start()
+        t.join(timeout=10)
+        assert done and done[0].status_code == 200
+    assert held == [True]

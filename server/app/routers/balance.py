@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import models
+from app import heavy, models
 from app.analysis.balance import Collected, analyse, car_geometry, collect, prepared
 from app.analysis.setup_advice import report
 from app.db import get_db
@@ -20,7 +20,7 @@ router = APIRouter()
 
 CACHE_SIZE = 8
 _cache: OrderedDict[tuple, dict] = OrderedDict()
-_lock = threading.Lock()  # one analysis at a time: each holds a whole session in memory while it reads it
+_cache_lock = threading.Lock()  # guards the cache only; the work itself runs under app.heavy.lock
 
 # Words in a car's name that pick its vehicle preset. A session with no car is taken to be the team's car, the one
 # preset there is so far; a named car that matches no preset gets no vehicle model.
@@ -73,11 +73,17 @@ def balance_report(session: int | None = None, event: int | None = None, db: Ses
     if not usable:
         raise HTTPException(422, f"No clean laps to analyse in this {kind}")
     key = _key(kind, sid, sessions)
-    with _lock:
+    with _cache_lock:
         if key in _cache:
             _cache.move_to_end(key)
             return _cache[key]
+    with heavy.lock:  # one log-reading job at a time across the server: each holds a whole log while it reads it
+        with _cache_lock:  # a request that waited its turn may find its report already built
+            hit = _cache.get(key)
+        if hit is not None:
+            return hit
         result = _build(db, kind, sid, name, usable)
+    with _cache_lock:
         _cache[key] = result
         while len(_cache) > CACHE_SIZE:
             _cache.popitem(last=False)
