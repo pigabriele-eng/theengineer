@@ -1,5 +1,6 @@
 """Tyre and qualifying preparation on synthetic logs: the 1 km circle of tests/synthetic.py driven at 10 Hz with
 TPMS readings that warm lap by lap."""
+import threading
 from itertools import pairwise
 
 import numpy as np
@@ -277,7 +278,22 @@ def test_report_endpoint(client, monkeypatch):
         ids.append(s["id"])
     locked = []  # every log is read holding the server-wide lock: one log in memory at a time
     read = tyreprep.read_file
-    monkeypatch.setattr(tyreprep, "read_file", lambda f: locked.append(heavy.lock._is_owned()) or read(f))
+
+    def read_holding(f):
+        other = []  # another thread can't take the lock meanwhile
+
+        def try_lock():
+            other.append(heavy.lock.acquire(blocking=False))
+            if other[-1]:
+                heavy.lock.release()
+
+        t = threading.Thread(target=try_lock)
+        t.start()
+        t.join()
+        locked.append(other == [False])
+        return read(f)
+
+    monkeypatch.setattr(tyreprep, "read_file", read_holding)
     r = client.get(f"/report/tyre-prep?event={ev['id']}")
     assert r.status_code == 200, r.text
     assert locked == [True, True]

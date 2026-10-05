@@ -1,5 +1,4 @@
 """Tyre and qualifying preparation report over one session or a whole event: GET /report/tyre-prep."""
-import gc
 import logging
 import threading
 from collections import OrderedDict
@@ -68,7 +67,8 @@ def _reduce(db: Session, s: models.RunSession) -> tuple[dict | None, str | None]
         if key in _cache:
             _cache.move_to_end(key)
             return _cache[key], None
-    with heavy.lock:  # one log in memory at a time across every request and import
+    # one log in memory at a time across every request and import; letting go hands its memory back
+    with heavy.lock:
         with _cache_lock:  # a request that waited its turn may find this session reduced already
             if key in _cache:
                 return _cache[key], None
@@ -82,8 +82,6 @@ def _reduce(db: Session, s: models.RunSession) -> tuple[dict | None, str | None]
         except Exception:  # one log the analysis trips on leaves that session out, not the whole event
             log.exception("Tyre prep: session %s left out", s.id)
             return None, "the analysis couldn't make sense of this log"
-        finally:
-            gc.collect()  # hand the log's arrays back before the next session is read
     with _cache_lock:
         _cache[key] = out
         while len(_cache) > CACHE_SIZE:
