@@ -100,11 +100,22 @@ def test_gps_timing_matches_the_lap_marker():
     assert [l.clean for l in laps][1:5] == [False, True, True, True]
 
 
-def test_beacons_win_over_other_lap_sources():
-    from app.analysis.laps import split_laps
+def test_the_dash_marker_and_its_line_win_over_beacons():
+    from app.analysis.laps import lap_starts, split_laps, timing_line_at
 
     channels, lap_times = simulate()
-    ld = read_ld(write_ld(channels))
-    starts = np.cumsum([0, *lap_times])[1:-1] + 0.0
-    laps, source = split_laps(ld, beacons=list(starts))
+    marked = read_ld(write_ld(channels))
+    unmarked = read_ld(write_ld({k: v for k, v in channels.items() if k not in ("S/F Marker", "Lap Time")}))
+    crossings = np.cumsum([0, *lap_times])[1:-1]
+    beacons = list(crossings + 0.75)  # like i2's "Auto GPS" beacons: past the dash's line
+    marker_line = timing_line_at(marked, list(lap_starts(marked)[0]), "marker")
+    beacon_line = timing_line_at(unmarked, beacons, "beacons")
+
+    assert lap_starts(marked, beacons)[1] == "marker"
+    starts, source = lap_starts(unmarked, beacons, marker_line)  # the line learned from the dash's marker
+    assert source == "gps" and np.allclose(starts[1:6], crossings, atol=0.1)  # (the log starts on the line)
+    assert lap_starts(unmarked, beacons, beacon_line)[1] == "beacons"
+    starts, source = lap_starts(unmarked, beacons)
+    assert source == "beacons" and np.allclose(starts, beacons)
+    laps, source = split_laps(unmarked, beacons=beacons)
     assert source == "beacons" and len(laps) == 4

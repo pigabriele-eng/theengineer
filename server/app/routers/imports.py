@@ -182,6 +182,8 @@ class _Run:
             s.name = self._unique(item.folder or rec.meta.get("event_session") or item.stem)
             if item.archive is not None:
                 s.event = self._event(item.archive)
+                db.flush()
+                self._settle(s.event)  # now, not only at the end: the server may restart before the import ends
             db.commit()
             self.names.add(s.name)
             job.session_ids = [*job.session_ids, s.id]
@@ -211,15 +213,18 @@ class _Run:
         return self.events[index]
 
     def finish_events(self) -> None:
-        """Each event's date is its first log's, and its track the one all its logs were driven at."""
         for ev in self.events.values():
-            files = self.db.scalars(select(models.LoggerFile).join(models.RunSession)
-                                    .where(models.RunSession.event_id == ev.id)).all()
-            venues = {f.meta.get("venue", "")[:120] for f in files}
-            if len(venues) == 1 and (venue := venues.pop()):
-                ev.track = self.db.scalar(select(models.Track).where(models.Track.name == venue))
-            ev.date = min(filter(None, (_date(f.meta.get("date", "")) for f in files)), default=None)
+            self._settle(ev)
         self.db.commit()
+
+    def _settle(self, ev: models.Event) -> None:
+        """The event's date is its first log's, and its track the one all its logs were driven at."""
+        files = self.db.scalars(select(models.LoggerFile).join(models.RunSession)
+                                .where(models.RunSession.event_id == ev.id)).all()
+        venues = {f.meta.get("venue", "")[:120] for f in files}
+        venue = venues.pop() if len(venues) == 1 else ""
+        ev.track = self.db.scalar(select(models.Track).where(models.Track.name == venue)) if venue else None
+        ev.date = min(filter(None, (_date(f.meta.get("date", "")) for f in files)), default=None)
 
 
 def _release_memory() -> None:

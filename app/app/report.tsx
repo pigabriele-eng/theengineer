@@ -5,6 +5,7 @@ import { ActivityIndicator, LayoutChangeEvent, Pressable, ScrollView, StyleSheet
 import { Bars, LineChart, LineSeries, useChartColors } from '@/components/ReportCharts';
 import { Balance } from '@/components/report/Balance';
 import { GripReport } from '@/components/report/GripReport';
+import { TyrePrep } from '@/components/report/TyrePrep';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
 import { formatLap } from '@/lib/api';
@@ -200,7 +201,9 @@ export default function ReportScreen() {
             <View style={styles.section}>
               {'event' in scope ? <Balance event={scope.event} /> : <Balance session={scope.session} />}
             </View>
-            {/* SLOT: tyres and qualifying preparation (built by another worker) goes here. */}
+            <View style={styles.section}>
+              {'event' in scope ? <TyrePrep event={scope.event} /> : <TyrePrep session={scope.session} />}
+            </View>
           </>
         )}
 
