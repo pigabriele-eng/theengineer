@@ -13,7 +13,6 @@ under the server's heavy-work lock (app/heavy.py).
 """
 from __future__ import annotations
 
-import ctypes
 import gc
 from datetime import datetime
 
@@ -119,14 +118,6 @@ def cached(db: Session, s: models.RunSession) -> dict | None:
     return row.data if row is not None and row.signature == signature(s) else None
 
 
-def _release_memory() -> None:
-    gc.collect()
-    try:
-        ctypes.CDLL("libc.so.6").malloc_trim(0)
-    except (OSError, AttributeError):  # not glibc
-        pass
-
-
 def _build(db: Session, s: models.RunSession) -> dict:
     """The balance report's analysis of this one session (as app.routers.balance builds it), summarised."""
     preset = preset_for([s.car] if s.car else [])
@@ -152,17 +143,14 @@ def run_summary(db: Session, s: models.RunSession) -> dict:
     hit = cached(db, s)
     if hit is not None:
         return hit
-    with heavy.lock:  # one log-reading job at a time across the server
+    with heavy.lock:  # one log-reading job at a time across the server; it hands the memory back after
         hit = cached(db, s)  # another request may have just computed it
         if hit is not None:
             return hit
         if _main_file(s) is None or not any(l.clean for l in s.laps):
             data = {"balance": None, "corners": [], "note": "No clean laps in this session"}
         else:
-            try:
-                data = _build(db, s)
-            finally:
-                _release_memory()
+            data = _build(db, s)
         row = db.scalar(select(SetupRunSummary).where(SetupRunSummary.session_id == s.id))
         if row is None:
             row = SetupRunSummary(session_id=s.id)

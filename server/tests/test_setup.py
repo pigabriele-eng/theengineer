@@ -156,6 +156,7 @@ def test_driver_observations_from_debrief_points():
         _Point(5, "Tyres were fine"),
         _Point(6, "It bottoms out over the kerbs", "T7"),
         _Point(7, "Sottosterzo in uscita", "T7"),
+        _Point(8, "Snap oversteer on the way into turn 6"),
     ]
     obs, skipped = driver_observations(points, corners)
     by_id = {o.ref["debrief_point_id"]: o for o in obs}
@@ -164,6 +165,7 @@ def test_driver_observations_from_debrief_points():
     assert (by_id[4].kind, by_id[4].speed) == ("understeer", "fast")
     assert by_id[6].kind == "ride"
     assert (by_id[7].kind, by_id[7].phase) == ("understeer", "exit")
+    assert by_id[8].corner == "T6"  # said in the text, not tagged
     assert {s["id"] for s in skipped} == {2, 5}  # a negated claim, and nothing about balance
 
 

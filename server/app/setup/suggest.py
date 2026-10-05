@@ -28,7 +28,7 @@ from dataclasses import asdict, dataclass, field
 from sqlalchemy.orm import Session
 
 from app import models
-from app.debrief.check import _codes, read_claim
+from app.debrief.check import _codes, corner_in_text, read_claim
 from app.setup.templates import OPPOSITE, Row, Template, format_value
 from app.vehicle.model import Change, Vehicle, what_if
 
@@ -153,10 +153,11 @@ def driver_observations(points: list[models.DebriefPoint], corners: list[dict] |
             skipped.append({"id": p.id, "text": p.text, "why": "says the car does not do it"})
             continue
         phase = {"traction": "exit", "lock_up": "braking", "braking_stability": "braking"}.get(kind, claim.phase)
-        speed = _speed_of(p.corner_code, corners or [])
-        if speed is None and not p.corner_code:
+        corner = p.corner_code or corner_in_text(p.text)  # "turn 4" in a typed point without a corner tag
+        speed = _speed_of(corner, corners or [])
+        if speed is None and not corner:
             speed = "fast" if FAST.search(p.text) else "slow" if SLOW.search(p.text) else None
-        used.append(Observation(kind=kind, phase=phase, corner=p.corner_code, speed=speed,
+        used.append(Observation(kind=kind, phase=phase, corner=corner, speed=speed,
                                 weight=1.5 if p.section == "priorities" else 1.0, source="driver", text=p.text,
                                 ref={"debrief_point_id": p.id, "debrief_id": p.debrief_id}))
     return _cap_repeats(used), skipped
