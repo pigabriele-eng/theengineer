@@ -7,18 +7,7 @@ import pytest
 
 from app.analysis.laps import MASTER_HZ, Lap
 from app.vehicle.model import Vehicle
-from app.vehicle.tyre_data import (
-    CONDITIONS,
-    Entry,
-    Reference,
-    Rows,
-    _grip,
-    _group_points,
-    _where,
-    _window,
-    fit_model,
-    summarise,
-)
+from app.vehicle.tyre_data import CONDITIONS, Entry, _confidence, _where, _window, fit_model, summarise
 from app.vehicle.tyre_fit import NotEnoughData, fit_tyres
 from tests.synthetic import simulate, write_ld
 from tests.test_vehicle import CAR, FRONT, REAR, _inverse, bicycle_session
@@ -94,13 +83,14 @@ LOADS = {"mass_kg": CAR["mass_kg"], "front_weight_fraction": CAR["front_weight_f
          "wheelbase_mm": 2800, "downforce_n": 0, "aero_balance_front": 0.5, "aero_ref_speed_kmh": 200}
 
 
-def fake_summary(rng, laps=10, offset=0.0, grip=None, rear_top=0.85, per_band=40) -> dict:
+def fake_summary(rng, laps=10, offset=0.0, grip=None, rear_top=0.85, per_band=40, bars=(1.60, 2.00)) -> dict:
     """A summary drawn from the axle curves FRONT and REAR, as a log's would be: per lap and band of mu, the
     median slip angle with a little scatter. offset: the body-slip estimate's error in this log (deg). grip(bar,
-    temp) scales the curves of a lap. The rear stops at rear_top of its peak, as on the real car."""
+    temp) scales the curves of a lap, whose hot pressure lies in bars. The rear stops at rear_top of its peak, as
+    on the real car."""
     rows = []
     for k in range(laps):
-        bar, temp = round(float(rng.uniform(1.60, 2.00)), 3), round(float(rng.uniform(70, 100)), 1)
+        bar, temp = round(float(rng.uniform(*bars)), 3), round(float(rng.uniform(70, 100)), 1)
         scale = grip(bar, temp) if grip else 1.0
         row = {"lap": k + 1, "start_s": 100.0 * k, "time_s": 100.0, "clean": True, "tyre_lap": k + 1,
                "samples": 0, "corners": 12}
@@ -157,13 +147,13 @@ def test_pooling_lines_sessions_up_and_finds_the_curve():
     assert len(model["curves"]["alpha_deg"]) == len(model["curves"]["front"]) == 61
 
 
+def _step(bar, _temp):
+    return 1.0 if bar < 1.80 else 0.94  # 6 % less grip at the same slip angle above 1.80 bar
+
+
 def test_grip_against_pressure_shows_the_window():
     rng = np.random.default_rng(2)
-
-    def grip(bar, _temp):
-        return 1.0 if bar < 1.80 else 0.94  # 6 % less grip at the same slip angle above 1.80 bar
-
-    entries = [Entry(fake_summary(rng, laps=12, offset=o, grip=grip), session_id=i + 1, name=f"Run {i + 1}")
+    entries = [Entry(fake_summary(rng, laps=12, offset=o, grip=_step), session_id=i + 1, name=f"Run {i + 1}")
                for i, o in enumerate(OFFSETS)]
     model = fit_model(entries)
     pressure = model["conditions"]["pressure"]
@@ -176,9 +166,11 @@ def test_grip_against_pressure_shows_the_window():
         assert np.mean(low) - np.mean(high) == pytest.approx(0.06, abs=0.025)
         w = pressure[ax]["window"]
         assert w["confidence"] == "high" and w["from"] == 1.60 and 1.74 <= w["to"] <= 1.82 and w["open"] == "low"
+        assert w["held"] == w["of"] == 6  # every session ran both sides: any five of them show it too
         assert bins[0]["grip"] - bins[-1]["grip"] == pytest.approx(0.06, abs=0.01)  # all laps below, all above
         assert 0.03 < w["gain"] <= 0.07  # against every group clearly worse, one of them part below 1.80
         assert w["text"].startswith(f"{ax.capitalize()}: most grip at ") and "bar hot or less" in w["text"]
+        assert "still there with any one session left out; high confidence" in w["text"]
         assert w["text"] in model["advice"]
     # temperature had nothing to do with it
     for ax in ("front", "rear"):
@@ -186,38 +178,54 @@ def test_grip_against_pressure_shows_the_window():
         assert w is None or w["confidence"] == "none"
 
 
-def _group(frm, to, rows, laps, low, high):
-    """A group of laps for _window, its grip worked out from its rows (entry, samples per band, slip angle)."""
-    ent = np.repeat([e for e, _, _ in rows], 3)
-    r = Rows(seg=np.arange(len(ent)), ent=ent, band=np.tile([2, 3, 4], len(rows)),
-             n=np.repeat([float(n) for _, n, _ in rows], 3), mu=np.zeros(len(ent)),
-             alpha=np.repeat([a for _, _, a in rows], 3), iqr=np.zeros(len(ent)))
-    a, n = _group_points(r, len(REF.alpha))
-    return {"from": frm, "to": to, "laps": laps, "session_ids": sorted({e + 1 for e, _, _ in rows}),
-            "grip": float(_grip(a, n, REF)), "low": low, "high": high, "samples": int(n.sum()), "rows": r}
+def test_a_window_only_a_few_runs_show_is_low():
+    """The same step at 1.80 bar, but only three of the six sessions ran above 1.70 bar. The full fit finds two
+    groups clearly worse; with any one of those three sessions left out, the high pressures rest on two sessions
+    and the window is gone, so it is reported as resting on a few runs."""
+    rng = np.random.default_rng(3)
+    runs = [{"laps": 20, "bars": (1.60, 2.00)}] * 3 + [{"laps": 12, "bars": (1.60, 1.70)}] * 3
+    entries = [Entry(fake_summary(rng, offset=o, grip=_step, **k), session_id=i + 1, name=f"Run {i + 1}")
+               for i, (o, k) in enumerate(zip(OFFSETS, runs, strict=True))]
+    model = fit_model(entries)
+    for ax in ("front", "rear"):
+        bins = model["conditions"]["pressure"][ax]["bins"]
+        best = max(bins, key=lambda b: b["grip"])
+        worse = [b for b in bins if b["to"] > 1.80]
+        # clear in the full fit: two groups, each wholly below the best one and 2 % or more down
+        assert len(worse) == 2 and all(b["sessions"] == 3 and b["high"] < best["low"] for b in worse)
+        assert all(best["grip"] - b["grip"] >= 0.02 for b in worse)
+        w = model["conditions"]["pressure"][ax]["window"]
+        assert w["sessions"] == 6 and w["laps"] >= 30  # enough for "high" without the refits
+        assert (w["held"], w["of"], w["confidence"]) == (3, 6, "low")
+        assert w["text"].startswith(f"{ax.capitalize()}: maybe more grip at ")
+        assert "only 3 of 6 fits that leave one session out still show it, so it rests on a few runs" in w["text"]
+        assert w["text"].endswith("low confidence).") and w["text"] in model["advice"]
+    assert fit_model(entries) == model  # the same data always give the same answer
 
 
-# the pool's slip angle is 1.0° in bands 2-4, and each degree less is worth 10 % more grip
-REF = Reference(alpha=np.array([np.nan, np.nan, 1.0, 1.0, 1.0]), per_deg=np.array([0, 0, 0.1, 0.1, 0.1]))
+def _g(frm, to, grip, low, high, sessions=5, laps=20):
+    return {"from": frm, "to": to, "laps": laps, "session_ids": list(range(1, sessions + 1)), "grip": grip,
+            "low": low, "high": high, "samples": 1000}
 
 
-def test_a_window_one_session_carries_is_not_trusted():
+def test_confidence_follows_the_refits_and_reads_plainly():
+    # high only when nearly every refit with one session left out still shows the window, medium when two
+    # thirds do, low below that
+    assert [_confidence("high", h, 10) for h in (10, 9, 8, 7, 6, 0)] == ["high"] * 2 + ["medium"] * 2 + ["low"] * 2
+    assert [_confidence("medium", h, 6) for h in (6, 4, 3)] == ["medium", "medium", "low"]
+    assert _confidence("none", 6, 6) == "none"
     spec = CONDITIONS["pressure"]
-    # the low pressures look 8 % better, but nearly all of that is one session's laps (Run A, 0.0° where the
-    # others needed 1.0°); without it the groups are level
-    best = _group(1.60, 1.70, [(0, 1000, 0.0), *[(e, 50, 1.0) for e in range(1, 5)]], 30, 0.06, 0.10)
-    worse = [_group(lo, lo + 0.1, [(e, 100, 1.0) for e in range(5)], 20, -0.01, 0.01) for lo in (1.70, 1.80)]
-    assert best["grip"] == pytest.approx(0.0833, abs=0.001) and worse[0]["grip"] == pytest.approx(0.0)
-    bins = [best, *worse]
-    w = _window(bins, spec, "front")  # without the rows' check: two groups clearly worse, 5 sessions, 30 laps
-    assert w["confidence"] == "high" and "gain_without_one" not in w
-    w = _window(bins, spec, "front", REF, ["Run A", "Run B", "Run C", "Run D", "Run E"])
-    assert w["confidence"] == "medium" and w["gain_without_one"] == pytest.approx(0.0, abs=1e-9)
-    assert w["text"] == ("Front: most grip at 1.70 bar hot or less, about 8 % more than at 1.70-1.90 bar hot "
-                         "(30 laps from 5 sessions; medium confidence: without Run A it is 0 %).")
+    bins = [_g(1.60, 1.70, 0.05, 0.04, 0.06, laps=30), _g(1.70, 1.80, 0.0, -0.01, 0.01),
+            _g(1.80, 1.90, 0.0, -0.01, 0.01)]
+    assert _window(bins, spec, "front")["confidence"] == "high"
+    w = _window(bins, spec, "front", (5, 5))
+    assert w["text"] == ("Front: most grip at 1.70 bar hot or less, about 5 % more than at 1.70-1.90 bar hot (30 laps "
+                         "from 5 sessions; still there with any one session left out; high confidence).")
+    w = _window(bins, spec, "front", (4, 5))
+    assert w["confidence"] == "medium" and "still there in 4 of 5 fits that leave one session out" in w["text"]
+    assert _window(bins, spec, "front", (3, 5))["confidence"] == "low"
     # a group beyond a clearly worse one that is as good as the best: up and down, no window
-    level = _group(1.90, 2.00, [(e, 100, 0.2) for e in range(5)], 20, 0.06, 0.10)
-    w = _window([*bins, level], spec, "front", REF)
+    w = _window([*bins, _g(1.90, 2.00, 0.048, 0.04, 0.06)], spec, "front")
     assert w["confidence"] == "none" and "up and down with no one range best" in w["text"]
     # laps on the tyre read as laps
     laps = CONDITIONS["tyre_laps"]

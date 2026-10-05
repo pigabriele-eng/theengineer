@@ -19,7 +19,9 @@ Model (fit_model), from the summaries of one car and tyre:
    condition, and in each band of mu at or above GRIP_MU (hard cornering) the slip angle a group needed is set
    against the pool's; the curve's slope there turns the slip saved into grip, averaged over the group's samples:
    +3 % means 3 % more grip at the same slip angle than the average lap. Its range comes from redrawing the
-   sessions and, within them, the laps.
+   sessions and, within them, the laps. A range of the condition with the most grip (_window) is trusted as far
+   as the model, fitted again with each of its sessions left out in turn, still shows it (_left_out). The redraws
+   use a fixed seed, so the same summaries always give the same answer.
 """
 from __future__ import annotations
 
@@ -64,6 +66,8 @@ BOOT_GRIP = 400
 MIN_SESSIONS_REDRAW = 3  # spreads redraw whole sessions once there are this many
 SPREAD_PCT = (5, 95)  # a group's grip range: the middle 90 % of its redraws
 MIN_GAIN = 0.02  # a group must also have this much less grip than the best to count as clearly worse
+HOLD_HIGH = 0.9  # a window stays "high" only when this share of the refits leaving one session out show it
+HOLD_MEDIUM = 2 / 3  # ... and "medium" when this share do; below it, "low"
 LAPS_PER_BIN = 15  # laps are grouped by a condition into groups of about this many laps ...
 MAX_BINS = 8  # ... and at most this many groups
 CONDITIONS = {
@@ -452,19 +456,34 @@ def _bins(values: np.ndarray, spec: dict) -> list[tuple[float, float]]:
     return [(round(float(a) * step, 3), round(float(b) * step, 3)) for a, b in itertools.pairwise(edges)]
 
 
-def _window(bins: list[dict], spec: dict, axle: str, ref: Reference | None = None,
-            names: list[str] | None = None) -> dict | None:
-    """The groups around the best one that are not clearly worse than it, and how sure that is. Only groups with
-    a range (from at least MIN_SESSIONS_REDRAW sessions) take part.
+def _usable(bins: list[dict]) -> list[dict]:
+    """The groups that take part in a window: those with a range (from at least MIN_SESSIONS_REDRAW sessions)."""
+    return [b for b in bins if b["low"] is not None]
+
+
+def _confidence(base: str, held: int, of: int) -> str:
+    """A window's confidence once it has been refitted with each of its sessions left out: it keeps "high" only when
+    nearly every refit still shows it (HOLD_HIGH), is at most "medium" when most do (HOLD_MEDIUM), else "low"."""
+    if base == "none":
+        return "none"
+    share = held / of if of else 0.0
+    if share >= HOLD_HIGH - 1e-9:
+        return base
+    if share >= HOLD_MEDIUM - 1e-9:
+        return "medium"
+    return "low"
+
+
+def _window(bins: list[dict], spec: dict, axle: str, held: tuple[int, int] | None = None) -> dict | None:
+    """The groups around the best one that are not clearly worse than it, and how sure that is.
 
     Clearly worse: the group's whole range lies below the best one's range, and its grip is at least MIN_GAIN
     below the best. Confidence is "high" when two groups or more are clearly worse and the window rests on at
     least 5 sessions and 30 laps, "medium" when one is, and "none" when none is, or when a group beyond a clearly
     worse one is not worse itself (grip going up and down is scatter, not a window): then grip did not clearly
-    change with the condition. With the groups' rows and the reference, the window is also checked with each
-    session left out in turn (_leave_one_out): when one session carries it, the confidence drops a step ("high"
-    to "medium", "medium" to "low") and the text names that session."""
-    usable = [b for b in bins if b["low"] is not None]
+    change with the condition. held: in how many of how many refits with one session left out the window is still
+    there (_left_out); the confidence then follows _confidence and the text says so."""
+    usable = _usable(bins)
     if len(usable) < 2:
         return None
     best = max(usable, key=lambda b: b["grip"])
@@ -505,51 +524,28 @@ def _window(bins: list[dict], spec: dict, axle: str, ref: Reference | None = Non
     # the window's grip against the clearly worse groups', each averaged over its samples (the best group alone
     # would overstate it: it is the highest of several noisy groups)
     out["gain"] = round(_mean_grip(inside) - _mean_grip(worse), 4)
-    caveat = ""
-    if ref is not None and all("rows" in b for b in inside + worse):
-        lowest, who = _leave_one_out(inside, worse, ref)
-        out["gain_without_one"] = round(lowest, 4)
-        if lowest < MIN_GAIN - 1e-9:
-            confidence = out["confidence"] = {"high": "medium", "medium": "low"}[confidence]
-            name = names[who] if names and who is not None else "one session"
-            caveat = f": without {name} it is {max(lowest, 0) * 100:.0f} %"
     below = [b for b in worse if b["to"] <= inside[0]["from"]]
     above = [b for b in worse if b["from"] >= inside[-1]["to"]]
     sides = " and ".join(_where(spec, g[0]["from"], g[-1]["to"], lead=True) for g in (below, above) if g)
     where = _where(spec, inside[0]["from"], inside[-1]["to"], edge, lead=True)
-    out["text"] = (f"{axle.capitalize()}: most grip {where}, about {out['gain'] * 100:.0f} % more than {sides} "
-                   f"({laps} laps from {sessions} sessions; {confidence} confidence{caveat}).")
+    basis, check = f"{laps} laps from {sessions} sessions", ""
+    if held is not None:
+        out["held"], out["of"] = held
+        confidence = out["confidence"] = _confidence(confidence, *held)
+        check = ("; still there with any one session left out" if held[0] == held[1]
+                 else f"; still there in {held[0]} of {held[1]} fits that leave one session out")
+    if confidence == "low":
+        out["text"] = (f"{axle.capitalize()}: maybe more grip {where}, about {out['gain'] * 100:.0f} % more than "
+                       f"{sides}, but only {held[0]} of {held[1]} fits that leave one session out still show it, so "
+                       f"it rests on a few runs ({basis}; low confidence).")
+    else:
+        out["text"] = (f"{axle.capitalize()}: most grip {where}, about {out['gain'] * 100:.0f} % more than {sides} "
+                       f"({basis}{check}; {confidence} confidence).")
     return out
 
 
 def _mean_grip(groups: list[dict]) -> float:
     return sum(b["grip"] * b["samples"] for b in groups) / sum(b["samples"] for b in groups)
-
-
-def _leave_one_out(inside: list[dict], worse: list[dict], ref: Reference) -> tuple[float, int | None]:
-    """The window's gain (its grip over the clearly worse groups') with each session left out in turn: the
-    smallest, and the session (entry index) left out for it. Point estimates only: cheap, no redraws."""
-    nb = len(ref.alpha)
-    ents = np.unique(np.concatenate([b["rows"].ent for b in inside + worse]))
-    lowest, who = math.inf, None
-    for e in ents:
-        means = []
-        for groups in (inside, worse):
-            num = den = 0.0
-            for b in groups:
-                r = b["rows"]
-                keep = r.ent != e
-                a, n = _group_points(Rows(r.seg[keep], r.ent[keep], r.band[keep], r.n[keep], r.mu[keep],
-                                          r.alpha[keep], r.iqr[keep]), nb)
-                counted = np.where(np.isfinite(ref.alpha), n, 0.0)
-                if np.count_nonzero(counted) >= MIN_GROUP_BANDS and counted.sum() >= MIN_GROUP_SAMPLES:
-                    num += float(_grip(a, n, ref)) * counted.sum()
-                    den += counted.sum()
-            means.append(num / den if den else None)
-        gain = means[0] - means[1] if None not in means else 0.0
-        if gain < lowest:
-            lowest, who = gain, int(e)
-    return lowest, who
 
 
 def _num(spec: dict, x: float) -> str:
@@ -581,38 +577,90 @@ def _where(spec: dict, a: float, b: float, edge: str | None = None, bare: bool =
     return "at " * lead + text
 
 
-def _conditions(p: Pool, fits: dict[str, dict], rng: np.random.Generator) -> dict:
-    out = {}
+def _groups(p: Pool, ax: str, ref: Reference, spec: dict, rng: np.random.Generator) -> list[dict]:
+    """The laps grouped by one condition, each group's grip against the pool and its range."""
+    r = p.rows[ax]
+    vals = np.array([np.nan if (x := (lap[ax][spec["key"]] if spec["key"] != "tyre_lap" else lap["tyre_lap"]))
+                     is None else float(x) for lap in p.laps])
+    bins = []
+    for lo, hi in _bins(vals, spec):
+        segs = np.flatnonzero((vals >= lo - 1e-9) & (vals < hi - 1e-9))
+        sub = _subset(r, segs)
+        laps_used = np.unique(sub.seg)
+        row = {"from": lo, "to": hi, "laps": len(laps_used),
+               "session_ids": sorted({p.entries[p.laps[s]["entry"]].session_id for s in laps_used}),
+               "grip": None, "low": None, "high": None, "samples": 0}
+        if len(laps_used) >= MIN_GROUP_LAPS:
+            g = _group_grip(sub, ref, rng)
+            if g:
+                row.update(g)
+        bins.append(row)
+    while bins and bins[0]["grip"] is None:
+        bins.pop(0)
+    while bins and bins[-1]["grip"] is None:
+        bins.pop()
+    for b in bins:
+        b["sessions"] = len(b["session_ids"])
+    return bins
+
+
+def _conditions(p: Pool, fits: dict[str, dict], rng: np.random.Generator, seed: int) -> dict:
+    refs = {ax: _reference(r, fits[ax]["params"]) for ax, r in p.rows.items()}
+    out, found = {}, []
     for name, spec in CONDITIONS.items():
         cond = {"label": spec["label"], "unit": spec["unit"], "note": spec["note"]}
-        for ax, r in p.rows.items():
-            ref = _reference(r, fits[ax]["params"])
-            vals = np.array([np.nan if (x := (lap[ax][spec["key"]] if spec["key"] != "tyre_lap"
-                                               else lap["tyre_lap"])) is None else float(x) for lap in p.laps])
-            bins = []
-            for lo, hi in _bins(vals, spec):
-                segs = np.flatnonzero((vals >= lo - 1e-9) & (vals < hi - 1e-9))
-                sub = _subset(r, segs)
-                laps_used = np.unique(sub.seg)
-                row = {"from": lo, "to": hi, "laps": len(laps_used),
-                       "session_ids": sorted({p.entries[p.laps[s]["entry"]].session_id for s in laps_used}),
-                       "grip": None, "low": None, "high": None, "samples": 0, "rows": sub}
-                if len(laps_used) >= MIN_GROUP_LAPS:
-                    g = _group_grip(sub, ref, rng)
-                    if g:
-                        row.update(g)
-                bins.append(row)
-            while bins and bins[0]["grip"] is None:
-                bins.pop(0)
-            while bins and bins[-1]["grip"] is None:
-                bins.pop()
-            for b in bins:
-                b["sessions"] = len(b["session_ids"])
-            cond[ax] = {"bins": bins, "window": _window(bins, spec, ax, ref, [e.name for e in p.entries])}
-            for b in bins:
-                del b["session_ids"], b["rows"]
+        for ax in p.rows:
+            bins = _groups(p, ax, refs[ax], spec, rng)
+            w = _window(bins, spec, ax)
+            cond[ax] = {"bins": bins, "window": w}
+            if w is not None and w["confidence"] != "none":
+                found.append((name, ax))
         out[name] = cond
+    held = _left_out(p, fits, out, found, seed)
+    for name, ax in found:
+        c = out[name][ax]
+        c["window"] = _window(c["bins"], CONDITIONS[name], ax, held[(name, ax)])
+    for cond in out.values():
+        for ax in p.rows:
+            for b in cond[ax]["bins"]:
+                del b["session_ids"]
     return out
+
+
+def _left_out(p: Pool, fits: dict[str, dict], out: dict, found: list[tuple[str, str]],
+              seed: int) -> dict[tuple[str, str], tuple[int, int]]:
+    """Each window found, fitted again from the start with each of its sessions left out in turn (lined up, curve,
+    groups, ranges): in how many of those refits it is still there, its best group inside the same range. A finding
+    one or two sessions carry fails this, even when the ranges of the full fit look clear. Every refit has its own
+    fixed seed, so the same data always give the same answer."""
+    sessions = {key: sorted(set().union(*(b["session_ids"] for b in _usable(out[key[0]][key[1]]["bins"]))))
+                for key in found}
+    held = dict.fromkeys(found, 0)
+    for i, sid in enumerate(sorted(set().union(*sessions.values()))):
+        rest = [e for e in p.entries if e.session_id != sid]
+        if not rest:
+            continue
+        q = _pool(rest)
+        refs: dict[str, Reference | None] = {}
+        for name, ax in found:
+            if sid not in sessions[(name, ax)]:
+                continue
+            if ax not in refs:
+                a, m, _ = _mu_points(q.rows[ax])
+                refs[ax] = _reference(q.rows[ax], _curve_fit(a, m, fits[ax]["params"].copy())[0]) \
+                    if len(a) >= 5 else None
+            if refs[ax] is None:
+                continue
+            rng = np.random.default_rng([seed, i, list(CONDITIONS).index(name), list(AXLE_WHEELS).index(ax)])
+            bins = _groups(q, ax, refs[ax], CONDITIONS[name], rng)
+            w = _window(bins, CONDITIONS[name], ax)
+            if w is None or w["confidence"] == "none":
+                continue
+            best = max(_usable(bins), key=lambda b: b["grip"])
+            full = out[name][ax]["window"]
+            if full["from"] - 1e-9 <= (best["from"] + best["to"]) / 2 <= full["to"] + 1e-9:
+                held[(name, ax)] += 1
+    return {key: (held[key], len(sessions[key])) for key in found}
 
 
 # ----- the whole model -----
@@ -636,7 +684,8 @@ def _dates(entries: list[Entry]) -> list[str]:
 
 
 def fit_model(entries: list[Entry], seed: int = 0) -> dict:
-    """The tyre model of the pooled summaries: curve per axle, grip against conditions, advice and its basis."""
+    """The tyre model of the pooled summaries: curve per axle, grip against conditions, advice and its basis. The
+    redraws use the fixed seed, so the same summaries always give the same model."""
     entries = [e for e in entries if e.summary.get("laps")]
     if not entries:
         raise NotEnoughData("No summarised session with steady cornering for this car and tyre yet.")
@@ -660,7 +709,7 @@ def fit_model(entries: list[Entry], seed: int = 0) -> dict:
     curves = {"alpha_deg": np.round(grid, 3).tolist()}
     for ax, f in fits.items():
         curves[ax] = np.round(magic_formula(np.radians(grid), *f["params"]), 4).tolist()
-    conditions = _conditions(p, fits, rng)
+    conditions = _conditions(p, fits, rng, seed)
     for f in fits.values():
         del f["params"]
 
@@ -715,9 +764,11 @@ def fit_model(entries: list[Entry], seed: int = 0) -> dict:
             "the sessions, and the laps within them, are redrawn; a group from fewer than "
             f"{MIN_SESSIONS_REDRAW} sessions gets none.",
             "A range has the most grip only when the groups beside it are clearly worse: their whole range below "
-            f"the best group's and at least {MIN_GAIN * 100:.0f} % less grip. Confidence is high with two such "
-            "groups, 5 sessions and 30 laps, and a step lower when leaving out one session takes the difference "
-            f"under {MIN_GAIN * 100:.0f} %.",
+            f"the best group's and at least {MIN_GAIN * 100:.0f} % less grip. The model is then fitted again with "
+            "each of its sessions left out in turn. Confidence is high with two such groups, 5 sessions and 30 laps, "
+            f"when at least {HOLD_HIGH * 100:.0f} % of those refits still show the range; medium when "
+            f"{HOLD_MEDIUM * 100:.0f} % do; low when fewer do, as it then rests on a few runs.",
+            "The redraws use a fixed seed: the same sessions always give the same answer.",
             "TPMS temperature is the sensor inside the tyre, not the tread surface.",
             "Laps on the tyre count from the cold start the TPMS shows in the log; earlier use of the set is not "
             "in the log.",

@@ -42,7 +42,9 @@ export type GripWindow = {
   open: 'low' | 'high' | null; // the window runs to the edge of what was seen: the best may lie beyond it
   grip: number;
   gain?: number;
-  confidence: 'high' | 'medium' | 'low' | 'none'; // low: one session carries it
+  confidence: 'high' | 'medium' | 'low' | 'none'; // low: only a few runs show it
+  held?: number; // refits with one session left out that still show it ...
+  of?: number; // ... of this many
   sessions: number;
   laps: number;
   text: string;
