@@ -266,3 +266,21 @@ class ReportCache(Base):
     result: Mapped[dict | None] = mapped_column(JSON)  # the last finished report, kept while a newer one is made
     result_signature: Mapped[str | None] = mapped_column(String(64))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class TechniqueCache(Base):
+    """The technique check of every clean lap of an event or a session (routers/technique.py), and the progress of
+    the one being worked out. The full check of each lap is kept in file storage (details)."""
+    __tablename__ = "technique_cache"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scope: Mapped[str] = mapped_column(String(40), unique=True, index=True)  # "event:3" or "session:12"
+    signature: Mapped[str] = mapped_column(String(64))  # the inputs the work in progress (or last done) is for
+    status: Mapped[str] = mapped_column(String(16), default="queued")  # queued, running, done, failed
+    done: Mapped[int] = mapped_column(Integer, default=0)
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    current: Mapped[str | None] = mapped_column(String(255))
+    error: Mapped[str | None] = mapped_column(Text)
+    result: Mapped[dict | None] = mapped_column(JSON)  # every lap's summary and the habits
+    details: Mapped[str | None] = mapped_column(String(512))  # storage key of every lap's full check
+    result_signature: Mapped[str | None] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)

@@ -50,6 +50,8 @@ def client(tmp_path, monkeypatch):
     importlib.reload(app.routers.vehicle)
     importlib.reload(app.routers.trackmap)
     importlib.reload(app.routers.balance)
+    import app.routers.technique
+    importlib.reload(app.routers.technique)
     import app.setup.data
     import app.setup.models
     import app.setup.results
@@ -67,5 +69,6 @@ def client(tmp_path, monkeypatch):
         deadline = time.monotonic() + 120
         while app.routers.imports._jobs.unfinished_tasks and time.monotonic() < deadline:
             time.sleep(0.05)
+        app.routers.technique.wait_idle()  # first: it asks for reports
         app.routers.reports.wait_idle()
     app.db.engine.dispose()
