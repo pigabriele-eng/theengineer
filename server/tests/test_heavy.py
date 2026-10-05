@@ -33,3 +33,24 @@ def test_work_that_holds_the_lock_can_call_more_of_it():
 
     with lock:
         assert inner() == "done"
+
+
+def test_memory_is_handed_back_once_the_outermost_holder_lets_go(monkeypatch):
+    import app.heavy as heavy
+
+    calls = []
+    monkeypatch.setattr(heavy, "release_memory", lambda: calls.append(1))
+    with lock:
+        with lock:
+            pass
+        assert calls == []  # still inside the outer job
+    assert calls == [1]
+
+
+def test_a_lock_another_thread_holds_is_not_taken_without_waiting():
+    took = []
+    with lock:
+        t = threading.Thread(target=lambda: took.append(lock.acquire(blocking=False)))
+        t.start()
+        t.join()
+    assert took == [False]
