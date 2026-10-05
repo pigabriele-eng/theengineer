@@ -45,7 +45,8 @@
         {
           "microphonePermission": "The Engineer records your debriefs so they can be transcribed into a report."
         }
-      ]
+      ],
+      "expo-sqlite"
     ],
     "experiments": {
       "typedRoutes": true

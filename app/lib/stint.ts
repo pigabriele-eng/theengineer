@@ -1,5 +1,5 @@
 // Client for the stint analysis (GET /sessions/{id}/stint): each run on one set of tyres, lap by lap, and its fade.
-import { API_URL, formatLap } from '@/lib/api';
+import { apiFetch, formatLap } from '@/lib/api';
 
 export type LapKind = 'flying' | 'out' | 'in' | 'pit' | 'slow';
 export type Phase = 'entry' | 'mid' | 'exit';
@@ -57,7 +57,7 @@ export type StintAnalysis = {
 };
 
 export async function fetchStint(sessionId: number): Promise<StintAnalysis> {
-  const res = await fetch(`${API_URL}/sessions/${sessionId}/stint`);
+  const res = await apiFetch(`/sessions/${sessionId}/stint`);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail ?? `Request failed (${res.status})`);

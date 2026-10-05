@@ -44,6 +44,8 @@ npm run ios                          # iPhone simulator (macOS), or scan the QR 
 
 The app talks to `http://localhost:8000` unless `EXPO_PUBLIC_API_URL` is set. On a real iPhone, set it to your computer's address on the same network.
 
+Sign-in is off unless `EXPO_PUBLIC_SUPABASE_URL` is set. With it (and `EXPO_PUBLIC_SUPABASE_ANON_KEY`), the app shows an email and password sign-in screen, and sends the Supabase access token with every server request. Users are created in the Supabase dashboard; there is no sign-up in the app.
+
 ## Deploying
 
 Supabase holds the database, the uploaded files and the logins; Render runs the API server and serves the web app. Both have free plans. [`render.yaml`](render.yaml) describes both Render services as a Blueprint.
@@ -68,7 +70,7 @@ Web app (`theengineer-web`), built into the site at build time (change them, the
 
 | Variable | Value |
 | --- | --- |
-| `EXPO_PUBLIC_API_URL` | The API's address with `https://` and no trailing slash, e.g. `https://theengineer-api.onrender.com` |
+| `EXPO_PUBLIC_API_URL` | The API's address, e.g. `https://theengineer-api.onrender.com` (the app adds `https://` if it's left out) |
 | `EXPO_PUBLIC_SUPABASE_URL` | Same as `SUPABASE_URL` |
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Same as `SUPABASE_ANON_KEY` (the public one, never the secret key) |
 

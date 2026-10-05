@@ -1,5 +1,22 @@
 // Client for the The Engineer server (see /server). Set EXPO_PUBLIC_API_URL to point at a deployed server.
-export const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000';
+import { accessToken, authEnabled, signOut } from './auth';
+
+// Render passes the server's bare host name (theengineer-api.onrender.com), so add https:// when there's no scheme.
+const baseUrl = (process.env.EXPO_PUBLIC_API_URL ?? '').trim() || 'http://localhost:8000';
+export const API_URL = (/^https?:\/\//i.test(baseUrl) ? baseUrl : `https://${baseUrl}`).replace(/\/+$/, '');
+
+// Every call to the server goes through here. It adds the signed-in user's token, and a 401 (the session is gone)
+// signs out, which brings back the sign-in screen.
+export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const token = await accessToken();
+  const headers = { ...(init.headers as Record<string, string> | undefined) };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${API_URL}${path}`, { ...init, headers });
+  if (res.status === 401 && authEnabled) {
+    await signOut('Your session has ended. Please sign in again.');
+  }
+  return res;
+}
 
 export type SessionKind = 'test' | 'practice' | 'qualifying' | 'race';
 
@@ -114,7 +131,7 @@ const formFile = (f: PickedFile, type: string) =>
     : ({ uri: f.uri, name: f.name, type } as any);
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, init);
+  const res = await apiFetch(path, init);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail ?? `Request failed (${res.status})`);
@@ -154,7 +171,11 @@ export const api = {
   debriefCorners: (id: number) =>
     request<{ corners: Record<string, DebriefCorner> }>(`/debriefs/${id}/corners`),
   processDebrief: (id: number) => request<Debrief>(`/debriefs/${id}/process`, { method: 'POST' }),
-  debriefAudioUrl: (id: number) => `${API_URL}/debriefs/${id}/audio`,
+  // An audio player can't send headers, so when signed in the token goes in the query string.
+  debriefAudioUrl: async (id: number) => {
+    const token = await accessToken();
+    return `${API_URL}/debriefs/${id}/audio${token ? `?access_token=${encodeURIComponent(token)}` : ''}`;
+  },
 };
 
 export const formatLap = (s: number | null | undefined) => {

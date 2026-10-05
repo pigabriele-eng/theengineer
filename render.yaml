@@ -44,8 +44,8 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"  # as in CI
-      # The API's public address with https:// and no trailing slash, e.g. https://theengineer-api.onrender.com
-      # (copy it from the theengineer-api page). fromService can't give it: its host is the private-network name.
+      # The API's public address, e.g. https://theengineer-api.onrender.com (copy it from the theengineer-api page;
+      # the app adds https:// if it's left out). fromService can't give it: its host is the private-network name.
       # EXPO_PUBLIC_ values are built into the web app, so change them with a new deploy of this site.
       - key: EXPO_PUBLIC_API_URL
         sync: false
