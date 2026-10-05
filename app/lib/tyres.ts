@@ -1,5 +1,5 @@
 // Client for the tyre tools on the server (/tyres/...): pressure calculator, P-Book minimums, tyre temperatures.
-import { API_URL } from './api';
+import { apiFetch } from './api';
 
 export const CORNERS = ['FL', 'FR', 'RL', 'RR'] as const;
 export type Corner = (typeof CORNERS)[number];
@@ -136,7 +136,7 @@ export type TempAnalysis = {
 export type TempSettings = { target_spread_c: number; target_spread_source: string; reference: Reference };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, init);
+  const res = await apiFetch(path, init);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     const detail = Array.isArray(body.detail) ? body.detail.map((d: { msg: string }) => d.msg).join('; ') : body.detail;

@@ -1,5 +1,5 @@
 // Client for the vehicle tools on the server: the vehicle model, setup what-ifs, car presets and the tyre fit.
-import { API_URL } from '@/lib/api';
+import { apiFetch } from '@/lib/api';
 
 // One car and its setup. Lengths in mm, rates in N/mm, masses in kg. Motion ratio = spring (or bar link)
 // travel / wheel travel. Bar rate = force at one drop link per mm, other end held.
@@ -141,7 +141,7 @@ export type TyreFit = {
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, init);
+  const res = await apiFetch(path, init);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     const detail = body.detail;
