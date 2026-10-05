@@ -110,6 +110,8 @@ def _picked_run(db: Session, session_id: int, name: str, picks: set[int] | None)
 def compare_sources(db: Session, a: Side, b: Side) -> tuple[list[RunSource], models.Track | None]:
     """The sessions of both sides as runs to read one at a time, after checking they can be compared: one track,
     one car, and a session on both sides only when each side has its own laps of it."""
+    if not a.label.strip() or not b.label.strip():
+        raise HTTPException(422, "Give each side a name")
     if a.label.strip() == b.label.strip():
         raise HTTPException(422, "Give the two sides different names")
     picked = {key: {p.session_id: set(p.laps) for p in side.laps} for key, side in (("a", a), ("b", b))}

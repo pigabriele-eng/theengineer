@@ -101,8 +101,6 @@ def _log_date(text: str | None) -> date | None:
     return None
 
 
-
-
 @router.get("/compare/options")
 def compare_options(db: Session = Depends(get_db)):
     """Sessions with clean laps, grouped by track and car (what can be compared), with the drivers in each group.
