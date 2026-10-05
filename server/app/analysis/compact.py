@@ -16,10 +16,11 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from app.heavy import release_memory
 from app.analysis.align import MAX_OFFSET_M, TrackLine, lap_position, track_line
 from app.analysis.channels import math_channels
 from app.analysis.insights import LapRecord, Prepared, _closed_sim, _limit_laps
-from app.analysis.laps import MASTER_HZ, CornerSpec, SessionData, lap_length, make_sections
+from app.analysis.laps import MASTER_HZ, CornerSpec, SessionData, lap_length, load_session, make_sections
 from app.analysis.limits import car_limits
 from app.analysis.scan import lap_medians
 from app.importers.motec import LdFile
@@ -60,10 +61,11 @@ class CompactSession:
         return sum(a.nbytes for a in self.traces.values())
 
 
-def reduce_session(data: SessionData, name: str, driver: str | None = None, ld: LdFile | None = None
-                   ) -> CompactSession:
-    """The session's clean laps on its own line (from its fastest clean lap), every metre. With the log, also each
-    lap's median of every channel it recorded, for the channel scan."""
+def reduce_session(data: SessionData, name: str, driver: str | None = None, ld: LdFile | None = None,
+                   medians: bool = True) -> CompactSession:
+    """The session's clean laps on its own line (from its fastest clean lap), every metre. With the log, also the
+    units of its channels and (unless medians is False) each lap's median of every channel it recorded, for the
+    channel scan."""
     if "phase" not in data.channels:
         math_channels(data)
     c = data.channels
@@ -102,10 +104,37 @@ def reduce_session(data: SessionData, name: str, driver: str | None = None, ld: 
         i0, i1 = round(lap.start * MASTER_HZ), min(round(lap.end * MASTER_HZ), len(data.t) - 1)
         for r in tyres:
             tyres[r][i] = np.median(c[r][i0:i1 + 1])
-    medians = lap_medians(ld, clean) if ld is not None else {}
-    channels = {k: (unit, med.astype(np.float32), sd) for k, (unit, med, sd) in medians.items()}
-    return CompactSession(name, length, np.array([l.number for l in clean]), np.array([l.time for l in clean]),
-                          np.arange(n), traces, tyres, line, driver, units, PAD_M, dict(data.sources), channels)
+    cs = CompactSession(name, length, np.array([l.number for l in clean]), np.array([l.time for l in clean]),
+                        np.arange(n), traces, tyres, line, driver, units, PAD_M, dict(data.sources))
+    if ld is not None and medians:
+        cs.channels = channel_medians(ld, clean)
+    return cs
+
+
+def channel_medians(ld: LdFile, laps: list) -> dict[str, tuple[str, np.ndarray, float]]:
+    return {k: (unit, med.astype(np.float32), sd) for k, (unit, med, sd) in lap_medians(ld, laps).items()}
+
+
+KEEP_ROLES = {*FLOAT_ROLES, *STATE_ROLES, *TYRE_ROLES, "lat", "lon"}
+
+
+def reduce_log(ld: LdFile, name: str, channel_map: dict | None = None, beacons: list[float] | None = None,
+               line=None) -> CompactSession:
+    """reduce_session straight from a log, in the order that needs the least memory: the full-rate channels the
+    traces don't keep are dropped as soon as the math channels are made from them, and all of them are freed before
+    every channel of the log is read for its lap medians."""
+    data = load_session(ld, channel_map, beacons=beacons, line=line)
+    math_channels(data)
+    for role in [r for r in data.channels if r not in KEEP_ROLES]:
+        del data.channels[role]
+    release_memory()
+    cs = reduce_session(data, name, ld=ld, medians=False)
+    clean = [l for l in data.laps if l.clean]
+    del data
+    release_memory()
+    if cs.n_laps:
+        cs.channels = channel_medians(ld, clean)
+    return cs
 
 
 # ---------- storage ----------

@@ -27,7 +27,6 @@ from sqlalchemy.orm import Session
 from app import heavy, models, storage
 from app.analysis import compact
 from app.analysis.advice import build_report
-from app.analysis.laps import load_session
 from app.db import SessionLocal, get_db
 from app.importers.motec import LdFormatError
 from app.routers.sessions import _channel_map, _line, official_corners, read_file
@@ -345,9 +344,8 @@ def ensure_traces(db: Session, item: Item, track: models.Track | None) -> models
         try:
             s, f = item.session, item.file
             ld = read_file(f)
-            data = load_session(ld, _channel_map(s), beacons=f.meta.get("beacons"), line=_line(track))
-            cs = compact.reduce_session(data, item.name, ld=ld)
-            del ld, data
+            cs = compact.reduce_log(ld, item.name, _channel_map(s), beacons=f.meta.get("beacons"), line=_line(track))
+            del ld
             if cs.n_laps:
                 rec.path = storage.save(compact.to_bytes(cs), ".npz")
                 rec.laps = cs.n_laps
