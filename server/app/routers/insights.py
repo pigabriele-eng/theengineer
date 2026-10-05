@@ -1,4 +1,5 @@
-"""Engine views over one or more sessions: opportunities, trends, setup, scores, driver comparison, debrief check."""
+"""Engine views over one or more sessions: opportunities, trends, setup, scores, stints, driver comparison,
+debrief check."""
 from dataclasses import replace
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,9 +10,10 @@ from app import models
 from app.analysis.compare import compare_groups
 from app.analysis.insights import CornerSpec, RunInput, analyze_runs
 from app.analysis.laps import load_session
+from app.analysis.stint import stint_analysis
 from app.db import get_db
 from app.debrief.check import check_debrief
-from app.importers.motec import read_ld
+from app.importers.csvlog import read_log
 from app.routers.sessions import _channel_map, _get, _line, _track_for
 
 router = APIRouter()
@@ -22,7 +24,7 @@ def _run(db: Session, s: models.RunSession, name: str | None = None) -> tuple[Ru
     if not s.files:
         raise HTTPException(404, f"No logger file uploaded for session {s.id}")
     f = max(s.files, key=lambda f: f.meta.get("duration_s", 0))
-    ld = read_ld(f.path)
+    ld = read_log(f.path)
     track = _track_for(db, s, ld)
     data = load_session(ld, _channel_map(s), beacons=f.meta.get("beacons"), line=_line(track))
     run = RunInput(name or s.name or f"Session {s.id}", data, s.driver.name if s.driver else None,
@@ -58,6 +60,14 @@ def session_insights(session_id: int, db: Session = Depends(get_db)):
     """Lap time opportunities, driving trends, setup checks and driver scores for one session."""
     runs, track = _runs(db, [session_id])
     return analyze_runs(runs, _corners(track))
+
+
+@router.get("/sessions/{session_id}/stint")
+def session_stint(session_id: int, db: Session = Depends(get_db)):
+    """Each stint (split at pit stops) lap by lap: grip in use, lateral g, balance by corner phase, TC and ABS,
+    tyres; and how the car fades through it (seconds and grip per lap) with the understeer gradient."""
+    run, _ = _run(db, _get(db, session_id))
+    return stint_analysis(run)
 
 
 class InsightsIn(BaseModel):

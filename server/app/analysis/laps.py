@@ -11,31 +11,41 @@ import numpy as np
 
 from app.importers.motec import LdFile
 
-# Standard channel roles and the logger channel names that can fill them, in order of preference.
+# Standard channel roles and the logger channel names that can fill them, in order of preference: native
+# MoTeC names first, then MoTeC i2 export names, AiM Race Studio names and Cosworth (Pi Toolbox) names.
+# Names are matched without regard to case.
+WHEELS = ("FL", "FR", "RL", "RR")
 DEFAULT_CHANNEL_MAP: dict[str, tuple[str, ...]] = {
-    "speed": ("vCar", "Ground Speed", "Corr Speed", "GPS Speed", "Speed"),
-    "throttle": ("rThrottlePedal", "Throttle Pedal", "Throttle Pos", "TPS", "rThrottle"),
-    "brake": ("Brake Pressure Front", "pBrakeF", "Brake Press Front", "Brake Torque", "Brake Pressure"),
-    "steer": ("aSteer", "Steered Angle", "Steering Angle", "Steering"),
-    "gear": ("nGear", "NGearPos", "Gear"),
-    "rpm": ("nEngine", "Engine Speed", "RPM"),
-    "lat": ("GPS Latitude",),
-    "lon": ("GPS Longitude",),
-    "g_lat": ("gLat", "aLat [m/s/s]", "G Force Lat", "Lateral Accel"),
-    "g_long": ("gLong", "aLong [m/s/s]", "G Force Long", "Longitudinal Accel"),
-    "yaw": ("nYaw", "Yaw Rate", "Gyro Yaw Velocity", "Yaw Velocity"),
+    "speed": ("vCar", "Ground Speed", "Corr Speed", "Vehicle Speed", "ecu_speed", "GPS Speed", "Speed",
+              "log_gps_speed"),
+    "throttle": ("rThrottlePedal", "Throttle Pedal", "Throttle Pos", "TPS", "rThrottle", "Throttle Position",
+                 "Throttle", "ThrPos", "PPS", "Pedal Pos", "Accel Pos", "Accelerator", "ECU Throttle", "ecu_aps"),
+    "brake": ("Brake Pressure Front", "pBrakeF", "Brake Press Front", "Brake Torque", "Brake Pressure",
+              "Brake Pres Front", "Front Brake Pres", "Front Brake Press", "BrakePress Front", "Brake Press F",
+              "Brake Press", "log_pbrake_f", "Brake Pos"),
+    "steer": ("aSteer", "Steered Angle", "Steering Angle", "Steering", "Steer Angle", "SteerAngle", "log_asteer"),
+    "gear": ("nGear", "NGearPos", "Gear", "Gear Position", "Gear Pos", "ecu_gear"),
+    "rpm": ("nEngine", "Engine Speed", "RPM", "Engine RPM", "ECU RPM", "ecu_nmot"),
+    "lat": ("GPS Latitude", "GPS Lat", "Latitude", "log_gps_lat"),
+    "lon": ("GPS Longitude", "GPS Long", "GPS Lon", "Longitude", "log_gps_lon"),
+    "g_lat": ("gLat", "aLat [m/s/s]", "G Force Lat", "Lateral Accel", "LateralAcc", "Lateral Acc",
+              "Lateral Acceleration", "LatAcc", "Lateral G", "log_acc_y", "GPS LatAcc"),
+    "g_long": ("gLong", "aLong [m/s/s]", "G Force Long", "Longitudinal Accel", "InlineAcc", "Inline Acc",
+               "LongAcc", "LonAcc", "Longitudinal Acceleration", "Longitudinal G", "log_acc_x", "GPS LonAcc"),
+    "yaw": ("nYaw", "Yaw Rate", "Gyro Yaw Velocity", "Yaw Velocity", "YawRate", "sclu_yaw_rate", "log_yaw_rate",
+            "GPS Gyro"),
     "steer_wheel": ("aSteerWheel", "Steering Wheel Angle"),
-    "brake_rear": ("pBrakeR", "Brake Pressure Rear", "Brake Press Rear"),
-    "wheel_fl": ("nWheelFL", "vWheelFL", "Wheel Speed FL"),
-    "wheel_fr": ("nWheelFR", "vWheelFR", "Wheel Speed FR"),
-    "wheel_rl": ("nWheelRL", "vWheelRL", "Wheel Speed RL"),
-    "wheel_rr": ("nWheelRR", "vWheelRR", "Wheel Speed RR"),
-    "tc": ("BInterventionCauseTC", "TC Active", "TC Intervention"),
-    "abs": ("NAbs", "ABS Active"),
-    "tyre_p_fl": ("pTyreFL", "Tyre Pres FL"), "tyre_p_fr": ("pTyreFR", "Tyre Pres FR"),
-    "tyre_p_rl": ("pTyreRL", "Tyre Pres RL"), "tyre_p_rr": ("pTyreRR", "Tyre Pres RR"),
-    "tyre_t_fl": ("TTyreFL", "Tyre Temp FL"), "tyre_t_fr": ("TTyreFR", "Tyre Temp FR"),
-    "tyre_t_rl": ("TTyreRL", "Tyre Temp RL"), "tyre_t_rr": ("TTyreRR", "Tyre Temp RR"),
+    "brake_rear": ("pBrakeR", "Brake Pressure Rear", "Brake Press Rear", "Brake Pres Rear", "Rear Brake Pres",
+                   "Rear Brake Press", "BrakePress Rear", "Brake Press R", "log_pbrake_r"),
+    **{f"wheel_{w.lower()}": (f"nWheel{w}", f"vWheel{w}", f"Wheel Speed {w}", f"WheelSpd{w}", f"Wheel Spd {w}",
+                              f"log_speed_{w.lower()}", f"abs_speed_{w.lower()}") for w in WHEELS},
+    "tc": ("BInterventionCauseTC", "TC Active", "TC Intervention", "ecu_B_tc_act"),
+    "abs": ("NAbs", "ABS Active", "abs_active"),
+    **{f"tyre_p_{w.lower()}": (f"pTyre{w}", f"Tyre Pres {w}", f"Tyre Pressure {w}", f"Tire Pressure {w}",
+                               f"Tire Pres {w}", f"TPMS Press {w}", f"TPMS Pressure {w}", f"tpms_press_{w.lower()}")
+       for w in WHEELS},
+    **{f"tyre_t_{w.lower()}": (f"TTyre{w}", f"Tyre Temp {w}", f"Tyre Temperature {w}", f"Tire Temp {w}",
+                               f"TPMS Temp {w}", f"tpms_temp_{w.lower()}") for w in WHEELS},
 }
 # Roles that hold states or flags: sampled, not interpolated, onto the master clock.
 DISCRETE_ROLES = {"gear", "tc", "abs"}
@@ -118,7 +128,7 @@ def load_session(ld: LdFile, channel_map: dict[str, tuple[str, ...]] | None = No
 
 
 def _gps(ld: LdFile):
-    lat, lon = ld.channel("GPS Latitude"), ld.channel("GPS Longitude")
+    lat, lon = ld.channel(*DEFAULT_CHANNEL_MAP["lat"]), ld.channel(*DEFAULT_CHANNEL_MAP["lon"])
     if lat is None or lon is None:
         return None
     t = lat.times()
@@ -186,7 +196,7 @@ def lap_starts(ld: LdFile, beacons: list[float] | None = None,
         starts = gps_crossings(ld, line)
         if len(starts) >= 2:
             return starts, "gps"
-    ln = ld.channel("Lap Number", "Lap")
+    ln = ld.channel("Lap Number", "Lap", "lap_number")
     if ln is not None:
         starts = ln.times()[1:][np.diff(ln.values()) != 0]
         if len(starts) >= 2:

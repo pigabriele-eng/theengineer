@@ -26,10 +26,11 @@ def curvature_at(d: np.ndarray) -> np.ndarray:
 
 
 def simulate(
-    paces=(0.9, 1.0, 0.97, 0.99), hz: int = 100
+    paces=(0.9, 1.0, 0.97, 0.99), hz: int = 100, stops: dict[int, float] | None = None
 ) -> tuple[dict[str, tuple[int, str, np.ndarray]], list[float]]:
     """An out-lap at 0.6 pace, then one lap per pace, then a slow in-lap.
 
+    stops: seconds standing at the line at the end of lap i of [out-lap, *paces, in-lap] (a pit stop).
     Returns (name -> (freq, unit, data), lap times).
     """
     laps = [0.6, *paces, 0.6]
@@ -43,6 +44,11 @@ def simulate(
             lap_idx.append(i)
             dist.append(d)
             d += v / 3.6 * dt
+            elapsed += dt
+        for _ in range(round((stops or {}).get(i, 0.0) * hz)):
+            v_out.append(0.0)
+            lap_idx.append(i)
+            dist.append(TRACK_M)
             elapsed += dt
         lap_times.append(elapsed)
     v = np.array(v_out)

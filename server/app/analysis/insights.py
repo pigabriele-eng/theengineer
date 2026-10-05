@@ -471,6 +471,27 @@ def top_speeds(prep: Prepared, groups: dict[str, list[LapRecord]] | None = None)
 
 # ---------- setup ----------
 
+def cornering(tr: dict[str, np.ndarray]) -> np.ndarray:
+    """Samples where the car is cornering: over 0.5 g lateral, not braking in a straight line, not at full power."""
+    phase = np.rint(tr["phase"]).astype(int)
+    return (np.abs(tr["ay"]) > 0.5) & (phase != BRAKE) & (phase != POWER)
+
+
+def understeer_fit(tr: dict[str, np.ndarray]) -> tuple[float, float]:
+    """Understeer against lateral g while cornering: slope and intercept.
+
+    The slope is the understeer gradient: steering beyond the path's geometry per g, in the steering channel's
+    units. understeer - (slope * |ay| + intercept) is the balance against the car's own average at the same
+    lateral g.
+    """
+    corner = cornering(tr)
+    us = tr["understeer"][corner]
+    if len(us) <= 100:
+        return 0.0, float(np.median(us)) if len(us) else 0.0
+    k, b = np.polyfit(np.abs(tr["ay"][corner]), us, 1)
+    return float(k), float(b)
+
+
 def setup_diagnostics(prep: Prepared) -> dict:
     tr = {k: np.concatenate([x.trace[k] for x in prep.laps]) for k in prep.reference.trace if k != "distance"}
     dt = np.concatenate([_dt(x.trace) for x in prep.laps])
@@ -481,8 +502,8 @@ def setup_diagnostics(prep: Prepared) -> dict:
         for s, g in zip(prep.limits.speeds, prep.limits.max_lateral(prep.limits.speeds), strict=True)]}
     if "understeer" in tr:
         us = tr["understeer"]
-        corner = (ay > 0.5) & (phase != BRAKE) & (phase != POWER)
-        k = float(np.polyfit(ay[corner], us[corner], 1)[0]) if corner.sum() > 100 else 0.0
+        corner = cornering(tr)
+        k, _ = understeer_fit(tr)
         rel = us - k * ay  # balance against the car's own average at the same lateral g
         bands = (("slow", 0, 110), ("medium", 110, 160), ("fast", 160, 400))
         table = []
