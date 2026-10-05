@@ -9,8 +9,6 @@ lap is read first: that lap gives the line every lap is placed on and the corner
 """
 from __future__ import annotations
 
-import ctypes
-import gc
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
@@ -127,16 +125,6 @@ class _Reference:
     @property  # for insights.straights, which reads prep.reference.trace
     def reference(self):
         return self
-
-
-def release_memory() -> None:
-    """Free a run's arrays before the next one is read, and hand the memory back to the system (glibc keeps it
-    otherwise, and the server has 512 MB)."""
-    gc.collect()
-    try:
-        ctypes.CDLL("libc.so.6").malloc_trim(0)
-    except (OSError, AttributeError):  # not glibc
-        pass
 
 
 # ---------- one lap ----------
@@ -303,7 +291,7 @@ def _read(sources: list[RunSource], corners: list[CornerSpec] | None,
                     laps.append(_summarise(tr, src, lap, i, ref.sections))
                     del tr
                 del data
-            release_memory()
+            heavy.release_memory()  # also when the lock is held further out, as by POST /compare/drivers
         times = [l.time for l in clean]
         runs.append({"run": src.name, "side": src.side, **src.meta, "laps": len(times),
                      "best": min(times) if times else None,

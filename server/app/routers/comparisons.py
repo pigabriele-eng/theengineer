@@ -17,7 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app import models
-from app.analysis.compare import compare_groups, release_memory
+from app.analysis.compare import compare_groups
+from app.heavy import release_memory
 from app.db import SessionLocal, get_db
 from app.routers.drivers import main_file, session_track
 from app.routers.insights import CompareIn, compare_sources
