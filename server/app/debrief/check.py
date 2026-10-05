@@ -196,7 +196,9 @@ class Reading:
     @property
     def value(self) -> float:
         v = float(np.median(self.values[self.ok]))
-        return round(v, self.digits) if self.digits is not None else v
+        if self.digits is None:
+            return v
+        return round(round(v, self.digits + 1), self.digits)  # as the report: stored to 0.01°, shown to 0.1°
 
     @property
     def z(self) -> float:
