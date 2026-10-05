@@ -50,10 +50,16 @@ export default function SessionScreen() {
   };
 
   const best = session?.best_lap_s;
+  const title = session?.name ?? 'Session';
 
   return (
     <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.container}>
-      <Stack.Screen options={{ title: session?.name ?? 'Session' }} />
+      <Stack.Screen
+        options={{
+          title: [title, session?.track_name].filter(Boolean).join(' · '),
+          headerTitle: () => <HeaderTitle title={title} venue={session?.track_name} />,
+        }}
+      />
       <View style={styles.facts}>
         <Fact label="Best lap" value={formatLap(best)} />
         <Fact label="Theoretical best" value={formatLap(analysis?.theoretical_best)} />
@@ -157,6 +163,22 @@ export default function SessionScreen() {
   );
 }
 
+// The session's name with the track it was driven at under it.
+function HeaderTitle({ title, venue }: { title: string; venue?: string | null }) {
+  return (
+    <View style={styles.headerTitle}>
+      <Text style={styles.headerName} numberOfLines={1}>
+        {title}
+      </Text>
+      {venue ? (
+        <Text style={styles.headerVenue} numberOfLines={1}>
+          {venue}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
 function Fact({ label, value }: { label: string; value: string }) {
   return (
     <View style={styles.fact}>
@@ -168,6 +190,9 @@ function Fact({ label, value }: { label: string; value: string }) {
 
 const styles = StyleSheet.create({
   container: { padding: 16, gap: 16 },
+  headerTitle: { backgroundColor: 'transparent', flexShrink: 1 },
+  headerName: { fontSize: 17, fontWeight: '600' },
+  headerVenue: { fontSize: 12, opacity: 0.6 },
   facts: { flexDirection: 'row', gap: 24, flexWrap: 'wrap' },
   fact: { gap: 2 },
   factLabel: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },

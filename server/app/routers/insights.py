@@ -7,13 +7,16 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app import models
+from app.analysis.balance import car_geometry
 from app.analysis.compare import compare_groups
 from app.analysis.insights import RunInput, analyze_runs
 from app.analysis.laps import load_session
 from app.analysis.stint import stint_analysis
 from app.db import get_db
 from app.debrief.check import check_debrief
+from app.vehicle.presets import preset_detail
 from app.heavy import one_at_a_time
+from app.routers.balance import preset_for
 from app.routers.sessions import _channel_map, _get, _line, _track_for, official_corners, read_file
 
 router = APIRouter()
@@ -135,4 +138,7 @@ def debrief_check(debrief_id: int, db: Session = Depends(get_db)):
     corners = {c.id: c.code for c in track.corners} if track else {}
     points = [{"id": p.id, "text": p.text, "corner_code": p.corner_code or corners.get(p.corner_id),
                "phase": p.phase.value if p.phase else None} for p in d.points]
-    return check_debrief(points, runs, official_corners(track), drop_channels=True)
+    s = _get(db, d.session_id)
+    preset = preset_for([s.car] if s.car else [])  # the car's steering ratio and wheelbase, as the report reads them
+    geo = car_geometry(preset_detail(preset) if preset else None)
+    return check_debrief(points, runs, official_corners(track), drop_channels=True, geo=geo)
