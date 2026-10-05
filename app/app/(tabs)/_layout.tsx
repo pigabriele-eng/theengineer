@@ -38,6 +38,19 @@ export default function TabLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="tools"
+        options={{
+          title: 'Tools',
+          tabBarIcon: ({ color }) => (
+            <SymbolView
+              name={{ ios: 'wrench.and.screwdriver', android: 'build', web: 'build' }}
+              tintColor={color}
+              size={26}
+            />
+          ),
+        }}
+      />
     </Tabs>
   );
 }
