@@ -13,12 +13,14 @@ def client(tmp_path, monkeypatch):
     import app.db
     import app.main
     import app.routers.debriefs
+    import app.routers.insights
     import app.routers.sessions
     importlib.reload(app.db)
     importlib.reload(app.models)
     importlib.reload(app.routers.catalog)
     importlib.reload(app.routers.sessions)
     importlib.reload(app.routers.debriefs)
+    importlib.reload(app.routers.insights)
     importlib.reload(app.main)
     with TestClient(app.main.app) as c:
         yield c
