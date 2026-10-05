@@ -74,6 +74,10 @@ def grip_report(session: int | None = None, event: int | None = None, db: Sessio
             _cache.move_to_end(key)
             return hit[1]
     with _work_lock:
+        with _cache_lock:  # a request that waited on the lock may find its report already built
+            hit = _cache.get(key)
+        if hit is not None and hit[0] == fp:
+            return hit[1]
         result = _build(db, sessions, track)
     with _cache_lock:
         _cache[key] = (fp, result)
@@ -89,21 +93,29 @@ def _build(db: Session, sessions: list[models.RunSession], track: models.Track |
     skipped = [s.name or f"Session {s.id}" for s in sessions if s not in timed]
     study = GripStudy(official_corners(track))
     names: set[str] = set()
+    unread: list[str] = []
     for s in timed:
         name = s.name or f"Session {s.id}"
         if name in names:
             name = f"{name} #{s.id}"
         names.add(name)
-        run, run_track = _run(db, s, name)
+        try:
+            run, run_track = _run(db, s, name)
+        except Exception:  # one unreadable log leaves that session out, not the whole event
+            unread.append(name)
+            _free()
+            continue
         if study.corners is None and run_track is not None:
             study.corners = official_corners(run_track)
         study.add(run.name, run.data, run.ld, run.driver)
         del run
         _free()
     result = study.report()
+    notes = result.setdefault("notes", [])
     if skipped:
         n = len(skipped)
-        result.setdefault("notes", []).append(
-            f"{n} session{'s' if n > 1 else ''} without a clean lap left out: {', '.join(skipped)}.")
+        notes.append(f"{n} session{'s' if n > 1 else ''} without a clean lap left out: {', '.join(skipped)}.")
+    if unread:
+        notes.append(f"Could not read the log of {', '.join(unread)}; left out.")
     _free()
     return result

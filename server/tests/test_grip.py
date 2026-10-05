@@ -180,3 +180,25 @@ def test_grip_endpoint(client, run):
     assert client.get(f"/report/grip?session={ids[0]}&event={ev['id']}").status_code == 422
     assert client.get("/report/grip?session=999").status_code == 404
     assert client.get("/report/grip?event=999").status_code == 404
+
+
+def test_unreadable_log_is_left_out(client, run, monkeypatch):
+    import app.routers.report_grip as rg
+
+    ev = client.post("/events", json={"name": "Second day"}).json()
+    for name in ("Good", "Broken"):
+        s = client.post("/sessions", json={"name": name, "event_id": ev["id"]}).json()
+        assert client.post(f"/sessions/{s['id']}/files", files={"file": ("run.ld", write_ld(run))}).status_code == 201
+    real = rg._run
+
+    def flaky(db, s, name=None):
+        if s.name == "Broken":
+            raise ValueError("bad log")
+        return real(db, s, name)
+
+    monkeypatch.setattr(rg, "_run", flaky)
+    r = client.get(f"/report/grip?event={ev['id']}")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["clean_laps"] == len(PACES) and {x["run"] for x in body["laps"]} == {"Good"}
+    assert any("Could not read the log of Broken" in n for n in body["notes"])
