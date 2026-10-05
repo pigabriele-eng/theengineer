@@ -8,20 +8,19 @@ two runs of the same car can be compared. The corners' apex speeds come along, s
 put in the right speed range.
 
 Reading a log is the expensive part (one 90 MB log peaks at about 300 MB), so a summary is kept in its own table
-and computed for one session at a time, behind a lock.
+and computed for one session at a time, under the server's heavy-work lock (app/heavy.py).
 """
 from __future__ import annotations
 
 import ctypes
 import gc
-import threading
 from datetime import datetime
 
 import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import models
+from app import heavy, models
 from app.analysis.channels import BRAKE, EXIT, MID, POWER, TRAIL, math_channels
 from app.analysis.laps import MASTER_HZ, CornerSpec, SessionData, corner_sections, lap_length, lap_trace, load_session
 from app.routers.sessions import _channel_map, _line, _track_for, official_corners, read_file
@@ -32,8 +31,6 @@ SPEED_BANDS = (("slow", 0.0, 110.0), ("medium", 110.0, 160.0), ("fast", 160.0, 1
 PHASES = ((TRAIL, "entry"), (MID, "mid"), (EXIT, "exit"))
 MIN_SAMPLES = 2 * MASTER_HZ  # two seconds of a phase across the run before its balance counts
 CORNERING_G = 0.5
-
-_lock = threading.Lock()
 
 
 def speed_band(kmh: float | None) -> str | None:
@@ -130,7 +127,7 @@ def run_summary(db: Session, s: models.RunSession) -> dict:
     hit = cached(db, s)
     if hit is not None:
         return hit
-    with _lock:
+    with heavy.lock:  # one log-reading job at a time across the server
         hit = cached(db, s)  # another request may have just computed it
         if hit is not None:
             return hit

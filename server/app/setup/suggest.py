@@ -89,8 +89,8 @@ _data_sources: list[DataSource] = []
 
 def register_data_source(fn: DataSource) -> DataSource:
     """Add a source of logger-data observations for a session; usable as a decorator. Each source gets the
-    database session and the run, and returns Observations with source="data". It should read at most one log
-    and keep the request under the server's memory budget (or read a summary it has cached)."""
+    database session and the run, and returns Observations with source="data". It should read at most one log,
+    under app.heavy.lock (after checking its own cache, so a hit doesn't wait), or read a summary it has cached."""
     if fn not in _data_sources:
         _data_sources.append(fn)
     return fn
