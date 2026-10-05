@@ -6,6 +6,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-nati
 import { LapCompare } from '@/components/LapCompare';
 import { SetupCard } from '@/components/SetupCard';
 import { Text, View, useThemeColor } from '@/components/Themed';
+import { TrackMap } from '@/components/TrackMap';
 import { Analysis, api, Debrief, DETECTED_CORNERS_NOTE, formatLap, SessionDetail } from '@/lib/api';
 
 export default function SessionScreen() {
@@ -59,6 +60,8 @@ export default function SessionScreen() {
         <Fact label="Theoretical best" value={formatLap(analysis?.theoretical_best)} />
         <Fact label="Laps" value={String(session?.laps.length ?? 0)} />
       </View>
+      {/* drawn from a clean lap; keyed so an upload that changes the laps redraws it */}
+      {session?.laps.some((l) => l.clean) && <TrackMap key={`${session.files.length}-${best}`} session={sessionId} />}
 
       <Pressable style={[styles.button, { backgroundColor: tint }]} onPress={upload} disabled={busy}>
         {busy ? (
