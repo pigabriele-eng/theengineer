@@ -204,11 +204,14 @@ def test_engine_endpoints(client):
     d = client.post(f"/sessions/{ids[0]}/debriefs", json={"points": [
         {"section": "balance", "text": "Understeer mid-corner", "corner_code": "T1"},
         {"section": "issues", "text": "Radio was quiet"},
+        {"section": "traction", "text": "Wheelspin out of T2"},  # typed: the corner is in the words
     ]}).json()
     check = client.get(f"/debriefs/{d['id']}/check").json()
-    assert [p["claim"] for p in check["points"]] == ["understeer", None]
-    assert check["points"][0]["section"] == "T1"
-    assert check["points"][1]["verdict"] == "cannot check"
+    assert [p["claim"] for p in check["points"]] == ["understeer", None, "traction"]
+    assert check["points"][0]["section"] == "T1" and check["points"][0]["line"].startswith("Said understeer at T1")
+    assert check["points"][1]["verdict"] == "cannot check" and check["points"][1]["agreement"] == "unclear"
+    assert check["points"][2]["section"] == "T2"
+    assert sum(check["agreement"].values()) == 3
 
 
 def test_corners_in_one_sector_are_one_section():
