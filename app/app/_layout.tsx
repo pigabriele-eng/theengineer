@@ -64,6 +64,7 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
           <Stack.Screen name="tools/tyre-fit" />
           <Stack.Screen name="tools/vehicle" />
           <Stack.Screen name="tools/stint" />
+          <Stack.Screen name="tools/setup" />
           <Stack.Screen name="drivers/tag" options={{ title: 'Tag drivers' }} />
           <Stack.Screen name="drivers/compare" options={{ title: 'Compare drivers' }} />
           <Stack.Screen name="compare" options={{ title: 'Compare laps' }} />

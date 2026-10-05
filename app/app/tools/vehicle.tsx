@@ -1,7 +1,8 @@
-import { Stack } from 'expo-router';
+import { Stack, useLocalSearchParams } from 'expo-router';
 import { ReactNode, useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 
+import { SetupLoader } from '@/components/SetupLoader';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import {
   Change,
@@ -55,6 +56,7 @@ const toText = (v: Vehicle, f: Field) => {
 };
 
 export default function VehicleScreen() {
+  const params = useLocalSearchParams<{ session?: string }>(); // ?session=<id> loads that run's setup sheet
   const [preset, setPreset] = useState<Preset | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
   const [bars, setBars] = useState<Record<Axle, BarState>>({
@@ -214,6 +216,15 @@ export default function VehicleScreen() {
       <Pressable onPress={() => setShowSources((s) => !s)}>
         <Text style={{ color: tint }}>{showSources ? 'Hide' : 'Show'} where each value comes from</Text>
       </Pressable>
+      <SetupLoader
+        initial={params.session ? Number(params.session) : undefined}
+        ready={preset != null}
+        onLoad={(v) => {
+          fill(v);
+          setWhatIf(null);
+          vehicleApi.model(v).then(setResult, (e) => setError(e.message));
+        }}
+      />
 
       <Section title="Car">{CAR_FIELDS.map(input)}</Section>
       <Section title="Front">

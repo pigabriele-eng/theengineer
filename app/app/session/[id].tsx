@@ -5,6 +5,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-nati
 
 import { SessionDriver } from '@/components/DriverPicker';
 import { LapCompare } from '@/components/LapCompare';
+import { SetupCard } from '@/components/SetupCard';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
 import { Analysis, api, Debrief, DETECTED_CORNERS_NOTE, formatLap, SessionDetail } from '@/lib/api';
@@ -105,6 +106,8 @@ export default function SessionScreen() {
           </Pressable>
         </Link>
       )}
+
+      <SetupCard sessionId={sessionId} />
 
       {debriefs.length > 0 && (
         <View style={styles.section}>
