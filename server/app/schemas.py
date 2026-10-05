@@ -94,6 +94,8 @@ class SessionOut(SessionIn, Orm):
     id: int
     created_at: dt.datetime
     best_lap_s: float | None = None
+    event_name: str | None = None
+    track_name: str | None = None  # the event's track, else the venue in the log header
 
 
 class SessionDetail(SessionOut):
