@@ -93,6 +93,13 @@ export default function SessionScreen() {
           </Pressable>
         </Link>
       )}
+      {session?.best_lap_s != null && (
+        <Link href={{ pathname: '/compare', params: { session: sessionId } }} asChild>
+          <Pressable style={StyleSheet.flatten([styles.button, styles.outline, { borderColor: tint }])}>
+            <Text style={[styles.buttonText, { color: tint }]}>Compare with other sessions and drivers</Text>
+          </Pressable>
+        </Link>
+      )}
 
       <SetupCard sessionId={sessionId} />
 
