@@ -267,8 +267,12 @@ def detect_corners(ref: dict[str, np.ndarray], min_drop_kmh: float = 15.0) -> li
     """Corners are speed minima that sit well below the surrounding straights."""
     v = _smooth(ref["speed"])
     n = len(v)
-    apexes = [i for i in range(60, n - 60)
-              if v[i] == v[i - 60:i + 61].min() and v[max(0, i - 150):i + 151].max() - v[i] > min_drop_kmh]
+    apexes: list[int] = []
+    for i in range(60, n - 60):
+        if v[i] == v[i - 60:i + 61].min() and v[max(0, i - 150):i + 151].max() - v[i] > min_drop_kmh:
+            if apexes and i - apexes[-1] <= 60:
+                continue  # the same flat-bottomed minimum, not a second corner
+            apexes.append(i)
     bounds = [0]
     for a, b in pairwise(apexes):
         bounds.append(max(bounds[-1] + 1, a + int(np.argmax(v[a:b])) - 40))

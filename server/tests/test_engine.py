@@ -5,7 +5,7 @@ from app.analysis.align import aligned_trace, track_line
 from app.analysis.channels import BRAKE, POWER, math_channels
 from app.analysis.compare import compare_groups
 from app.analysis.insights import RunInput, analyze_runs, make_sections
-from app.analysis.laps import load_session
+from app.analysis.laps import detect_corners, load_session
 from app.analysis.scan import channel_scan
 from app.debrief.check import read_claim
 from app.importers.motec import read_ld
@@ -89,6 +89,18 @@ def test_grouped_and_flat_corners():
     assert numbering == "official"
     assert [s.code for s in secs] == ["T1", "T2/T3", "T4"]
     assert secs[0].start == 0 and secs[-1].end == 999
+
+
+def test_a_flat_bottomed_corner_is_one_corner():
+    # a hairpin held at its slowest speed for a few metres: every point of the flat bottom is a minimum
+    d = np.arange(1000)
+    v = 150 - 100 * np.exp(-((d - 300) / 45.0) ** 2) - 80 * np.exp(-((d - 700) / 45.0) ** 2)
+    flat = np.abs(d - 700) < 20
+    v[flat] = v[flat].max()
+    found = detect_corners({"speed": v})
+    assert len(found) == 2 and found[0].apex == 300 and 680 < found[1].apex < 720
+    # the second corner starts on the straight before it, so its braking zone is inside it
+    assert found[1].start < 600 < found[1].apex < found[1].end
 
 
 def test_two_drivers_compared():
