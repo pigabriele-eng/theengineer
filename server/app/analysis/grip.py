@@ -697,17 +697,22 @@ def _f(v, nd=0) -> str:
     return "-" if v is None else f"{v:.{nd}f}"
 
 
+def _sr(v: float) -> str:
+    """A correlation with its sign, a true minus for negatives."""
+    return f"{v:+.2f}".replace("-", "\u2212")
+
+
 def section_note(s: dict, brake_unit: str = "") -> str:
     """What the quick passes do differently in this section, in a sentence or two."""
     if s["r"] is None:
         return "Too few quick laps to compare quick and slow passes here."
     brake_r = s["phases"]["braking"]["r"]
-    harder_slower = (f" Braking harder here goes with a slower pass (r {brake_r:+.2f}): brake less and carry speed."
+    harder_slower = (f" Braking harder here goes with a slower pass (r {_sr(brake_r)}): brake less and carry speed."
                      if brake_r is not None and brake_r >= 0.35 else "")
     if not s["spots"]:
         if s["flat_out"]:
             return "Flat out: the time here comes from the exit of the corner before, not from grip."
-        return f"No grip pattern separates the quick passes from the slow ones here (r {s['r']:+.2f})." + harder_slower
+        return f"No grip pattern separates the quick passes from the slow ones here (r {_sr(s['r'])})." + harder_slower
     return _spot_words(s["spots"][0], f" {brake_unit}" if brake_unit else "", harder_slower)
 
 
@@ -802,7 +807,7 @@ def headlines(r: dict) -> list[dict]:
                   "use more than the slowest ("
                   + "; ".join(f"{thirds['fast'][p]['grip_use']:.0f} % against {thirds['slow'][p]['grip_use']:.0f} %"
                               for p in top) + ").") if top else "Grip use is even across the corner phases."
-        out.append({"key": "grip_vs_time", "label": "Lap time follows grip use", "value": f"r {vt['r']:+.2f}",
+        out.append({"key": "grip_vs_time", "label": "Lap time follows grip use", "value": f"r {_sr(vt['r'])}",
                     "detail": detail, "action": action})
     worth = [s for s in r["sections"] if (s["worth_s"] or 0) >= 0.005]
     if worth:
@@ -810,7 +815,7 @@ def headlines(r: dict) -> list[dict]:
         top = sorted(worth, key=lambda s: -s["worth_s"])[:2]
         out.append({"key": "grip_left", "label": "Time left in grip use", "value": f"≈ {total:.2f} s",
                     "detail": "If a typical quick lap used the grip like the quickest third of laps in every corner. "
-                              f"Most of it in {' and '.join(s['code'] for s in top)}.",
+                              "The most in " + " and ".join(f"{s['code']} ({s['worth_s']:.2f} s)" for s in top) + ".",
                     "action": f"{top[0]['code']}: {top[0]['note']}"})
     tc = r["tc"]
     if tc.get("available"):
@@ -827,12 +832,14 @@ def headlines(r: dict) -> list[dict]:
             out.append({"key": "tc_cost", "label": "Lost to traction control", "value": "none measured",
                         "detail": "Where TC cuts in, passes with more TC are no slower than passes with less.",
                         "action": "No change needed."})
+        within = tc.get("vs_rear_temp_within") is not None
         w = tc.get("vs_rear_temp_within") or tc.get("vs_rear_temp")
         if w is not None and w["p"] is not None and w["p"] < SIGNIFICANT and w["slope"] > 0:
             out.append({"key": "tc_temp", "label": "TC and rear tyre temperature",
                         "value": f"+{w['slope']:.2f} s per °C",
                         "detail": f"Each °C hotter on the rear tyres brings {w['slope']:.2f} s more TC a lap "
-                                  f"(r {w['r']:+.2f} over {w['n']} laps, lap to lap within a run).",
+                                  f"(r {_sr(w['r'])} over {w['n']} laps"
+                                  + (", lap to lap within a run)." if within else ")."),
                         "action": "Keep the rears from overheating on long runs (pressures, how hard you drive off "
                                   "the slow corners): hotter rears spin up sooner."})
     return out
