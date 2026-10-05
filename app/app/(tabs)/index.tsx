@@ -53,6 +53,14 @@ export default function SessionsScreen() {
         ))}
       </View>
       <ImportLogs onProgress={load} />
+      {sessions.some((s) => s.best_lap_s != null) && (
+        // Link asChild hands its child's style to a web anchor, which can't take a style array: one object
+        <Link href="/compare" asChild>
+          <Pressable style={StyleSheet.flatten([styles.compare, { borderColor: tint }])}>
+            <Text style={[styles.compareText, { color: tint }]}>Compare laps from any sessions</Text>
+          </Pressable>
+        </Link>
+      )}
       {error && <Text style={styles.error}>Can't reach the server: {error}</Text>}
       <FlatList
         data={sessions}
@@ -89,6 +97,8 @@ const styles = StyleSheet.create({
   buttonText: { color: '#fff', fontWeight: '600' },
   kinds: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
   chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 4 },
+  compare: { borderWidth: 1, borderRadius: 8, padding: 12, alignItems: 'center' },
+  compareText: { fontWeight: '600', fontSize: 15 },
   error: { color: '#c8372d' },
   empty: { opacity: 0.6, marginTop: 24, textAlign: 'center' },
   row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: '#8882' },
