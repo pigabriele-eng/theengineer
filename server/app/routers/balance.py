@@ -92,16 +92,26 @@ def _build(db: Session, kind: str, sid: int, name: str, sessions: list[models.Ru
     track = None
     for s in sessions:
         label = s.name or f"Session {s.id}"
-        _, data, t = load_main_file(db, s)
-        if track is None:
-            track = t
-        elif t is not None and t.id != track.id:
-            col.sessions.append({"name": label, "session_id": s.id, "laps": 0, "note": "Driven at another track"})
+        before = (len(col.laps), len(col.sessions), col.line, col.length)
+        data = None
+        try:
+            _, data, t = load_main_file(db, s)
+            if track is not None and t is not None and t.id != track.id:
+                col.sessions.append({"name": label, "session_id": s.id, "laps": 0, "note": "Driven at another track"})
+                continue
+            collect(label, data, geo, col, driver=s.driver.name if s.driver else None, meta={"session_id": s.id})
+            track = track or t
+        except Exception:
+            if kind == "session":
+                raise
+            # one unreadable log leaves that session out, not the whole event
+            del col.laps[before[0]:], col.sessions[before[1]:]
+            col.line, col.length = before[2], before[3]
+            col.sessions.append({"name": label, "session_id": s.id, "laps": 0,
+                                 "note": "Could not read the log; left out"})
+        finally:
             del data
-            continue
-        collect(label, data, geo, col, driver=s.driver.name if s.driver else None, meta={"session_id": s.id})
-        del data
-        gc.collect()  # free the session's channels and close its log before the next one
+            gc.collect()  # free the session's channels and close its log before the next one
     corners = official_corners(track)
     prep = prepared(col, corners)
     if prep is None:

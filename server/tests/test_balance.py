@@ -271,3 +271,25 @@ def test_balance_endpoint_for_a_session_and_an_event(client):
     assert client.get("/report/balance?session=999").status_code == 404
     empty = client.post("/events", json={"name": "Nothing yet"}).json()
     assert client.get(f"/report/balance?event={empty['id']}").status_code == 422
+
+
+def test_an_unreadable_log_is_left_out_of_an_event(client, monkeypatch):
+    import app.routers.balance as router
+
+    event = client.post("/events", json={"name": "Test day"}).json()
+    _upload(client, "Good", event["id"], (0.97, 1.0, 0.98))
+    broken = _upload(client, "Broken", event["id"], (0.99, 1.0, 0.98))  # the quickest run, read first
+    real = router.load_main_file
+
+    def flaky(db, s):
+        if s.name == "Broken":
+            raise ValueError("bad log")
+        return real(db, s)
+
+    monkeypatch.setattr(router, "load_main_file", flaky)
+    body = client.get(f"/report/balance?event={event['id']}").json()
+    assert body["laps"] == 3 and body["reference"]["run"] == "Good"
+    assert {"name": "Broken", "session_id": broken, "laps": 0, "note": "Could not read the log; left out"} in \
+        body["sessions"]
+    with pytest.raises(ValueError):  # one session asked for on its own: the error is not hidden
+        client.get(f"/report/balance?session={broken}")
