@@ -60,9 +60,20 @@ export default function SessionScreen() {
       </View>
 
       <Pressable style={[styles.button, { backgroundColor: tint }]} onPress={upload} disabled={busy}>
-        {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Upload MoTeC .ld or .ldx file</Text>}
+        {busy ? (
+          <ActivityIndicator color="#fff" />
+        ) : (
+          <Text style={styles.buttonText}>Upload a logger file (MoTeC .ld/.ldx, or a CSV export)</Text>
+        )}
       </Pressable>
       {error && <Text style={styles.error}>{error}</Text>}
+      {(session?.laps.length ?? 0) > 0 && (
+        <Link href={{ pathname: '/tools/stint', params: { session: sessionId } }} asChild>
+          <Pressable style={[styles.button, styles.outline, { borderColor: tint }]}>
+            <Text style={[styles.buttonText, { color: tint }]}>Stint analysis</Text>
+          </Pressable>
+        </Link>
+      )}
 
       {debriefs.length > 0 && (
         <View style={styles.section}>
@@ -148,6 +159,7 @@ const styles = StyleSheet.create({
   factLabel: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
   factValue: { fontSize: 24, fontWeight: '600', fontVariant: ['tabular-nums'] },
   button: { borderRadius: 8, padding: 14, alignItems: 'center' },
+  outline: { borderWidth: 1, backgroundColor: 'transparent' },
   buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
   error: { color: '#c8372d' },
   section: { gap: 8 },
