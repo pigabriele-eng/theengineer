@@ -8,8 +8,9 @@ from app import heavy, models
 from app.analysis.lapcompare import MAX_LAPS, MIN_LAPS, Pick, compare_picks
 from app.analysis.laps import SessionData, load_session
 from app.db import get_db
-from app.routers.imports import _date, _release_memory
-from app.routers.sessions import _channel_map, _get, _line, official_corners, read_file
+from app.routers.imports import _date
+from app.routers.sessions import _channel_map, _get, official_corners
+from app.timing import read_file, track_line
 
 router = APIRouter(prefix="/compare")
 
@@ -113,17 +114,17 @@ def compare_laps(body: CompareLapsIn, db: Session = Depends(get_db)):
     track = next(iter(tracks.values()))
 
     def load(run: str) -> SessionData:
-        _release_memory()  # the run before this one
         s = sessions[int(run)]
         f = _main_file(s)
         # timed with the same start/finish line as when its laps were stored, so lap numbers match
-        return load_session(read_file(f), _channel_map(s), beacons=f.meta.get("beacons"), line=_line(track))
+        return load_session(read_file(f), _channel_map(s), beacons=f.meta.get("beacons"), line=track_line(track))
 
     try:
-        # each session's log is read and traced under the shared lock, one session at a time
+        # each session's log is read and traced under the shared lock, one session at a time; letting go of the
+        # lock between sessions hands the last one's memory back before the next is read
         result = compare_picks(picks, load, official_corners(track), body.step_m, guard=heavy.lock)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     finally:
-        _release_memory()
+        heavy.release_memory()
     return {"track": track.name if track else None, **result}

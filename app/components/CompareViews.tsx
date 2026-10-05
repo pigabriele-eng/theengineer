@@ -224,14 +224,13 @@ export function CompareTraces({ data, colors, ideal, zoom, onZoom, cursor, onCur
       const out = t.slice(i0, i1 + 1).map((v, k) => v - ref.t[i0 + k]);
       return out.map((v) => v - out[0]);
     };
-    const series = tr.laps.map((l, i) => ({ values: sliced(l.t), color: colors.laps[i] }));
-    if (ideal) series.push({ values: sliced(tr.ideal.t), color: colors.ideal });
-    return series;
+    // the ideal lap first, so it is drawn under the laps: where it is one of them, that lap stays visible
+    const series = ideal ? [{ values: sliced(tr.ideal.t), color: colors.ideal }] : [];
+    return [...series, ...tr.laps.map((l, i) => ({ values: sliced(l.t), color: colors.laps[i] }))];
   }, [tr, ref, i0, i1, ideal, colors]);
   const seriesOf = (role: TraceRole) => {
-    const out = tr.laps.flatMap((l, i) => (l[role] ? [{ values: l[role]!.slice(i0, i1 + 1), color: colors.laps[i] }] : []));
-    if (ideal && tr.ideal[role]) out.push({ values: tr.ideal[role]!.slice(i0, i1 + 1), color: colors.ideal });
-    return out;
+    const part = (values: number[] | undefined, color: string) => (values ? [{ values: values.slice(i0, i1 + 1), color }] : []);
+    return [...(ideal ? part(tr.ideal[role], colors.ideal) : []), ...tr.laps.flatMap((l, i) => part(l[role], colors.laps[i]))];
   };
   // the whole lap is marked section by section; a zoomed section shows each official corner in it
   const marks = section && section.corners.length > 1 ? data.track_corners : data.corners;
