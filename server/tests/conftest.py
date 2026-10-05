@@ -1,4 +1,5 @@
 import os
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -43,4 +44,9 @@ def client(tmp_path, monkeypatch):
         app.db.Base.metadata.drop_all(app.db.engine)
     with TestClient(app.main.app) as c:
         yield c
+        # imports and reports run in background threads: let them finish here, not in the next test's database
+        deadline = time.monotonic() + 120
+        while app.routers.imports._jobs.unfinished_tasks and time.monotonic() < deadline:
+            time.sleep(0.05)
+        app.routers.reports.wait_idle()
     app.db.engine.dispose()

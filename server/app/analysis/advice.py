@@ -47,6 +47,7 @@ TRACE_STEP_M = 5
 CORNER_WINDOW_M = 40  # an official corner's speed is the lowest within this distance of its position
 SPLIT_GAP_M = 200  # corners of one section further apart than this get a speed check on the way between them
 MIN_RELATION_S = 0.05  # a lap-time relation worth less than this over the range seen is left out
+MIN_WORTH_S = 0.02  # a habit worth less than this in a section is not advice, however clearly it is linked
 # What the driver is doing, in the words of the report: the engine's phases of a lap
 WHERE = {"braking": "braking", "trail": "entry", "mid": "mid-corner", "exit": "exit", "power": "full throttle"}
 LINK_STRONG, LINK_CLEAR = 0.6, 0.3
@@ -358,7 +359,7 @@ def _section(prep: Prepared, s: Section, prev: str | None, realistic, brake_unit
                "used": False}
         habits.append(row)
         big = abs(diff) >= need
-        linked = agrees and link in ("strong", "clear")
+        linked = agrees and link in ("strong", "clear") and (worth is None or worth >= MIN_WORTH_S)
         unlinked = r is None  # too few laps to measure a link: the difference alone
         if big and (linked or unlinked) and (not h.outcome or h.key in ("exit_speed", "entry_speed")):
             actions.append({"key": h.key, "phase": h.phase, "worth": worth, "typical": t, "quick": q, "row": row,
@@ -378,7 +379,8 @@ def _section(prep: Prepared, s: Section, prev: str | None, realistic, brake_unit
     if flat:
         chosen = [a for a in ranked if a["key"] == "entry_speed"][:1] + technique[:MAX_ADVICE - 1]
     else:
-        chosen = technique[:MAX_ADVICE] or [a for a in ranked if a["key"] == "exit_speed"][:1]
+        chosen = technique[:MAX_ADVICE]
+    chosen = chosen or [a for a in ranked if a["key"] == "exit_speed"][:1]
     top = chosen[0] if chosen else None  # the most telling one
     chosen.sort(key=lambda a: PHASE_ORDER.index(a["phase"]))
     for a in chosen:
@@ -386,9 +388,17 @@ def _section(prep: Prepared, s: Section, prev: str | None, realistic, brake_unit
     chosen = _merge_release(chosen)
     if top is not None and top not in chosen:  # merged into "come off the brake sooner"
         top = next(a for a in chosen if a["key"] == "release_at")
-    headline = top["text"] if top is not None else None
-    habits.sort(key=lambda h: (not h["used"], {"strong": 0, "clear": 1}.get(h["link"], 2), -(h["worth_s"] or 0)))
     main = max(by_phase.items(), key=lambda kv: kv[1])[0] if gain > 0 else None
+    if top is not None:
+        headline = top["text"]
+    elif main is not None and gain >= 0.05:
+        place = {"braking": "under braking", "entry": "on entry", "mid-corner": "mid-corner", "exit": "on the exit",
+                 "full throttle": "on the straight after it"}[main]
+        headline = (f"The quick passes gain {gain:.2f} s here, most of it {place}, with no one habit standing out: "
+                    "compare the speed traces")
+    else:
+        headline = None
+    habits.sort(key=lambda h: (not h["used"], {"strong": 0, "clear": 1}.get(h["link"], 2), -(h["worth_s"] or 0)))
     sim_t = float(prep.sim.t[s.end] - prep.sim.t[s.start])
     real_t = float(realistic.t[s.end] - realistic.t[s.start])
     fast_t = float(times[ref_i])

@@ -174,12 +174,12 @@ def report_for(db: Session, kind: str, id_: int) -> dict:
         return _answer(db, plan, row, "failed")
     if not _used(plan):
         return _answer(db, plan, row, "empty")
+    if row is not None and row.signature == plan.signature and plan.scope in _pending:
+        return _answer(db, plan, row, row.status)  # being worked out (again, after a refresh)
     if row is not None and row.result is not None and row.result_signature == plan.signature:
         return _answer(db, plan, row, "ready")
     if row is not None and row.signature == plan.signature and row.status == "failed":
         return _answer(db, plan, row, "failed")  # tried for these very inputs: POST refresh to try again
-    if row is not None and row.signature == plan.signature and plan.scope in _pending:
-        return _answer(db, plan, row, row.status)
     row = _queue(db, plan, row)
     return _answer(db, plan, row, "queued")
 
@@ -262,8 +262,9 @@ def schedule_sessions(db: Session, session_ids: list[int]) -> None:
 
 
 def _work() -> None:
+    jobs = _jobs
     while True:
-        scope = _jobs.get()
+        scope = jobs.get()
         try:
             run_job(scope)
         except Exception:
@@ -272,6 +273,15 @@ def _work() -> None:
             with _lock:
                 _pending.discard(scope)
             heavy.release_memory()
+            jobs.task_done()
+
+
+def wait_idle(timeout: float = 120) -> bool:
+    """Wait until every report asked for is worked out (for tests). True when nothing is left."""
+    deadline = time.monotonic() + timeout
+    while _jobs.unfinished_tasks and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return not _jobs.unfinished_tasks
 
 
 def _wait_for_imports(db: Session, row: models.ReportCache) -> None:
