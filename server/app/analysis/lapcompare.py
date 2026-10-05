@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import gc
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from itertools import pairwise
 
@@ -75,12 +76,12 @@ class Traced:
 
 
 def compare_picks(picks: list[Pick], load: Callable[[str], SessionData], corners: list[CornerSpec] | None = None,
-                  step: float = 5.0) -> dict:
+                  step: float = 5.0, guard: AbstractContextManager = nullcontext()) -> dict:
     """The picked laps on one line: section times, the ideal lap, where each lap loses time and why, and traces.
 
     load(run) reads one run; it is called once per run, the quickest lap's run first, and the run is let go
-    before the next is read. corners are the track's official corners. Raises ValueError when a picked lap is not
-    in its run.
+    before the next is read. guard is held from reading a run until it is let go (the server's one-log-at-a-time
+    lock). corners are the track's official corners. Raises ValueError when a picked lap is not in its run.
     """
     if not MIN_LAPS <= len(picks) <= MAX_LAPS:
         raise ValueError(f"Pick {MIN_LAPS} to {MAX_LAPS} laps")
@@ -88,20 +89,21 @@ def compare_picks(picks: list[Pick], load: Callable[[str], SessionData], corners
     traced: dict[int, Traced] = {}
     line = length = sources = None
     for run in order:
-        data = load(run)
-        math_channels(data)
-        for i, p in sorted(((i, p) for i, p in enumerate(picks) if p.run == run), key=lambda ip: ip[1].time):
-            lap = next((l for l in data.laps if l.number == p.number), None)
-            if lap is None:
-                raise ValueError(f"{p.meta.get('session', run)} has no lap {p.number}")
-            if length is None:  # the quickest picked lap: its path is the line every lap is placed on
-                line = track_line(data, lap)
-                length = line.length if line is not None else round(lap_length(data, lap))
-                sources = data.sources
-            tr = aligned_trace(data, lap, line, length)
-            traced[i] = Traced(p, lap, {k: tr[k] for k in KEEP if k in tr})
-        del data
-        gc.collect()
+        with guard:  # while this run's log is in memory
+            data = load(run)
+            math_channels(data)
+            for i, p in sorted(((i, p) for i, p in enumerate(picks) if p.run == run), key=lambda ip: ip[1].time):
+                lap = next((l for l in data.laps if l.number == p.number), None)
+                if lap is None:
+                    raise ValueError(f"{p.meta.get('session', run)} has no lap {p.number}")
+                if length is None:  # the quickest picked lap: its path is the line every lap is placed on
+                    line = track_line(data, lap)
+                    length = line.length if line is not None else round(lap_length(data, lap))
+                    sources = data.sources
+                tr = aligned_trace(data, lap, line, length)
+                traced[i] = Traced(p, lap, {k: tr[k] for k in KEEP if k in tr})
+            del data
+            gc.collect()
     laps = [traced[i] for i in range(len(picks))]
     out = _summarise(laps, corners, step)
     out["aligned_by"] = "gps" if line is not None else "wheel speed"

@@ -83,6 +83,34 @@ def test_laps_from_different_runs_on_one_line(monkeypatch):
     assert [c["code"] for c in res["track_corners"]] == ["T1", "T2"]
 
 
+def test_each_run_is_read_under_the_guard():
+    runs = {"a": _run((1.0, 0.99)), "b": _run((1.0, 0.98))}
+    events = []
+
+    class Guard:  # stands in for the server's one-log-at-a-time lock
+        held = False
+
+        def __enter__(self):
+            self.held = True
+            events.append("take")
+
+        def __exit__(self, *exc):
+            self.held = False
+            events.append("let go")
+
+    guard = Guard()
+
+    def load(name):
+        assert guard.held  # a log is only read while the guard is held
+        events.append(name)
+        return runs[name][0]
+
+    picks = [Pick("a", 2, runs["a"][1][2]), Pick("b", 1, runs["b"][1][1])]
+    compare_picks(picks, load, CORNERS, guard=guard)
+    first, second = (p.run for p in sorted(picks, key=lambda p: p.time))
+    assert events == ["take", first, "let go", "take", second, "let go"]  # one run at a time, let go in between
+
+
 def test_lap_picks_are_checked():
     runs = {"a": _run((1.0, 0.99))}
     with pytest.raises(ValueError, match="no lap 9"):

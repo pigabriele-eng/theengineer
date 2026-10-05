@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app import models
+from app import heavy, models
 from app.analysis.lapcompare import MAX_LAPS, MIN_LAPS, Pick, compare_picks
 from app.analysis.laps import SessionData, load_session
 from app.db import get_db
@@ -120,7 +120,8 @@ def compare_laps(body: CompareLapsIn, db: Session = Depends(get_db)):
         return load_session(read_file(f), _channel_map(s), beacons=f.meta.get("beacons"), line=_line(track))
 
     try:
-        result = compare_picks(picks, load, official_corners(track), body.step_m)
+        # each session's log is read and traced under the shared lock, one session at a time
+        result = compare_picks(picks, load, official_corners(track), body.step_m, guard=heavy.lock)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     finally:
