@@ -5,7 +5,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-nati
 
 import { LapCompare } from '@/components/LapCompare';
 import { Text, View, useThemeColor } from '@/components/Themed';
-import { Analysis, api, Debrief, formatLap, SessionDetail } from '@/lib/api';
+import { Analysis, api, Debrief, DETECTED_CORNERS_NOTE, formatLap, SessionDetail } from '@/lib/api';
 
 export default function SessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -67,6 +67,7 @@ export default function SessionScreen() {
         )}
       </Pressable>
       {error && <Text style={styles.error}>{error}</Text>}
+      {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
       {(session?.laps.length ?? 0) > 0 && (
         <Link href={{ pathname: '/tools/stint', params: { session: sessionId } }} asChild>
           <Pressable style={StyleSheet.flatten([styles.button, styles.outline, { borderColor: tint }])}>
@@ -104,6 +105,9 @@ export default function SessionScreen() {
       {analysis && (
         <View style={styles.section}>
           <Text style={styles.h2}>Corners vs best lap {analysis.reference_lap}</Text>
+          {analysis.numbering === 'detected' && analysis.corners.length > 0 && (
+            <Text style={styles.note}>{DETECTED_CORNERS_NOTE}</Text>
+          )}
           {analysis.corners.map((c) => {
             const ref = c.laps[String(analysis.reference_lap)];
             const top = c.laps[String(c.best_lap)];
@@ -167,6 +171,7 @@ const styles = StyleSheet.create({
   corner: { paddingVertical: 8, borderBottomWidth: 1, borderColor: '#8882', gap: 2 },
   cornerTitle: { fontSize: 16, fontWeight: '600' },
   sub: { opacity: 0.7, fontVariant: ['tabular-nums'] },
+  note: { fontSize: 12, opacity: 0.6 },
   lap: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
   lapNo: { fontVariant: ['tabular-nums'] },
   time: { fontVariant: ['tabular-nums'], fontSize: 16 },

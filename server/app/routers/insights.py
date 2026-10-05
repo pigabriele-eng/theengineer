@@ -8,12 +8,12 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.analysis.compare import compare_groups
-from app.analysis.insights import CornerSpec, RunInput, analyze_runs
+from app.analysis.insights import RunInput, analyze_runs
 from app.analysis.laps import load_session
 from app.analysis.stint import stint_analysis
 from app.db import get_db
 from app.debrief.check import check_debrief
-from app.routers.sessions import _channel_map, _get, _line, _track_for, read_file
+from app.routers.sessions import _channel_map, _get, _line, _track_for, official_corners, read_file
 
 router = APIRouter()
 
@@ -29,14 +29,6 @@ def _run(db: Session, s: models.RunSession, name: str | None = None) -> tuple[Ru
     run = RunInput(name or s.name or f"Session {s.id}", data, s.driver.name if s.driver else None,
                    {"session_id": s.id, "file_id": f.id}, ld)
     return run, track
-
-
-def _corners(track: models.Track | None) -> list[CornerSpec] | None:
-    """The track's official corner numbers, where their position on the lap is known."""
-    if track is None:
-        return None
-    known = [(c.code, c.apex_m, c.sector) for c in track.corners if c.apex_m is not None]
-    return known or None
 
 
 def _runs(db: Session, session_ids: list[int]) -> tuple[list[RunInput], models.Track | None]:
@@ -58,7 +50,7 @@ def _runs(db: Session, session_ids: list[int]) -> tuple[list[RunInput], models.T
 def session_insights(session_id: int, db: Session = Depends(get_db)):
     """Lap time opportunities, driving trends, setup checks and driver scores for one session."""
     runs, track = _runs(db, [session_id])
-    return analyze_runs(runs, _corners(track), drop_channels=True)
+    return analyze_runs(runs, official_corners(track), drop_channels=True)
 
 
 @router.get("/sessions/{session_id}/stint")
@@ -77,7 +69,7 @@ class InsightsIn(BaseModel):
 def multi_insights(body: InsightsIn, db: Session = Depends(get_db)):
     """The same across several sessions at one track (a test day, an event): the car's limits come from all."""
     runs, track = _runs(db, body.session_ids)
-    return analyze_runs(runs, _corners(track), drop_channels=True)
+    return analyze_runs(runs, official_corners(track), drop_channels=True)
 
 
 class LapPick(BaseModel):
@@ -120,7 +112,7 @@ def compare_drivers(body: CompareIn, db: Session = Depends(get_db)):
         raise HTTPException(422, "Pick at least one session or lap for each side")
     if len(track_ids) > 1:
         raise HTTPException(422, "These sessions are from different tracks")
-    result = compare_groups(runs, group_of, {"a": body.a.label, "b": body.b.label}, _corners(track),
+    result = compare_groups(runs, group_of, {"a": body.a.label, "b": body.b.label}, official_corners(track),
                             drop_channels=True)
     if result.get("error"):
         raise HTTPException(422, result["error"])
@@ -137,4 +129,4 @@ def debrief_check(debrief_id: int, db: Session = Depends(get_db)):
     corners = {c.id: c.code for c in track.corners} if track else {}
     points = [{"id": p.id, "text": p.text, "corner_code": p.corner_code or corners.get(p.corner_id),
                "phase": p.phase.value if p.phase else None} for p in d.points]
-    return check_debrief(points, runs, _corners(track), drop_channels=True)
+    return check_debrief(points, runs, official_corners(track), drop_channels=True)

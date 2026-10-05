@@ -122,6 +122,12 @@ def test_debrief_corners_line_up_with_logged_corners(client):
     ]}).json()
 
     corners = client.get(f"/debriefs/{d['id']}/corners").json()["corners"]
+    # T1 has no position on the track map, so the first slow point of the lap is not taken to be T1
+    assert set(corners) == {"T2"}
+    assert corners["T2"]["detected_code"] == "T2" and abs(corners["T2"]["apex_m"] - 700) < 40
+
+    client.put(f"/tracks/{track['id']}/corners", json=[{"code": "T1", "apex_m": 300}, {"code": "T2", "apex_m": 690}])
+    corners = client.get(f"/debriefs/{d['id']}/corners").json()["corners"]
     assert set(corners) == {"T1", "T2"}
     assert abs(corners["T1"]["apex_m"] - 300) < 40
     assert abs(corners["T2"]["apex_m"] - 700) < 40

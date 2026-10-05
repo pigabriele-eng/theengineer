@@ -21,13 +21,37 @@ type Props = {
   series: Series[];
   cursor: number | null;
   onCursor: (i: number | null) => void;
-  markers?: { at: number; label: string }[];
+  markers?: Marker[];
   domain?: [number, number];
   zeroLine?: boolean;
   height?: number;
 };
 
 const PAD = { left: 40, right: 8, top: 8, bottom: 18 };
+const LABEL_ROW = 11; // px between rows of corner labels
+const LABEL_ROWS = 3;
+const LABEL_CHAR = 6; // rough width of one character at fontSize 10
+
+type Marker = { at: number; label: string };
+
+/** Corner labels left to right, each on the first row where it clears the label before it, so close corners
+ * ("T13", "T14", "T15-T17") stay readable on a phone. A label with no room on any row is left out. */
+function placeLabels(markers: Marker[], xAt: (at: number) => number) {
+  const ends: number[] = []; // right edge of the last label on each row
+  const out: (Marker & { x: number; row: number })[] = [];
+  for (const m of [...markers].sort((a, b) => a.at - b.at)) {
+    const x = xAt(m.at);
+    const half = (m.label.length * LABEL_CHAR) / 2;
+    let row = ends.findIndex((end) => x - half >= end + 3);
+    if (row === -1) {
+      if (ends.length === LABEL_ROWS) continue;
+      row = ends.length;
+    }
+    ends[row] = x + half;
+    out.push({ ...m, x, row });
+  }
+  return out;
+}
 
 /** One channel against distance. Charts on a screen share `cursor` so scrubbing one moves all. */
 export function TraceChart({ title, unit, distance, series, cursor, onCursor, markers = [], domain, zeroLine,
@@ -58,6 +82,10 @@ export function TraceChart({ title, unit, distance, series, cursor, onCursor, ma
     : {};
 
   const fmt = (v: number) => (Math.abs(hi - lo) < 5 ? v.toFixed(2) : Math.round(v).toString());
+  const labels = width > 0 && n > 1
+    ? placeLabels(markers, (at) => x(Math.round((at / distance[n - 1]) * (n - 1))))
+    : [];
+  const svgHeight = height + Math.max(0, ...labels.map((m) => m.row)) * LABEL_ROW;
 
   return (
     <View style={styles.wrap}>
@@ -82,7 +110,7 @@ export function TraceChart({ title, unit, distance, series, cursor, onCursor, ma
         onResponderMove={scrub}
         {...hover}>
         {width > 0 && n > 1 && (
-          <Svg width={width} height={height} pointerEvents="none">
+          <Svg width={width} height={svgHeight} pointerEvents="none">
             <Line x1={PAD.left} x2={width - PAD.right} y1={y(lo)} y2={y(lo)} stroke={muted} strokeOpacity={0.2} />
             {zeroLine && (
               <Line x1={PAD.left} x2={width - PAD.right} y1={y(0)} y2={y(0)} stroke={muted} strokeOpacity={0.35} />
@@ -93,15 +121,12 @@ export function TraceChart({ title, unit, distance, series, cursor, onCursor, ma
             <SvgText x={PAD.left - 4} y={PAD.top + h} fontSize={10} fill={muted} fillOpacity={0.6} textAnchor="end">
               {fmt(lo)}
             </SvgText>
-            {markers.map((m) => {
-              const i = Math.round((m.at / distance[n - 1]) * (n - 1));
-              return (
-                <SvgText key={m.label} x={x(i)} y={height - 4} fontSize={10} fill={muted} fillOpacity={0.6}
-                  textAnchor="middle">
-                  {m.label}
-                </SvgText>
-              );
-            })}
+            {labels.map((m) => (
+              <SvgText key={m.label} x={m.x} y={height - 4 + m.row * LABEL_ROW} fontSize={10} fill={muted}
+                fillOpacity={0.6} textAnchor="middle">
+                {m.label}
+              </SvgText>
+            ))}
             {series.map((s, i) => (
               <Path key={i} d={path(s.values)} stroke={s.color} strokeWidth={2} fill="none" strokeLinejoin="round" />
             ))}

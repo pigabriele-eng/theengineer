@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { TraceChart, useSeriesColors } from '@/components/TraceChart';
-import { Analysis, api, formatLap, Lap, LapCompare as Compare } from '@/lib/api';
+import { Analysis, api, DETECTED_CORNERS_NOTE, formatLap, Lap, LapCompare as Compare } from '@/lib/api';
 
 type Props = { sessionId: number; analysis: Analysis; laps: Lap[] };
 
@@ -27,7 +27,8 @@ export function LapCompare({ sessionId, analysis, laps: allLaps }: Props) {
   }, [sessionId, lap, ref]);
 
   if (lap == null) return null;
-  const markers = analysis.corners.map((c) => ({ at: c.apex_m, label: c.code }));
+  const markers = (data?.corners ?? analysis.corners).map((c) => ({ at: c.apex_m, label: c.code }));
+  const detected = (data?.numbering ?? analysis.numbering) === 'detected';
   const time = (n: number) => formatLap(laps.find((l) => l.number === n)?.time_s);
   const shared = { distance: data?.distance ?? [], cursor, onCursor: setCursor, markers };
   const pair = (role: 'speed' | 'throttle' | 'brake') =>
@@ -77,6 +78,7 @@ export function LapCompare({ sessionId, analysis, laps: allLaps }: Props) {
           {pair('brake') && <TraceChart {...shared} title="Brake" unit="" height={100} series={pair('brake')!} />}
           <Text style={styles.hint}>
             Above zero, L{lap} is behind the reference at that point. Drag across a chart to read values.
+            {detected && markers.length > 0 ? ` ${DETECTED_CORNERS_NOTE}` : ''}
           </Text>
         </>
       )}

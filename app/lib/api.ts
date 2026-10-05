@@ -48,12 +48,22 @@ export type CornerMetrics = {
   full_throttle?: number | null;
 };
 
+// 'official': corners carry the track map's numbers, grouped like "T8/T9" or a sector like "T2-T5".
+// 'detected': the track has no official numbers, so corners are the slow points of the speed trace, C1, C2...
+export type CornerNumbering = 'official' | 'detected';
+
+export type CornerSpan = { code: string; apex_m: number; start_m: number; end_m: number };
+
+export const DETECTED_CORNERS_NOTE =
+  'This track has no official corner numbers yet, so C1, C2… are the slow corners found in the speed trace, in lap order.';
+
 export type Analysis = {
   file_id: number;
   reference_lap: number;
   length_m: number;
   theoretical_best: number;
-  corners: { code: string; apex_m: number; best_lap: number; laps: Record<string, CornerMetrics> }[];
+  numbering?: CornerNumbering; // absent when the log has no clean lap
+  corners: (CornerSpan & { best_lap: number; laps: Record<string, CornerMetrics> })[];
 };
 
 type Trace = { speed?: number[]; throttle?: number[]; brake?: number[]; steer?: number[]; gear?: number[] };
@@ -66,6 +76,8 @@ export type LapCompare = {
   reference: Trace;
   compare: Trace;
   delta: number[];
+  numbering: CornerNumbering;
+  corners: CornerSpan[];
 };
 
 export type DebriefPointIn = { section: string; text: string };
