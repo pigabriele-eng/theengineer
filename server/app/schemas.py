@@ -101,6 +101,21 @@ class SessionDetail(SessionOut):
     laps: list[LapOut]
 
 
+class ImportJobOut(Orm):
+    id: int
+    filename: str
+    status: str  # queued, running, done, failed
+    total: int  # logs found (0 until the upload has been unpacked)
+    done: int
+    current: str | None
+    session_ids: list[int]
+    errors: list[dict]  # {"file", "error"}
+    skipped: list[dict]  # {"file", "reason"}
+    message: str | None
+    created_at: dt.datetime
+    finished_at: dt.datetime | None
+
+
 class DebriefPointIn(BaseModel):
     section: str = Field(max_length=40)
     text: str

@@ -81,6 +81,19 @@ def test_supabase_storage_keeps_logs_compressed_and_reads_them_back(tmp_path):
         s.local_path("0123456789abcdef.ld")
 
 
+def test_files_on_disk_are_stored_in_chunks(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage, "CHUNK_BYTES", 1000)
+    fake = FakeSupabaseStorage()
+    s = fake.storage(tmp_path / "cache")
+    log = b"\x40\x00\x00\x00" + bytes(range(256)) * 400
+    (tmp_path / "run.ld").write_bytes(log)
+    key = s.save_file(tmp_path / "run.ld", ".ld")
+    assert gzip.decompress(fake.objects[f"logs/{key}.gz"]) == log
+    assert s.local_path(key).read_bytes() == log
+    local = LocalStorage(tmp_path / "storage")
+    assert local.local_path(local.save_file(tmp_path / "run.ld", ".ld")).read_bytes() == log
+
+
 def test_supabase_keys_go_on_the_right_headers(tmp_path):
     new = FakeSupabaseStorage().storage(tmp_path)
     assert "authorization" not in new.client.headers  # a secret key isn't a JWT
