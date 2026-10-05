@@ -714,6 +714,10 @@ def fit_model(entries: list[Entry], seed: int = 0) -> dict:
             "needed against all laps', turned into grip by the curve's slope. The range is the middle 90 % when "
             "the sessions, and the laps within them, are redrawn; a group from fewer than "
             f"{MIN_SESSIONS_REDRAW} sessions gets none.",
+            "A range has the most grip only when the groups beside it are clearly worse: their whole range below "
+            f"the best group's and at least {MIN_GAIN * 100:.0f} % less grip. Confidence is high with two such "
+            "groups, 5 sessions and 30 laps, and a step lower when leaving out one session takes the difference "
+            f"under {MIN_GAIN * 100:.0f} %.",
             "TPMS temperature is the sensor inside the tyre, not the tread surface.",
             "Laps on the tyre count from the cold start the TPMS shows in the log; earlier use of the set is not "
             "in the log.",
