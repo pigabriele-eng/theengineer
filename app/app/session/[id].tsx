@@ -69,7 +69,7 @@ export default function SessionScreen() {
       {error && <Text style={styles.error}>{error}</Text>}
       {(session?.laps.length ?? 0) > 0 && (
         <Link href={{ pathname: '/tools/stint', params: { session: sessionId } }} asChild>
-          <Pressable style={[styles.button, styles.outline, { borderColor: tint }]}>
+          <Pressable style={StyleSheet.flatten([styles.button, styles.outline, { borderColor: tint }])}>
             <Text style={[styles.buttonText, { color: tint }]}>Stint analysis</Text>
           </Pressable>
         </Link>
