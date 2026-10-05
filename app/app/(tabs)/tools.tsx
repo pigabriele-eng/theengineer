@@ -1,7 +1,8 @@
 import { Href, Link } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet } from 'react-native';
 
-import { Text, View } from '@/components/Themed';
+import { Text, View, useThemeColor } from '@/components/Themed';
+import { authEnabled, signOut, useAuthSession } from '@/lib/auth';
 
 type Tool = { href: Href; title: string; blurb: string };
 
@@ -67,7 +68,27 @@ export default function ToolsScreen() {
           ))}
         </View>
       ))}
+      {authEnabled && <Account />}
     </ScrollView>
+  );
+}
+
+function Account() {
+  const { session } = useAuthSession();
+  const tint = useThemeColor({}, 'tint');
+  return (
+    <View style={styles.group}>
+      <Text style={styles.groupName}>Account</Text>
+      <View style={styles.row}>
+        <View style={styles.rowText}>
+          <Text style={styles.title}>Signed in</Text>
+          <Text style={styles.blurb}>{session?.user.email}</Text>
+        </View>
+        <Pressable onPress={() => signOut()} accessibilityRole="button" hitSlop={8}>
+          <Text style={[styles.signOut, { color: tint }]}>Sign out</Text>
+        </Pressable>
+      </View>
+    </View>
   );
 }
 
@@ -80,4 +101,5 @@ const styles = StyleSheet.create({
   title: { fontSize: 16, fontWeight: '600' },
   blurb: { opacity: 0.6, lineHeight: 19 },
   chevron: { fontSize: 24, opacity: 0.4, paddingLeft: 8 },
+  signOut: { fontSize: 16, fontWeight: '600', paddingLeft: 8 },
 });

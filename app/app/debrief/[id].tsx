@@ -17,7 +17,8 @@ export default function DebriefReport() {
   const [error, setError] = useState<string | null>(null);
   const [showTranscript, setShowTranscript] = useState(false);
   const [corners, setCorners] = useState<Record<string, DebriefCorner>>({});
-  const player = useAudioPlayer(d?.has_audio ? api.debriefAudioUrl(debriefId) : null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const player = useAudioPlayer(audioUrl);
   const tint = useThemeColor({}, 'tint');
   const background = useThemeColor({}, 'background');
 
@@ -26,6 +27,12 @@ export default function DebriefReport() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // The recording's URL carries the sign-in token, so get it once rather than on every render (a new URL means a new player).
+  const hasAudio = !!d?.has_audio;
+  useEffect(() => {
+    if (hasAudio) api.debriefAudioUrl(debriefId).then(setAudioUrl);
+  }, [hasAudio, debriefId]);
 
   // Recordings are transcribed and structured on the server; check back until that's done.
   const pending = d?.status === 'queued' || d?.status === 'processing';

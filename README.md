@@ -44,6 +44,8 @@ npm run ios                          # iPhone simulator (macOS), or scan the QR 
 
 The app talks to `http://localhost:8000` unless `EXPO_PUBLIC_API_URL` is set. On a real iPhone, set it to your computer's address on the same network.
 
+Sign-in is off unless `EXPO_PUBLIC_SUPABASE_URL` is set. With it (and `EXPO_PUBLIC_SUPABASE_ANON_KEY`), the app shows an email and password sign-in screen, and sends the Supabase access token with every server request. Users are created in the Supabase dashboard; there is no sign-up in the app.
+
 ## What works now
 
 - Create sessions, upload a MoTeC `.ld` file, and see laps, best lap, theoretical best and per-corner metrics (brake point, minimum speed, throttle pickup, full throttle).
