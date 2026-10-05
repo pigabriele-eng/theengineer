@@ -2,15 +2,18 @@ import { Link, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, TextInput } from 'react-native';
 
+import { DriverLinks } from '@/components/DriverPicker';
 import { ImportLogs } from '@/components/ImportLogs';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { api, formatLap, Session, SessionKind } from '@/lib/api';
+import { Driver, driversApi, Tagged } from '@/lib/drivers';
 
 const KINDS: SessionKind[] = ['test', 'practice', 'qualifying', 'race'];
 
 export default function SessionsScreen() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [drivers, setDrivers] = useState<Driver[]>([]);
   const [name, setName] = useState('');
   const [kind, setKind] = useState<SessionKind>('test');
   const tint = useThemeColor({}, 'tint');
@@ -18,7 +21,9 @@ export default function SessionsScreen() {
 
   const load = useCallback(() => {
     api.sessions().then(setSessions, (e) => setError(e.message));
+    driversApi.list().then(setDrivers, () => setDrivers([]));
   }, []);
+  const driverOf = (s: Session) => drivers.find((d) => d.id === (s as Tagged).driver_id)?.name;
   useFocusEffect(load);
 
   const create = async () => {
@@ -53,6 +58,7 @@ export default function SessionsScreen() {
         ))}
       </View>
       <ImportLogs onProgress={load} />
+      <DriverLinks />
       {error && <Text style={styles.error}>Can't reach the server: {error}</Text>}
       <FlatList
         data={sessions}
@@ -70,6 +76,7 @@ export default function SessionsScreen() {
                 <Text style={styles.title}>{item.name ?? `Session ${item.id}`}</Text>
                 <Text style={styles.sub}>
                   {item.kind} · {new Date(item.created_at).toLocaleDateString()}
+                  {driverOf(item) ? ` · ${driverOf(item)}` : ''}
                 </Text>
               </View>
               <Text style={styles.time}>{formatLap(item.best_lap_s)}</Text>

@@ -1,18 +1,21 @@
 """Engine views over one or more sessions: opportunities, trends, setup, scores, stints, driver comparison,
 debrief check."""
 from dataclasses import replace
+from functools import partial
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app import models
-from app.analysis.compare import compare_groups
+from app.analysis.compare import ROLES as COMPARE_ROLES
+from app.analysis.compare import RunSource, compare_groups
 from app.analysis.insights import RunInput, analyze_runs
 from app.analysis.laps import load_session
 from app.analysis.stint import stint_analysis
 from app.db import get_db
 from app.debrief.check import check_debrief
+from app.routers.drivers import main_file, session_track
 from app.routers.sessions import _channel_map, _get, _line, _track_for, official_corners, read_file
 
 router = APIRouter()
@@ -78,7 +81,7 @@ class LapPick(BaseModel):
 
 
 class Side(BaseModel):
-    label: str
+    label: str = Field(min_length=1, max_length=120)
     session_ids: list[int] = []
     laps: list[LapPick] = []  # only these laps; for a log where both drivers shared the car
 
@@ -88,34 +91,62 @@ class CompareIn(BaseModel):
     b: Side
 
 
+def _picked_run(db: Session, session_id: int, name: str, picks: set[int] | None) -> RunInput:
+    """A session's main log with only the channels the comparison reads, and only the picked laps counted clean."""
+    s = _get(db, session_id)
+    f = main_file(s)
+    ld = read_file(f)
+    data = load_session(ld, _channel_map(s), beacons=f.meta.get("beacons"), line=_line(_track_for(db, s, ld)),
+                        roles=COMPARE_ROLES)
+    if picks is not None:
+        data.laps = [replace(l, clean=l.clean and l.number in picks) for l in data.laps]
+    return RunInput(name, data, s.driver.name if s.driver else None, {"session_id": s.id, "file_id": f.id})
+
+
+def compare_sources(db: Session, a: Side, b: Side) -> tuple[list[RunSource], models.Track | None]:
+    """The sessions of both sides as runs to read one at a time, after checking they can be compared: one track,
+    one car, and a session on both sides only when each side has its own laps of it."""
+    if a.label.strip() == b.label.strip():
+        raise HTTPException(422, "Give the two sides different names")
+    picked = {key: {p.session_id: set(p.laps) for p in side.laps} for key, side in (("a", a), ("b", b))}
+    ids = {key: list(dict.fromkeys([*side.session_ids, *picked[key]])) for key, side in (("a", a), ("b", b))}
+    for sid in set(ids["a"]) & set(ids["b"]):
+        if sid not in picked["a"] or sid not in picked["b"]:
+            raise HTTPException(422, f"Session {sid} is on both sides; pick which of its laps go on each side")
+    sources, tracks, cars = [], {}, set()
+    for key, side in (("a", a), ("b", b)):
+        for sid in ids[key]:
+            s = _get(db, sid)
+            f = main_file(s)
+            if f is None:
+                raise HTTPException(404, f"No logger file uploaded for session {sid}")
+            track = session_track(db, s)
+            tracks[track.id if track else None] = track
+            cars.add(s.car_id)
+            picks = picked[key].get(sid)
+            clean = [l.time_s for l in s.laps if l.file_id == f.id and l.clean and (picks is None or l.number in picks)]
+            name = f"{side.label}: {s.name or 'Session'} #{sid}"
+            sources.append(RunSource(name, key, partial(_picked_run, db, sid, name, picks), min(clean, default=None),
+                                     {"session_id": sid, "session": s.name or f"Session {sid}"}))
+    if not ids["a"] or not ids["b"]:
+        raise HTTPException(422, "Pick at least one session or lap for each side")
+    if len(tracks) > 1:
+        raise HTTPException(422, "These sessions are from different tracks; compare sessions from one track")
+    if len(cars - {None}) > 1:
+        raise HTTPException(422, "These sessions are from different cars; compare sessions in one car")
+    return sources, next(iter(tracks.values()))
+
+
 @router.post("/compare/drivers")
 def compare_drivers(body: CompareIn, db: Session = Depends(get_db)):
-    """Two drivers or two stints on one car and track: where the time goes and which technique explains it."""
-    if body.a.label == body.b.label:
-        raise HTTPException(422, "Give the two sides different labels")
-    runs, group_of = [], {}
-    track_ids = set()
-    track = None
-    for key, side in (("a", body.a), ("b", body.b)):
-        picks = {p.session_id: set(p.laps) for p in side.laps}
-        for sid in dict.fromkeys([*side.session_ids, *picks]):
-            s = _get(db, sid)
-            run, t = _run(db, s, f"{side.label}: {s.name or 'Session'} #{sid}")
-            if sid in picks:
-                laps = [replace(l, clean=l.clean and l.number in picks[sid]) for l in run.data.laps]
-                run = replace(run, data=replace(run.data, laps=laps))
-            runs.append(run)
-            group_of[run.name] = key
-            track_ids.add(t.id if t else None)
-            track = track or t
-    if not runs or set(group_of.values()) != {"a", "b"}:
-        raise HTTPException(422, "Pick at least one session or lap for each side")
-    if len(track_ids) > 1:
-        raise HTTPException(422, "These sessions are from different tracks")
-    result = compare_groups(runs, group_of, {"a": body.a.label, "b": body.b.label}, official_corners(track),
-                            drop_channels=True)
+    """Two drivers or two groups of runs on one car and track, over all their clean laps: where each gains or loses
+    and how consistently, the technique behind it and each driver's habits that repeat lap after lap. Runs are read
+    one at a time and reduced to per-lap metrics, so many sessions fit in the server's memory."""
+    sources, track = compare_sources(db, body.a, body.b)
+    result = compare_groups(sources, {"a": body.a.label.strip(), "b": body.b.label.strip()}, official_corners(track))
     if result.get("error"):
         raise HTTPException(422, result["error"])
+    result["track"] = track.name if track else None
     return result
 
 

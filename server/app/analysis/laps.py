@@ -4,6 +4,7 @@ Works on any logger once its channels are mapped to the standard roles below.
 """
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from itertools import pairwise
 
@@ -89,8 +90,12 @@ class SessionData:
 
 
 def load_session(ld: LdFile, channel_map: dict[str, tuple[str, ...]] | None = None,
-                 beacons: list[float] | None = None, line: TimingLine | None = None) -> SessionData:
+                 beacons: list[float] | None = None, line: TimingLine | None = None,
+                 roles: Collection[str] | None = None) -> SessionData:
+    """The log on the 100 Hz master clock, split into laps. roles limits the channels read (speed always is)."""
     cmap = {**DEFAULT_CHANNEL_MAP, **(channel_map or {})}
+    if roles is not None:
+        cmap = {role: names for role, names in cmap.items() if role in roles or role == "speed"}
     speed = ld.channel(*cmap["speed"])
     if speed is None:
         raise ValueError("No speed channel found; add the car's speed channel to its channel map")

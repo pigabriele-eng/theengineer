@@ -5,7 +5,7 @@ import pytest
 
 from app.analysis.align import aligned_trace, track_line
 from app.analysis.channels import BRAKE, POWER, math_channels
-from app.analysis.compare import compare_groups
+from app.analysis.compare import compare_groups, sources_from_runs
 from app.analysis.insights import RunInput, analyze_runs, make_sections
 from app.analysis.laps import analyze, compare_laps, detect_corners, lap_trace, load_session
 from app.analysis.scan import channel_scan
@@ -108,13 +108,14 @@ def test_a_flat_bottomed_corner_is_one_corner():
 def test_two_drivers_compared():
     fast = load_session(read_ld(write_ld(simulate(paces=(1.0, 0.99, 0.995))[0])))
     slow = load_session(read_ld(write_ld(simulate(paces=(0.96, 0.95, 0.955))[0])))
-    res = compare_groups([RunInput("A run", slow), RunInput("B run", fast)], {"A run": "a", "B run": "b"},
-                         {"a": "Anna", "b": "Ben"})
+    runs = [RunInput("A run", slow), RunInput("B run", fast)]
+    res = compare_groups(sources_from_runs(runs, {"A run": "a", "B run": "b"}), {"a": "Anna", "b": "Ben"})
     assert res["typical_gap_s"] > 0.5  # Anna is slower
-    assert {g["faster"] for g in res["where_time_goes"]} == {"Ben"}
-    assert set(res["summary"]) == {"Anna", "Ben"}
-    assert res["summary"]["Ben"]["median_extraction"] > res["summary"]["Anna"]["median_extraction"]
-    assert set(res["top_speeds"][0]["groups"]) == {"Anna", "Ben"}
+    assert {g["faster"] for g in res["where_time_goes"]} == {"b"}
+    assert [res["summary"][g]["label"] for g in ("a", "b")] == ["Anna", "Ben"]
+    assert res["summary"]["b"]["median_extraction"] > res["summary"]["a"]["median_extraction"]
+    assert set(res["top_speeds"][0]["groups"]) == {"a", "b"}
+    assert all(r.data.channels == {} for r in runs)  # each run's channels are dropped once its laps are reduced
 
 
 class _Channel:
@@ -199,7 +200,7 @@ def test_engine_endpoints(client):
     picked = client.post("/compare/drivers", json={
         "a": {"label": "Early", "laps": [{"session_id": ids[1], "laps": [1]}]},
         "b": {"label": "Late", "laps": [{"session_id": ids[1], "laps": [2, 3]}]}}).json()
-    assert picked["summary"]["Early"]["laps"] == 1 and picked["summary"]["Late"]["laps"] == 2
+    assert picked["summary"]["a"]["laps"] == 1 and picked["summary"]["b"]["laps"] == 2
 
     d = client.post(f"/sessions/{ids[0]}/debriefs", json={"points": [
         {"section": "balance", "text": "Understeer mid-corner", "corner_code": "T1"},
