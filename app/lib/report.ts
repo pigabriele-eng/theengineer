@@ -69,6 +69,7 @@ export type Relation = {
   sure: 'very sure' | 'sure' | 'fairly sure';
   compared: string;
   source: string;
+  warm_up: boolean; // only over each run's first laps, while the car warms up
 };
 
 export type RunTrend = {

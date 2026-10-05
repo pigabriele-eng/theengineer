@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, LayoutChangeEvent, Pressable, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 
 import { Bars, LineChart, LineSeries, useChartColors } from '@/components/ReportCharts';
+import { Balance } from '@/components/report/Balance';
 import { GripReport } from '@/components/report/GripReport';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
@@ -29,6 +30,14 @@ const SCORE_NAMES: Record<string, string> = {
 };
 
 const s2 = (v: number) => `${v.toFixed(2)} s`;
+const MAX_EVIDENCE = 5; // measures shown under a section before "Show all"
+// lap time axis ticks as m:ss, with tenths only when the ticks are closer than a second
+const lapTick = (v: number) => {
+  const m = Math.floor(v / 60);
+  const sec = Math.round((v - 60 * m) * 10) / 10;
+  const text = Number.isInteger(sec) ? String(sec) : sec.toFixed(1);
+  return m ? `${m}:${sec < 10 ? '0' : ''}${text}` : text;
+};
 
 /** How to go faster, for a whole event (every session of a test) or one session: the advice first, then corner by
  * corner what to change and the evidence, then trends, consistency and what goes with lap time. */
@@ -100,6 +109,8 @@ export default function ReportScreen() {
     return <Text style={styles.pad}>Open a report from an event on the Sessions tab, or from a session.</Text>;
   }
   const working = answer?.status === 'queued' || answer?.status === 'running';
+  // the sessions have clean laps (the report is ready or being worked out), so the other sections have data too
+  const hasLaps = report != null || working || answer?.sessions.some((s) => s.included) === true;
   const highlight = focus ?? report?.gains[0]?.code ?? undefined;
   const map = 'event' in scope ? <TrackMap event={scope.event} highlight={highlight} />
     : <TrackMap session={scope.session} highlight={highlight} />;
@@ -143,18 +154,24 @@ export default function ReportScreen() {
           </Text>
         )}
 
-        {report && (
-          <>
-            <View style={wide ? styles.row : styles.column}>
+        {/* The core report answers at once from the server's cache; the map and the other sections load themselves
+            meanwhile (they take turns on the server's log lock), so nothing waits for anything else to paint. */}
+        {hasLaps && (
+          <View style={wide ? styles.row : styles.column}>
+            {report && (
               <View style={wide ? styles.half : undefined}>
                 <Glance report={report} onPick={setFocus} focus={highlight ?? null} />
               </View>
-              <View style={wide ? styles.half : undefined}
-                onLayout={(e: LayoutChangeEvent) => setMapY(e.nativeEvent.layout.y)}>
-                {map}
-              </View>
+            )}
+            <View style={wide ? styles.half : undefined}
+              onLayout={(e: LayoutChangeEvent) => setMapY(e.nativeEvent.layout.y)}>
+              {map}
             </View>
+          </View>
+        )}
 
+        {report && (
+          <>
             <Section title="Where the time goes">
               <Text style={styles.note}>
                 What a typical lap ({formatLap(report.headline.typical)}) loses to the quick passes of every section,
@@ -172,13 +189,23 @@ export default function ReportScreen() {
                 <DrivingCard key={s.code} section={s} report={report} wide={wide} onMap={() => showOnMap(s.code)} />
               ))}
             </Section>
+          </>
+        )}
 
+        {hasLaps && (
+          <>
             <View style={styles.section}>
               {'event' in scope ? <GripReport event={scope.event} /> : <GripReport session={scope.session} />}
             </View>
-            {/* SLOT: car balance and setup direction (built by another worker) goes here. */}
+            <View style={styles.section}>
+              {'event' in scope ? <Balance event={scope.event} /> : <Balance session={scope.session} />}
+            </View>
             {/* SLOT: tyres and qualifying preparation (built by another worker) goes here. */}
+          </>
+        )}
 
+        {report && (
+          <>
             <Section title="Trends and consistency">
               <Trends report={report} />
             </Section>
@@ -265,7 +292,9 @@ function Glance({ report, onPick, focus }: { report: Report; onPick: (code: stri
             <Text style={styles.medalText}>{MEDAL[sc.medal]}</Text>
             {sc.next_medal && (
               <Text style={styles.note}>
-                {sc.next_medal.seconds_to_find.toFixed(2)} s to {sc.next_medal.medal}
+                {sc.next_medal.seconds_to_find >= 0.01 ? `${sc.next_medal.seconds_to_find.toFixed(2)} s to `
+                  : 'on the edge of '}
+                {sc.next_medal.medal}
               </Text>
             )}
           </View>
@@ -331,8 +360,11 @@ function DrivingCard({ section: s, report, wide, onMap }: {
   const c = useChartColors();
   const [all, setAll] = useState(false);
   const t = s.times;
-  const shown = s.habits.filter((h) => all || h.used || h.link === 'strong' || h.link === 'clear');
-  const hidden = s.habits.length - s.habits.filter((h) => h.used || h.link === 'strong' || h.link === 'clear').length;
+  // the measures behind the advice, then the most strongly linked others (the server sorts them that way)
+  const telling = s.habits.filter((h, i) => h.used || (i < MAX_EVIDENCE && (h.link === 'strong' || h.link === 'clear')));
+  const shown = all ? s.habits : telling;
+  const hidden = s.habits.length - telling.length;
+  const also = s.advice.filter((a) => a !== s.headline);
   const top = Math.max(...PHASES.map((p) => s.where[p] ?? 0), 0.001);
   return (
     <View style={[styles.card, { borderColor: c.grid }]}>
@@ -349,10 +381,10 @@ function DrivingCard({ section: s, report, wide, onMap }: {
 
       <View style={wide ? styles.row : styles.column}>
         <View style={wide ? styles.half : styles.block}>
-          {s.advice.length > 0 && (
+          {also.length > 0 && (
             <View style={styles.block}>
-              <Text style={styles.h4}>What to change</Text>
-              {s.advice.map((a) => (
+              <Text style={styles.h4}>{s.advice.length > also.length ? 'Also' : 'What to change'}</Text>
+              {also.map((a) => (
                 <Text key={a} style={styles.bullet}>• {a}</Text>
               ))}
             </View>
@@ -493,8 +525,8 @@ function Trends({ report }: { report: Report }) {
         ))}
       </View>
       <Text style={styles.note}>
-        Consistency is how closely the clean laps sit to the session&apos;s best (100% = every lap the same); score is the
-        best lap&apos;s share of the theoretical pace.
+        Consistency is 100% when every clean lap matches the session&apos;s best, 10 points off for each 1% the median
+        lap is slower; score is the best lap&apos;s share of the theoretical pace.
         {tr.consistency != null ? ` Across all ${report.laps_analysed} laps: ${tr.consistency.toFixed(1)}%.` : ''}
       </Text>
       {longest >= 2 && (
@@ -505,7 +537,7 @@ function Trends({ report }: { report: Report }) {
           height={200}
           unit="clean laps into the session"
           formatX={(v) => `lap ${v}`}
-          formatY={(v) => formatLap(v)}
+          formatY={lapTick}
           title="Lap times through a session"
           readout={(i) => {
             const vs = runs.map((r) => r.values[i]).filter((v): v is number => v != null);
@@ -537,25 +569,42 @@ function Relations({ relations, laps }: { relations: Relation[]; laps: number })
     return (
       <Text style={styles.note}>
         {laps < 8 ? `With ${laps} clean laps it is too early to say what goes with lap time.`
-          : 'Nothing goes clearly with lap time beyond the driving above.'}
+          : 'Nothing in the car\'s state goes clearly with lap time: the time is in the driving above.'}
       </Text>
     );
   }
+  const warm = relations.filter((r) => !r.warm_up);
+  const warming = relations.filter((r) => r.warm_up);
   return (
     <View style={styles.block}>
       <Text style={styles.note}>
-        Every clean lap&apos;s time against the car&apos;s state and the driving measures, strongest first. These show
-        what goes with a quicker lap, not what causes it: tyre temperatures and pressures, for one, rise together over
-        the first laps of a run.
+        Every clean lap&apos;s time against the car&apos;s state (tyres, traction control, ABS, temperatures) and the
+        driving measures, strongest first. These show what goes with a quicker lap, not what causes it.
       </Text>
-      {relations.map((r) => (
-        <View key={`${r.source}-${r.label}`} style={styles.relation}>
-          <Text style={styles.relationText}>{r.text}</Text>
-          <Text style={styles.note}>
-            {s2(r.seconds)} over the range seen · {r.sure} (r {r.r.toFixed(2)}, {r.n} laps) · {r.compared}
-          </Text>
-        </View>
-      ))}
+      {warm.length === 0 && (
+        <Text style={styles.relationText}>
+          Once the car is warm, from the third lap of a run, nothing in its state goes clearly with lap time: the time
+          left is in the driving above.
+        </Text>
+      )}
+      {warm.map((r) => <RelationRow key={`${r.source}-${r.label}`} r={r} />)}
+      {warming.length > 0 && (
+        <>
+          <Text style={styles.h4}>Only over each run&apos;s first laps, while the car warms up</Text>
+          {warming.map((r) => <RelationRow key={`${r.source}-${r.label}`} r={r} />)}
+        </>
+      )}
+    </View>
+  );
+}
+
+function RelationRow({ r }: { r: Relation }) {
+  return (
+    <View style={styles.relation}>
+      <Text style={styles.relationText}>{r.text}</Text>
+      <Text style={styles.note}>
+        {s2(r.seconds)} over the range seen · {r.sure} (r {r.r.toFixed(2)}, {r.n} laps) · {r.compared}
+      </Text>
     </View>
   );
 }

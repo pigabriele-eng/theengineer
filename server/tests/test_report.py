@@ -130,10 +130,25 @@ def test_a_lap_time_relation_in_plain_words():
     assert _relation("x", "", vals, runs, -0.001, -0.7, 12, 1e-4, True, "lap", 0) is None  # too small to matter
 
 
+def test_a_relation_carried_by_the_warm_up_laps_is_flagged():
+    from app.analysis.advice import _only_warm_up
+    rng = np.random.default_rng(5)
+    runs = [r for r in "abc" for _ in range(8)]
+    index = np.array([i for _ in "abc" for i in range(8)])
+    warm = np.where(index < 2, 60.0 + 10 * index, 80.0) + rng.normal(0, 0.5, 24)  # tyres warm over two laps
+    slow_start = np.where(index < 2, 2.0 - index, 0.0) + rng.normal(0, 0.05, 24)  # and the first laps are slow
+    assert _only_warm_up(warm, 100 + slow_start, runs, index, -0.8)
+    hot = 80 + rng.normal(0, 3, 24)  # hotter is quicker on every lap
+    assert not _only_warm_up(hot, 100 - 0.05 * hot + rng.normal(0, 0.02, 24), runs, index, -0.8)
+
+
 def test_what_goes_with_lap_time_is_ranked_and_leaves_out_the_obvious(reduced):
     prep, extras = compact.prepare_compact([(1, reduced[0]), (2, reduced[1])], SECTORED)
     rels = build_report(prep, extras, SECTORED)["lap_time_relations"]
-    assert [abs(r["r"]) for r in rels] == sorted((abs(r["r"]) for r in rels), reverse=True)
+    for group in (False, True):  # what holds once the car is warm first, each part strongest first
+        rs = [abs(r["r"]) for r in rels if r["warm_up"] is group]
+        assert rs == sorted(rs, reverse=True)
+    assert [r["warm_up"] for r in rels] == sorted(r["warm_up"] for r in rels)
     assert all(r["seconds"] >= 0.05 and r["sure"] in ("very sure", "sure", "fairly sure") for r in rels)
     assert not any("grip" in r["label"] for r in rels)
 

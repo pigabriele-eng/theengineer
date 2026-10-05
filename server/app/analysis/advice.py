@@ -491,6 +491,20 @@ def _relation(label: str, unit: str, vals: np.ndarray, runs: list[str], slope: f
             "source": source}
 
 
+WARM_UP_LAPS = 2
+
+
+def _only_warm_up(vals: np.ndarray, times: np.ndarray, runs: list[str], index: np.ndarray, r: float) -> bool:
+    """True when a relation within runs is carried by each run's first laps (tyres and brakes coming up to
+    temperature): without them it is no longer clear."""
+    keep = (np.asarray(index) >= WARM_UP_LAPS) & np.isfinite(vals)
+    if keep.sum() < MIN_LAPS_FOR_TRENDS:
+        return False
+    rr = [runs[i] for i in np.flatnonzero(keep)]
+    c = corr(_within(vals[keep], rr), _within(np.asarray(times, float)[keep], rr))
+    return c is None or c["p"] > SIGNIFICANT_P or c["r"] * r <= 0
+
+
 def lap_time_relations(prep: Prepared, per_lap: dict[str, list[dict]], extras: Extras | None) -> list[dict]:
     """What goes with lap time across all the laps: the engine's lap measures and the car's state lap by lap
     (lap_correlations), and the other slow channels the logger recorded (the channel scan). Strongest first, each
@@ -500,6 +514,8 @@ def lap_time_relations(prep: Prepared, per_lap: dict[str, list[dict]], extras: E
         return []
     tyres = extras.tyres if extras else {}
     runs = [x.run for x in prep.laps]
+    times = np.array([x.time for x in prep.laps])
+    index = np.array([x.index_in_run for x in prep.laps])
     # lap_correlations reads the tyre state as each lap's median: hand it the medians the cache kept
     view = replace(prep, laps=[LapRecord(x.run, x.number, x.time, x.driver,
                                          {k: np.array([v]) for k, v in tyres.get(x.key, {}).items()},
@@ -525,6 +541,8 @@ def lap_time_relations(prep: Prepared, per_lap: dict[str, list[dict]], extras: E
             s = c["seconds_per_unit"]
             rel["text"] = (f"Lap times {'fell' if s < 0 else 'rose'} {abs(s):.2f} s a lap through a run, "
                            f"{rel['seconds']:.2f} s over the run: tyres and fuel load.")
+        elif within and _only_warm_up(vals, times, runs, index, c["r"]):
+            rel["warm_up"] = True  # only over each run's first laps, while the car warms up
         if key.startswith("tyre_"):  # one per axle for pressure and for temperature: the wheels move together
             group = key[:6] + ("front" if key[-2] == "f" else "rear")
             if group not in best_tyre or rel["p"] < best_tyre[group]["p"]:
@@ -545,9 +563,17 @@ def lap_time_relations(prep: Prepared, per_lap: dict[str, list[dict]], extras: E
         rel = _relation(name, f["unit"], vals.astype(float), scan_runs, f["seconds_per_unit"], f["r"],
                         int(np.isfinite(vals).sum()), f["p"], True, f"channel ({f['category']})", digits,
                         f.get("window"))
-        if rel is not None:
-            out.append(rel)
-    out.sort(key=lambda r: -abs(r["r"]))
+        if rel is None:
+            continue
+        scan_times = np.array([t for _, ts, _ in extras.scan for t in ts])
+        scan_index = np.array([i for _, ts, _ in extras.scan for i in range(len(ts))])
+        if _only_warm_up(vals.astype(float), scan_times, scan_runs, scan_index, f["r"]):
+            rel["warm_up"] = True  # only over each run's first laps, while the car warms up
+        out.append(rel)
+    # what holds once the car is warm first: that is what can be changed; then the strongest first
+    for rel in out:
+        rel.setdefault("warm_up", False)
+    out.sort(key=lambda r: (r["warm_up"], -abs(r["r"])))
     return out
 
 
@@ -631,7 +657,8 @@ def build_report(prep: Prepared, extras: Extras | None = None, corners: list | N
     spread = sorted(({"code": sec["code"], "spread_s": sec["spread_s"]} for sec in sections),
                     key=lambda r: -r["spread_s"])
 
-    summary = _summary(fastest, score, typical_lap, ideal, realistic.time, gains, where_total, len(laps))
+    summary = _summary(fastest, score, round(typical_lap, 3), round(ideal, 3), round(realistic.time, 3), gains,
+                       where_total, len(laps))  # the numbers as the screen shows them
     trace = _profiles(prep, sections, realistic)
     for sec in sections:
         del sec["_quick"], sec["_rows"]
@@ -668,7 +695,11 @@ def _summary(fastest: LapRecord, score: dict, typical: float, ideal: float, real
            f"{score['extraction']:.1f}% of the car's theoretical pace")
     if medal:
         out += f": a {medal} score"
-        out += f", {nxt['seconds_to_find']:.2f} s from {nxt['medal']}." if nxt else "."
+        if nxt:
+            gap = nxt["seconds_to_find"]
+            out += f", {gap:.2f} s from {nxt['medal']}." if gap >= 0.01 else f", on the edge of {nxt['medal']}."
+        else:
+            out += "."
     else:
         out += "."
     if ideal < fastest.time - 0.01:
@@ -704,5 +735,6 @@ METHOD = [
     "while turning (exit) and full throttle.",
     "What goes with lap time compares every clean lap's time with the engine's measures of the lap and with every "
     "slow channel the logger recorded, lap to lap within each run and across all laps. Only clear relationships "
-    "are kept; each is sized over the range of values seen.",
+    "are kept; each is sized over the range of values seen. One that is no longer clear once each run's first two "
+    "laps are left out is shown apart: it comes from the car warming up.",
 ]
