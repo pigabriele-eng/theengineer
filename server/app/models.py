@@ -233,3 +233,36 @@ class TyreData(Base):
     samples: Mapped[int] = mapped_column(Integer, default=0)
     summary: Mapped[dict | None] = mapped_column(JSON)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+# ---------- the report (routers/reports.py): caches, so a whole test is never read from its logs at once ----------
+
+class SessionTraces(Base):
+    """A session's clean laps reduced to compact traces (analysis/compact.py), kept in file storage. The report reads
+    these instead of the log. signature says what they were made from; when it no longer matches, they are made
+    again."""
+    __tablename__ = "session_traces"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # no foreign key: the row of a session that no longer exists is simply never read
+    session_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    signature: Mapped[str] = mapped_column(String(64))
+    path: Mapped[str | None] = mapped_column(String(512))  # storage key; None when the session has no clean lap
+    laps: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text)  # why the log couldn't be reduced
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ReportCache(Base):
+    """The last report worked out for an event or a session, and the progress of the one being worked out."""
+    __tablename__ = "report_cache"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scope: Mapped[str] = mapped_column(String(40), unique=True, index=True)  # "event:3" or "session:12"
+    signature: Mapped[str] = mapped_column(String(64))  # the inputs the work in progress (or last done) is for
+    status: Mapped[str] = mapped_column(String(16), default="queued")  # queued, running, done, failed
+    done: Mapped[int] = mapped_column(Integer, default=0)  # steps done: one per session, then the report itself
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    current: Mapped[str | None] = mapped_column(String(255))  # what it is doing now
+    error: Mapped[str | None] = mapped_column(Text)
+    result: Mapped[dict | None] = mapped_column(JSON)  # the last finished report, kept while a newer one is made
+    result_signature: Mapped[str | None] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)

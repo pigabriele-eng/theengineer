@@ -71,18 +71,26 @@ def lap_medians(ld: LdFile, laps: list[Lap]) -> dict[str, tuple[str, np.ndarray,
 
 def channel_scan(items: list[tuple[str, LdFile, list[Lap]]]) -> list[dict]:
     """Slow channels that move with lap time, strongest first, each with the range where laps were quickest."""
-    runs = np.array([run for run, _, laps in items for _ in laps])
-    times = np.array([l.time for _, _, laps in items for l in laps])
-    order = np.array([i for _, _, laps in items for i in range(len(laps))], float)
+    if sum(len(laps) for _, _, laps in items) < MIN_LAPS:
+        return []
+    return scan_medians([(run, [l.time for l in laps], lap_medians(ld, laps)) for run, ld, laps in items])
+
+
+def scan_medians(items: list[tuple[str, list[float], dict[str, tuple[str, np.ndarray, float]]]]) -> list[dict]:
+    """channel_scan from each run's lap times and lap_medians() of its log, worked out earlier: (run, lap times,
+    medians)."""
+    runs = np.array([run for run, times, _ in items for _ in times])
+    times = np.array([t for _, ts, _ in items for t in ts])
+    order = np.array([i for _, ts, _ in items for i in range(len(ts))], float)
     if len(times) < MIN_LAPS:
         return []
     stats: dict[str, list] = {}
-    for k, (_, ld, laps) in enumerate(items):
-        for name, (unit, med, sd) in lap_medians(ld, laps).items():
+    for k, (_, _, medians) in enumerate(items):
+        for name, (unit, med, sd) in medians.items():
             stats.setdefault(name, [unit, [None] * len(items), []])
             stats[name][1][k] = med
             stats[name][2].append(sd)
-    lengths = [len(laps) for _, _, laps in items]
+    lengths = [len(ts) for _, ts, _ in items]
     trend = _within(order, runs)
     y = _residual(_within(times, runs), trend)
     found: list[dict] = []

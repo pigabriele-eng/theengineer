@@ -195,9 +195,12 @@ def start() -> None:
     _wake.set()
 
 
-def stop() -> None:
+def stop(timeout: float = 60) -> None:
+    """Stop the job once the log in hand is done (on server shut-down, and between tests)."""
     _stop.set()
     _wake.set()
+    if _thread is not None and _thread is not threading.current_thread():
+        _thread.join(timeout)
 
 
 def _todo(db: Session) -> list[int]:

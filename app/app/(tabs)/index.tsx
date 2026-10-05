@@ -1,15 +1,17 @@
 import { Link, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { FlatList, Pressable, StyleSheet, TextInput } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import { Pressable, SectionList, StyleSheet, TextInput } from 'react-native';
 
 import { ImportLogs } from '@/components/ImportLogs';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { api, formatLap, Session, SessionKind } from '@/lib/api';
+import { EventInfo, fetchEvents, SessionInEvent } from '@/lib/report';
 
 const KINDS: SessionKind[] = ['test', 'practice', 'qualifying', 'race'];
 
 export default function SessionsScreen() {
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [events, setEvents] = useState<EventInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [kind, setKind] = useState<SessionKind>('test');
@@ -18,7 +20,9 @@ export default function SessionsScreen() {
 
   const load = useCallback(() => {
     api.sessions().then(setSessions, (e) => setError(e.message));
+    fetchEvents().then(setEvents, () => setEvents([]));
   }, []);
+  const groups = useMemo(() => groupByEvent(sessions as SessionInEvent[], events), [sessions, events]);
   useFocusEffect(load);
 
   const create = async () => {
@@ -54,15 +58,35 @@ export default function SessionsScreen() {
       </View>
       <ImportLogs onProgress={load} />
       {error && <Text style={styles.error}>Can't reach the server: {error}</Text>}
-      <FlatList
-        data={sessions}
+      <SectionList
+        sections={groups}
         keyExtractor={(s) => String(s.id)}
+        stickySectionHeadersEnabled={false}
         ListEmptyComponent={
           <Text style={styles.empty}>
             No sessions yet. Add one above and upload a logger file to it, or upload logs or a zip of a whole test: each
             log becomes a session.
           </Text>
         }
+        renderSectionHeader={({ section }) => (
+          <View style={styles.group}>
+            <View style={styles.rowText}>
+              <Text style={styles.groupTitle}>{section.title}</Text>
+              <Text style={styles.sub}>
+                {section.data.length} {section.data.length === 1 ? 'session' : 'sessions'}
+                {section.date ? ` · ${new Date(section.date).toLocaleDateString()}` : ''}
+              </Text>
+            </View>
+            {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
+            {section.eventId != null && section.data.some((x) => x.best_lap_s != null) && (
+              <Link href={{ pathname: '/report', params: { event: section.eventId } }} asChild>
+                <Pressable style={StyleSheet.flatten([styles.reportButton, { borderColor: tint }])}>
+                  <Text style={StyleSheet.flatten([styles.reportText, { color: tint }])}>Report</Text>
+                </Pressable>
+              </Link>
+            )}
+          </View>
+        )}
         renderItem={({ item }) => (
           <Link href={{ pathname: '/session/[id]', params: { id: item.id } }} asChild>
             <Pressable style={styles.row}>
@@ -83,6 +107,31 @@ export default function SessionsScreen() {
   );
 }
 
+type Group = { title: string; eventId: number | null; date: string | null; data: SessionInEvent[] };
+
+/** Sessions under their event (a test or a race weekend), the event with the newest session first; sessions of an
+ * event in name order, which is run order for an imported test. Sessions without an event come as one group. */
+function groupByEvent(sessions: SessionInEvent[], events: EventInfo[]): Group[] {
+  const byId = new Map(events.map((e) => [e.id, e]));
+  const groups = new Map<number | null, Group>();
+  for (const s of sessions) {
+    const id = s.event_id != null && byId.has(s.event_id) ? s.event_id : null;
+    if (!groups.has(id)) {
+      const ev = id != null ? byId.get(id)! : null;
+      groups.set(id, { title: ev ? ev.name : 'Sessions without an event', eventId: id, date: ev?.date ?? null,
+        data: [] });
+    }
+    groups.get(id)!.data.push(s);
+  }
+  const newest = (g: Group) => Math.max(...g.data.map((s) => Date.parse(s.created_at)));
+  for (const g of groups.values()) {
+    if (g.eventId != null) {
+      g.data.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '', undefined, { numeric: true }));
+    }
+  }
+  return [...groups.values()].sort((a, b) => newest(b) - newest(a));
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 16, gap: 12 },
   newRow: { flexDirection: 'row', gap: 8 },
@@ -98,4 +147,9 @@ const styles = StyleSheet.create({
   title: { fontSize: 16, fontWeight: '600' },
   sub: { opacity: 0.6, marginTop: 2 },
   time: { fontSize: 18, fontVariant: ['tabular-nums'] },
+  group: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingTop: 18, paddingBottom: 6,
+    borderBottomWidth: 1, borderColor: '#8884' },
+  groupTitle: { fontSize: 17, fontWeight: '700' },
+  reportButton: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 6 },
+  reportText: { fontWeight: '600' },
 });
