@@ -160,6 +160,14 @@ export default function ReportScreen() {
             These numbers are from before the sessions last changed; the new report replaces them when it is ready.
           </Text>
         )}
+        {hasLaps && (
+          <Link href={{ pathname: '/technique', params: 'event' in scope ? { event: scope.event }
+            : { session: scope.session } }} asChild>
+            <Pressable style={styles.smallButton}>
+              <Text style={styles.smallButtonText}>Technique check: each lap&apos;s mistakes against perfect driving</Text>
+            </Pressable>
+          </Link>
+        )}
 
         {/* The core report answers at once from the server's cache; the map and the other sections load themselves
             meanwhile (they take turns on the server's log lock), so nothing waits for anything else to paint. */}

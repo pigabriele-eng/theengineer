@@ -80,6 +80,13 @@ export default function SessionScreen() {
           </Pressable>
         </Link>
       )}
+      {session?.laps.some((l) => l.clean) && (
+        <Link href={{ pathname: '/technique', params: { session: sessionId } }} asChild>
+          <Pressable style={StyleSheet.flatten([styles.button, styles.outline, { borderColor: tint }])}>
+            <Text style={[styles.buttonText, { color: tint }]}>Technique check</Text>
+          </Pressable>
+        </Link>
+      )}
       {/* drawn from a clean lap; keyed so an upload that changes the laps redraws it */}
       {session?.laps.some((l) => l.clean) && <TrackMap key={`${session.files.length}-${best}`} session={sessionId} />}
 

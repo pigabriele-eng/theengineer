@@ -20,7 +20,12 @@ type Props = {
   session?: number; // draw this session's best clean lap
   event?: number; // or the event's fastest clean lap
   highlight?: string; // the section to emphasise: its code ("T2-T5") or an official corner inside it ("T3")
+  marks?: MapMark[]; // numbered points on the lap, such as a lap's mistakes
+  selectedMark?: number | null; // its stretch of the lap drawn over the track
+  marksLengthM?: number; // the lap length the marks' metres are measured on, when it isn't the map's own
 };
+
+export type MapMark = { n: number; at_m: number; from_m: number; to_m: number };
 
 // Chart chrome and ramps from the validated palette: neutral inks for the track and its sections, the blue
 // categorical slot for the emphasised section, the one-hue blue ramp for speed (slow near the surface).
@@ -121,7 +126,7 @@ function layout(map: TrackMapData, width: number) {
 /** The track drawn from a session's or an event's reference lap, with its corners and sections numbered as
  * the analysis numbers them, the start/finish line and the direction of travel. Tap or hover a section for
  * its distances; switch to speed to colour the lap by speed. */
-export function TrackMap({ session, event, highlight }: Props) {
+export function TrackMap({ session, event, highlight, marks, selectedMark, marksLengthM }: Props) {
   const [map, setMap] = useState<TrackMapData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [none, setNone] = useState(false);
@@ -150,6 +155,18 @@ export function TrackMap({ session, event, highlight }: Props) {
   }, [session, event]);
 
   const g = useMemo(() => (map && width > 0 ? layout(map, width) : null), [map, width]);
+  const pins = useMemo(() => {
+    if (!g || !map || !marks?.length) return [];
+    const n = g.pts.length;
+    const scale = marksLengthM ? map.length_m / marksLengthM : 1;
+    const at = (m: number) => Math.round((m * scale) / map.step_m);
+    const pt = (i: number) => g.pts[((i % n) + n) % n];
+    return marks.map((k) => {
+      const run: MapPoint[] = [];
+      for (let i = at(k.from_m); i <= Math.max(at(k.to_m), at(k.from_m) + 1); i++) run.push(pt(i));
+      return { ...k, p: pt(at(k.at_m)), d: line(run) };
+    }).sort((a, b) => b.n - a.n); // the costliest drawn last, on top
+  }, [g, map, marks, marksLengthM]);
 
   if (none) return null;
   if (error) return <Text style={styles.note}>The track map didn&apos;t load: {error}</Text>;
@@ -267,6 +284,20 @@ export function TrackMap({ session, event, highlight }: Props) {
               {g.labels.map((l) => (
                 <Circle key={`a-${l.code}`} cx={l.anchor.x} cy={l.anchor.y} r={3} fill={c.ink} stroke={surface}
                   strokeWidth={1.5} />
+              ))}
+              {pins.filter((k) => k.n === selectedMark).map((k) => (
+                <Path key={`r-${k.n}`} d={k.d} fill="none" stroke={c.ink} strokeWidth={g.z.strong}
+                  strokeLinejoin="round" strokeLinecap="round" />
+              ))}
+              {pins.map((k) => (
+                <G key={`p-${k.n}`}>
+                  <Circle cx={k.p.x} cy={k.p.y} r={k.n === selectedMark ? 10 : 8}
+                    fill={k.n === selectedMark ? c.ink : c.secondary} stroke={surface} strokeWidth={1.5} />
+                  <SvgText x={k.p.x} y={k.p.y + 3.5} fontSize={10} fontFamily={SANS} fontWeight="700"
+                    textAnchor="middle" fill={surface}>
+                    {String(k.n)}
+                  </SvgText>
+                </G>
               ))}
               {g.labels.map((l) => {
                 const strong = l.code === focus || !emphasised;
