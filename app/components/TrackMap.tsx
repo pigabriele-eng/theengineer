@@ -1,0 +1,352 @@
+import { useEffect, useMemo, useState } from 'react';
+import { LayoutChangeEvent, Platform, Pressable, StyleSheet } from 'react-native';
+import Svg, { Circle, G, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
+
+import { Text, View, useThemeColor } from '@/components/Themed';
+import { useColorScheme } from '@/components/useColorScheme';
+import { formatLap } from '@/lib/api';
+import {
+  Box,
+  fetchTrackMap,
+  fitTrack,
+  leaderEnd,
+  MapPoint,
+  NoTrackMap,
+  placeLabels,
+  TrackMapData,
+} from '@/lib/trackmap';
+
+type Props = {
+  session?: number; // draw this session's best clean lap
+  event?: number; // or the event's fastest clean lap
+  highlight?: string; // the section to emphasise: its code ("T2-T5") or an official corner inside it ("T3")
+};
+
+// Chart chrome and ramps from the validated palette: neutral inks for the track and its sections, the blue
+// categorical slot for the emphasised section, the one-hue blue ramp for speed (slow near the surface).
+const PALETTE = {
+  light: {
+    ink: '#0b0b0b',
+    secondary: '#52514e',
+    muted: '#898781',
+    casing: '#c3c2b7',
+    accent: '#2a78d6',
+    speed: ['#b7d3f6', '#86b6ef', '#5598e7', '#2a78d6', '#1c5cab', '#104281', '#0d366b'],
+  },
+  dark: {
+    ink: '#ffffff',
+    secondary: '#c3c2b7',
+    muted: '#898781',
+    casing: '#383835',
+    accent: '#3987e5',
+    speed: ['#184f95', '#256abf', '#3987e5', '#5598e7', '#86b6ef', '#9ec5f4', '#cde2fb'],
+  },
+};
+
+const PAD = 34; // room round the track for labels
+// label size, track stroke, emphasised stroke and chequer square (the start/finish tick is 2 squares along the
+// track and 4 across), px: a little larger on a wide screen
+const sizes = (width: number) =>
+  width >= 700 ? { font: 13, track: 7, strong: 10, check: 5 } : { font: 12, track: 5, strong: 8, check: 4 };
+// SVG text on the web falls back to a serif face; use the system sans like the rest of the app
+const SANS = Platform.select({ web: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' });
+
+type Mode = 'sections' | 'speed';
+
+const unit = (x: number, y: number) => {
+  const l = Math.hypot(x, y) || 1;
+  return { x: x / l, y: y / l };
+};
+const line = (pts: MapPoint[]) => pts.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join('');
+
+function layout(map: TrackMapData, width: number) {
+  const z = sizes(width);
+  const fit = fitTrack(map, width, Math.min(460, Math.max(280, width * 0.72)), PAD);
+  const { pts } = fit;
+  const n = pts.length;
+  const at = (m: number) => Math.min(Math.round(m / map.step_m), n);
+  const pt = (i: number) => pts[((i % n) + n) % n];
+  const tangent = (i: number) => unit(pt(i + 1).x - pt(i - 1).x, pt(i + 1).y - pt(i - 1).y);
+
+  const sections = map.sections.map((s, k) => {
+    const i0 = at(s.start_m);
+    const i1 = k === map.sections.length - 1 ? n : Math.max(at(s.end_m), i0 + 1); // the last one closes the loop
+    const run: MapPoint[] = [];
+    for (let i = i0; i <= i1; i++) run.push(pt(i));
+    return { ...s, i0, i1, d: line(run) };
+  });
+  const boundaries = sections.slice(1).map((s) => ({ p: pt(s.i0), t: tangent(s.i0) }));
+
+  // start/finish: the line across the track at the first point, the arrow beside it on the outside
+  const s0 = pts[0];
+  const dir = unit(map.start.dx, -map.start.dy); // screen y runs down
+  const cx = pts.reduce((a, p) => a + p.x, 0) / n, cy = pts.reduce((a, p) => a + p.y, 0) / n;
+  let side = { x: -dir.y, y: dir.x };
+  if ((s0.x - cx) * side.x + (s0.y - cy) * side.y < 0) side = { x: -side.x, y: -side.y };
+  const a0 = { x: s0.x + side.x * 15 + dir.x * 3, y: s0.y + side.y * 15 + dir.y * 3 };
+  const a1 = { x: a0.x + dir.x * 20, y: a0.y + dir.y * 20 };
+  const head = (turn: number) => ({
+    x: a1.x - 6 * (dir.x * Math.cos(turn) - dir.y * Math.sin(turn)),
+    y: a1.y - 6 * (dir.x * Math.sin(turn) + dir.y * Math.cos(turn)),
+  });
+  const arrow = `M${a0.x.toFixed(1)},${a0.y.toFixed(1)}L${a1.x.toFixed(1)},${a1.y.toFixed(1)}` +
+    `M${head(0.5).x.toFixed(1)},${head(0.5).y.toFixed(1)}L${a1.x.toFixed(1)},${a1.y.toFixed(1)}` +
+    `L${head(-0.5).x.toFixed(1)},${head(-0.5).y.toFixed(1)}`;
+  const box = (ps: MapPoint[], m: number): Box => {
+    const xs = ps.map((p) => p.x), ys = ps.map((p) => p.y);
+    return { x: Math.min(...xs) - m, y: Math.min(...ys) - m, w: Math.max(...xs) - Math.min(...xs) + 2 * m,
+      h: Math.max(...ys) - Math.min(...ys) + 2 * m };
+  };
+  const obstacles = [box([s0], 2.5 * z.check), box([a0, a1, head(0.5), head(-0.5)], 2)];
+
+  const anchors = map.sections.filter((s) => s.apex).map((s) => ({ code: s.code, anchor: fit.px(s.apex!) }));
+  const labels = placeLabels(anchors, pts, fit, { fontSize: z.font, clearance: z.strong / 2 + 3, obstacles });
+
+  // speed: the lap cut into runs of one colour, each run sharing its end point with the next
+  const lo = Math.min(...map.speed), hi = Math.max(...map.speed);
+  const bin = (v: number) => Math.min(6, Math.max(0, Math.floor(((v - lo) / (hi - lo || 1)) * 7)));
+  const runs: { bin: number; d: string }[] = [];
+  let start = 0;
+  for (let i = 1; i <= n; i++) {
+    if (i === n || bin(map.speed[i]) !== bin(map.speed[start])) {
+      const run: MapPoint[] = [];
+      for (let j = start; j <= i; j++) run.push(pt(j));
+      runs.push({ bin: bin(map.speed[start]), d: line(run) });
+      start = i;
+    }
+  }
+  return { ...fit, z, sections, boundaries, labels, s0, dir, arrow, runs, lo, hi, loop: line([...pts, pts[0]]) };
+}
+
+/** The track drawn from a session's or an event's reference lap, with its corners and sections numbered as
+ * the analysis numbers them, the start/finish line and the direction of travel. Tap or hover a section for
+ * its distances; switch to speed to colour the lap by speed. */
+export function TrackMap({ session, event, highlight }: Props) {
+  const [map, setMap] = useState<TrackMapData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [none, setNone] = useState(false);
+  const [mode, setMode] = useState<Mode>('sections');
+  const [width, setWidth] = useState(0);
+  const [active, setActive] = useState<string | null>(null);
+  const c = PALETTE[useColorScheme() === 'dark' ? 'dark' : 'light'];
+  const surface = useThemeColor({}, 'background');
+
+  useEffect(() => {
+    let live = true;
+    setMap(null);
+    setError(null);
+    setNone(false);
+    if (session == null && event == null) return;
+    fetchTrackMap({ session, event })
+      .then((m) => live && setMap(m))
+      .catch((e: Error) => {
+        if (!live) return;
+        if (e instanceof NoTrackMap) setNone(true);
+        else setError(e.message);
+      });
+    return () => {
+      live = false;
+    };
+  }, [session, event]);
+
+  const g = useMemo(() => (map && width > 0 ? layout(map, width) : null), [map, width]);
+
+  if (none) return null;
+  if (error) return <Text style={styles.note}>The track map didn&apos;t load: {error}</Text>;
+
+  // the section to emphasise: named as the analysis names it, or by one of the official corners inside it
+  const emphasised = (highlight && (map?.sections.find((s) => s.code === highlight) ??
+    map?.sections.find((s) => s.corners.includes(highlight)))?.code) || null;
+  const focus = active ?? emphasised;
+  const sectionAt = (x: number, y: number) => {
+    if (!g || !map) return null;
+    let best = -1, dist = 22;
+    g.pts.forEach((p, i) => {
+      const d = Math.hypot(p.x - x, p.y - y);
+      if (d < dist) [dist, best] = [d, i];
+    });
+    if (best < 0) return null;
+    const m = best * map.step_m;
+    return map.sections.find((s) => m >= s.start_m && m < s.end_m)?.code ?? map.sections[map.sections.length - 1].code;
+  };
+  const hover = Platform.OS === 'web'
+    ? {
+        onMouseMove: (e: any) => setActive(sectionAt(e.nativeEvent.offsetX ?? e.nativeEvent.locationX,
+          e.nativeEvent.offsetY ?? e.nativeEvent.locationY)),
+        onMouseLeave: () => setActive(null),
+      }
+    : {};
+
+  const detail = (() => {
+    const s = map?.sections.find((x) => x.code === focus);
+    if (!s) return null;
+    const parts = [s.code, `${Math.round(s.start_m)}–${Math.round(s.end_m)} m`];
+    if (s.time != null) parts.push(`${s.time.toFixed(2)} s`);
+    if (s.min_speed != null) parts.push(`min ${s.min_speed.toFixed(1)} km/h`);
+    return parts.join(' · ');
+  })();
+
+  const tone = (k: number, code: string) => {
+    if (code === emphasised) return c.accent;
+    return k % 2 ? c.muted : c.secondary;
+  };
+  const caption = map
+    ? `Drawn from ${event != null && map.session_name ? `${map.session_name}, ` : ''}lap ${map.reference_lap} ` +
+      `(${formatLap(map.lap_time)})${event != null ? ', the fastest of the event' : ''} · ${map.length_m} m · ` +
+      `runs ${map.clockwise ? 'clockwise' : 'anticlockwise'}`
+    : '';
+
+  return (
+    <View style={styles.wrap}>
+      <View style={styles.head}>
+        <Text style={styles.title}>Track map</Text>
+        <View style={styles.toggle}>
+          {(['sections', 'speed'] as Mode[]).map((m) => (
+            <Pressable
+              key={m}
+              accessibilityRole="button"
+              accessibilityState={{ selected: mode === m }}
+              onPress={() => setMode(m)}
+              style={StyleSheet.flatten([styles.toggleItem, { borderColor: mode === m ? c.ink : c.casing }])}>
+              <Text style={[styles.toggleText, { opacity: mode === m ? 1 : 0.6 }]}>
+                {m === 'sections' ? 'Sections' : 'Speed'}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      </View>
+      <View onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)} {...hover}>
+        {!g && <Text style={styles.note}>Loading the track map…</Text>}
+        {g && map && (
+          <Pressable
+            onPress={(e: any) => {
+              const code = sectionAt(e.nativeEvent.locationX ?? e.nativeEvent.offsetX,
+                e.nativeEvent.locationY ?? e.nativeEvent.offsetY);
+              setActive(code); // a tap off the track clears it
+            }}>
+            <Svg width={g.width} height={g.height} pointerEvents="none"
+              accessibilityLabel={`Track map from lap ${map.reference_lap}: ${map.sections.map((s) => s.code).join(', ')}`}>
+              {mode === 'speed' ? (
+                <>
+                  <Path d={g.loop} stroke={c.casing} strokeWidth={g.z.track + 3} fill="none" strokeLinejoin="round" />
+                  {g.sections.filter((s) => s.code === emphasised || s.code === active).map((s) => (
+                    // an ink edge: the blue of the speed ramp would hide a blue one
+                    <Path key={s.code} d={s.d} stroke={s.code === emphasised ? c.ink : c.muted} fill="none"
+                      strokeWidth={g.z.track + 6} strokeLinejoin="round" />
+                  ))}
+                  {g.runs.map((r, i) => (
+                    <Path key={i} d={r.d} stroke={c.speed[r.bin]} strokeWidth={g.z.track} fill="none"
+                      strokeLinejoin="round" />
+                  ))}
+                  {g.boundaries.map((b, i) => (
+                    <Line key={i} x1={b.p.x - b.t.y * 7} y1={b.p.y + b.t.x * 7} x2={b.p.x + b.t.y * 7}
+                      y2={b.p.y - b.t.x * 7} stroke={c.muted} strokeWidth={1.5} />
+                  ))}
+                </>
+              ) : (
+                <>
+                  {g.sections.map((s, k) => (
+                    <Path key={s.code} d={s.d} fill="none" strokeLinejoin="round"
+                      stroke={tone(k, s.code)}
+                      strokeOpacity={emphasised && s.code !== emphasised ? 0.55 : 1}
+                      strokeWidth={s.code === emphasised || s.code === active ? g.z.strong : g.z.track} />
+                  ))}
+                  {g.boundaries.map((b, i) => (
+                    <Line key={i} x1={b.p.x - b.t.y * 6} y1={b.p.y + b.t.x * 6} x2={b.p.x + b.t.y * 6}
+                      y2={b.p.y - b.t.x * 6} stroke={surface} strokeWidth={2} />
+                  ))}
+                </>
+              )}
+              {g.labels.map((l) => {
+                const end = leaderEnd(l);
+                return l.leader ? (
+                  <Line key={`l-${l.code}`} x1={l.anchor.x} y1={l.anchor.y} x2={end.x} y2={end.y}
+                    stroke={c.muted} strokeWidth={1} />
+                ) : null;
+              })}
+              {g.labels.map((l) => (
+                <Circle key={`a-${l.code}`} cx={l.anchor.x} cy={l.anchor.y} r={3} fill={c.ink} stroke={surface}
+                  strokeWidth={1.5} />
+              ))}
+              {g.labels.map((l) => {
+                const strong = l.code === focus || !emphasised;
+                return (
+                  <SvgText key={`t-${l.code}`} x={l.box.x + l.box.w / 2} y={l.box.y + g.z.font} fontSize={g.z.font}
+                    fontFamily={SANS} fontWeight="700" textAnchor="middle" fill={strong ? c.ink : c.secondary}>
+                    {l.code}
+                  </SvgText>
+                );
+              })}
+              <G transform={`translate(${g.s0.x.toFixed(1)} ${g.s0.y.toFixed(1)}) rotate(${(
+                (Math.atan2(g.dir.y, g.dir.x) * 180) / Math.PI).toFixed(1)})`}>
+                <Chequer x={-g.z.check} y={-2 * g.z.check} size={g.z.check} ink={c.ink} paper={surface} />
+              </G>
+              <Path d={g.arrow} stroke={c.ink} strokeWidth={1.5} fill="none" strokeLinecap="round"
+                strokeLinejoin="round" />
+            </Svg>
+          </Pressable>
+        )}
+      </View>
+      {g && map && (
+        <>
+          {mode === 'speed' ? (
+            <View style={styles.legend}>
+              <Text style={styles.small}>{Math.round(g.lo)}</Text>
+              <View style={styles.ramp}>
+                {c.speed.map((col) => (
+                  <View key={col} style={[styles.rampStep, { backgroundColor: col }]} />
+                ))}
+              </View>
+              <Text style={styles.small}>{Math.round(g.hi)} km/h</Text>
+            </View>
+          ) : null}
+          <Text style={styles.detail}>
+            {detail ?? `${Platform.OS === 'web' ? 'Hover or tap' : 'Tap'} a section for where it starts and ends.`}
+          </Text>
+          <View style={styles.legend}>
+            <Svg width={12} height={18}>
+              <Chequer x={1.5} y={1} size={4} ink={c.ink} paper={surface} />
+            </Svg>
+            <Text style={styles.small}>Start/finish</Text>
+            <Svg width={18} height={14}>
+              <Path d="M2,7L15,7M11,4L15,7L11,10" stroke={c.ink} strokeWidth={1.5} fill="none" strokeLinecap="round"
+                strokeLinejoin="round" />
+            </Svg>
+            <Text style={styles.small}>Direction of travel</Text>
+          </View>
+          <Text style={styles.small}>{caption}</Text>
+        </>
+      )}
+    </View>
+  );
+}
+
+/** A chequered tick, 2 squares by 4 with a hairline edge, top left at x, y (along the track is x). */
+function Chequer({ x, y, size, ink, paper }: { x: number; y: number; size: number; ink: string; paper: string }) {
+  return (
+    <G>
+      {[0, 1].map((col) =>
+        [0, 1, 2, 3].map((row) => (
+          <Rect key={`${col}${row}`} x={x + col * size} y={y + row * size} width={size} height={size}
+            fill={(col + row) % 2 === 0 ? ink : paper} />
+        )),
+      )}
+      <Rect x={x} y={y} width={2 * size} height={4 * size} fill="none" stroke={ink} strokeWidth={1} />
+    </G>
+  );
+}
+
+const styles = StyleSheet.create({
+  wrap: { gap: 6 },
+  head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
+  title: { fontSize: 13, fontWeight: '600', opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 },
+  toggle: { flexDirection: 'row', gap: 6 },
+  toggleItem: { borderWidth: 1, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
+  toggleText: { fontSize: 13, fontWeight: '600' },
+  legend: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  ramp: { flexDirection: 'row', gap: 1 },
+  rampStep: { width: 16, height: 8 },
+  detail: { fontSize: 14, fontVariant: ['tabular-nums'] },
+  small: { fontSize: 12, opacity: 0.6, fontVariant: ['tabular-nums'] },
+  note: { fontSize: 12, opacity: 0.6 },
+});
