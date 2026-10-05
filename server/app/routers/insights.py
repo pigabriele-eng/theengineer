@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.analysis.compare import compare_groups
-from app.analysis.insights import RunInput, analyze_runs
+from app.analysis.insights import CornerSpec, RunInput, analyze_runs
 from app.analysis.laps import load_session
 from app.db import get_db
 from app.debrief.check import check_debrief
@@ -30,11 +30,11 @@ def _run(db: Session, s: models.RunSession, name: str | None = None) -> tuple[Ru
     return run, track
 
 
-def _corners(track: models.Track | None) -> list[tuple[str, float]] | None:
+def _corners(track: models.Track | None) -> list[CornerSpec] | None:
     """The track's official corner numbers, where their position on the lap is known."""
     if track is None:
         return None
-    known = [(c.code, c.apex_m) for c in track.corners if c.apex_m is not None]
+    known = [(c.code, c.apex_m, c.sector) for c in track.corners if c.apex_m is not None]
     return known or None
 
 

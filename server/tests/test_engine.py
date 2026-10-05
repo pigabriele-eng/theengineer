@@ -207,3 +207,27 @@ def test_engine_endpoints(client):
     assert [p["claim"] for p in check["points"]] == ["understeer", None]
     assert check["points"][0]["section"] == "T1"
     assert check["points"][1]["verdict"] == "cannot check"
+
+
+def test_corners_in_one_sector_are_one_section():
+    # T2-T4 slow complex at 300, T5 a flat kink at 520; the track times T2 to T5 as one sector
+    d = np.arange(1000)
+    ref = {"speed": 150 - 100 * np.exp(-((d - 300) / 45.0) ** 2) - 80 * np.exp(-((d - 700) / 45.0) ** 2)}
+    corners = [("T1", 100, None), ("T2", 280, "T2-T5"), ("T3", 300, "T2-T5"), ("T4", 320, "T2-T5"),
+               ("T5", 520, "T2-T5"), ("T6", 700, None)]
+    apart, _ = make_sections(ref, [c[:2] for c in corners])
+    assert [s.code for s in apart] == ["T1", "T2-T4", "T5", "T6"]
+    secs, numbering = make_sections(ref, corners)
+    assert numbering == "official"
+    assert [s.code for s in secs] == ["T1", "T2-T5", "T6"]
+    joined = secs[1]
+    assert (joined.start, joined.end) == (apart[1].start, apart[2].end) and joined.apex == 300
+    assert secs[0].end == joined.start and joined.end == secs[2].start
+
+
+def test_known_track_gets_its_corners(client):
+    t = client.post("/tracks", json={"name": "Hockenheimring"}).json()
+    sectors = {c["code"]: c["sector"] for c in t["corners"]}
+    assert len(t["corners"]) == 17 and sectors["T2"] == sectors["T5"] == "T2-T5" and sectors["T6"] is None
+    t = client.put(f"/tracks/{t['id']}/corners", json=[{"code": "T1", "apex_m": 280}]).json()
+    assert [c["code"] for c in t["corners"]] == ["T1"]

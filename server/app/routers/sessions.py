@@ -10,6 +10,7 @@ from app import models, schemas
 from app.analysis.laps import SessionData, TimingLine, analyze, compare_laps, load_session
 from app.db import STORAGE_DIR, get_db
 from app.importers.motec import LdFile, LdFormatError, read_ld, read_ldx_beacons
+from app.known_tracks import fill_corners
 
 router = APIRouter(prefix="/sessions")
 
@@ -143,6 +144,7 @@ def _track_for(db: Session, s: models.RunSession, ld: LdFile) -> models.Track | 
     track = db.scalar(select(models.Track).where(models.Track.name == ld.venue))
     if track is None:
         track = models.Track(name=ld.venue)
+        fill_corners(track)
         db.add(track)
         db.flush()
     return track
