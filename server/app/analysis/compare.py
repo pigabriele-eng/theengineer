@@ -69,10 +69,10 @@ def fingerprint(laps: list[LapRecord], prep: Prepared) -> dict:
 
 
 def compare_groups(runs: list[RunInput], group_of: dict[str, str], labels: dict[str, str] | None = None,
-                   corners: list[CornerSpec] | None = None) -> dict:
+                   corners: list[CornerSpec] | None = None, *, drop_channels: bool = False) -> dict:
     """group_of maps each run name to "a" or "b"; labels names the two groups (driver names)."""
     labels = labels or {"a": "A", "b": "B"}
-    prep = prepare(runs, corners)
+    prep = prepare(runs, corners, drop_channels=drop_channels)
     if prep is None:
         return {"error": "Each side needs at least one clean lap", "sections": []}
     groups = {g: [x for x in prep.laps if group_of.get(x.run) == g] for g in ("a", "b")}

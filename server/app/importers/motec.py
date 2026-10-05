@@ -6,6 +6,7 @@ doubly linked list of channel headers that point at raw sample arrays.
 """
 from __future__ import annotations
 
+import mmap
 import struct
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,7 +34,7 @@ class Channel:
     unit: str
     freq: int
     count: int
-    _buf: bytes = field(repr=False)
+    _buf: bytes | mmap.mmap = field(repr=False)
     _offset: int = field(repr=False)
     _dtype: type | None = field(repr=False)
     _shift: int = field(repr=False)
@@ -93,8 +94,18 @@ class LdFormatError(ValueError):
     pass
 
 
+def _map(path: Path) -> bytes | mmap.mmap:
+    """The file mapped into memory rather than read: only the channels used are paged in, and those pages can
+    be dropped again under memory pressure (a log is often 50-100 MB)."""
+    with path.open("rb") as f:
+        try:
+            return mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+        except ValueError:  # an empty file can't be mapped
+            return b""
+
+
 def read_ld(source: bytes | str | Path) -> LdFile:
-    buf = source if isinstance(source, bytes) else Path(source).read_bytes()
+    buf = source if isinstance(source, bytes) else _map(Path(source))
     if len(buf) < HEADER.size:
         raise LdFormatError("File is too short to be a MoTeC .ld log")
     h = HEADER.unpack_from(buf, 0)

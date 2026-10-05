@@ -81,4 +81,4 @@ def create_event(body: schemas.EventIn, db: Session = Depends(get_db)):
 
 @router.get("/events", response_model=list[schemas.EventOut])
 def list_events(db: Session = Depends(get_db)):
-    return db.scalars(select(models.Event).order_by(models.Event.date.desc())).all()
+    return db.scalars(select(models.Event).order_by(models.Event.date.desc().nulls_last())).all()

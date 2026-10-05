@@ -83,11 +83,18 @@ class Prepared:
 
 # ---------- preparation ----------
 
-def prepare(runs: list[RunInput], corners: list[CornerSpec] | None = None) -> Prepared | None:
-    """Traces on one line for every clean lap, the car's limits and the theoretical lap."""
-    for r in runs:
-        if "phase" not in r.data.channels:
-            math_channels(r.data)
+def prepare(runs: list[RunInput], corners: list[CornerSpec] | None = None, *,
+            drop_channels: bool = False) -> Prepared | None:
+    """Traces on one line for every clean lap, the car's limits and the theoretical lap.
+
+    drop_channels is for callers that are done with the runs' full-rate channels once their laps are traced: each
+    run's channels (about 100 MB for an hour of logging) are dropped as soon as its laps are, so several long
+    sessions fit in memory together. The runs keep their laps and log.
+    """
+    if not drop_channels:
+        for r in runs:
+            if "phase" not in r.data.channels:
+                math_channels(r.data)
     clean = [(r, l) for r in runs for l in r.data.laps if l.clean]
     if not clean:
         return None
@@ -96,9 +103,13 @@ def prepare(runs: list[RunInput], corners: list[CornerSpec] | None = None) -> Pr
     length = line.length if line is not None else round(lap_length(ref_run.data, ref_lap))
     laps = []
     for r in runs:
+        if "phase" not in r.data.channels:
+            math_channels(r.data)
         for i, l in enumerate(x for x in r.data.laps if x.clean):
             tr = aligned_trace(r.data, l, line, length)
             laps.append(LapRecord(r.name, l.number, l.time, r.driver, tr, i))
+        if drop_channels:
+            r.data.channels = {}
     reference = next(x for x in laps if x.run == ref_run.name and x.number == ref_lap.number)
     limits = car_limits([x.trace for x in _limit_laps(laps)])
     sim = _closed_sim(reference.trace["curvature"], limits)
@@ -597,8 +608,9 @@ def _r(v, nd=3):
     return None if v is None else round(v, nd)
 
 
-def analyze_runs(runs: list[RunInput], corners: list[CornerSpec] | None = None) -> dict:
-    prep = prepare(runs, corners)
+def analyze_runs(runs: list[RunInput], corners: list[CornerSpec] | None = None, *,
+                 drop_channels: bool = False) -> dict:
+    prep = prepare(runs, corners, drop_channels=drop_channels)
     if prep is None:
         return {"laps": [], "sections": []}
     laps, sim = prep.laps, prep.sim

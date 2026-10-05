@@ -11,6 +11,7 @@ dependencies = [
   "numpy>=1.26",
   "anthropic>=1.11",
   "httpx>=0.27",
+  "psycopg[binary]>=3.2",  # Postgres (Supabase) when DATABASE_URL points at one
 ]
 
 [project.optional-dependencies]

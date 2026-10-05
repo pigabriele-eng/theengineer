@@ -242,9 +242,10 @@ def _tyres(claim: Claim, prep: Prepared) -> dict:
             "suggestion": SUGGEST[("tyre_drop", None)]}
 
 
-def check_debrief(points: list[dict], runs: list[RunInput], corners: list[CornerSpec] | None = None) -> dict:
+def check_debrief(points: list[dict], runs: list[RunInput], corners: list[CornerSpec] | None = None, *,
+                  drop_channels: bool = False) -> dict:
     """points: [{"id", "text", "corner_code", "phase"}]. Returns a verdict per point."""
-    prep = prepare(runs, corners)
+    prep = prepare(runs, corners, drop_channels=drop_channels)
     if prep is None:
         return {"points": [], "error": "No clean laps in this session to check against"}
     per = {s.code: [section_metrics(x, s, prep.limits, prep.sim) for x in prep.laps] for s in prep.sections}
