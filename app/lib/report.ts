@@ -126,6 +126,7 @@ export type Report = {
   };
   method: string[];
   corners: { code: string; at_m: number }[];
+  laps_left_out?: number; // a long event is worked out from its quickest laps only
 };
 
 export type ReportStatus = 'ready' | 'queued' | 'running' | 'failed' | 'empty';

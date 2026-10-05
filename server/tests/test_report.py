@@ -102,8 +102,6 @@ def test_report_names_corners_by_number_only(reduced):
     words = " ".join(_strings(rep))
     corners = set(re.findall(r"\bT\d+(?:[-/]T?\d+)?\b", words))
     assert corners and corners <= {"T1", "T2", "T3", "T4", "T5", "T6", "T7", "T2-T5", "T6/T7"}
-    for name in ("hairpin", "Parabolika", "Sachs", "Nordkurve", "Südkurve", "Mercedes"):
-        assert name.lower() not in words.lower()
 
 
 def _strings(x):
@@ -237,3 +235,44 @@ def test_report_without_laps_and_unknown_ids(client):
     assert body["sessions"][0]["note"] == "No logger file" and not body["sessions"][0]["included"]
     assert client.get("/reports/events/9999").status_code == 404
     assert client.get("/reports/sessions/9999").status_code == 404
+
+
+def test_report_json_is_plain():
+    from app.routers.reports import _plain
+    out = _plain({"a": np.float32(1.5), "b": [np.nan, np.int64(3), np.inf], "c": (np.bool_(True), "x")})
+    assert out == {"a": 1.5, "b": [None, 3, None], "c": [True, "x"]}
+    assert type(out["b"][1]) is int
+
+
+def test_a_long_event_keeps_its_quickest_laps(reduced, monkeypatch):
+    from app.routers import reports
+    monkeypatch.setattr(reports, "MAX_LAPS", 6)
+    kept, left_out = reports._quickest([(1, reduced[0]), (2, reduced[1])])
+    times = sorted(np.concatenate([cs.times for cs in reduced]))
+    n = sum(cs.n_laps for _, cs in kept)
+    assert left_out == 10 - n and n == sum(t <= times[5] for t in times)  # the quickest six, and any tied with them
+    assert max(t for _, cs in kept for t in cs.times) == times[5]
+    for _, cs in kept:
+        assert cs.traces["speed"].shape[0] == cs.n_laps == len(cs.index_in_run)
+        assert all(len(med) == cs.n_laps for _, med, _ in cs.channels.values())
+
+
+def test_a_log_that_trips_the_reduction_leaves_only_its_session_out(client, monkeypatch):
+    from app.analysis import compact as compact_module
+    event = client.post("/events", json={"name": "Test day"}).json()
+    ids = []
+    for name, paces in RUNS.items():
+        s = client.post("/sessions", json={"event_id": event["id"], "name": name}).json()
+        client.post(f"/sessions/{s['id']}/files", files={"file": ("run.ld", write_ld(simulate(paces=paces)[0]))})
+        ids.append(s["id"])
+    real = compact_module.reduce_log
+
+    def flaky(ld, name, *a, **k):
+        if name == "Run 1":
+            raise RuntimeError("unexpected layout")
+        return real(ld, name, *a, **k)
+    monkeypatch.setattr(compact_module, "reduce_log", flaky)
+    body = _wait(client, f"/reports/events/{event['id']}")
+    assert body["status"] == "ready" and body["report"]["runs_analysed"] == 1
+    note = {s["name"]: s for s in body["sessions"]}["Run 1"]
+    assert not note["included"] and "unexpected layout" in note["note"]

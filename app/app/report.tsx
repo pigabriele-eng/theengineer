@@ -149,6 +149,12 @@ export default function ReportScreen() {
             they are imported.
           </Text>
         )}
+        {report && (report.laps_left_out ?? 0) > 0 && (
+          <Text style={styles.note}>
+            Worked out from the {report.laps_analysed} quickest clean laps; the {report.laps_left_out} slower ones are
+            left out to keep within the server&apos;s memory.
+          </Text>
+        )}
         {answer?.stale && report && (
           <Text style={styles.note}>
             These numbers are from before the sessions last changed; the new report replaces them when it is ready.

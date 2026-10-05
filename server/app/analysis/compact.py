@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import io
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -135,6 +135,13 @@ def reduce_log(ld: LdFile, name: str, channel_map: dict | None = None, beacons: 
     if cs.n_laps:
         cs.channels = channel_medians(ld, clean)
     return cs
+
+
+def keep_laps(cs: CompactSession, keep: np.ndarray) -> CompactSession:
+    """The session with only the laps marked in keep (each keeps its place in the run)."""
+    return replace(cs, numbers=cs.numbers[keep], times=cs.times[keep], index_in_run=cs.index_in_run[keep],
+                   traces={k: v[keep] for k, v in cs.traces.items()}, tyres={k: v[keep] for k, v in cs.tyres.items()},
+                   channels={k: (unit, med[keep], sd) for k, (unit, med, sd) in cs.channels.items()})
 
 
 # ---------- storage ----------

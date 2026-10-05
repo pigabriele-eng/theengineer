@@ -15,20 +15,22 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import queue
 import threading
 import time
 from dataclasses import dataclass, field
 
+import numpy as np
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import heavy, models, storage
 from app.analysis import compact
 from app.analysis.advice import build_report
 from app.db import SessionLocal, get_db
-from app.importers.motec import LdFormatError
 from app.routers.sessions import _channel_map, _line, official_corners, read_file
 
 router = APIRouter(prefix="/reports")
@@ -37,6 +39,7 @@ log = logging.getLogger(__name__)
 REPORT_VERSION = 1  # raise when the advice changes, so every kept report is worked out again
 TRACES_VERSION = compact.FORMAT  # raise (in compact.py) when the reduction changes
 IMPORT_WAIT_S = 1800  # longest the report waits for an import that is reading logs
+MAX_LAPS = 250  # the quickest laps of an event the report works from, to keep within the server's memory
 
 _jobs: queue.Queue[str] = queue.Queue()
 _pending: set[str] = set()  # scopes queued or being worked on in this process
@@ -185,12 +188,18 @@ def report_for(db: Session, kind: str, id_: int) -> dict:
 
 
 def _queue(db: Session, plan: Plan, row: models.ReportCache | None) -> models.ReportCache:
-    if row is None:
-        row = models.ReportCache(scope=plan.scope)
-        db.add(row)
-    row.signature, row.status, row.error = plan.signature, "queued", None
-    row.done, row.total, row.current = 0, len(_used(plan)) + 1, "Waiting to start"
-    db.commit()
+    for _ in range(2):
+        if row is None:
+            row = models.ReportCache(scope=plan.scope)
+            db.add(row)
+        row.signature, row.status, row.error = plan.signature, "queued", None
+        row.done, row.total, row.current = 0, len(_used(plan)) + 1, "Waiting to start"
+        try:
+            db.commit()
+            break
+        except IntegrityError:  # another request made the row a moment ago: use that one
+            db.rollback()
+            row = db.scalar(select(models.ReportCache).where(models.ReportCache.scope == plan.scope))
     schedule(plan.scope)
     return row
 
@@ -362,8 +371,11 @@ def ensure_traces(db: Session, item: Item, track: models.Track | None) -> models
                 rec.path = storage.save(compact.to_bytes(cs), ".npz")
                 rec.laps = cs.n_laps
             del cs
-        except (FileNotFoundError, LdFormatError, ValueError, storage.StorageError) as e:
+        except (FileNotFoundError, ValueError, storage.StorageError) as e:  # missing, or not a log it can read
             rec.error = f"Its log couldn't be read: {e}"
+        except Exception as e:  # one log that trips the reduction leaves that session out, not the whole report
+            log.exception("Reducing session %s failed", item.session.id)
+            rec.error = f"Its log couldn't be analysed: {e}"
         finally:
             heavy.release_memory()
     db.commit()
@@ -397,6 +409,7 @@ def compute(db: Session, plan: Plan) -> dict:
             sessions.append((item.session.id, cs))
     if not sessions:
         raise ReportError("No clean laps to analyse")
+    sessions, left_out = _quickest(sessions)
     prepared = compact.prepare_compact(sessions, corners)
     del sessions
     if prepared is None:
@@ -404,4 +417,32 @@ def compute(db: Session, plan: Plan) -> dict:
     prep, extras = prepared
     out = build_report(prep, extras, corners)
     out["corners"] = [{"code": c[0], "at_m": c[1]} for c in corners or []]
-    return out
+    out["laps_left_out"] = left_out
+    return _plain(out)
+
+
+def _quickest(sessions: list[tuple[int, compact.CompactSession]]) -> tuple[list, int]:
+    """At most MAX_LAPS laps, the quickest of all, so a long event fits in memory: each lap on the reference line
+    takes about 0.7 MB while the report is worked out."""
+    times = np.sort(np.concatenate([cs.times for _, cs in sessions]))
+    if len(times) <= MAX_LAPS:
+        return sessions, 0
+    limit = times[MAX_LAPS - 1]
+    kept = [(sid, compact.keep_laps(cs, cs.times <= limit)) for sid, cs in sessions]
+    kept = [(sid, cs) for sid, cs in kept if cs.n_laps]
+    return kept, len(times) - sum(cs.n_laps for _, cs in kept)
+
+
+def _plain(x):
+    """JSON that Postgres and the API both take: plain numbers, and no NaN or infinity (None instead)."""
+    if isinstance(x, dict):
+        return {str(k): _plain(v) for k, v in x.items()}
+    if isinstance(x, list | tuple):
+        return [_plain(v) for v in x]
+    if isinstance(x, bool | np.bool_):
+        return bool(x)
+    if isinstance(x, int | np.integer):
+        return int(x)
+    if isinstance(x, float | np.floating):
+        return float(x) if math.isfinite(x) else None
+    return x
