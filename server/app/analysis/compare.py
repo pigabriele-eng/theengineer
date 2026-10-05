@@ -69,6 +69,8 @@ TECHNIQUE: dict[str, tuple[str, str, bool | None]] = {
 }
 SHARES = {"trail_share", "grip_use", "grip_braking", "grip_trail", "grip_mid", "grip_exit"}  # 0..1, sent as %
 POSITIONS = {"brake_point", "throttle_on", "full_throttle"}  # metres on the lap, sent as metres from the apex
+# speeds are what the technique produces, not technique: they show where the time goes, the inputs show how
+OUTCOMES = {"min_speed", "exit_speed", "end_speed"}
 CLEAR_SHARE = 0.6  # a section difference is clear when the quicker side beats the other's median this often
 
 
@@ -340,7 +342,8 @@ def _technique(laps: list[LapSummary], k: int, sides: np.ndarray, times: np.ndar
                      "diff": _shown(key, med["a"] - med["b"]), "worth_s": worth,
                      "r": c["r"] if c is not None else None,
                      "explains": worth is not None and worth * delta > 0})
-    rows.sort(key=lambda r: (not r["explains"], -abs(r["worth_s"] or 0)))
+    # what explains the difference first, the driver's inputs before the speeds they produce
+    rows.sort(key=lambda r: (not r["explains"], r["metric"] in OUTCOMES, -abs(r["worth_s"] or 0)))
     return rows
 
 
