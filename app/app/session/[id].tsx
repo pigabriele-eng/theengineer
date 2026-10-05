@@ -3,11 +3,13 @@ import { Link, Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
 
+import { SessionDriver } from '@/components/DriverPicker';
 import { LapCompare } from '@/components/LapCompare';
 import { SetupCard } from '@/components/SetupCard';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
 import { Analysis, api, Debrief, DETECTED_CORNERS_NOTE, formatLap, SessionDetail } from '@/lib/api';
+import { Tagged } from '@/lib/drivers';
 
 export default function SessionScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -61,6 +63,10 @@ export default function SessionScreen() {
           headerTitle: () => <HeaderTitle title={title} venue={session?.track_name} />,
         }}
       />
+      {session && (
+        <SessionDriver sessionId={sessionId} driverId={(session as Tagged).driver_id}
+          onChanged={() => api.session(sessionId).then(setSession, (e) => setError(e.message))} />
+      )}
       <View style={styles.facts}>
         <Fact label="Best lap" value={formatLap(best)} />
         <Fact label="Theoretical best" value={formatLap(analysis?.theoretical_best)} />
