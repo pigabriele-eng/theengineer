@@ -12,14 +12,18 @@ from dataclasses import asdict, dataclass
 
 import numpy as np
 
+from app.analysis.laps import DEFAULT_CHANNEL_MAP
 from app.importers.motec import Channel, LdFile
 from app.tyres.gaslaw import hot_from_cold
 from app.tyres.presets import ATMOSPHERIC_BAR
 
 CORNERS = ("FL", "FR", "RL", "RR")
-PRESSURE_CHANNELS = {c: (f"pTyre{c}", f"Tyre Pres {c}", f"Tyre Pressure {c}") for c in CORNERS}
-TEMP_CHANNELS = {c: (f"TTyre{c}", f"Tyre Temp {c}", f"Tyre Air Temp {c}") for c in CORNERS}
-SPEED_CHANNELS = ("vCar", "Ground Speed", "Corr Speed", "GPS Speed", "Speed")
+# the engine's channel map names first (MoTeC, AiM and Pi Toolbox exports), then the tyre tools' own extras
+PRESSURE_CHANNELS = {c: tuple(dict.fromkeys((*DEFAULT_CHANNEL_MAP[f"tyre_p_{c.lower()}"], f"Tyre Pressure {c}")))
+                     for c in CORNERS}
+TEMP_CHANNELS = {c: tuple(dict.fromkeys((*DEFAULT_CHANNEL_MAP[f"tyre_t_{c.lower()}"], f"Tyre Air Temp {c}")))
+                 for c in CORNERS}
+SPEED_CHANNELS = DEFAULT_CHANNEL_MAP["speed"]
 AMBIENT_CHANNELS = ("TAmbient", "Air Temp", "Ambient Temp")
 ATMOSPHERE_CHANNELS = ("pAmbient", "Baro Pressure", "Barometric Pressure")
 
