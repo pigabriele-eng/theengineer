@@ -1,4 +1,5 @@
 import os
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -23,6 +24,7 @@ def client(tmp_path, monkeypatch):
     import app.routers.debriefs
     import app.routers.imports
     import app.routers.insights
+    import app.routers.reports
     import app.routers.sessions
     import app.routers.setups
     import app.routers.trackmap
@@ -34,6 +36,7 @@ def client(tmp_path, monkeypatch):
     importlib.reload(app.timing)
     importlib.reload(app.routers.catalog)
     importlib.reload(app.routers.sessions)
+    importlib.reload(app.routers.reports)
     importlib.reload(app.routers.imports)
     importlib.reload(app.routers.debriefs)
     importlib.reload(app.routers.insights)
@@ -54,4 +57,9 @@ def client(tmp_path, monkeypatch):
         app.db.Base.metadata.drop_all(app.db.engine)
     with TestClient(app.main.app) as c:
         yield c
+        # imports and reports run in background threads: let them finish here, not in the next test's database
+        deadline = time.monotonic() + 120
+        while app.routers.imports._jobs.unfinished_tasks and time.monotonic() < deadline:
+            time.sleep(0.05)
+        app.routers.reports.wait_idle()
     app.db.engine.dispose()
