@@ -7,12 +7,14 @@ import { api, formatLap, Session } from '@/lib/api';
 import {
   History,
   HistoryRun,
+  Observation,
   POSITION_LABEL,
   runDate,
   setupApi,
   Sheet,
   showValue,
   signed,
+  Suggestion,
   Suggestions,
   Template,
   TemplateRow,
@@ -68,7 +70,7 @@ export default function SetupScreen() {
       <Stack.Screen options={{ title: current ? `Setup · ${current.name ?? `Session ${current.id}`}` : 'Setup' }} />
       <Text style={styles.intro}>
         One setup sheet per run. Copy the last run and change what you changed, then see it against lap time and
-        balance, and get setup changes to try from the debrief.
+        balance, and get setup changes to try from the debrief and the data.
       </Text>
 
       <ScrollView
@@ -504,8 +506,7 @@ function RunsView({ sessionId, onPick }: { sessionId: number; onPick: (id: numbe
 
   if (error) return <Text style={styles.error}>{error}</Text>;
   if (!hist) return <ActivityIndicator />;
-  const unit = hist.runs.find((r) => r.summary?.steer_unit)?.summary?.steer_unit ?? '';
-  const channel = hist.runs.find((r) => r.summary?.steer_channel)?.summary?.steer_channel;
+  const estimated = hist.runs.some((r) => r.summary?.steering?.confidence === 'estimate');
   return (
     <View style={styles.section}>
       <Text style={styles.dim}>
@@ -525,11 +526,11 @@ function RunsView({ sessionId, onPick }: { sessionId: number; onPick: (id: numbe
       ))}
       <Text style={styles.note}>
         Best and Top 3 (the mean of the three quickest clean laps), with the change from the run it is compared with:
-        green is quicker. Balance is the steering used beyond what the corner needs ({unit || 'steering units'}
-        {channel ? ` of ${channel}` : ''}), median while cornering on the clean laps, on entry (on the brakes), mid-corner
-        and exit (on the throttle): + is more understeer, − more oversteer. Per g is how fast it grows with cornering
-        g. It is calibrated on each run's own gentle cornering, so runs of the same car compare. TC and ABS: seconds
-        working per clean lap.
+        green is quicker. The balance is the balance report's: steering beyond what the corner needs, in road wheel
+        degrees. Per g is the car's own understeer per g of cornering (lower is less understeer overall). Entry (on the
+        brakes), mid-corner and exit (on the throttle) are the balance against that normal while cornering on the
+        clean laps: + the front pushes more than normal, − the rear slides. TC and ABS: seconds working per clean lap.
+        {estimated ? ' The steering ratio behind it is an estimate, so compare runs rather than reading one alone.' : ''}
       </Text>
     </View>
   );
@@ -582,10 +583,10 @@ function RunCard({ run, current, onPick }: { run: HistoryRun; current: boolean; 
           </View>
           {b ? (
             <View style={styles.statGroup}>
-              <Stat label="Entry" value={fmt(b.entry)} delta={signed(d?.balance.entry)} />
-              <Stat label="Mid" value={fmt(b.mid)} delta={signed(d?.balance.mid)} />
-              <Stat label="Exit" value={fmt(b.exit)} delta={signed(d?.balance.exit)} />
               <Stat label="Per g" value={fmt(b.gradient_per_g)} delta={signed(d?.balance.gradient_per_g)} />
+              <Stat label="Entry" value={fmt(b.entry, true)} delta={signed(d?.balance.entry)} />
+              <Stat label="Mid" value={fmt(b.mid, true)} delta={signed(d?.balance.mid)} />
+              <Stat label="Exit" value={fmt(b.exit, true)} delta={signed(d?.balance.exit)} />
             </View>
           ) : run.needs_summary ? (
             <Stat label="Balance" value="…" />
@@ -606,7 +607,8 @@ function RunCard({ run, current, onPick }: { run: HistoryRun; current: boolean; 
   );
 }
 
-const fmt = (x: number | null | undefined) => (x == null ? '–' : x.toFixed(2));
+// a balance against the car's normal carries its sign; per g is a plain amount
+const fmt = (x: number | null | undefined, sign = false) => (x == null ? '–' : sign ? signed(x) : x.toFixed(2));
 
 function Stat({ label, value, delta, color }: { label: string; value: string; delta?: string; color?: string }) {
   return (
@@ -638,36 +640,77 @@ function IdeasView({ sessionId }: { sessionId: number }) {
 
   if (error) return <Text style={styles.error}>{error}</Text>;
   if (!data) return <ActivityIndicator />;
+  const said = data.observations.filter((o) => o.source === 'driver');
+  const other = data.observations.filter((o) => o.source !== 'driver');
   return (
     <View style={styles.section}>
       <Text style={styles.dim}>
-        Setup changes to try, best first, from what the driver said about this run. Each one says why, what to expect
-        and what to watch. Change one thing at a time.
+        Setup changes to try, best first, in one list from what the driver said and what the balance report reads in
+        this run's log. Each says why, what to expect and what to watch, and where the driver and the data disagree.
+        Change one thing at a time.
       </Text>
+      {data.data?.headline ? (
+        <View style={styles.card}>
+          <Text style={styles.subhead}>From the data</Text>
+          <Text>{data.data.headline}</Text>
+          {data.data.notes.map((n) => (
+            <Text key={n} style={styles.note}>
+              {n}
+            </Text>
+          ))}
+        </View>
+      ) : null}
       {data.notes.map((n) => (
         <Text key={n} style={styles.note}>
           {n}
         </Text>
       ))}
-      {data.suggestions.length === 0 && data.observations.length > 0 && (
-        <Text>Nothing in the feedback points clearly to a setup change.</Text>
+      {data.suggestions.length === 0 && (data.observations.length > 0 || data.data) && (
+        <Text>Nothing in the feedback or the data points clearly to a setup change.</Text>
       )}
       {data.suggestions.map((s) => (
         <View key={s.lever} style={styles.card}>
           <View style={styles.headRow}>
             <Text style={[styles.rank, { color: tint }]}>{s.rank}</Text>
             <Text style={[styles.runName, styles.flex]}>{s.title}</Text>
-            <Text style={styles.source}>{s.sources.map((x) => (x === 'data' ? 'logger' : 'driver')).join(' + ')}</Text>
+            <Text style={[styles.source, s.agreement === 'disagree' && { color: WARN, opacity: 1 }]}>
+              {AGREEMENT[s.agreement]}
+            </Text>
           </View>
           {s.changes.map((c) => (
             <Text key={c.key} style={styles.change}>
               {c.text}
             </Text>
           ))}
-          <Text>
-            <Text style={styles.bold}>Why: </Text>
-            {s.reason}
-          </Text>
+          {s.reason ? (
+            <Text>
+              <Text style={styles.bold}>Why: </Text>
+              {s.reason}
+            </Text>
+          ) : null}
+          {s.report ? (
+            <Text>
+              <Text style={styles.bold}>Balance report's no. {s.report.rank}: </Text>
+              {s.report.why}
+            </Text>
+          ) : s.data_shows ? (
+            <Text>
+              <Text style={styles.bold}>The data shows: </Text>
+              {s.data_shows}
+            </Text>
+          ) : null}
+          {s.confirmed.length > 0 && (
+            <Text>
+              <Text style={styles.bold}>The data agrees: </Text>
+              {s.confirmed.join(' ')}
+            </Text>
+          )}
+          {s.disagree.map((t) => (
+            <Text key={t} style={{ color: WARN }}>
+              <Text style={[styles.bold, { color: WARN }]}>Disagree: </Text>
+              {t}
+            </Text>
+          ))}
           <Text>
             <Text style={styles.bold}>Expect: </Text>
             {s.expected}
@@ -681,18 +724,21 @@ function IdeasView({ sessionId }: { sessionId: number }) {
           ) : null}
         </View>
       ))}
-      {data.observations.length > 0 && (
+      {said.length > 0 && (
         <View style={styles.group}>
-          <Text style={styles.groupName}>Feedback used</Text>
-          {data.observations.map((o, i) => (
+          <Text style={styles.groupName}>What the driver said</Text>
+          {said.map((o, i) => (
             <View key={i} style={styles.obs}>
               <Text style={styles.bold}>
                 {o.label}
                 {o.speed && o.corner ? ` (${o.speed} corner)` : ''}
               </Text>
-              <Text style={styles.dim}>
-                {o.source === 'data' ? 'Logger' : 'Driver'}: “{o.text}”
-              </Text>
+              <Text style={styles.dim}>“{o.text}”</Text>
+              {o.check ? (
+                <Text style={[styles.note, o.check.verdict === 'disagree' && { color: WARN, opacity: 1 }]}>
+                  Data: {VERDICT[o.check.verdict]}. {o.check.text}
+                </Text>
+              ) : null}
             </View>
           ))}
           {data.skipped_points.length > 0 && (
@@ -703,9 +749,38 @@ function IdeasView({ sessionId }: { sessionId: number }) {
           )}
         </View>
       )}
+      {data.measured.length + other.length > 0 && (
+        <View style={styles.group}>
+          <Text style={styles.groupName}>What the data shows</Text>
+          {[...data.measured, ...other].map((o, i) => (
+            <Text key={i} style={styles.measured}>
+              {o.text || o.label}
+            </Text>
+          ))}
+          <Text style={styles.note}>
+            Each corner's balance against the car's normal where it is clear (0.8° or more), and where traction control
+            or rear wheel slip says the rear can't take the power.
+          </Text>
+        </View>
+      )}
     </View>
   );
 }
+
+const AGREEMENT: Record<Suggestion['agreement'], string> = {
+  both: 'driver + data agree',
+  driver: 'driver',
+  data: 'data',
+  disagree: 'driver and data disagree',
+};
+
+const VERDICT: Record<NonNullable<Observation['check']>['verdict'], string> = {
+  agree: 'agrees',
+  slight: 'leans the same way',
+  normal: 'reads normal',
+  disagree: 'says the opposite',
+  unmeasured: 'not measured',
+};
 
 const styles = StyleSheet.create({
   container: { padding: 16, gap: 12, paddingBottom: 48, width: '100%', maxWidth: 860, alignSelf: 'center' },
@@ -779,4 +854,5 @@ const styles = StyleSheet.create({
   source: { fontSize: 12, opacity: 0.6 },
   bold: { fontWeight: '600' },
   obs: { paddingVertical: 4, gap: 1 },
+  measured: { paddingVertical: 2, fontVariant: ['tabular-nums'] },
 });

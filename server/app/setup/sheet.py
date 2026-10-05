@@ -114,6 +114,14 @@ def _deltas(before: dict, after: dict) -> dict:
     return out
 
 
+BRIEF = ("balance", "tc_s_per_lap", "abs_s_per_lap", "lap_split", "steering", "note")
+
+
+def _brief(summary: dict | None) -> dict | None:
+    """What the run history shows of a run summary (the setup advice and per-corner rows stay out)."""
+    return None if summary is None else {k: summary[k] for k in BRIEF if k in summary}
+
+
 def history(db: Session, s: models.RunSession) -> dict:
     """Every run of the session's event in order: its setup, what changed from the run it is compared with, and
     what the lap times and balance did. A run is compared with the last run before it that has a sheet and clean
@@ -129,7 +137,7 @@ def history(db: Session, s: models.RunSession) -> dict:
                      "track_temp_c": r.track_temp_c, "ambient_temp_c": r.ambient_temp_c, "tyre_set": r.tyre_set,
                      "has_setup": st is not None, "template": st.template if st else None,
                      "values": st.values if st else None, "laps": results.lap_times(r.laps),
-                     "summary": results.cached(db, r), "needs_summary": False,
+                     "summary": _brief(results.cached(db, r)), "needs_summary": False,
                      "compared_with": None, "changes": [], "deltas": None})
         rows[-1]["needs_summary"] = rows[-1]["summary"] is None and rows[-1]["laps"]["clean_laps"] > 0
     for i, row in enumerate(rows):

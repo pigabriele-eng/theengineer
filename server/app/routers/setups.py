@@ -1,5 +1,6 @@
 """Setup sheets: a setup per session on its car's template, run-to-run changes against lap time and balance, the
-setup in the vehicle model, and ranked setup changes from driver feedback (and logger data, once plugged in)."""
+setup in the vehicle model, and one ranked list of setup changes from the driver's debrief and the balance report."""
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,20 +11,14 @@ from sqlalchemy.orm import Session
 from app import models
 from app.db import get_db
 from app.routers.sessions import _get
+from app.setup import data as balance_data
 from app.setup import results, sheet
 from app.setup.models import SessionSetup
-from app.setup.suggest import (
-    Observation,
-    _data_sources,
-    _speed_of,
-    data_observations,
-    driver_observations,
-    observation_dict,
-    suggest,
-)
+from app.setup.suggest import Observation, _speed_of, data_observations, driver_observations, observation_dict, suggest
 from app.setup.templates import TEMPLATES, InvalidSetup, clean_values
 from app.vehicle.model import Vehicle
 
+log = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -149,41 +144,63 @@ def _suggestions(db: Session, s: models.RunSession, extra: list[Observation]) ->
     template = sheet.template_of(db, s, own)
     values = own.values if own else {}
     notes = []
-    summary = results.run_summary(db, s) if any(l.clean for l in s.laps) else None
+    summary = None
+    if s.files and any(l.clean for l in s.laps):
+        try:
+            summary = results.run_summary(db, s)  # the balance report's analysis of this run, kept
+        except Exception as e:  # an unreadable log leaves the driver's side standing
+            log.exception("Balance analysis failed for session %s", s.id)
+            db.rollback()
+            notes.append(f"The logger data is left out: {getattr(e, 'detail', None) or e}")
+    if summary is not None and "sections" not in summary:
+        summary = None
     corners = (summary or {}).get("corners", [])
     points = [p for d in s.debriefs if d.status == models.DebriefStatus.ready for p in d.points]
     driver, skipped = driver_observations(points, corners)
-    data, data_notes = data_observations(db, s)
-    notes += data_notes
-    for o in [*data, *extra]:
+    for o in driver:
+        o.check = balance_data.check(o, summary)
+    sources, source_notes = data_observations(db, s)
+    notes += source_notes
+    for o in [*sources, *extra]:
         o.speed = o.speed or _speed_of(o.corner, corners)
-    observations = [*driver, *data, *extra]
+    observations = [*driver, *sources, *extra]
+    measured = balance_data.measured(summary)
+    advice = (summary or {}).get("advice") or {}
     vehicle = None
     if template.vehicle_preset:
         try:
             vehicle = Vehicle.model_validate(sheet.to_vehicle(template, values)["vehicle"])
         except (LookupError, ValueError):
             vehicle = None
+    ranked = suggest(template, values, observations, vehicle, advice=advice.get("recommendations"),
+                     measured=measured)
+    notes += ranked["notes"]
     if not points:
         notes.append("No debrief for this session yet: record or type one, and its points about balance, traction, "
-                     "braking and kerbs turn into suggestions here.")
-    if not _data_sources and not extra:
-        notes.append("Logger data isn't feeding the suggestions yet; they come from the driver's debrief.")
+                     "braking and kerbs are ranked here with the data.")
+    if summary is None and not any(n.startswith("The logger data") for n in notes):
+        notes.append("No log with clean laps for this session, so the suggestions come from the debrief only.")
     if own is None:
         notes.append("This session has no setup sheet, so the changes are given as steps from wherever the car is.")
     return {"session_id": s.id, "template": template.key, "has_setup": own is not None,
-            "observations": [observation_dict(o) for o in observations], "skipped_points": skipped,
-            "suggestions": suggest(template, values, observations, vehicle), "notes": notes}
+            "observations": [observation_dict(o) for o in observations],
+            "measured": [observation_dict(m) for m in measured], "skipped_points": skipped,
+            "suggestions": ranked["suggestions"], "notes": notes,
+            "data": {"headline": advice.get("headline"), "notes": advice.get("notes") or [],
+                     "checks": advice.get("checks") or [], "lap_split": summary.get("lap_split")}
+            if summary is not None else None}
 
 
 @router.get("/sessions/{session_id}/setup/suggestions")
 def setup_suggestions(session_id: int, db: Session = Depends(get_db)):
-    """Ranked setup changes to try, from the session's debrief (and logger data sources, once registered)."""
+    """Ranked setup changes to try, in one list from the session's debrief and the balance report's analysis of
+    its log: each with its reason, what to expect and what to watch, whether driver and data agree, and where they
+    disagree. Driver remarks carry the data's check of them."""
     return _suggestions(db, _get(db, session_id), [])
 
 
 @router.post("/sessions/{session_id}/setup/suggestions")
 def setup_suggestions_with(session_id: int, body: SuggestIn, db: Session = Depends(get_db)):
-    """The same, with extra observations from the caller (for example the balance report's findings)."""
+    """The same, with extra observations from the caller (for example another analysis's findings)."""
     extra = [Observation(**o.model_dump()) for o in body.observations]
     return _suggestions(db, _get(db, session_id), extra)

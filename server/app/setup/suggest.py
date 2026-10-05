@@ -1,13 +1,17 @@
-"""Setup changes to try, ranked, from what the driver said and what the logger shows.
+"""Setup changes to try, ranked in one list, from what the driver said and what the logger shows.
 
-Both sides come in as Observations: one thing the car does (understeer mid-corner in T6, wheelspin out of T2-T5,
-a nervous rear under braking) with how much it matters. The driver side reads the session's debrief points (tagged
-with corner and phase); the data side plugs in through register_data_source, or a caller passes its own
-observations to suggest(). Each lever on the car's sheet (a bar one position softer, two clicks of rear rebound,
-half a percent of brake balance) says which symptoms it helps and which it makes worse; a lever's score is the sum
-over the observations, weighted by the corner speed it works at (aero in fast corners, springs and bars in slow
-ones) and by how quick it is to change in the garage. The best ones come with the observations behind them, what
-to expect (the vehicle model's numbers for the bars) and what to watch.
+The driver side reads the session's debrief points (tagged with corner and phase) as Observations: one thing the
+car does (understeer mid-corner in T6, wheelspin out of T2-T5, a nervous rear under braking) with how much it
+matters. Each lever on the car's sheet (a bar one position softer, two clicks of rear rebound, half a percent of
+brake balance) says which symptoms it helps and which it makes worse; a lever's score is the sum over the
+observations, weighted by the corner speed it works at (aero in fast corners, springs and bars in slow ones) and by
+how quick it is to change in the garage.
+
+The data side is the balance report's analysis of the run (app.setup.data): its ranked setup changes score the
+levers they map onto, and what it measures checks each driver remark and backs each lever. A change both sides
+back counts more; one they disagree on counts less and says why. Other logger data plugs in through
+register_data_source, or a caller passes its own observations. The best changes come with the evidence behind
+them, what to expect (the vehicle model's numbers for the bars) and what to watch.
 
 The lever table is the usual setup-sheet logic for a front-engined GT car: roll stiffness distribution for
 steady-state balance, damping for the transients (more damping on an axle gives it more of the transient load
@@ -50,6 +54,7 @@ class Observation:
         the lap time at stake (about 1.0 per 0.1 s a lap).
     source: "driver" or "data". text: what was said or measured, shown as the reason.
     time_s: lap time at stake, when known. ref: where it came from, e.g. {"debrief_point_id": 12}.
+    check: what the run's data says about a driver remark (app.setup.data.check), when it measures it.
     """
     kind: str
     phase: str | None = None
@@ -60,6 +65,7 @@ class Observation:
     text: str = ""
     time_s: float | None = None
     ref: dict = field(default_factory=dict)
+    check: dict | None = None
 
     @property
     def symptom(self) -> str:
@@ -332,12 +338,49 @@ LEVERS: tuple[Lever, ...] = (
           cost="Raises the centre of gravity and changes the aero."),
 )
 
+# The balance report's recommendation keys (app.analysis.setup_advice) and the levers that make the same change,
+# the first one the sheet can take
+ADVICE_LEVERS: dict[str, tuple[str, ...]] = {
+    "rear_bar_softer": ("arb_rear_softer",),
+    "rear_bar_stiffer": ("arb_rear_stiffer",),
+    "front_bar_softer": ("arb_front_softer",),
+    "rear_bump_softer": ("bump_rear_softer",),
+    "rear_wing": ("wing_more",),
+    "aero_rear": ("wing_more", "rake_less"),
+    "aero_front": ("wing_less", "rake_more"),
+    "brake_bias_rear": ("brake_balance_rear",),
+    "brake_bias_front": ("brake_balance_front",),
+    "front_grip_slow": ("camber_front_more", "toe_front_out"),
+}
+# Levers that move one balance either way: the roll stiffness (and so the load transfer) to the front or the rear,
+# the aero balance forward or rearward, the brake balance, one damper setting. Two levers on the same axis with
+# opposite signs work against each other: a softer front bar undoes a softer rear bar.
+DIRECTION: dict[str, tuple[str, int]] = {
+    **{k: ("roll", 1) for k in ("arb_front_stiffer", "arb_rear_softer", "spring_front_stiffer", "spring_rear_softer")},
+    **{k: ("roll", -1) for k in ("arb_front_softer", "arb_rear_stiffer", "spring_front_softer", "spring_rear_stiffer")},
+    "wing_less": ("aero", 1), "rake_more": ("aero", 1), "wing_more": ("aero", -1), "rake_less": ("aero", -1),
+    "brake_balance_front": ("brakes", 1), "brake_balance_rear": ("brakes", -1),
+    "bump_front_stiffer": ("bump_front", 1), "bump_front_softer": ("bump_front", -1),
+    "rebound_rear_stiffer": ("rebound_rear", 1), "rebound_rear_softer": ("rebound_rear", -1),
+}
+AXIS = {"roll": "moves the roll stiffness the other way", "aero": "moves the aero balance the other way",
+        "brakes": "moves the brake balance the other way"}
+
+
+def against(a: str, b: str) -> bool:
+    """The two levers work against each other."""
+    da, db = DIRECTION.get(a), DIRECTION.get(b)
+    return da is not None and db is not None and da[0] == db[0] and da[1] != db[1]
+
+
 # How much a lever does at each corner speed: aero needs speed, bars and springs matter most in slow corners.
 SPEED_FACTOR = {"aero": {"slow": 0.1, "medium": 0.5, "fast": 1.0, None: 0.5},
                 "mechanical": {"slow": 1.0, "medium": 1.0, "fast": 0.7, None: 1.0}}
 MIN_HELP = 0.75  # a lever must answer at least this much (one clear remark with a strong effect) to be listed
 SHOWN = 0.4  # an observation is named as a reason (or a risk) when it counts at least this much for the lever
 BOTH_SOURCES = 1.25  # driver and data agree
+DISPUTED = 0.6  # driver and data point different ways: what both agree on goes first
+ADVICE_SCORE, ADVICE_DECAY = 2.5, 0.8  # the balance report's first change, and each later one by this much less
 
 
 def _sign(row: Row, want: str) -> int | None:
@@ -449,43 +492,117 @@ def _model_effect(lever: Lever, vehicle: Vehicle | None, changes: list[dict], te
             f"{x:.1f} % → {y:.1f} %.")
 
 
-def suggest(template: Template, values: dict, observations: list[Observation], vehicle: Vehicle | None = None,
-            limit: int = 6) -> list[dict]:
-    """Ranked setup changes for these observations, on this car's sheet with these values."""
-    out = []
+def _applicable(template: Template, values: dict) -> dict[str, list[dict]]:
+    """Each lever's field changes on this sheet, for the levers the sheet can take."""
+    out = {}
     for lever in LEVERS:
         changes = next((c for c in (_apply(template, values, opt) for opt in lever.options) if c is not None), None)
+        if changes is not None:
+            out[lever.key] = changes
+    return out
+
+
+def _contribution(lever: Lever, o: Observation) -> float:
+    return o.weight * lever.effects.get(o.symptom, 0.0) * SPEED_FACTOR.get(lever.kind, {}).get(o.speed, 1.0)
+
+
+def suggest(template: Template, values: dict, observations: list[Observation], vehicle: Vehicle | None = None,
+            limit: int = 8, advice: list[dict] | None = None, measured: list[Observation] | None = None) -> dict:
+    """Ranked setup changes on this car's sheet with these values, from both sides.
+
+    observations: the driver's remarks (each with its check against the data) and any data source's observations;
+        they score the levers.
+    advice: the balance report's recommendations, best first. Each maps onto a lever (ADVICE_LEVERS) and scores it
+        by its rank.
+    measured: what the run's data shows (app.setup.data.measured). It scores nothing by itself; a lever it backs
+        counts as backed by the data.
+    Returns {"suggestions": [...], "notes": [...]}.
+    """
+    applicable = _applicable(template, values)
+    advice, measured = advice or [], measured or []
+    notes = []
+    by_lever: dict[str, tuple[int, dict]] = {}
+    for i, rec in enumerate(advice):
+        key = next((k for k in ADVICE_LEVERS.get(rec["key"], ()) if k in applicable), None)
+        if key is None:
+            notes.append(f"The balance report also suggests: {rec['title']}. The sheet can't take it as it stands "
+                         "(no such setting on this car, or it is at its end).")
+        elif key not in by_lever:
+            by_lever[key] = (i, rec)
+    titles = {lv.key: lv.title for lv in LEVERS}
+    driver_backed = {lv.key for lv in LEVERS if lv.key in applicable and sum(
+        max(_contribution(lv, o), 0.0) for o in observations if o.source == "driver") >= MIN_HELP}
+
+    out = []
+    for lever in LEVERS:
+        changes = applicable.get(lever.key)
         if changes is None:
             continue
-        factors = SPEED_FACTOR.get(lever.kind, {})
         helps, hurts, score, helped = [], [], 0.0, 0.0
         for o in observations:
-            c = o.weight * lever.effects.get(o.symptom, 0.0) * factors.get(o.speed, 1.0)
+            c = _contribution(lever, o)
             score += c
             helped += max(c, 0.0)
             if c >= SHOWN:
                 helps.append(o)
             elif c <= -SHOWN:
                 hurts.append(o)
-        if helped < MIN_HELP or score <= 0:
+        hit = by_lever.get(lever.key)
+        if hit is None and (helped < MIN_HELP or score <= 0):
             continue
-        sources = sorted({o.source for o in helps})
-        score *= lever.effort * (BOTH_SOURCES if len(sources) > 1 else 1.0)
-        expected = lever.expected
-        model = _model_effect(lever, vehicle, changes, template)
+        if hit is None:
+            score *= lever.effort
+        else:  # the report has weighed its change, side effects too: remarks against it are shown, not summed
+            score = helped * lever.effort + ADVICE_SCORE * ADVICE_DECAY ** hit[0]
+        driver = [o for o in helps if o.source == "driver"]
+        shows = [m for m in measured if _contribution(lever, m) >= SHOWN]
+        confirmed = [o for o in driver if (o.check or {}).get("verdict") == "agree"]
+        data_backed = bool(hit or shows or confirmed or any(o.source == "data" for o in helps))
+
+        disagree = [f"The driver said {o.describe()}, but the data reads {o.check['reads']} "
+                    f"({o.check['where']})." for o in driver if (o.check or {}).get("verdict") == "disagree"]
+        for key, (_, rec) in by_lever.items():
+            if against(lever.key, key):
+                disagree.append(f"The balance report {AXIS.get(DIRECTION[key][0], 'goes the other way')}: "
+                                f"{rec['title']}.")
+        named = []  # the driver's remarks named as the disagreement, so not again under watch
+        if hit is not None and any(against(lever.key, k) for k in driver_backed):
+            named = [o for o in hurts if o.source == "driver"]
+            disagree.append("The driver's feedback points the other way: " + (
+                _where(named) if named else next(titles[k] for k in driver_backed if against(lever.key, k))) + ".")
+        if disagree:
+            agreement = "disagree"
+            score *= DISPUTED
+        elif driver and data_backed:
+            agreement = "both"
+            score *= BOTH_SOURCES
+        else:
+            agreement = "driver" if driver else "data"
+        score = max(score, 0.05)
+
         watch = []
-        if hurts:
-            watch.append(f"It can make this worse: {_where(hurts)}.")
+        if hit is not None and hit[1].get("watch"):
+            watch.append(hit[1]["watch"])
+        rest = [o for o in hurts if o not in named]
+        if rest:
+            watch.append(f"It can make this worse: {_where(rest)}.")
         if lever.cost:
             watch.append(lever.cost)
-        out.append({"lever": lever.key, "title": lever.title, "kind": lever.kind, "changes": changes,
-                    "reason": _where(helps), "expected": expected, "model": model, "watch": " ".join(watch),
-                    "sources": sources, "score": round(score, 2),
-                    "addresses": [o.ref for o in helps if o.ref]})
+        out.append({
+            "lever": lever.key, "title": lever.title, "kind": lever.kind, "changes": changes,
+            "reason": _where(helps), "data_shows": _where(shows) if shows else None,
+            "confirmed": [o.check["text"] for o in confirmed],
+            "report": {"rank": hit[0] + 1, **{k: hit[1].get(k) for k in ("key", "title", "why", "expect")}}
+            if hit is not None else None,
+            "expected": hit[1]["expect"] if hit is not None else lever.expected,
+            "model": _model_effect(lever, vehicle, changes, template), "watch": " ".join(watch),
+            "agreement": agreement, "disagree": disagree,
+            "sources": [x for x, on in (("driver", bool(driver)), ("data", data_backed)) if on],
+            "score": round(score, 2), "addresses": [o.ref for o in helps if o.ref]})
     out.sort(key=lambda x: -x["score"])
     for i, x in enumerate(out[:limit]):
         x["rank"] = i + 1
-    return out[:limit]
+    return {"suggestions": out[:limit], "notes": notes}
 
 
 def observation_dict(o: Observation) -> dict:

@@ -1,5 +1,5 @@
 // Client for the setup sheets on the server: the car's template, a sheet per session, run-to-run changes against
-// lap time and balance, the setup in the vehicle model, and ranked setup changes from driver feedback.
+// lap time and balance, the setup in the vehicle model, and ranked setup changes from the debrief and the data.
 import { apiFetch } from '@/lib/api';
 import { Vehicle } from '@/lib/vehicle';
 
@@ -55,14 +55,19 @@ export type Sheet = {
 
 type PhaseBalance = { entry: number | null; mid: number | null; exit: number | null };
 
+// A run's balance, from the balance report's analysis of its log (GET /report/balance builds the same): the car's
+// understeer per g of cornering, and the balance against that normal in each phase (+ pushes, − the rear slides).
 export type RunSummary = {
-  balance: (PhaseBalance & { by_speed: (PhaseBalance & { speed: string })[]; gradient_per_g: number | null }) | null;
-  corners: { code: string; apex_m: number; apex_kmh: number; speed: 'slow' | 'medium' | 'fast' }[];
+  balance:
+    | (PhaseBalance & {
+        gradient_per_g: number | null;
+        spread?: number;
+        by_speed: (PhaseBalance & { speed: string })[];
+      })
+    | null;
   tc_s_per_lap?: number | null;
   abs_s_per_lap?: number | null;
-  tyres?: { pressure_bar?: Record<string, number>; temperature_c?: Record<string, number> } | null;
-  steer_channel?: string | null;
-  steer_unit?: string;
+  steering?: { value: number | null; source: string; confidence: string; reads: string } | null;
   note?: string;
 };
 
@@ -103,6 +108,8 @@ export type Observation = {
   text: string;
   time_s: number | null;
   label: string;
+  // a driver remark against the run's balance report: agree, slight (leans the same way), normal, disagree, unmeasured
+  check?: { verdict: 'agree' | 'slight' | 'normal' | 'disagree' | 'unmeasured'; text: string; value?: number } | null;
 };
 
 export type Suggestion = {
@@ -111,10 +118,15 @@ export type Suggestion = {
   title: string;
   kind: string;
   changes: SetupChange[];
-  reason: string;
+  reason: string; // the remarks behind it
+  data_shows: string | null; // what the run's data measures that backs it
+  confirmed: string[]; // the data's reading of the driver's remarks, where it agrees
+  report: { rank: number; key: string; title: string; why: string; expect: string } | null; // the balance report's
   expected: string;
   model: string | null;
   watch: string;
+  agreement: 'both' | 'driver' | 'data' | 'disagree';
+  disagree: string[];
   sources: ('driver' | 'data')[];
   score: number;
 };
@@ -124,9 +136,11 @@ export type Suggestions = {
   template: string;
   has_setup: boolean;
   observations: Observation[];
+  measured: Observation[];
   skipped_points: { id: number; text: string; why: string }[];
   suggestions: Suggestion[];
   notes: string[];
+  data: { headline: string | null; notes: string[]; checks: { label: string; value: string }[] } | null;
 };
 
 export type SetupVehicle = {

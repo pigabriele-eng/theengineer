@@ -41,11 +41,13 @@ def client(tmp_path, monkeypatch):
     importlib.reload(app.routers.vehicle)
     importlib.reload(app.routers.trackmap)
     importlib.reload(app.routers.balance)
+    import app.setup.data
     import app.setup.models
     import app.setup.results
     import app.setup.sheet
     import app.setup.suggest
-    for m in (app.setup.models, app.setup.results, app.setup.sheet, app.setup.suggest, app.routers.setups):
+    for m in (app.setup.models, app.setup.results, app.setup.sheet, app.setup.suggest, app.setup.data,
+              app.routers.setups):
         importlib.reload(m)
     importlib.reload(app.main)
     if TEST_DATABASE_URL:

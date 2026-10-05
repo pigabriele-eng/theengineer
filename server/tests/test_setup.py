@@ -64,7 +64,7 @@ def test_diff_lists_changes_in_sheet_order():
 # ---------- suggestions ----------
 
 def _ranked(observations, values=BASE, template=BMW):
-    return suggest(template, values, observations)
+    return suggest(template, values, observations)["suggestions"]
 
 
 def test_mid_corner_understeer_in_slow_corners_softens_the_front_bar_first():
@@ -124,7 +124,8 @@ def test_without_a_sheet_changes_are_relative_steps():
 
 
 def test_generic_template_uses_spring_rates():
-    out = suggest(GENERIC, {"spring_rate_rear": 200.0}, [Observation("traction", "exit", "T2", "slow")] * 2)
+    out = suggest(GENERIC, {"spring_rate_rear": 200.0}, [Observation("traction", "exit", "T2", "slow")] * 2)[
+        "suggestions"]
     springs = next(s for s in out if s["lever"] == "spring_rear_softer")
     assert springs["changes"][0]["to"] == pytest.approx(180.0)
 
@@ -135,7 +136,7 @@ def test_driver_and_data_together_rank_higher():
     alone = _ranked([driver])[0]["score"]
     both = _ranked([driver, data])[0]
     assert both["score"] > 2 * alone
-    assert both["sources"] == ["data", "driver"]
+    assert both["sources"] == ["driver", "data"] and both["agreement"] == "both"
     assert "0.08 s" in both["reason"]
 
 
@@ -172,27 +173,112 @@ def test_repeats_are_capped():
     assert sum(o.weight for o in obs) == pytest.approx(1.5)
 
 
-# ---------- the run summary ----------
+# ---------- the data side: the balance report ----------
 
-def test_summarize_on_a_synthetic_run():
-    from app.analysis.laps import load_session
-    from app.importers.motec import read_ld
+def _summary():
+    """A run summary built from an analyse()-shaped result (the balance report's own test fixture): the rear won't
+    take power out of T6 and T8/T9, and the slow corners push mid-corner."""
+    from app.analysis.balance import car_geometry
+    from app.analysis.setup_advice import report
     from app.setup.results import summarize
-    from tests.synthetic import simulate, write_ld
+    from tests.test_balance import _analysis, _row
 
-    channels, _ = simulate(paces=(1.0, 0.99, 0.98, 0.995, 0.97))
-    import tempfile
-    from pathlib import Path
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "run.ld"
-        path.write_bytes(write_ld(channels))
-        data = load_session(read_ld(path))
-        out = summarize(data, steer_unit="deg")
-    assert [c["code"] for c in out["corners"]] == ["C1", "C2"]
-    assert {c["speed"] for c in out["corners"]} == {"slow"}  # 50 and 70 km/h apexes
-    assert out["steer_unit"] == "deg"
-    if out["balance"] is not None:
-        assert set(out["balance"]) >= {"entry", "mid", "exit", "by_speed", "gradient_per_g"}
+    a = _analysis([_row("T6", 70, mid=2.0, exit_=-1.2, car=0.13, tc=0.8, slip=11),
+                   _row("T8/T9", 75, mid=1.5, exit_=0.1, car=0.05, tc=0.6),
+                   _row("T15-T17", 108, mid=0.7, exit_=-0.4, car=0.29, tc=1.3)],
+                  [("slow", 0.2, 1.5, -0.3), ("medium", 0.1, 0.4, 0.0), ("fast", 0.0, 0.3, 0.2)], tc_per_lap=5.9)
+    for i, sec in enumerate(a["sections"]):
+        sec["apex_m"] = 500 * (i + 1)
+    rep = report(a, car_geometry(None).to_dict(), [], "bmw-m4-gt4-evo")
+    return summarize(a, rep, {"entry": 0.1, "mid": 1.1, "exit": -0.6, "abs_s_per_lap": 4.2})
+
+
+def test_run_summary_comes_from_the_balance_report():
+    s = _summary()
+    b = s["balance"]
+    assert (b["entry"], b["mid"], b["exit"], b["gradient_per_g"]) == (0.1, 1.1, -0.6, 1.0)
+    assert [r["speed"] for r in b["by_speed"]] == ["slow", "medium", "fast"]
+    assert [(c["code"], c["speed"]) for c in s["corners"]] == [("T6", "slow"), ("T8/T9", "slow"),
+                                                               ("T15-T17", "slow")]  # 108 km/h is under 110
+    t6 = s["sections"][0]
+    assert (t6["mid"], t6["exit"], t6["tc_s"], t6["rear_slip_exit"]) == (2.0, -1.2, 0.8, 11)
+    assert (s["tc_s_per_lap"], s["abs_s_per_lap"]) == (5.9, 4.2)
+    assert s["advice"]["headline"].startswith("One weakness runs through the data")
+    assert [r["key"] for r in s["advice"]["recommendations"]][:2] == ["rear_bar_softer", "rear_bump_softer"]
+
+
+def test_the_data_measures_and_checks_each_remark():
+    from app.setup import data
+
+    s = _summary()
+    seen = {(o.corner, o.kind, o.phase) for o in data.measured(s)}
+    assert {("T6", "understeer", "mid"), ("T6", "oversteer", "exit"), ("T8/T9", "understeer", "mid")} <= seen
+    assert ("T6", "traction", "exit") in seen  # 0.8 s of TC a pass and 11 % rear slip
+    assert ("T15-T17", "understeer", "mid") not in seen  # 0.7 degrees is slight
+
+    def verdict(*args):
+        return data.check(Observation(*args), s)["verdict"]
+
+    assert verdict("understeer", "mid", "T6") == "agree"
+    assert verdict("oversteer", "mid", "T6") == "disagree"
+    assert verdict("understeer", "mid", "T16") == "slight"  # T16 is in T15-T17
+    assert verdict("understeer", "exit", "T8") == "normal"  # T8/T9 on exit: +0.1
+    assert verdict("understeer", "mid", None, "slow") == "agree"  # the slow corners' row
+    assert verdict("understeer", "entry", "T6") == "unmeasured"
+    assert verdict("understeer", "mid", "T11") == "unmeasured"  # no such section
+    assert verdict("traction", "exit", "T6") == "agree"
+    assert verdict("traction", "exit", None) == "agree"  # 5.9 s of TC a lap
+    assert data.check(Observation("lock_up", "braking", "T6"), s) is None  # not measured by the balance
+    assert "+2.0°" in data.check(Observation("oversteer", "mid", "T6"), s)["text"]
+
+
+def test_one_list_from_the_balance_report_and_the_debrief():
+    from app.setup import data
+
+    s = _summary()
+    advice = s["advice"]["recommendations"]
+    alone = suggest(BMW, BASE, [], advice=advice)["suggestions"]
+    assert [x["lever"] for x in alone][:3] == ["arb_rear_softer", "bump_rear_softer", "wing_more"]  # its order
+    assert all(x["agreement"] == "data" and x["sources"] == ["data"] for x in alone)
+    assert alone[0]["report"]["rank"] == 1 and alone[0]["reason"] == ""
+
+    driver = Observation("oversteer", "exit", "T6", "slow", text="The rear steps out on the throttle")
+    driver.check = data.check(driver, s)
+    out = suggest(BMW, BASE, [driver], advice=advice, measured=data.measured(s))["suggestions"]
+    top = out[0]
+    assert top["lever"] == "arb_rear_softer" and top["agreement"] == "both"
+    assert top["sources"] == ["driver", "data"]
+    assert top["changes"][0]["text"] == "Anti-roll bar rear 2 → 1"
+    assert top["confirmed"][0].startswith("T6 on exit")
+    assert top["score"] > alone[0]["score"] + 2.0  # the driver's remark, and both sides agreeing
+
+
+def test_driver_and_data_disagreeing_is_shown():
+    from app.setup import data
+
+    s = _summary()
+    loose = Observation("oversteer", "mid", "T6", "slow", text="Loose mid-corner in T6")
+    loose.check = data.check(loose, s)  # the data reads +2.0: understeer
+    out = {x["lever"]: x for x in suggest(BMW, BASE, [loose], measured=data.measured(s))["suggestions"]}
+    stiffer = out["arb_front_stiffer"]
+    assert stiffer["agreement"] == "disagree"
+    assert stiffer["disagree"][0] == ("The driver said oversteer mid-corner at T6, but the data reads +2.0° against "
+                                      "the car's normal, strong understeer (T6 mid-corner).")
+
+    advice = [{"key": "rear_bar_softer", "title": "Rear anti-roll bar one step softer", "why": "Traction",
+               "expect": "Less TC", "watch": None}]
+    pushes = Observation("understeer", "exit", "T6", "slow")
+    out = {x["lever"]: x for x in suggest(BMW, BASE, [pushes], advice=advice)["suggestions"]}
+    assert out["arb_rear_stiffer"]["disagree"] == ["The balance report moves the roll stiffness the other way: Rear "
+                                                   "anti-roll bar one step softer."]
+    assert out["arb_front_softer"]["agreement"] == "disagree"  # a softer front bar undoes a softer rear bar
+    assert out["arb_rear_softer"]["agreement"] == "disagree"
+    assert out["arb_rear_softer"]["disagree"] == ["The driver's feedback points the other way: understeer on exit at "
+                                                  "T6 (driver)."]
+
+    at_softest = suggest(BMW, {**BASE, "arb_rear": 1}, [], advice=advice)
+    assert at_softest["suggestions"] == []
+    assert "can't take it" in at_softest["notes"][0]
 
 
 # ---------- the API ----------
@@ -268,7 +354,8 @@ def test_history_vehicle_and_suggestions(client):
     assert s["suggestions"][0]["changes"][0]["text"] == "Anti-roll bar front 2 → 1"
     assert "Vehicle model" in s["suggestions"][0]["model"]
     assert len(s["skipped_points"]) == 1
-    assert any("Logger data" in n for n in s["notes"])
+    assert s["observations"][0]["check"]["verdict"] == "unmeasured"  # the synthetic log has no yaw rate
+    assert s["data"]["headline"].startswith("This log has no usable steering or yaw rate channel")
 
     extra = {"observations": [{"kind": "oversteer", "phase": "exit", "corner": "C2", "weight": 3,
                                "text": "C2 exit oversteer", "time_s": 0.3}]}
@@ -296,3 +383,23 @@ def test_registered_data_sources_feed_the_suggestions(client):
     assert out["suggestions"][0]["lever"] == "arb_front_softer"
     assert out["suggestions"][0]["sources"] == ["data"]
     assert any("no log" in n for n in out["notes"])
+
+
+def test_suggestions_use_the_runs_balance_report(client, monkeypatch):
+    import app.setup.results as results
+
+    summary = _summary()
+    monkeypatch.setattr(results, "run_summary", lambda db, s: summary)
+    sid = client.post("/sessions", json={"name": "Run"}).json()["id"]
+    _upload(client, sid)
+    client.put(f"/sessions/{sid}/setup", json={"values": BASE})
+    client.post(f"/sessions/{sid}/debriefs", json={"points": [
+        {"section": "balance", "text": "The rear steps out on the throttle", "corner_code": "T6", "phase": "exit"}]})
+    out = client.get(f"/sessions/{sid}/setup/suggestions").json()
+    assert out["data"]["headline"].startswith("One weakness runs through the data")
+    assert out["observations"][0]["check"]["verdict"] == "agree"
+    assert out["observations"][0]["speed"] == "slow"  # T6 from the report's corners
+    assert {m["corner"] for m in out["measured"]} >= {"T6", "T8/T9"}
+    top = out["suggestions"][0]
+    assert (top["lever"], top["agreement"], top["report"]["rank"]) == ("arb_rear_softer", "both", 1)
+    assert "Vehicle model" in top["model"]

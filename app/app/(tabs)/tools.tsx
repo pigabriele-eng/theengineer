@@ -33,7 +33,7 @@ const GROUPS: { name: string; tools: Tool[] }[] = [
       {
         href: '/tools/setup',
         title: 'Setup',
-        blurb: 'A setup sheet per run for the M4 GT4 EVO, copied from the last run. What changed against lap time and balance, and setup changes to try from the debrief.',
+        blurb: 'A setup sheet per run for the M4 GT4 EVO, copied from the last run. What changed against lap time and balance, and setup changes to try from the debrief and the data.',
       },
     ],
   },
