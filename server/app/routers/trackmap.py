@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import models
+from app import heavy, models
 from app.analysis.laps import DEFAULT_CHANNEL_MAP, load_session
 from app.analysis.trackmap import MAP_ROLES, NoGpsError, NoLapError, track_map
 from app.db import get_db
@@ -60,17 +60,18 @@ def session_map(db: Session, s: models.RunSession, reference_lap: int | None = N
         if key in _cache:
             _cache.move_to_end(key)
             return _cache[key]
-    ld = read_file(f)
-    track = _track_for(db, s, ld)
-    data = load_session(ld, _map_channels(s), beacons=f.meta.get("beacons"), line=_line(track))
-    del ld
-    try:
-        out = {"session_id": s.id, "session_name": s.name, "file_id": f.id,
-               **track_map(data, official_corners(track), reference_lap)}
-    except NoLapError as e:
-        raise HTTPException(404, str(e)) from e
-    except NoGpsError as e:
-        raise HTTPException(422, str(e)) from e
+    with heavy.lock:
+        ld = read_file(f)
+        track = _track_for(db, s, ld)
+        data = load_session(ld, _map_channels(s), beacons=f.meta.get("beacons"), line=_line(track))
+        del ld
+        try:
+            out = {"session_id": s.id, "session_name": s.name, "file_id": f.id,
+                   **track_map(data, official_corners(track), reference_lap)}
+        except NoLapError as e:
+            raise HTTPException(404, str(e)) from e
+        except NoGpsError as e:
+            raise HTTPException(422, str(e)) from e
     with _cache_lock:
         _cache[_key(s, f, track, reference_lap)] = out
         while len(_cache) > CACHE_SIZE:
