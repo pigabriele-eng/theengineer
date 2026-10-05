@@ -4,7 +4,8 @@ A track learns its line from its logs: from the dash's S/F marker if one has it,
 marker is the better source: i2's "Auto GPS" beacons can sit tens of metres from the dash's line (and miss laps),
 and the official corner positions are measured from the dash's line. So a log with the marker replaces a line
 learned from beacons, and the track's other logs are then re-timed in the background: one worker thread, one log at
-a time, reading only the channels lap timing needs (speed, marker, lap time, GPS), which keeps memory low.
+a time under heavy.lock (so never alongside a request or import that reads a log), reading only the channels lap
+timing needs (speed, marker, lap time, GPS), which keeps memory low.
 
 Each log keeps the line it was timed from (meta "timed_line"), so it is re-timed only when its track's line has
 changed since. On startup every track is checked once the same way; a line saved before its source was recorded is
@@ -24,7 +25,7 @@ from sqlalchemy import event, select
 from sqlalchemy.orm import Session, selectinload
 
 from app import db as app_db  # SessionLocal is looked up when used: the tests swap the database
-from app import models, storage
+from app import heavy, models, storage
 from app.analysis.laps import LapTiming, TimingLine, time_laps
 from app.importers.csvlog import read_log
 from app.importers.motec import LdFile
@@ -150,18 +151,28 @@ def check_track(track_id: int) -> None:
         if (track.timing_line or {}).get("source") != "marker":
             _learn_from_marker_log(db, track, [f for f in files if f.meta.get("lap_source") == "marker"])
         for f in files:
-            if f.meta.get("lap_source") == "marker" or same_line(f.meta.get("timed_line"), track.timing_line):
+            if _up_to_date(f, track):
                 continue
-            try:
-                ld = read_file(f)
-                store_laps(db, f.session, f, time_laps(ld, f.meta.get("beacons"), track_line(track)), track)
-                del ld
-                db.commit()
-            except Exception:
-                log.exception("Re-timing log %s failed", f.id)
-                db.rollback()
-            finally:
-                _release_memory()
+            with heavy.lock:  # one log at a time, across this worker, imports and requests
+                try:
+                    db.refresh(track)  # what's stored now: a request may have changed them while this waited
+                    db.refresh(f)
+                    if _up_to_date(f, track):
+                        continue
+                    ld = read_file(f)
+                    store_laps(db, f.session, f, time_laps(ld, f.meta.get("beacons"), track_line(track)), track)
+                    del ld
+                    db.commit()
+                except Exception:
+                    log.exception("Re-timing log %s failed", f.id)
+                    db.rollback()
+                finally:
+                    _release_memory()
+
+
+def _up_to_date(f: models.LoggerFile, track: models.Track) -> bool:
+    """Timed by the dash's own marker, or from the track's line as it is now."""
+    return f.meta.get("lap_source") == "marker" or same_line(f.meta.get("timed_line"), track.timing_line)
 
 
 def files_at(db: Session, track: models.Track) -> list[models.LoggerFile]:
@@ -183,17 +194,22 @@ def files_at(db: Session, track: models.Track) -> list[models.LoggerFile]:
 def _learn_from_marker_log(db: Session, track: models.Track, marker_logs: list[models.LoggerFile]) -> None:
     """The track's line from the first of its logs with the dash's marker that can be read."""
     for f in marker_logs:
-        try:
-            timing = time_laps(read_file(f))
-        except Exception:
-            log.exception("Reading log %s for its start/finish line failed", f.id)
-            continue
-        finally:
-            _release_memory()
-        if timing.source == "marker" and timing.line is not None:
-            track.timing_line = asdict(timing.line)
-            db.commit()
-            return
+        with heavy.lock:
+            try:
+                db.refresh(track)
+                if (track.timing_line or {}).get("source") == "marker":  # an upload taught it while this waited
+                    return
+                timing = time_laps(read_file(f))
+            except Exception:
+                log.exception("Reading log %s for its start/finish line failed", f.id)
+                db.rollback()
+                continue
+            finally:
+                _release_memory()
+            if timing.source == "marker" and timing.line is not None:
+                track.timing_line = asdict(timing.line)
+                db.commit()
+                return
 
 
 def _release_memory() -> None:

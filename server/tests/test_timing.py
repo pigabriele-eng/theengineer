@@ -171,6 +171,31 @@ def test_a_line_saved_by_older_code_corrects_itself_on_startup(client):
                                                          for s in client.get("/sessions").json())
 
 
+def test_re_timing_waits_while_other_work_reads_a_log(client):
+    """The background re-timing reads its logs under heavy.lock, like every request and import that reads one."""
+    import time
+
+    import app.db
+    import app.models
+    from app import heavy, timing
+
+    upload(client, ("day.zip", make_zip({"01/a.ld": counter_only(), "02/c.ld": marked()})))
+    timing.wait_idle()
+    with app.db.SessionLocal() as db:  # a.ld timed from an older line
+        f = db.query(app.models.LoggerFile).filter_by(filename="a.ld").one()
+        f.meta = {**f.meta, "timed_line": {"lat": 0.0, "lon": 0.0, "heading": 0.0}}
+        db.commit()
+        track_id = db.query(app.models.Track).one().id
+
+    with heavy.lock:  # a request reading a log
+        timing.schedule(track_id)
+        time.sleep(0.3)
+        assert db_state()[1]["a.ld"][0]["timed_line"]["lat"] == 0.0  # waiting its turn
+    timing.wait_idle()
+    line, files = db_state()
+    assert files["a.ld"][0]["timed_line"] == line
+
+
 def test_a_single_upload_puts_the_session_at_its_track(client):
     a = client.post("/sessions", json={"name": "FP1"}).json()
     assert a["track_name"] is None

@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy import inspect, select, update
 from sqlalchemy.orm import Session
 
-from app import models, schemas, storage
+from app import heavy, models, schemas, storage
 from app.db import SessionLocal, get_db
 from app.importers import archive
 from app.importers.motec import read_ldx_beacons
@@ -130,7 +130,8 @@ def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]]) -> No
                 db.commit()
                 run = _Run(db, job, found.archives, folder)
                 for i, item in enumerate(found.logs):
-                    run.add(item, ldx_for.get(i))
+                    with heavy.lock:  # one log in memory at a time, across imports and requests
+                        run.add(item, ldx_for.get(i))
                     job.done = i + 1
                     db.commit()
                 run.finish_events()
