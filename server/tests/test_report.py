@@ -128,6 +128,15 @@ def test_a_lap_time_relation_in_plain_words():
     assert _relation("x", "", vals, runs, -0.001, -0.7, 12, 1e-4, True, "lap", 0) is None  # too small to matter
 
 
+def test_logger_channel_names_in_words():
+    from app.analysis.advice import channel_words
+    assert channel_words("TGearbox") == "the gearbox temperature"
+    assert channel_words("POilEngine") == "the oil engine pressure"
+    assert channel_words("FuelLevel") == "the fuel level"
+    assert channel_words("BrakeTempFL") == "the brake temp FL"
+    assert channel_words("Fuel_Used") == "the fuel used"
+
+
 def test_a_relation_carried_by_the_warm_up_laps_is_flagged():
     from app.analysis.advice import _only_warm_up
     rng = np.random.default_rng(5)

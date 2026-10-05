@@ -13,6 +13,7 @@ Corners are named only by their official numbers (or C1, C2... where the track h
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from itertools import pairwise
 
@@ -449,6 +450,20 @@ OBVIOUS = {"grip_use"}  # a quicker lap uses more of the grip: true, and no help
 # channel scan categories worth reporting: tyres come from the engine's own tyre state, and "other" channels
 # (electrics, air conditioning, debug values) are rarely about the car's pace
 SCAN_CATEGORIES = ("brakes", "fuel", "powertrain", "conditions")
+UNIT_WORDS = {"C": "°C", "degC": "°C", "deg C": "°C", "F": "°F", "degF": "°F"}
+PREFIX_WORDS = {"T": "temperature", "P": "pressure"}  # the loggers' short names: TGearbox, POil
+
+
+def channel_words(name: str) -> str:
+    """A logger channel's name as words: "TGearbox" -> "the gearbox temperature", "FuelLevel" -> "the fuel level";
+    short capitals (FL, ECU) stay as they are."""
+    m = re.fullmatch(r"([TP])((?:[A-Z][a-z]+)+)", name)
+    if m:
+        return f"the {' '.join(re.findall(r'[A-Z][a-z]+', m[2])).lower()} {PREFIX_WORDS[m[1]]}"
+    tokens = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", name)
+    if not tokens:
+        return name
+    return "the " + " ".join(t.lower() if t[1:].islower() else t for t in tokens)
 
 
 def _feature(key: str, prep: Prepared, per_lap: dict[str, list[dict]], tyres: dict[str, dict[str, float]]
@@ -560,7 +575,8 @@ def lap_time_relations(prep: Prepared, per_lap: dict[str, list[dict]], extras: E
         scan_runs = [run for run, ts, _ in extras.scan for _ in ts]
         spread = float(np.nanpercentile(vals, 90) - np.nanpercentile(vals, 10)) if np.isfinite(vals).any() else 0
         digits = 0 if spread >= 20 else 1 if spread >= 2 else 2 if spread >= 0.2 else 3
-        rel = _relation(name, f["unit"], vals.astype(float), scan_runs, f["seconds_per_unit"], f["r"],
+        unit = UNIT_WORDS.get(f["unit"], f["unit"])
+        rel = _relation(channel_words(name), unit, vals.astype(float), scan_runs, f["seconds_per_unit"], f["r"],
                         int(np.isfinite(vals).sum()), f["p"], True, f"channel ({f['category']})", digits,
                         f.get("window"))
         if rel is None:
