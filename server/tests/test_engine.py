@@ -208,7 +208,9 @@ def test_engine_endpoints(client):
     ]}).json()
     check = client.get(f"/debriefs/{d['id']}/check").json()
     assert [p["claim"] for p in check["points"]] == ["understeer", None, "traction"]
-    assert check["points"][0]["section"] == "T1" and check["points"][0]["line"].startswith("Said understeer at T1")
+    # the synthetic laps have too little cornering for the car's balance gradient: the point says so
+    assert check["points"][0]["section"] == "T1" and check["points"][0]["line"].startswith("The balance can't be")
+    assert check["balance"] is None
     assert check["points"][1]["verdict"] == "cannot check" and check["points"][1]["agreement"] == "unclear"
     assert check["points"][2]["section"] == "T2"
     assert sum(check["agreement"].values()) == 3

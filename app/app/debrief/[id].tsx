@@ -256,7 +256,8 @@ function CheckSummary({ check, error }: { check: DebriefCheck | null; error: str
     <View style={styles.card}>
       <Text style={styles.cardTitle}>Against the data</Text>
       <Text style={styles.meta}>
-        Each point against this car&apos;s other corners, over the session&apos;s {check.laps ?? 0} clean laps.
+        Balance against the car&apos;s normal balance (as in the report), braking and traction against its other
+        corners, over the session&apos;s {check.laps ?? 0} clean laps.
       </Text>
       <View style={styles.kpis}>
         <Kpi n={counts.agrees} label="match" verdict="confirmed" />

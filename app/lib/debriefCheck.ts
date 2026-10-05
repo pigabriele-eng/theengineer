@@ -1,6 +1,8 @@
 // Client for the debrief check (GET /debriefs/{id}/check): each debrief point against the session's data.
 import { apiFetch } from '@/lib/api';
 
+// Balance points are read as the report's balance section reads them (degrees from the car's normal understeer),
+// braking and traction against the car's other corners.
 // confirmed and partly: the data backs the point; not seen: the corner is as the car usually is;
 // contradicted: the data shows the opposite; cannot check: no corner, no claim, or no channel for it.
 export type Verdict = 'confirmed' | 'partly' | 'not seen' | 'contradicted' | 'cannot check';
@@ -32,6 +34,7 @@ export type DataTrait = {
   section: string;
   phase: string;
   kind: 'understeer' | 'oversteer';
+  value: number; // degrees from the car's normal balance
   laps_with_it: number;
   laps: number;
   line: string;

@@ -7,6 +7,7 @@ from app.analysis.channels import EXIT, MID, POWER, TRAIL
 from app.analysis.insights import LapRecord, Prepared, Section
 from app.debrief.car_balance import CORNER, section_balance
 from app.debrief.check import (
+    MINUS,
     SUGGEST,
     _tyres,
     _verdict,
@@ -24,9 +25,9 @@ MIN_SPEED = 100 + np.arange(N_LAPS)  # lap i carries a little more speed through
 def _lap(i: int, rng: np.random.Generator) -> dict[str, np.ndarray]:
     """One lap over six 100 m sections: 30 m braking into the turn, 30 m mid-corner, 30 m exit, 10 m flat out.
 
-    The car's understeer grows 1.0 per g, is 0.5 higher mid-corner than on entry and exit everywhere, and:
-    T3 entry pushes (+0.6) on all laps but one, T5 exit is loose (-0.8) on every lap, and T1 mid-corner pushes
-    more on the laps with more speed at the apex.
+    The car's normal understeer is 1.0 degree per g, and: T3 entry pushes (+0.6) on all laps but one, T5 exit is
+    loose (-0.8) on every lap, T4 mid-corner pushes a little (+0.2: within normal, as the report reads it) and T1
+    mid-corner pushes more on the laps with more speed at the apex.
     """
     n = SECTION_M * len(CODES) + 1
     phase = np.full(n, float(POWER))
@@ -34,12 +35,12 @@ def _lap(i: int, rng: np.random.Generator) -> dict[str, np.ndarray]:
     us = np.zeros(n)
     for s, code in enumerate(CODES):
         a = s * SECTION_M
-        for j, (p, g, offset) in enumerate(((TRAIL, 0.9, 0.0), (MID, 1.3, 0.5), (EXIT, 1.0, 0.0))):
+        for j, (p, g) in enumerate(((TRAIL, 0.9), (MID, 1.3), (EXIT, 1.0))):
             sl = slice(a + 30 * j, a + 30 * (j + 1))
             phase[sl], ay[sl] = p, g
-            extra = {("T3", TRAIL): 0.6 if i != 3 else -0.2, ("T5", EXIT): -0.8,
+            extra = {("T3", TRAIL): 0.6 if i != 3 else -0.2, ("T5", EXIT): -0.8, ("T4", MID): 0.2,
                      ("T1", MID): 0.08 * (MIN_SPEED[i] - MIN_SPEED.mean())}.get((code, p), 0.0)
-            us[sl] = 1.0 * ay[sl] + offset + extra + rng.normal(0, 0.03, 30)
+            us[sl] = 1.0 * ay[sl] + extra + rng.normal(0, 0.03, 30)
     return {"phase": phase, "ay": ay, "understeer": us, "speed": np.where(ay > 1.1, 90.0, 150.0)}
 
 
@@ -58,29 +59,50 @@ def per(prep) -> dict[str, list[dict]]:
 
 
 def check(prep, per, text, corner=None, phase=None):
-    return check_point(text, corner, phase, prep, per, {}, section_balance(prep, "°"))
+    return check_point(text, corner, phase, prep, per, {}, section_balance(prep))
 
 
 def test_balance_by_section_and_phase(prep):
-    bal = section_balance(prep, "°")
-    assert bal.unit == "°" and bal.per_g > 0
+    bal = section_balance(prep)
+    assert bal.unit == "°" and bal.per_g == pytest.approx(1.0, abs=0.05)  # through zero, as the report fits it
     assert np.nanmedian(bal.laps["T3"]["entry"]) == pytest.approx(0.6, abs=0.1)
     assert np.sum(bal.laps["T3"]["entry"] > 0.3) == N_LAPS - 1
     assert np.nanmedian(bal.laps["T5"]["exit"]) == pytest.approx(-0.8, abs=0.1)
-    # the car is 0.5 higher mid-corner everywhere: that is its own average, not a corner standing out
     assert abs(np.nanmedian(bal.laps["T2"]["mid"])) < 0.1
     assert np.isfinite(bal.laps["T4"][CORNER]).all()
-    assert 0.03 < bal.scale < 0.3
     # slow cornering (the 90 km/h mid-corner samples) is all mid-corner; the 150 km/h ones are entry and exit
     assert np.isfinite(bal.bands["slow"]["mid"]).all() and np.isnan(bal.bands["slow"]["entry"]).all()
+
+
+def test_no_balance_without_the_channel(prep):
+    bare = Prepared(None, prep.length, prep.reference, [LapRecord(x.run, x.number, x.time, None,
+                    {k: v for k, v in x.trace.items() if k != "understeer"}, x.index_in_run) for x in prep.laps],
+                    None, None, prep.sections, "official")
+    assert section_balance(bare) is None
 
 
 def test_balance_point_that_matches_is_the_car_when_on_almost_every_lap(prep, per):
     r = check(prep, per, "Big understeer at turn-in", "T3", "entry")
     assert (r["verdict"], r["agreement"], r["cause"]) == ("confirmed", "agrees", "car")
     assert r["laps_with_it"] == N_LAPS - 1 and r["laps"] == N_LAPS
-    assert r["line"].startswith("Said understeer at T3 entry; data: understeer angle at T3 entry well above")
+    assert r["line"].startswith("Said understeer at T3 entry; data: balance at T3 entry +0.6° from the car's "
+                                "normal (slight understeer), more understeer than normal on 9 of 10 laps")
     assert r["line"].endswith("so it matches.")
+    assert r["suggestion"] == SUGGEST[("understeer", "entry")]
+
+
+def test_balance_reads_as_the_report_does(prep, per):
+    # +0.2 is within the car's normal in the report (slight starts at 0.3): partly, never confirmed
+    r = check(prep, per, "A bit of understeer mid-corner", "T4", "mid")
+    assert r["verdict"] == "partly" and "a touch towards understeer (+0.2°, within the car's normal)" in r["evidence"]
+    r = check(prep, per, "Sovrasterzo in uscita dalla T5")
+    assert f"{MINUS}0.8° from the car's normal (clear oversteer)" in r["evidence"]
+
+
+def test_trait_felt_in_another_phase(prep, per):
+    r = check(prep, per, "Understeer in the middle of T3", "T3", "mid")
+    assert r["verdict"] == "not seen" and r["cause"] == "car"
+    assert r["meaning"].startswith("The data shows understeer here on entry instead (+0.6°")
     assert r["suggestion"] == SUGGEST[("understeer", "entry")]
 
 
@@ -105,8 +127,9 @@ def test_trait_that_comes_with_the_driving(prep, per):
 
 def test_negated_and_whole_corner_points(prep, per):
     assert check(prep, per, "Sovrasterzo in uscita dalla T5")["verdict"] == "confirmed"
-    r = check(prep, per, "No understeer at T4 any more")
+    r = check(prep, per, "No understeer at T2 any more")
     assert (r["verdict"], r["phase"]) == ("confirmed", None)
+    assert check(prep, per, "No understeer at T4 any more")["verdict"] == "partly"  # +0.2 mid-corner
     r = check(prep, per, "No understeer at T3 any more")
     assert r["verdict"] == "contradicted"
     r = check(prep, per, "Understeer at T3")  # no phase said: the phase that shows it

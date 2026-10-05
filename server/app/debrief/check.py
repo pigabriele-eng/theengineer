@@ -1,10 +1,10 @@
 """Check what the driver said in a debrief against what the logger recorded, and suggest how to drive it.
 
 Each debrief point is read for a claim (understeer, oversteer, traction, lock-ups, tyres...), the corner and
-the phase. The data then says whether that corner really stands out that way against the car's other corners in
-the same session, and on how many laps. Balance is the understeer angle against the car's own average at the same
-lateral g and in the same phase of the corner (car_balance.py): the car has no "correct" steering angle, but a
-corner that needs more steering than the car's others does stand out.
+the phase. The data then says whether that corner really shows it, and on how many laps. Balance is the report's
+(app.analysis.balance, read lap by lap in car_balance.py): the understeer angle against the car's normal
+understeer at the same lateral g, read as the report reads it (from 0.3 degrees a slight understeer or oversteer).
+Braking and traction are measured against the car's other corners in the same session.
 
 A trait the data shows on almost every lap is the car (a setup item). One that comes and goes with how the corner
 was driven (later braking, more speed to the apex...) is technique, and so is rear movement where the data shows
@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from app.analysis.balance import Geometry, car_geometry
 from app.analysis.insights import (
     CornerSpec,
     Prepared,
@@ -28,8 +29,9 @@ from app.analysis.insights import (
     prepare,
     section_metrics,
 )
+from app.analysis.setup_advice import NOTABLE, STRENGTH, deg, describe
 from app.analysis.stint import find_stops, split_stints
-from app.debrief.car_balance import CORNER, SectionBalance, section_balance
+from app.debrief.car_balance import CORNER, SectionBalance, add_balance_channel, section_balance
 
 NEG = re.compile(r"\b(no|not|never|without|non|senza|kein\w*|nicht|ohne)\b[\w' ]{0,20}$", re.I)
 CLAIMS: list[tuple[str, re.Pattern]] = [  # first match wins, so the specific ones come first
@@ -155,11 +157,14 @@ TRENDS_BY_PHASE = {
 }
 PHASE_NAME = {"entry": "entry", "mid": "mid-corner", "exit": "exit", "braking": "braking", CORNER: ""}
 Z_CONFIRM, Z_PARTLY = 0.75, 0.5  # in units of how far apart this car's corners usually are
+# Balance in degrees from the car's normal: confirmed where the report calls it at least slight (0.3), partly there
+# from 0.2
+BALANCE_SCALE = STRENGTH[-1][0] / Z_CONFIRM
 SHARE_CONFIRM, SHARE_CAR = 0.6, 0.8  # of the laps: most laps, and almost every lap (then it is the car)
 MIN_LAPS = 3
 AGREEMENT = {"confirmed": "agrees", "partly": "agrees", "not seen": "disagrees", "contradicted": "disagrees",
              "cannot check": "unclear"}
-UNMENTIONED_Z, MAX_UNMENTIONED = 1.0, 3
+MAX_UNMENTIONED = 3  # balance traits the report calls clear (NOTABLE) on almost every lap that no point mentions
 MINUS = "\u2212"  # a typographic minus sign, as the app shows numbers
 
 
@@ -174,10 +179,11 @@ class Claim:
 class Reading:
     """One claim's measure at one corner, lap by lap, against the car's other corners."""
     values: np.ndarray  # per clean lap, NaN where there is nothing to read
-    typical: float  # the car's other corners (0 for balance: the car's own average)
+    typical: float  # the car's other corners (0 for balance: the car's normal)
     scale: float  # how far apart the car's corners usually are
     label: str
     unit: str
+    digits: int | None = None  # the median as it is shown: the balance to 0.1°, as the report reads it
 
     @property
     def ok(self) -> np.ndarray:
@@ -189,11 +195,12 @@ class Reading:
 
     @property
     def value(self) -> float:
-        return float(np.median(self.values[self.ok]))
+        v = float(np.median(self.values[self.ok]))
+        return round(v, self.digits) if self.digits is not None else v
 
     @property
     def z(self) -> float:
-        return (self.value - self.typical) / self.scale
+        return round((self.value - self.typical) / self.scale, 6)  # 0.3 / 0.4 reads 0.75, not 0.7499...
 
     def above(self) -> int:
         return int((self.values[self.ok] > self.typical).sum())
@@ -261,15 +268,19 @@ def _corner_reading(metric: tuple[str, str, str, float], sec: Section, per: dict
     return r if r.n >= MIN_LAPS else None
 
 
-def _balance_reading(bal: SectionBalance, by_phase: dict[str, np.ndarray], phase: str | None, sign: int
-                     ) -> tuple[Reading, str] | None:
-    """The understeer angle in this phase (over the whole corner when the phase has too little cornering).
+def _balance(values: np.ndarray) -> Reading:
+    """Balance lap by lap, in degrees from the car's normal."""
+    return Reading(values, 0.0, BALANCE_SCALE, "balance", "°", 1)
+
+
+def _balance_reading(by_phase: dict[str, np.ndarray], phase: str | None, sign: int) -> tuple[Reading, str] | None:
+    """The balance in this phase (over the whole corner when the phase has too little cornering).
 
     With no phase said, the phase that shows the most of the claimed trait: a push at turn-in is what "understeer
     at T3" means, even when the rest of the corner is neutral, and a "no understeer at T3" has to hold in every
     phase.
     """
-    readings = {ph: Reading(v, 0.0, bal.scale, "understeer angle", bal.unit) for ph, v in by_phase.items()}
+    readings = {ph: _balance(v) for ph, v in by_phase.items()}
     readings = {ph: r for ph, r in readings.items() if r.n >= MIN_LAPS}
     want = {"braking": "entry"}.get(phase or "", phase)
     if want is None:
@@ -283,6 +294,22 @@ def _balance_reading(bal: SectionBalance, by_phase: dict[str, np.ndarray], phase
     return None
 
 
+def _elsewhere(by_phase: dict[str, np.ndarray], read: str, sign: int) -> tuple[str, Reading, int] | None:
+    """Another phase of the same corner that clearly shows the claimed trait, when the phase said doesn't: the
+    driver felt it, in a different part of the corner."""
+    best = None
+    for ph in ("entry", "mid", "exit"):
+        if ph == read or ph not in by_phase:
+            continue
+        r = _balance(by_phase[ph])
+        if r.n < MIN_LAPS:
+            continue
+        with_it = int((r.values[r.ok] * sign > 0).sum())
+        if sign * r.z >= Z_CONFIRM and with_it >= SHARE_CONFIRM * r.n and (best is None or sign * r.z > best[0]):
+            best = (sign * r.z, ph, r, with_it)
+    return best[1:] if best else None
+
+
 def _verdict(z: float, share: float, negated: bool) -> str:
     """z and share are in the claim's direction: how far the corner stands out that way, and on what share of laps."""
     shows = z >= Z_CONFIRM and share >= SHARE_CONFIRM
@@ -293,7 +320,7 @@ def _verdict(z: float, share: float, negated: bool) -> str:
         return "confirmed" if z < Z_PARTLY else "partly"
     if shows:
         return "confirmed"
-    if some or (z >= Z_CONFIRM and share >= 0.5):
+    if some:
         return "partly"
     if z <= -Z_CONFIRM and share <= 1 - SHARE_CONFIRM:
         return "contradicted"
@@ -392,9 +419,12 @@ def check_point(text: str, corner: str | None, phase: str | None, prep: Prepared
     if balance:
         sign = 1 if claim.kind == "understeer" else -1
         by_phase = (bal.bands[band] if band else bal.laps.get(sec.code, {})) if bal else {}
-        found = _balance_reading(bal, by_phase, claim.phase, sign) if bal else None
+        found = _balance_reading(by_phase, claim.phase, sign) if bal else None
         if found is None:
-            return unclear("The logger has no steering and yaw data to read the balance here.")
+            return unclear("The balance can't be read in this session: it needs steering and yaw rate channels and "
+                           "enough cornering." if bal is None else
+                           f"Too little hard cornering {f'at {corner}' if corner else f'in the {band} corners'} on "
+                           "enough laps to read the balance.")
         r, read_phase = found
         metric_phase = None if read_phase == CORNER else read_phase
     else:
@@ -407,14 +437,17 @@ def check_point(text: str, corner: str | None, phase: str | None, prep: Prepared
     z = sign * r.z
     with_it = int(((r.values[r.ok] - r.typical) * sign > 0).sum())
     verdict = _verdict(z, with_it / r.n, claim.negated)
+    elsewhere = None
+    if balance and claim.phase and not claim.negated and verdict in ("not seen", "contradicted"):
+        elsewhere = _elsewhere(by_phase, read_phase, sign)
     link, cost, trend = None, "", ""
     if ms is not None:  # how the trait goes with the driving, lap to lap, at this corner
         runs = [x.run for x in prep.laps]
         link = _link(r.values, ms, runs, LINKS_BY_PHASE.get(metric_phase, LINKS_BY_PHASE[None]), sign)
         cost = _cost(r.values, ms, runs, sign)
-        trend = _trend_note(trends.get(sec.code, []), metric_phase)
+        trend = _trend_note(trends.get(sec.code, []), elsewhere[0] if elsewhere else metric_phase)
     meaning, cause, advice = _meaning(claim, verdict, r, with_it, link, metric_phase, bal, cost,
-                                      f"the {band} corners" if band else "this corner")
+                                      f"the {band} corners" if band else "this corner", elsewhere)
     if band:
         where_data = f"in {band} corners" + (f" {BAND_PHASE[read_phase]}" if read_phase in BAND_PHASE else "")
     else:
@@ -452,20 +485,25 @@ def _verdict_words(verdict: str, negated: bool) -> str:
 def _evidence(r: Reading, balance: bool, where: str) -> str:
     """where: "at T6 entry", "in slow corners on entry"."""
     v = r.value
-    if balance:
-        z = r.z
-        level = ("well above" if z >= 2 else "above" if z >= Z_CONFIRM else "a little above" if z >= Z_PARTLY else
-                 "well below" if z <= -2 else "below" if z <= -Z_CONFIRM else "a little below" if z <= -Z_PARTLY
-                 else "close to")
+    if balance:  # in the report's words: slight, clear or strong understeer or oversteer
+        d = describe(v)
         up = r.above()
-        count = (f"above it on {up} of {r.n} laps" if v >= 0 else f"below it on {r.n - up} of {r.n} laps")
-        return f"understeer angle {where} {level} this car's average ({_num(v, r.unit, True)}), {count}"
+        count = (f"more understeer than normal on {up} of {r.n} laps" if v >= 0 else
+                 f"more oversteer than normal on {r.n - up} of {r.n} laps")
+        if d["kind"] == "normal" and abs(r.z) >= Z_PARTLY:
+            lean = "understeer" if v > 0 else "oversteer"
+            return f"balance {where} a touch towards {lean} ({deg(v)}, within the car's normal), {count}"
+        if d["kind"] == "normal":  # how many laps stay within it, as the report reads a lap (to 0.1°)
+            within = int((np.abs(np.round(r.values[r.ok], 1)) < STRENGTH[-1][0]).sum())
+            return f"balance {where} within the car's normal ({deg(v)}) on {within} of {r.n} laps"
+        return f"balance {where} {deg(v)} from the car's normal ({d['strength']} {d['kind']}), {count}"
     return (f"{r.label} {where} {_num(v, r.unit)} against {_num(r.typical, r.unit)} in the car's other "
             f"corners, more on {r.above()} of {r.n} laps")
 
 
 def _meaning(claim: Claim, verdict: str, r: Reading, with_it: int, link: str | None, phase: str | None,
-             bal: SectionBalance | None, cost: str, subject: str = "this corner") -> tuple[str, str | None, str]:
+             bal: SectionBalance | None, cost: str, subject: str = "this corner",
+             elsewhere: tuple[str, Reading, int] | None = None) -> tuple[str, str | None, str]:
     """What the comparison likely means (and whether it points at the car or the driving), and what to try.
 
     Returns (meaning, cause, suggestion); cause is "car", "technique" or None when it can't be told apart.
@@ -474,15 +512,14 @@ def _meaning(claim: Claim, verdict: str, r: Reading, with_it: int, link: str | N
     here = "here" if subject == "this corner" else f"in {subject}"
     seen = f"{with_it} of {n} laps"
     balance = kind in ("understeer", "oversteer")
+    than = "than the car's normal" if balance else "than in the car's other corners"
     suggest = SUGGEST.get((kind, phase if balance else None), "") if phase or not balance else ""
     if claim.negated:
         if verdict == "contradicted":
-            return f"The data does show {MORE_OF[kind]} {here}, on {seen}, more than in the car's other corners.", \
-                None, suggest
+            return f"The data does show {MORE_OF[kind]} {here}, on {seen}, more {than}.", None, suggest
         if verdict == "partly":
-            return (f"Mostly: a little more {MORE_OF[kind]} {here} than in the car's other corners, on {seen}.",
-                    None, "")
-        return f"The data agrees: no more {MORE_OF[kind]} {here} than in the car's other corners.", None, ""
+            return f"Mostly: a little more {MORE_OF[kind]} {here} {than}, on {seen}.", None, ""
+        return f"The data agrees: no more {MORE_OF[kind]} {here} {than}.", None, ""
     linked = f" It is bigger on laps where you {link}." if link else ""
     if verdict in ("confirmed", "partly"):
         if with_it >= SHARE_CAR * n:
@@ -492,6 +529,11 @@ def _meaning(claim: Claim, verdict: str, r: Reading, with_it: int, link: str | N
             return (f"Seen on {seen}, more on laps where you {link}: it comes from how the corner is driven more "
                     f"than from the car.{cost}", "technique", suggest)
         return f"Seen on {seen}.{cost}", None, suggest
+    if elsewhere is not None:  # felt in another part of the corner
+        ph, other, k = elsewhere
+        return (f"The data shows {kind} {here} {BAND_PHASE[ph]} instead ({deg(other.value)} from the car's normal, "
+                f"on {k} of {other.n} laps): what you felt is there, in another part of the corner.",
+                "car" if k >= SHARE_CAR * other.n else None, SUGGEST.get((kind, ph), ""))
     against = n - with_it
     if verdict == "contradicted":
         if kind == "oversteer":
@@ -499,9 +541,9 @@ def _meaning(claim: Claim, verdict: str, r: Reading, with_it: int, link: str | N
                     "movement after a push usually comes from lifting or adding steering, so it's the driving "
                     "reacting to the car.", "technique", SUGGEST.get(("understeer", phase), ""))
         if kind == "understeer":
-            return (f"The car needs less steering {here} than in its other corners on {against} of {n} laps, so the "
-                    "rear is sliding too: a front that feels vague may be both ends letting go. Look at rear grip "
-                    "rather than the front.", "car", SUGGEST.get(("oversteer", phase), ""))
+            return (f"The balance {here} is towards oversteer on {against} of {n} laps, so the rear is sliding too: "
+                    "a front that feels vague may be both ends letting go. Look at rear grip rather than the front.",
+                    "car", SUGGEST.get(("oversteer", phase), ""))
         if kind == "traction":
             return (f"The rear spins less {here} than in the car's other exits on {against} of {n} laps: a slow "
                     "exit here is more likely the line or the throttle timing than traction.", "technique", "")
@@ -512,14 +554,14 @@ def _meaning(claim: Claim, verdict: str, r: Reading, with_it: int, link: str | N
         return (f"Only on {seen}, the ones where you {link}: that is the driving on those laps, not the car.",
                 "technique", suggest)
     if kind == "understeer" and bal is not None and bal.per_g > 0:
-        return (f"{subject[0].upper() + subject[1:]} {'is' if subject == 'this corner' else 'are'} no worse than "
-                "the car's others. The car needs more steering as the cornering load rises everywhere "
-                f"({_num(bal.per_g, bal.unit, True)} per g), which is likely what you feel: a whole-car balance "
-                f"item, not {subject}.", "car", "")
+        return (f"{subject[0].upper() + subject[1:]} {'is' if subject == 'this corner' else 'are'} within the car's "
+                "normal balance. The car needs more steering as the cornering load rises, everywhere "
+                f"({bal.per_g:.1f}° per g, taken off before comparing), which is likely what you feel: a whole-car "
+                f"balance item, not {subject}.", "car", "")
     if kind == "oversteer":
-        return (f"The rear is no looser {here} than in the car's other corners on most laps: likely a single "
-                "moment (one lap, a kerb, a lift) rather than the car.", None, "")
-    return ("Not more than in the car's other corners: check whether it was one lap (traffic, a kerb).", None, "")
+        return (f"The rear is no looser {here} {than} on most laps: likely a single moment (one lap, a kerb, a "
+                "lift) rather than the car.", None, "")
+    return (f"Not more {than}: check whether it was one lap (traffic, a kerb).", None, "")
 
 
 def stints_of(runs: list[RunInput]) -> dict[tuple[str, int], tuple[str, int]]:
@@ -600,25 +642,16 @@ def _unmentioned(bal: SectionBalance | None, points: list[dict]) -> list[dict]:
             ok = np.isfinite(v)
             if ok.sum() < max(MIN_LAPS, 5) or (code, ph) in said or (code, None) in said:
                 continue
-            r = Reading(v, 0.0, bal.scale, "understeer angle", bal.unit)
+            r = _balance(v)
             kind = "understeer" if r.value > 0 else "oversteer"
             with_it = r.above() if r.value > 0 else r.n - r.above()
-            if abs(r.z) >= UNMENTIONED_Z and with_it >= SHARE_CAR * r.n:
+            if abs(r.value) >= NOTABLE and with_it >= SHARE_CAR * r.n:
                 evidence = _evidence(r, True, f"at {code} {PHASE_NAME[ph]}")
-                found.append({"section": code, "phase": ph, "kind": kind, "z": round(abs(r.z), 2),
+                found.append({"section": code, "phase": ph, "kind": kind, "value": round(r.value, 2),
                               "laps_with_it": with_it, "laps": r.n,
                               "line": evidence[0].upper() + evidence[1:] + "."})
-    found.sort(key=lambda f: -f["z"])
+    found.sort(key=lambda f: -abs(f["value"]))
     return found[:MAX_UNMENTIONED]
-
-
-def _steer_unit(runs: list[RunInput]) -> str:
-    for run in runs:
-        name = run.data.sources.get("steer") if run.data.sources else None
-        ch = run.ld.channel(name) if run.ld is not None and name else None
-        if ch is not None and ch.unit:
-            return "°" if ch.unit.lower() in ("deg", "degrees", "°") else ch.unit
-    return ""
 
 
 def _with_abs_share(ms: list[dict]) -> list[dict]:
@@ -630,17 +663,20 @@ def _with_abs_share(ms: list[dict]) -> list[dict]:
 
 
 def check_debrief(points: list[dict], runs: list[RunInput], corners: list[CornerSpec] | None = None, *,
-                  drop_channels: bool = False) -> dict:
-    """points: [{"id", "text", "corner_code", "phase"}]. Returns a verdict per point and how many agree."""
-    unit = _steer_unit(runs)
+                  drop_channels: bool = False, geo: Geometry | None = None) -> dict:
+    """points: [{"id", "text", "corner_code", "phase"}]. Returns a verdict per point and how many agree.
+
+    geo: the car's steering ratio and wheelbase for the balance (balance.car_geometry); Hockenheim's when None.
+    """
     stints = stints_of(runs)  # before prepare drops the channels
+    add_balance_channel(runs, geo or car_geometry(None))
     prep = prepare(runs, corners, drop_channels=drop_channels)
     if prep is None:
         return {"points": [], "error": "No clean laps in this session to check against"}
     per = {s.code: _with_abs_share([section_metrics(x, s, prep.limits, prep.sim) for x in prep.laps])
            for s in prep.sections}
     trends = {code: _trend_rows(prep.laps, ms) for code, ms in per.items()}
-    bal = section_balance(prep, unit)
+    bal = section_balance(prep)
     out = [{"id": p.get("id"), "text": p["text"],
             **check_point(p["text"], p.get("corner_code"), p.get("phase"), prep, per, trends, bal, stints)}
            for p in points]
