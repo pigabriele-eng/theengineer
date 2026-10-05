@@ -67,6 +67,9 @@ class TimingLine:
     lat: float
     lon: float
     heading: float  # degrees clockwise from north
+    # what it was learned from: "marker" (the dash's S/F marker) or "beacons" (an .ldx, often i2's own "Auto GPS"
+    # beacons, which can sit metres away from the line); "" when that wasn't recorded
+    source: str = ""
 
 
 @dataclass
@@ -124,12 +127,24 @@ def load_session(ld: LdFile, channel_map: dict[str, tuple[str, ...]] | None = No
         channels[role], sources[role] = v, ch.name
     distance = np.concatenate([[0.0], np.cumsum(channels["speed"][1:] / 3.6 / MASTER_HZ)])
     data = SessionData(t=t, distance=distance, channels=channels, sources=sources)
-    data.laps, data.lap_source = split_laps(ld, beacons, line)
-    if data.lap_source in ("beacons", "marker"):
-        data.timing_line = timing_line_at(ld, [l.start for l in data.laps])
-    else:
-        data.timing_line = line
+    timing = time_laps(ld, beacons, line)
+    data.laps, data.lap_source, data.timing_line = timing.laps, timing.source, timing.line
     return data
+
+
+@dataclass
+class LapTiming:
+    laps: list[Lap]
+    source: str  # beacons, marker, gps or counter; "" when the log has no laps
+    line: TimingLine | None  # where the laps start: learned from the beacons or marker, else the line given
+
+
+def time_laps(ld: LdFile, beacons: list[float] | None = None, line: TimingLine | None = None) -> LapTiming:
+    """The log's laps, without resampling its channels: what's needed to (re-)time a stored log."""
+    laps, source = split_laps(ld, beacons, line)
+    if source in ("beacons", "marker"):
+        return LapTiming(laps, source, timing_line_at(ld, [l.start for l in laps], source))
+    return LapTiming(laps, source, line)
 
 
 def _gps(ld: LdFile):
@@ -147,7 +162,7 @@ def _local_m(la: np.ndarray, lo: np.ndarray, lat0: float, lon0: float) -> tuple[
     return (np.radians(lo - lon0) * r * np.cos(np.radians(lat0)), np.radians(la - lat0) * r)
 
 
-def timing_line_at(ld: LdFile, times: list[float]) -> TimingLine | None:
+def timing_line_at(ld: LdFile, times: list[float], source: str = "") -> TimingLine | None:
     """Where the car was at known line-crossing times: the start/finish line for GPS lap timing."""
     g = _gps(ld)
     if g is None or len(times) < 2 or len(g[0]) < 10:
@@ -164,7 +179,7 @@ def timing_line_at(ld: LdFile, times: list[float]) -> TimingLine | None:
     if not heads:
         return None
     heading = float(np.degrees(np.arctan2(np.mean(np.sin(heads)), np.mean(np.cos(heads))))) % 360
-    return TimingLine(lat0, lon0, heading)
+    return TimingLine(lat0, lon0, heading, source)
 
 
 def gps_crossings(ld: LdFile, line: TimingLine, min_gap_s: float = 10.0) -> np.ndarray:
@@ -189,15 +204,23 @@ def gps_crossings(ld: LdFile, line: TimingLine, min_gap_s: float = 10.0) -> np.n
 
 def lap_starts(ld: LdFile, beacons: list[float] | None = None,
                line: TimingLine | None = None) -> tuple[np.ndarray, str]:
-    """Line-crossing times, from the most precise source the log offers."""
-    if beacons and len(beacons) >= 2:
-        return np.asarray(beacons, float), "beacons"
+    """Line-crossing times. The dash's own S/F marker comes first; then the GPS crossing of a line learned from
+    the dash's marker, so every log of a track starts its laps at the same place; then .ldx beacons (i2's "Auto
+    GPS" beacons can sit tens of metres from the dash's line, and miss laps); then the GPS crossing of any other
+    line; then the lap counter."""
     sf = ld.channel("S/F Marker", "Start Finish", "SF Marker")
     if sf is not None:
         starts = sf.times()[1:][np.diff(sf.values()) > 0]
         if len(starts) >= 2:
             return starts, "marker"
-    if line is not None:
+    marker_line = line is not None and line.source == "marker"
+    if marker_line:
+        starts = gps_crossings(ld, line)
+        if len(starts) >= 2:
+            return starts, "gps"
+    if beacons and len(beacons) >= 2:
+        return np.asarray(beacons, float), "beacons"
+    if line is not None and not marker_line:
         starts = gps_crossings(ld, line)
         if len(starts) >= 2:
             return starts, "gps"

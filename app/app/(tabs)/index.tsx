@@ -74,9 +74,15 @@ export default function SessionsScreen() {
             <Pressable style={styles.row}>
               <View style={styles.rowText}>
                 <Text style={styles.title}>{item.name ?? `Session ${item.id}`}</Text>
-                <Text style={styles.sub}>
-                  {item.kind} · {new Date(item.created_at).toLocaleDateString()}
-                  {driverOf(item) ? ` · ${driverOf(item)}` : ''}
+                <Text style={styles.sub} numberOfLines={1}>
+                  {[
+                    item.track_name,
+                    driverOf(item),
+                    item.kind,
+                    new Date(item.created_at).toLocaleDateString(),
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
                 </Text>
               </View>
               <Text style={styles.time}>{formatLap(item.best_lap_s)}</Text>
