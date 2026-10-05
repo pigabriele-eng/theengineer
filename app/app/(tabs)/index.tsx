@@ -2,9 +2,11 @@ import { Link, useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Pressable, SectionList, StyleSheet, TextInput } from 'react-native';
 
+import { DriverLinks } from '@/components/DriverPicker';
 import { ImportLogs } from '@/components/ImportLogs';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { api, formatLap, Session, SessionKind } from '@/lib/api';
+import { Driver, driversApi, Tagged } from '@/lib/drivers';
 import { EventInfo, fetchEvents, SessionInEvent } from '@/lib/report';
 
 const KINDS: SessionKind[] = ['test', 'practice', 'qualifying', 'race'];
@@ -13,6 +15,7 @@ export default function SessionsScreen() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [events, setEvents] = useState<EventInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [drivers, setDrivers] = useState<Driver[]>([]);
   const [name, setName] = useState('');
   const [kind, setKind] = useState<SessionKind>('test');
   const tint = useThemeColor({}, 'tint');
@@ -20,8 +23,10 @@ export default function SessionsScreen() {
 
   const load = useCallback(() => {
     api.sessions().then(setSessions, (e) => setError(e.message));
+    driversApi.list().then(setDrivers, () => setDrivers([]));
     fetchEvents().then(setEvents, () => setEvents([]));
   }, []);
+  const driverOf = (s: Session) => drivers.find((d) => d.id === (s as Tagged).driver_id)?.name;
   const groups = useMemo(() => groupByEvent(sessions as SessionInEvent[], events), [sessions, events]);
   useFocusEffect(load);
 
@@ -57,6 +62,7 @@ export default function SessionsScreen() {
         ))}
       </View>
       <ImportLogs onProgress={load} />
+      <DriverLinks />
       {sessions.some((s) => s.best_lap_s != null) && (
         // Link asChild hands its child's style to a web anchor, which can't take a style array: one object
         <Link href="/compare" asChild>
@@ -101,7 +107,12 @@ export default function SessionsScreen() {
               <View style={styles.rowText}>
                 <Text style={styles.title}>{item.name ?? `Session ${item.id}`}</Text>
                 <Text style={styles.sub} numberOfLines={1}>
-                  {[item.track_name, item.kind, new Date(item.created_at).toLocaleDateString()]
+                  {[
+                    item.track_name,
+                    driverOf(item),
+                    item.kind,
+                    new Date(item.created_at).toLocaleDateString(),
+                  ]
                     .filter(Boolean)
                     .join(' · ')}
                 </Text>

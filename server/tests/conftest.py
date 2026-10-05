@@ -21,12 +21,15 @@ def client(tmp_path, monkeypatch):
     import app.db
     import app.main
     import app.routers.balance
+    import app.routers.comparisons
     import app.routers.debriefs
+    import app.routers.drivers
     import app.routers.imports
     import app.routers.insights
     import app.routers.lapcompare
     import app.routers.reports
     import app.routers.sessions
+    import app.routers.setups
     import app.routers.trackmap
     import app.routers.tyres
     import app.routers.vehicle
@@ -39,12 +42,22 @@ def client(tmp_path, monkeypatch):
     importlib.reload(app.routers.reports)
     importlib.reload(app.routers.imports)
     importlib.reload(app.routers.debriefs)
+    importlib.reload(app.routers.drivers)
     importlib.reload(app.routers.insights)
+    importlib.reload(app.routers.comparisons)
     importlib.reload(app.routers.lapcompare)
     importlib.reload(app.routers.tyres)
     importlib.reload(app.routers.vehicle)
     importlib.reload(app.routers.trackmap)
     importlib.reload(app.routers.balance)
+    import app.setup.data
+    import app.setup.models
+    import app.setup.results
+    import app.setup.sheet
+    import app.setup.suggest
+    for m in (app.setup.models, app.setup.results, app.setup.sheet, app.setup.suggest, app.setup.data,
+              app.routers.setups):
+        importlib.reload(m)
     importlib.reload(app.main)
     if TEST_DATABASE_URL:
         app.db.Base.metadata.drop_all(app.db.engine)
