@@ -26,6 +26,7 @@ from app.importers import archive
 from app.importers.motec import read_ldx_beacons
 from app.routers import reports
 from app.routers.sessions import add_log
+from app.vehicle import tyre_store
 
 router = APIRouter(prefix="/imports")
 log = logging.getLogger(__name__)
@@ -110,6 +111,7 @@ def _work() -> None:
         finally:
             shutil.rmtree(folder, ignore_errors=True)
             _jobs.task_done()
+            tyre_store.kick()  # summarise the new logs for the tyre model
 
 
 def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]]) -> None:

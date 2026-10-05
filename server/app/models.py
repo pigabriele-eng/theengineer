@@ -211,6 +211,30 @@ class ImportJob(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class TyreData(Base):
+    """One log file's tyre data, binned small (vehicle/tyre_data.py): the accumulating tyre model is fitted from
+    these, never from the logs. Made in the background (vehicle/tyre_store.py)."""
+    __tablename__ = "tyre_data"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    file_id: Mapped[int] = mapped_column(ForeignKey("logger_files.id", ondelete="CASCADE"), unique=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("run_sessions.id", ondelete="CASCADE"), index=True)
+    version: Mapped[str] = mapped_column(String(64))  # summary method and car values it was made with
+    status: Mapped[str] = mapped_column(String(16))  # ok, none (no steady cornering) or failed (see message)
+    message: Mapped[str | None] = mapped_column(Text)
+    # how the file's laps were timed when it was summarised: source and line (tyre_store.timing_key)
+    lap_source: Mapped[str | None] = mapped_column(String(16))
+    car_key: Mapped[str] = mapped_column(String(80), index=True)  # car:<id>, logger:<serial> or vehicle:<name>
+    car_label: Mapped[str] = mapped_column(String(160))
+    preset: Mapped[str] = mapped_column(String(40))  # the car values the summary was made with
+    tyre: Mapped[str | None] = mapped_column(String(80))
+    track: Mapped[str | None] = mapped_column(String(120))
+    logged_on: Mapped[date | None] = mapped_column(Date)
+    ambient_c: Mapped[float | None] = mapped_column(Float)  # the logger's, at racing speed
+    samples: Mapped[int] = mapped_column(Integer, default=0)
+    summary: Mapped[dict | None] = mapped_column(JSON)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 # ---------- the report (routers/reports.py): caches, so a whole test is never read from its logs at once ----------
 
 class SessionTraces(Base):

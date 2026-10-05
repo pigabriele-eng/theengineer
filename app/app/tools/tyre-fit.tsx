@@ -1,12 +1,12 @@
 import { Stack, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, LayoutChangeEvent, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
-import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 
 import { Text, View, useThemeColor } from '@/components/Themed';
-import { useSeriesColors } from '@/components/TraceChart';
+import { AxleCard, CurveChart, useAxleColors } from '@/components/TyreCurve';
+import { TyreModelView } from '@/components/TyreModelView';
 import { api, Session } from '@/lib/api';
-import { AxleFit, DEFAULT_PRESET, Preset, TyreFit, Vehicle, vehicleApi } from '@/lib/vehicle';
+import { DEFAULT_PRESET, Preset, TyreFit, Vehicle, vehicleApi } from '@/lib/vehicle';
 
 type Field = { key: keyof Vehicle; label: string; unit: string; percent?: boolean };
 
@@ -20,7 +20,51 @@ const FIELDS: Field[] = [
   { key: 'aero_balance_front', label: 'Aero balance front', unit: '%', percent: true },
 ];
 
+type Mode = 'all' | 'one';
+const MODES: { key: Mode; label: string }[] = [
+  { key: 'all', label: 'All data for this car' },
+  { key: 'one', label: 'One log' },
+];
+
 export default function TyreFitScreen() {
+  const [mode, setMode] = useState<Mode>('all');
+  const tint = useThemeColor({}, 'tint');
+  const background = useThemeColor({}, 'background');
+  return (
+    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.container}>
+      <Stack.Screen options={{ title: 'Tyre fit' }} />
+      <View style={styles.modes} accessibilityRole="tablist">
+        {MODES.map((m) => {
+          const on = m.key === mode;
+          return (
+            <Pressable
+              key={m.key}
+              onPress={() => setMode(m.key)}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: on }}
+              style={on ? [styles.mode, styles.modeOn, { borderColor: tint }] : styles.mode}>
+              <Text style={on ? [styles.modeText, { color: tint }] : styles.modeText}>{m.label}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      {/* both stay mounted, so a single-log fit survives a look at the other mode */}
+      <View style={[styles.pane, mode !== 'all' && styles.hidden]}>
+        <Text style={styles.intro}>
+          One tyre model from every session of the car on this tyre: each log is summarised once, in the background,
+          and the model grows with every run. It shows where the grip peaks and how grip changes with TPMS
+          temperature, hot pressure and laps on the tyre.
+        </Text>
+        <TyreModelView />
+      </View>
+      <View style={[styles.pane, mode !== 'one' && styles.hidden]}>
+        <SingleLogFit />
+      </View>
+    </ScrollView>
+  );
+}
+
+function SingleLogFit() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [picked, setPicked] = useState<number[]>([]);
   const [preset, setPreset] = useState<Preset | null>(null);
@@ -30,7 +74,6 @@ export default function TyreFitScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
   const text = useThemeColor({}, 'text');
 
   useFocusEffect(
@@ -77,8 +120,7 @@ export default function TyreFitScreen() {
   const chip = (on: boolean) => [styles.chip, on && { borderColor: tint }];
 
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.container}>
-      <Stack.Screen options={{ title: 'Tyre fit' }} />
+    <>
       <Text style={styles.intro}>
         A simplified lateral tyre curve per axle (peak grip, slip angle at the peak, shape) fitted from the steady
         cornering in your logs: lateral g, yaw rate, steering and speed.
@@ -152,12 +194,12 @@ export default function TyreFitScreen() {
       {error && <Text style={styles.error}>{error}</Text>}
 
       {fit && <FitResult fit={fit} />}
-    </ScrollView>
+    </>
   );
 }
 
 function FitResult({ fit }: { fit: TyreFit }) {
-  const colors = useSeriesColors();
+  const colors = useAxleColors();
   const steering = fit.sessions[0]?.steering;
   const scale = fit.sessions[0]?.yaw_rate_scale ?? 1;
   return (
@@ -174,15 +216,9 @@ function FitResult({ fit }: { fit: TyreFit }) {
           ` The yaw-rate sensor read ${Math.round(Math.abs(1 - 1 / scale) * 100)} % ${scale > 1 ? 'low' : 'high'}` +
             ' against lateral g; corrected.'}
       </Text>
-      <CurveChart fit={fit} />
-      <View style={styles.legend}>
-        <Text>
-          <Text style={{ color: colors.reference }}>●</Text> Front <Text style={{ color: colors.compare }}>●</Text> Rear
-        </Text>
-        <Text style={styles.unit}>Lines: fitted curve. Dots: median slip angle at each grip level.</Text>
-      </View>
-      <Axle title="Front axle" f={fit.axles.front} color={colors.reference} />
-      <Axle title="Rear axle" f={fit.axles.rear} color={colors.compare} />
+      <CurveChart curves={fit.curves} binned={fit.binned} fits={fit.axles} />
+      <AxleCard title="Front axle" f={fit.axles.front} color={colors.front} />
+      <AxleCard title="Rear axle" f={fit.axles.rear} color={colors.rear} />
       {fit.skipped.length > 0 && (
         <Text style={styles.sub}>
           Not used: {fit.skipped.map((s) => `session ${s.session_id} (${s.reason})`).join('; ')}.
@@ -198,105 +234,14 @@ function FitResult({ fit }: { fit: TyreFit }) {
   );
 }
 
-function Axle({ title, f, color }: { title: string; f: AxleFit; color: string }) {
-  const range = (r?: [number, number], digits = 2) => (r ? ` (${r[0].toFixed(digits)}–${r[1].toFixed(digits)})` : '');
-  return (
-    <View style={styles.card}>
-      <Text style={[styles.subhead, { color }]}>{title}</Text>
-      <Row
-        label="Peak grip (mu)"
-        value={f.peak_reached ? `${f.peak_mu.toFixed(2)}${range(f.peak_mu_range)}` : `above ${f.mu_observed_max.toFixed(2)}`}
-      />
-      <Row
-        label="Slip angle at the peak"
-        value={f.peak_reached ? `${f.slip_at_peak_deg.toFixed(1)}°${range(f.slip_at_peak_range_deg, 1)}` : 'not reached'}
-      />
-      <Row label="Shape" value={`${f.shape.toFixed(2)}${f.shape_fitted ? '' : ' (assumed)'}`} />
-      <Row label="Grip reached" value={`mu ${f.mu_observed_max.toFixed(2)} at ${f.slip_at_mu_max_deg.toFixed(1)}°`} />
-      <Row label="Cornering stiffness" value={`${f.cornering_stiffness_mu_per_deg.toFixed(2)} mu/deg`} />
-      <Row label="Slip offset" value={`${f.slip_offset_deg.toFixed(1)}°`} />
-      <Row
-        label="Fit quality"
-        value={`R² ${f.r2 ?? '–'} · slip scatter ${f.slip_scatter_deg.toFixed(1)}° · ${f.samples.toLocaleString()} samples`}
-      />
-      {f.note && <Text style={styles.note}>{f.note}</Text>}
-    </View>
-  );
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.row}>
-      <Text style={styles.rowLabel}>{label}</Text>
-      <Text style={styles.num}>{value}</Text>
-    </View>
-  );
-}
-
-const PAD = { left: 36, right: 8, top: 8, bottom: 22 };
-
-/** Grip (mu) against slip angle: each axle's fitted curve and the binned data it was fitted through. */
-function CurveChart({ fit, height = 220 }: { fit: TyreFit; height?: number }) {
-  const [width, setWidth] = useState(0);
-  const colors = useSeriesColors();
-  const muted = useThemeColor({}, 'text');
-  const xs = fit.curves.alpha_deg;
-  const axles = [
-    { key: 'front' as const, color: colors.reference },
-    { key: 'rear' as const, color: colors.compare },
-  ];
-  const lo = Math.min(0, ...axles.flatMap((a) => fit.binned[a.key].alpha_deg));
-  const hi = Math.max(xs[xs.length - 1], ...axles.flatMap((a) => fit.binned[a.key].alpha_deg));
-  const top = Math.ceil(Math.max(...axles.flatMap((a) => [...fit.curves[a.key], ...fit.binned[a.key].mu])) * 5) / 5;
-  const w = Math.max(width - PAD.left - PAD.right, 1);
-  const h = height - PAD.top - PAD.bottom;
-  const x = (deg: number) => PAD.left + ((deg - lo) / (hi - lo || 1)) * w;
-  const y = (mu: number) => PAD.top + (1 - Math.max(mu, 0) / (top || 1)) * h;
-  const ticks = Array.from({ length: Math.floor(hi) - Math.ceil(lo) + 1 }, (_, i) => Math.ceil(lo) + i).filter(
-    (t) => t % (hi - lo > 8 ? 2 : 1) === 0,
-  );
-  return (
-    <View onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}>
-      {width > 0 && (
-        <Svg width={width} height={height}>
-          {[0, top / 2, top].map((m) => (
-            <Line key={m} x1={PAD.left} x2={width - PAD.right} y1={y(m)} y2={y(m)} stroke={muted} strokeOpacity={0.15} />
-          ))}
-          {[top / 2, top].map((m) => (
-            <SvgText key={m} x={PAD.left - 4} y={y(m) + 4} fontSize={10} fill={muted} fillOpacity={0.6} textAnchor="end">
-              {m.toFixed(1)}
-            </SvgText>
-          ))}
-          <SvgText x={PAD.left - 4} y={PAD.top + h} fontSize={10} fill={muted} fillOpacity={0.6} textAnchor="end">
-            mu
-          </SvgText>
-          {ticks.map((t) => (
-            <SvgText key={t} x={x(t)} y={height - 6} fontSize={10} fill={muted} fillOpacity={0.6} textAnchor="middle">
-              {`${t}°`}
-            </SvgText>
-          ))}
-          {axles.map((a) =>
-            fit.binned[a.key].alpha_deg.map((deg, i) => (
-              <Circle key={`${a.key}${i}`} cx={x(deg)} cy={y(fit.binned[a.key].mu[i])} r={2.5} fill={a.color} fillOpacity={0.5} />
-            )),
-          )}
-          {axles.map((a) => (
-            <Path
-              key={a.key}
-              d={xs.map((deg, i) => `${i ? 'L' : 'M'}${x(deg).toFixed(1)},${y(fit.curves[a.key][i]).toFixed(1)}`).join('')}
-              stroke={a.color}
-              strokeWidth={2}
-              fill="none"
-            />
-          ))}
-        </Svg>
-      )}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   container: { padding: 16, gap: 16, paddingBottom: 48 },
+  modes: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  mode: { borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
+  modeOn: { borderWidth: 2, paddingHorizontal: 13, paddingVertical: 7 },
+  modeText: { fontWeight: '600' },
+  pane: { gap: 16 },
+  hidden: { display: 'none' },
   intro: { opacity: 0.8 },
   section: { gap: 8 },
   h2: { fontSize: 18, fontWeight: '700' },
@@ -320,9 +265,4 @@ const styles = StyleSheet.create({
   button: { borderRadius: 8, padding: 14, alignItems: 'center' },
   buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
   error: { color: '#c8372d' },
-  legend: { gap: 2 },
-  card: { gap: 4, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#8883' },
-  row: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
-  rowLabel: { opacity: 0.7 },
-  num: { fontVariant: ['tabular-nums'], textAlign: 'right', flexShrink: 1 },
 });
