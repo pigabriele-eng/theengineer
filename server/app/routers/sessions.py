@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app import models, schemas, storage
-from app.analysis.laps import SessionData, TimingLine, analyze, compare_laps, load_session
+from app.analysis.laps import CornerSpec, SessionData, TimingLine, analyze, compare_laps, load_session
 from app.db import get_db
 from app.importers.csvlog import CsvLog, read_csv_log, read_log
 from app.importers.motec import LdFile, LdFormatError, read_ld, read_ldx_beacons
@@ -164,6 +164,14 @@ def _track_for(db: Session, s: models.RunSession, ld: LdFile) -> models.Track | 
     return track
 
 
+def official_corners(track: models.Track | None) -> list[CornerSpec] | None:
+    """The track's official corner numbers, where their position on the lap is known."""
+    if track is None:
+        return None
+    known = [(c.code, c.apex_m, c.sector) for c in track.corners if c.apex_m is not None]
+    return known or None
+
+
 def _line(track: models.Track | None) -> TimingLine | None:
     return TimingLine(**track.timing_line) if track and track.timing_line else None
 
@@ -175,30 +183,35 @@ def _channel_map(s: models.RunSession) -> dict[str, tuple[str, ...]] | None:
 
 
 def load_main_file(db: Session, s: models.RunSession,
-                   file_id: int | None = None) -> tuple[models.LoggerFile, SessionData]:
-    """The session's logger file to analyse: the one asked for, else the longest."""
+                   file_id: int | None = None) -> tuple[models.LoggerFile, SessionData, models.Track | None]:
+    """The session's logger file to analyse (the one asked for, else the longest) and the track it is from."""
     files = [f for f in s.files if file_id is None or f.id == file_id]
     if not files:
         raise HTTPException(404, "No logger file uploaded for this session")
     f = max(files, key=lambda f: f.meta.get("duration_s", 0))
     ld = read_file(f)
     track = _track_for(db, s, ld)
-    return f, load_session(ld, _channel_map(s), beacons=f.meta.get("beacons"), line=_line(track))
+    return f, load_session(ld, _channel_map(s), beacons=f.meta.get("beacons"), line=_line(track)), track
 
 
 @router.get("/{session_id}/analysis")
 def session_analysis(session_id: int, file_id: int | None = None, reference_lap: int | None = None,
                      db: Session = Depends(get_db)):
-    f, data = load_main_file(db, _get(db, session_id), file_id)
-    return {"file_id": f.id, **analyze(data, reference_lap)}
+    """Every clean lap against the reference lap, corner by corner. Corners carry the track's official numbers
+    when it has them (numbering "official"); otherwise they are the slow points of the speed trace, numbered
+    C1, C2... in lap order (numbering "detected")."""
+    f, data, track = load_main_file(db, _get(db, session_id), file_id)
+    return {"file_id": f.id, **analyze(data, reference_lap, official_corners(track))}
 
 
 @router.get("/{session_id}/compare")
 def session_compare(session_id: int, lap: int, reference_lap: int | None = None, file_id: int | None = None,
                     step: float = 5.0, db: Session = Depends(get_db)):
-    """Speed, throttle, brake and time delta of one lap against the reference lap, for charts."""
-    f, data = load_main_file(db, _get(db, session_id), file_id)
+    """Speed, throttle, brake and time delta of one lap against the reference lap, for charts, with the
+    reference lap's corners numbered as in the analysis."""
+    f, data, track = load_main_file(db, _get(db, session_id), file_id)
     try:
-        return {"file_id": f.id, **compare_laps(data, lap, reference_lap, max(1.0, min(step, 50.0)))}
+        return {"file_id": f.id, **compare_laps(data, lap, reference_lap, max(1.0, min(step, 50.0)),
+                                                official_corners(track))}
     except ValueError as e:
         raise HTTPException(404, str(e)) from e

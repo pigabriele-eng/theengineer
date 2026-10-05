@@ -1,4 +1,4 @@
-"""Lap splitting, distance alignment, corner detection and corner metrics.
+"""Lap splitting, distance alignment, corner detection and numbering, and corner metrics.
 
 Works on any logger once its channels are mapped to the standard roles below.
 """
@@ -274,7 +274,10 @@ def _smooth(y: np.ndarray, w: int = 25) -> np.ndarray:
 
 
 def detect_corners(ref: dict[str, np.ndarray], min_drop_kmh: float = 15.0) -> list[Corner]:
-    """Corners are speed minima that sit well below the surrounding straights."""
+    """Corners are speed minima that sit well below the surrounding straights.
+
+    They are numbered C1, C2... in lap order: the speed trace can't tell which official corner number each is.
+    """
     v = _smooth(ref["speed"])
     n = len(v)
     apexes: list[int] = []
@@ -287,7 +290,126 @@ def detect_corners(ref: dict[str, np.ndarray], min_drop_kmh: float = 15.0) -> li
     for a, b in pairwise(apexes):
         bounds.append(max(bounds[-1] + 1, a + int(np.argmax(v[a:b])) - 40))
     bounds.append(n - 1)
-    return [Corner(f"T{i + 1}", a, bounds[i], bounds[i + 1]) for i, a in enumerate(apexes)]
+    return [Corner(f"C{i + 1}", a, bounds[i], bounds[i + 1]) for i, a in enumerate(apexes)]
+
+
+GROUP_WITHIN_M = 150  # official corners this close to a corner's slowest point share its section
+
+# An official corner: (code, metres from the line) or (code, metres, sector). Corners given the same sector
+# name are timed and compared as one section, whatever the speed trace would split them into.
+CornerSpec = tuple[str, float] | tuple[str, float, str | None]
+
+
+@dataclass
+class Section:
+    code: str
+    start: int
+    end: int
+    apex: int | None  # slowest point, or None for a section without a real corner
+    corners: list[str] = field(default_factory=list)  # the official numbers inside it
+
+    def to_dict(self) -> dict:
+        return {"code": self.code, "start_m": self.start, "end_m": self.end, "apex_m": self.apex}
+
+
+def _label(codes: list[str]) -> str:
+    if len(codes) == 1:
+        return codes[0]
+    if len(codes) == 2:
+        return f"{codes[0]}/{codes[1]}"
+    return f"{codes[0]}-{codes[-1]}"
+
+
+def make_sections(ref: dict[str, np.ndarray], corners: list[CornerSpec] | None = None
+                  ) -> tuple[list[Section], str]:
+    """Split the lap at the fast points between corners.
+
+    With the track's official corners, each section carries the official numbers inside it, grouped like
+    "T8/T9" or "T2-T4"; a flat-out kink far from any slow point gets its own section. Corners the track
+    puts in one sector become one section. Without official corners, the slowest points are numbered
+    C1, C2... so they are never mistaken for official numbers.
+    """
+    found = detect_corners(ref)
+    n = len(ref["speed"])
+    if not found:
+        return [Section("Lap", 0, n - 1, None)], "detected"
+    if not corners:
+        secs = [Section(f"C{i + 1}", c.start, c.end, c.apex) for i, c in enumerate(found)]
+        return secs, "detected"
+    official = sorted(((c[0], int(c[1])) for c in corners if c[1] is not None and 0 <= c[1] < n), key=lambda c: c[1])
+    secs: list[Section] = []
+    for c in found:
+        inside = [(code, a) for code, a in official if c.start <= a < c.end or (c is found[-1] and a >= c.start)]
+        near = [x for x in inside if abs(x[1] - c.apex) <= GROUP_WITHIN_M]
+        far = [x for x in inside if abs(x[1] - c.apex) > GROUP_WITHIN_M]
+        if not near and secs and not far:  # a slow point the track map has no number for: part of the last one
+            secs[-1].end = c.end
+            continue
+        start = c.start
+        before = [x for x in far if x[1] < c.apex]
+        after = [x for x in far if x[1] > c.apex]
+        if before:
+            split = (before[-1][1] + (near[0][1] if near else c.apex)) // 2
+            secs.append(Section(_label([x[0] for x in before]), start, split, None, [x[0] for x in before]))
+            start = split
+        end = c.end
+        if after:
+            split = ((near[-1][1] if near else c.apex) + after[0][1]) // 2
+            end = split
+        secs.append(Section(_label([x[0] for x in near]) if near else f"C{len(secs) + 1}", start, end, c.apex,
+                            [x[0] for x in near]))
+        if after:
+            secs.append(Section(_label([x[0] for x in after]), split, c.end, None, [x[0] for x in after]))
+    secs[0].start, secs[-1].end = 0, n - 1
+    for a, b in pairwise(secs):
+        b.start = a.end
+    return _join_sectors(secs, corners, ref["speed"]), "official"
+
+
+def _join_sectors(secs: list[Section], corners: list[CornerSpec], speed: np.ndarray) -> list[Section]:
+    """Neighbouring sections whose corners all belong to one sector of the track become one section."""
+    sector = {c[0]: c[2] for c in corners if len(c) > 2 and c[2]}
+    if not sector:
+        return secs
+
+    def key(s: Section) -> str | None:
+        names = {sector.get(code) for code in s.corners}
+        return names.pop() if len(names) == 1 and None not in names else None
+
+    out: list[Section] = []
+    for s in secs:
+        last = out[-1] if out else None
+        if last is not None and key(s) is not None and key(s) == key(last):
+            apexes = [a for a in (last.apex, s.apex) if a is not None]
+            apex = min(apexes, key=lambda a: speed[a]) if apexes else None
+            out[-1] = Section("", last.start, s.end, apex, last.corners + s.corners)
+        else:
+            out.append(s)
+    for s in out:
+        if s.corners and key(s) is not None:
+            s.code = _label(s.corners)
+    return out
+
+
+def corner_sections(ref: dict[str, np.ndarray], corners: list[CornerSpec] | None = None) -> tuple[list[Corner], str]:
+    """The reference lap's corners, numbered and grouped as the insights engine numbers its sections.
+
+    With the track's official corners, each corner is labelled with the official numbers inside it ("T6",
+    "T8/T9", a whole sector such as "T2-T5"); a flat kink is placed at its official position. Without them,
+    the slowest points are numbered C1, C2... The second value says which: "official" or "detected".
+    """
+    sections, numbering = make_sections(ref, corners)
+    at = {c[0]: int(c[1]) for c in corners or [] if c[1] is not None}
+    out = []
+    for s in sections:
+        if s.apex is not None:
+            apex = s.apex
+        elif s.corners:
+            apex = min((at[code] for code in s.corners), key=lambda a: ref["speed"][a])
+        else:
+            continue  # no corner anywhere on the lap
+        out.append(Corner(s.code, apex, s.start, s.end))
+    return out, numbering
 
 
 def corner_metrics(tr: dict[str, np.ndarray], c: Corner, brake_on: float | None = None) -> dict:
@@ -319,20 +441,23 @@ def corner_metrics(tr: dict[str, np.ndarray], c: Corner, brake_on: float | None 
     return out
 
 
-def analyze(data: SessionData, ref_number: int | None = None) -> dict:
-    """Corner-by-corner comparison of every clean lap against a reference lap (best by default)."""
+def analyze(data: SessionData, ref_number: int | None = None, corners: list[CornerSpec] | None = None) -> dict:
+    """Corner-by-corner comparison of every clean lap against a reference lap (best by default).
+
+    corners: the track's official corners, which number and group the corners (see corner_sections).
+    """
     clean = [l for l in data.laps if l.clean]
     if not clean:
         return {"laps": [], "corners": []}
     ref = next((l for l in data.laps if l.number == ref_number), None) or min(clean, key=lambda l: l.time)
     length = round(lap_length(data, ref))
     traces = {l.number: lap_trace(data, l, length) for l in [*clean, ref]}
-    corners = detect_corners(traces[ref.number])
+    found, numbering = corner_sections(traces[ref.number], corners)
     brake_on = None
     if "brake" in data.channels:
         brake_on = 0.12 * float(np.percentile(data.channels["brake"], 99.5))
     result_corners = []
-    for c in corners:
+    for c in found:
         per_lap = {n: corner_metrics(tr, c, brake_on) for n, tr in traces.items()}
         best = min(per_lap, key=lambda n: per_lap[n]["time"])
         result_corners.append({
@@ -344,6 +469,7 @@ def analyze(data: SessionData, ref_number: int | None = None) -> dict:
         "length_m": length,
         "theoretical_best": round(sum(min(m["time"] for m in c["laps"].values()) for c in result_corners), 3),
         "laps": [{"number": l.number, "time": l.time, "clean": l.clean} for l in data.laps],
+        "numbering": numbering,
         "corners": result_corners,
         "channels": data.sources,
     }
@@ -352,8 +478,10 @@ def analyze(data: SessionData, ref_number: int | None = None) -> dict:
 TRACE_ROLES = ("speed", "throttle", "brake", "steer", "gear", "rpm")
 
 
-def compare_laps(data: SessionData, lap_number: int, ref_number: int | None = None, step: float = 5.0) -> dict:
-    """Two laps on one distance grid for charting, with the running time gained or lost against the reference.
+def compare_laps(data: SessionData, lap_number: int, ref_number: int | None = None, step: float = 5.0,
+                 corners: list[CornerSpec] | None = None) -> dict:
+    """Two laps on one distance grid for charting, with the running time gained or lost against the reference,
+    and the reference lap's corners as analyze() numbers them.
 
     delta > 0 means the lap is behind the reference at that point.
     """
@@ -364,6 +492,7 @@ def compare_laps(data: SessionData, lap_number: int, ref_number: int | None = No
         raise ValueError(f"No lap {lap_number} in this file")
     length = round(lap_length(data, ref))
     a, b = lap_trace(data, ref, length, step), lap_trace(data, lap, length, step)
+    found, numbering = corner_sections(lap_trace(data, ref, length), corners)
 
     def pack(tr: dict[str, np.ndarray]) -> dict[str, list[float]]:
         return {r: np.round(tr[r], 2).tolist() for r in TRACE_ROLES if r in tr}
@@ -373,4 +502,6 @@ def compare_laps(data: SessionData, lap_number: int, ref_number: int | None = No
         "distance": a["distance"].round(1).tolist(),
         "reference": pack(a), "compare": pack(b),
         "delta": np.round(b["t"] - a["t"], 3).tolist(),
+        "numbering": numbering,
+        "corners": [{"code": c.code, "apex_m": c.apex, "start_m": c.start, "end_m": c.end} for c in found],
     }

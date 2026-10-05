@@ -12,7 +12,7 @@ from app.debrief.corners import corner_data
 from app.debrief.pipeline import process_debrief
 from app.debrief.transcribe import LANGUAGES
 from app.routers.sessions import _get as get_session
-from app.routers.sessions import load_main_file
+from app.routers.sessions import load_main_file, official_corners
 
 router = APIRouter()
 # The recording is played by URL, where the app can't set headers: its sign-in may come as ?access_token=
@@ -103,8 +103,7 @@ def debrief_corners(debrief_id: int, db: Session = Depends(get_db)):
     s = d.session
     if not s.files or not any(p.corner_code for p in d.points):
         return {"corners": {}}
-    f, data = load_main_file(db, s)
-    track = s.event.track if s.event else None
-    analysis = analyze(data)
+    f, data, track = load_main_file(db, s)
+    analysis = analyze(data, corners=official_corners(track))
     return {"file_id": f.id, "reference_lap": analysis.get("reference_lap"),
-            "corners": corner_data(d.points, track.corners if track else [], analysis)}
+            "corners": corner_data(d.points, analysis)}

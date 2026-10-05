@@ -7,24 +7,18 @@ by corner and phase by phase, and the laps are compared with each other to find 
 from __future__ import annotations
 
 import math
-from itertools import pairwise
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from app.analysis.align import TrackLine, aligned_trace, track_line
 from app.analysis.channels import BRAKE, EXIT, MID, PHASES, POWER, TRAIL, math_channels
-from app.analysis.laps import SessionData, detect_corners, lap_length
+from app.analysis.laps import CornerSpec, SessionData, Section, lap_length, make_sections
 from app.analysis.lapsim import LIMITED_BY, SimLap, theoretical_lap
 from app.analysis.limits import CarLimits, car_limits
 from app.analysis.scan import channel_scan
 from app.importers.motec import LdFile
 
-GROUP_WITHIN_M = 150  # official corners this close to a corner's slowest point share its section
-
-# An official corner: (code, metres from the line) or (code, metres, sector). Corners given the same sector
-# name are timed and compared as one section, whatever the speed trace would split them into.
-CornerSpec = tuple[str, float] | tuple[str, float, str | None]
 STRAIGHT_MIN_M = 250  # full throttle for at least this long makes a straight with a speed trap
 MEDALS = (("gold", 98.0), ("silver", 97.0), ("bronze", 95.0))  # % of the theoretical lap
 MIN_LAPS_FOR_TRENDS = 8
@@ -40,18 +34,6 @@ class RunInput:
     driver: str | None = None
     meta: dict = field(default_factory=dict)
     ld: LdFile | None = None  # the raw log, to scan every channel it recorded
-
-
-@dataclass
-class Section:
-    code: str
-    start: int
-    end: int
-    apex: int | None  # slowest point, or None for a section without a real corner
-    corners: list[str] = field(default_factory=list)  # the official numbers inside it
-
-    def to_dict(self) -> dict:
-        return {"code": self.code, "start_m": self.start, "end_m": self.end, "apex_m": self.apex}
 
 
 @dataclass
@@ -134,85 +116,6 @@ def _closed_sim(curvature: np.ndarray, limits: CarLimits) -> SimLap:
     sim = theoretical_lap(curvature[:-1], limits)
     return SimLap(np.append(sim.speed, sim.speed[0]), np.append(sim.t, sim.time), sim.time,
                   np.append(sim.limited_by, sim.limited_by[0]))
-
-
-def _label(codes: list[str]) -> str:
-    if len(codes) == 1:
-        return codes[0]
-    if len(codes) == 2:
-        return f"{codes[0]}/{codes[1]}"
-    return f"{codes[0]}-{codes[-1]}"
-
-
-def make_sections(ref: dict[str, np.ndarray], corners: list[CornerSpec] | None = None
-                  ) -> tuple[list[Section], str]:
-    """Split the lap at the fast points between corners.
-
-    With the track's official corners, each section carries the official numbers inside it, grouped like
-    "T8/T9" or "T2-T4"; a flat-out kink far from any slow point gets its own section. Corners the track
-    puts in one sector become one section. Without official corners, the slowest points are numbered
-    C1, C2... so they are never mistaken for official numbers.
-    """
-    found = detect_corners(ref)
-    n = len(ref["speed"])
-    if not found:
-        return [Section("Lap", 0, n - 1, None)], "detected"
-    if not corners:
-        secs = [Section(f"C{i + 1}", c.start, c.end, c.apex) for i, c in enumerate(found)]
-        return secs, "detected"
-    official = sorted(((c[0], int(c[1])) for c in corners if c[1] is not None and 0 <= c[1] < n), key=lambda c: c[1])
-    secs: list[Section] = []
-    for c in found:
-        inside = [(code, a) for code, a in official if c.start <= a < c.end or (c is found[-1] and a >= c.start)]
-        near = [x for x in inside if abs(x[1] - c.apex) <= GROUP_WITHIN_M]
-        far = [x for x in inside if abs(x[1] - c.apex) > GROUP_WITHIN_M]
-        if not near and secs and not far:  # a slow point the track map has no number for: part of the last one
-            secs[-1].end = c.end
-            continue
-        start = c.start
-        before = [x for x in far if x[1] < c.apex]
-        after = [x for x in far if x[1] > c.apex]
-        if before:
-            split = (before[-1][1] + (near[0][1] if near else c.apex)) // 2
-            secs.append(Section(_label([x[0] for x in before]), start, split, None, [x[0] for x in before]))
-            start = split
-        end = c.end
-        if after:
-            split = ((near[-1][1] if near else c.apex) + after[0][1]) // 2
-            end = split
-        secs.append(Section(_label([x[0] for x in near]) if near else f"C{len(secs) + 1}", start, end, c.apex,
-                            [x[0] for x in near]))
-        if after:
-            secs.append(Section(_label([x[0] for x in after]), split, c.end, None, [x[0] for x in after]))
-    secs[0].start, secs[-1].end = 0, n - 1
-    for a, b in pairwise(secs):
-        b.start = a.end
-    return _join_sectors(secs, corners, ref["speed"]), "official"
-
-
-def _join_sectors(secs: list[Section], corners: list[CornerSpec], speed: np.ndarray) -> list[Section]:
-    """Neighbouring sections whose corners all belong to one sector of the track become one section."""
-    sector = {c[0]: c[2] for c in corners if len(c) > 2 and c[2]}
-    if not sector:
-        return secs
-
-    def key(s: Section) -> str | None:
-        names = {sector.get(code) for code in s.corners}
-        return names.pop() if len(names) == 1 and None not in names else None
-
-    out: list[Section] = []
-    for s in secs:
-        last = out[-1] if out else None
-        if last is not None and key(s) is not None and key(s) == key(last):
-            apexes = [a for a in (last.apex, s.apex) if a is not None]
-            apex = min(apexes, key=lambda a: speed[a]) if apexes else None
-            out[-1] = Section("", last.start, s.end, apex, last.corners + s.corners)
-        else:
-            out.append(s)
-    for s in out:
-        if s.corners and key(s) is not None:
-            s.code = _label(s.corners)
-    return out
 
 
 # ---------- per lap, per section ----------

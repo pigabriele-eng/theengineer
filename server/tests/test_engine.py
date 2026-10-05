@@ -1,3 +1,5 @@
+from itertools import pairwise
+
 import numpy as np
 import pytest
 
@@ -5,7 +7,7 @@ from app.analysis.align import aligned_trace, track_line
 from app.analysis.channels import BRAKE, POWER, math_channels
 from app.analysis.compare import compare_groups
 from app.analysis.insights import RunInput, analyze_runs, make_sections
-from app.analysis.laps import detect_corners, load_session
+from app.analysis.laps import analyze, compare_laps, detect_corners, lap_trace, load_session
 from app.analysis.scan import channel_scan
 from app.debrief.check import read_claim
 from app.importers.motec import read_ld
@@ -231,3 +233,64 @@ def test_known_track_gets_its_corners(client):
     assert len(t["corners"]) == 17 and sectors["T2"] == sectors["T5"] == "T2-T5" and sectors["T6"] is None
     t = client.put(f"/tracks/{t['id']}/corners", json=[{"code": "T1", "apex_m": 280}]).json()
     assert [c["code"] for c in t["corners"]] == ["T1"]
+
+
+# The synthetic lap laid out like Hockenheim: a flat T1, the T2-T5 sector around the first slow point (T5 a flat
+# kink well after it), and two official corners close together at the second slow point.
+SECTORED = [("T1", 100, None), ("T2", 280, "T2-T5"), ("T3", 300, "T2-T5"), ("T4", 320, "T2-T5"),
+            ("T5", 520, "T2-T5"), ("T6", 690, None), ("T7", 740, None)]
+
+
+def test_session_corners_use_the_official_numbers(data):
+    d, lap_times = data
+    res = analyze(d, corners=SECTORED)
+    assert res["numbering"] == "official"
+    codes = [c["code"] for c in res["corners"]]
+    ref = next(l for l in d.laps if l.number == res["reference_lap"])
+    assert codes == [s.code for s in make_sections(lap_trace(d, ref, res["length_m"]), SECTORED)[0]]
+    assert codes == ["T1", "T2-T5", "T6/T7"]
+    t1, sector, pair = res["corners"]
+    assert t1["apex_m"] == 100  # a flat kink sits at its official position
+    assert abs(sector["apex_m"] - 300) < 20 and abs(pair["apex_m"] - 700) < 20
+    assert sector["start_m"] < 280 and sector["end_m"] > 520  # T5 is timed inside the T2-T5 section
+    assert res["corners"][0]["start_m"] == 0 and res["corners"][-1]["end_m"] == res["length_m"] - 1
+    assert all(a["end_m"] == b["start_m"] for a, b in pairwise(res["corners"]))
+    assert res["theoretical_best"] <= min(lap_times[1:5]) + 0.05
+
+    cmp = compare_laps(d, lap_number=3, ref_number=res["reference_lap"], corners=SECTORED)
+    assert cmp["numbering"] == "official"
+    assert cmp["corners"] == [{k: c[k] for k in ("code", "apex_m", "start_m", "end_m")} for c in res["corners"]]
+
+
+def test_session_corners_without_official_numbers_are_not_t_numbers(data):
+    d, _ = data
+    res = analyze(d)
+    assert res["numbering"] == "detected"
+    assert [c["code"] for c in res["corners"]] == ["C1", "C2"]
+    cmp = compare_laps(d, lap_number=3)
+    assert cmp["numbering"] == "detected" and [c["code"] for c in cmp["corners"]] == ["C1", "C2"]
+
+
+def test_session_page_endpoints_number_corners_from_the_track(client):
+    track = client.post("/tracks", json={"name": "Test ring", "corners": [
+        {"code": code, "apex_m": m, "sector": sector} for code, m, sector in SECTORED]}).json()
+    event = client.post("/events", json={"name": "Test day", "track_id": track["id"]}).json()
+    on_track = client.post("/sessions", json={"event_id": event["id"]}).json()
+    unknown = client.post("/sessions", json={}).json()  # no event, and the log names no venue
+    for s in (on_track, unknown):
+        r = client.post(f"/sessions/{s['id']}/files", files={"file": ("run.ld", write_ld(simulate()[0]))})
+        assert r.status_code == 201, r.text
+
+    analysis = client.get(f"/sessions/{on_track['id']}/analysis").json()
+    assert analysis["numbering"] == "official"
+    assert [c["code"] for c in analysis["corners"]] == ["T1", "T2-T5", "T6/T7"]
+    cmp = client.get(f"/sessions/{on_track['id']}/compare", params={"lap": 3}).json()
+    assert cmp["numbering"] == "official"
+    assert [(c["code"], c["apex_m"]) for c in cmp["corners"]] == [(c["code"], c["apex_m"]) for c in analysis["corners"]]
+    insights = client.get(f"/sessions/{on_track['id']}/insights").json()
+    assert [s["code"] for s in insights["sections"]] == ["T1", "T2-T5", "T6/T7"]  # the same numbers everywhere
+
+    analysis = client.get(f"/sessions/{unknown['id']}/analysis").json()
+    assert analysis["numbering"] == "detected" and [c["code"] for c in analysis["corners"]] == ["C1", "C2"]
+    cmp = client.get(f"/sessions/{unknown['id']}/compare", params={"lap": 3}).json()
+    assert cmp["numbering"] == "detected" and [c["code"] for c in cmp["corners"]] == ["C1", "C2"]
