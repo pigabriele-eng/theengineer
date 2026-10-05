@@ -25,6 +25,7 @@ def client(tmp_path, monkeypatch):
     import app.routers.imports
     import app.routers.insights
     import app.routers.sessions
+    import app.routers.trackmap
     import app.routers.tyres
     import app.routers.vehicle
     importlib.reload(app.db)
@@ -38,6 +39,7 @@ def client(tmp_path, monkeypatch):
     importlib.reload(app.routers.comparisons)
     importlib.reload(app.routers.tyres)
     importlib.reload(app.routers.vehicle)
+    importlib.reload(app.routers.trackmap)
     importlib.reload(app.main)
     if TEST_DATABASE_URL:
         app.db.Base.metadata.drop_all(app.db.engine)
