@@ -193,3 +193,5 @@ def test_csv_upload(client, run):
     pi = client.post(f"/sessions/{s['id']}/files", files={"file": ("run.txt", pi_ascii(run).encode())})
     assert pi.status_code == 201 and pi.json()["files"][1]["logger"] == "cosworth"
     assert client.get(f"/sessions/{s['id']}/analysis").status_code == 200  # stored CSVs open again
+    temps = client.get(f"/sessions/{s['id']}/tyre-temps")  # the tyre tools read them too: no IR sensors here
+    assert temps.status_code == 422 and "no IR tyre temperature channels" in temps.json()["detail"]

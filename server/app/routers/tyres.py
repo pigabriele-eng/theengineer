@@ -10,8 +10,9 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.db import get_db
-from app.importers.motec import LdFormatError, read_ld
-from app.routers.sessions import _get
+from app.importers.csvlog import read_log
+from app.importers.motec import LdFormatError
+from app.routers.sessions import LOG_FILES, _get
 from app.tyres import temps as tyre_temps
 from app.tyres.pressure import pressure_plan
 from app.tyres.presets import (
@@ -49,10 +50,10 @@ def logged_runs(db: Session, car_id: int | None = None, session_ids: list[int] |
     out = []
     for s in _sessions(db, car_id, session_ids):
         for f in s.files:
-            if Path(f.filename).suffix.lower() != ".ld":
+            if Path(f.filename).suffix.lower() not in LOG_FILES:
                 continue
             try:
-                ld = read_ld(f.path)
+                ld = read_log(f.path)
             except (LdFormatError, OSError):
                 continue
             logger = logger_conditions(ld)
@@ -274,11 +275,11 @@ def log_tyre_temps(session_id: int, file_id: int | None = None,
                    series: str | None = None, db: Session = Depends(get_db)):
     """The same advice from IR tyre sensors in the session's log (its longest file, unless one is named)."""
     s = _get(db, session_id)
-    files = [f for f in s.files if Path(f.filename).suffix.lower() == ".ld" and file_id in (None, f.id)]
+    files = [f for f in s.files if Path(f.filename).suffix.lower() in LOG_FILES and file_id in (None, f.id)]
     if not files:
         raise HTTPException(404, "No logger file uploaded for this session")
     f = max(files, key=lambda f: f.meta.get("duration_s", 0))
-    ld = read_ld(f.path)
+    ld = read_log(f.path)
     readings, channels = tyre_temps.ir_readings(ld, numbered_from)
     if not readings:
         tpms = [n for c in CORNERS for n in TEMP_CHANNELS[c] if n in ld.channels]

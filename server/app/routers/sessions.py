@@ -17,6 +17,7 @@ router = APIRouter(prefix="/sessions")
 
 # .csv and .txt are logger exports (MoTeC i2, AiM Race Studio, Pi Toolbox); the logger is read from the file
 SUPPORTED = {".ld": "motec", ".ldx": "motec", ".csv": "csv", ".txt": "csv"}
+LOG_FILES = (".ld", ".csv", ".txt")  # logs themselves; a .ldx only adds beacons to its .ld
 
 
 def _get(db: Session, session_id: int) -> models.RunSession:
