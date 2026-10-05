@@ -101,6 +101,7 @@ class RunSession(Base):
     car_id: Mapped[int | None] = mapped_column(ForeignKey("cars.id"))
     driver_id: Mapped[int | None] = mapped_column(ForeignKey("drivers.id"))
     track_temp_c: Mapped[float | None] = mapped_column(Float)
+    ambient_temp_c: Mapped[float | None] = mapped_column(Float)
     tyre_set: Mapped[str | None] = mapped_column(String(60))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -171,3 +172,15 @@ class DebriefPoint(Base):
     phase: Mapped[CornerPhase | None] = mapped_column(Enum(CornerPhase))
     audio_start_s: Mapped[float | None] = mapped_column(Float)
     debrief: Mapped[Debrief] = relationship(back_populates="points")
+
+
+class TyreMinimum(Base):
+    """A P-Book minimum tyre pressure for one series, tyre and axle: cold, hot or both (gauge bar)."""
+    __tablename__ = "tyre_minimums"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    series: Mapped[str] = mapped_column(String(80))
+    tyre: Mapped[str | None] = mapped_column(String(80))  # "Pirelli P Zero DHG"
+    axle: Mapped[str] = mapped_column(String(8))  # front, rear
+    cold_min_bar: Mapped[float | None] = mapped_column(Float)
+    hot_min_bar: Mapped[float | None] = mapped_column(Float)
+    source: Mapped[str | None] = mapped_column(String(255))  # P-Book edition and page
