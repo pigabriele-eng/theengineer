@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import models
+from app import heavy, models
 from app.analysis.grip import GripStudy
 from app.db import get_db
 from app.routers.insights import _run
@@ -19,7 +19,6 @@ router = APIRouter(prefix="/report")
 CACHE_SIZE = 8
 _cache: OrderedDict[tuple, tuple[tuple, dict]] = OrderedDict()
 _cache_lock = threading.Lock()
-_work_lock = threading.Lock()  # one report at a time: each holds a whole log in memory while it reads it
 
 
 def _free() -> None:
@@ -73,7 +72,7 @@ def grip_report(session: int | None = None, event: int | None = None, db: Sessio
         if hit is not None and hit[0] == fp:
             _cache.move_to_end(key)
             return hit[1]
-    with _work_lock:
+    with heavy.lock:  # one log-reading job at a time: each holds a whole log in memory while it reads it
         with _cache_lock:  # a request that waited on the lock may find its report already built
             hit = _cache.get(key)
         if hit is not None and hit[0] == fp:

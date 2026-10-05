@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.db import get_db
+from app.heavy import one_at_a_time
 from app.importers.motec import LdFormatError
 from app.routers.sessions import LOG_FILES, _get, read_file
 from app.tyres import temps as tyre_temps
@@ -44,6 +45,7 @@ def _sessions(db: Session, car_id: int | None, session_ids: list[int] | None) ->
     return list(db.scalars(q).all())
 
 
+@one_at_a_time
 def logged_runs(db: Session, car_id: int | None = None, session_ids: list[int] | None = None) -> list[dict]:
     """Every cold start in the sessions' logs with the hot pressure it reached, per corner."""
     out = []
@@ -268,6 +270,7 @@ def analyze_pyrometer(body: TempsIn, db: Session = Depends(get_db)):
 
 
 @router.get("/sessions/{session_id}/tyre-temps")
+@one_at_a_time
 def log_tyre_temps(session_id: int, file_id: int | None = None,
                    numbered_from: Literal["inside", "outside"] = "inside",
                    spread_front: float | None = None, spread_rear: float | None = None,
