@@ -221,7 +221,8 @@ class TyreData(Base):
     version: Mapped[str] = mapped_column(String(64))  # summary method and car values it was made with
     status: Mapped[str] = mapped_column(String(16))  # ok, none (no steady cornering) or failed (see message)
     message: Mapped[str | None] = mapped_column(Text)
-    lap_source: Mapped[str | None] = mapped_column(String(16))  # the file's lap timing when it was summarised
+    # how the file's laps were timed when it was summarised: source and line (tyre_store.timing_key)
+    lap_source: Mapped[str | None] = mapped_column(String(16))
     car_key: Mapped[str] = mapped_column(String(80), index=True)  # car:<id>, logger:<serial> or vehicle:<name>
     car_label: Mapped[str] = mapped_column(String(160))
     preset: Mapped[str] = mapped_column(String(40))  # the car values the summary was made with

@@ -13,8 +13,6 @@ flight for QUIET_S, so it fills the gaps while the app is idle.
 """
 from __future__ import annotations
 
-import ctypes
-import gc
 import hashlib
 import json
 import logging
@@ -32,7 +30,8 @@ from app import db as dbmod
 from app import heavy
 from app import models
 from app.analysis.laps import DEFAULT_CHANNEL_MAP, load_session
-from app.routers.sessions import LOG_FILES, _channel_map, _line, _track_for, read_file
+from app.routers.sessions import LOG_FILES, _channel_map, _track_for
+from app.timing import read_file, track_line
 from app.tyres.tpms import logger_conditions, measure_runs
 from app.vehicle import tyre_data
 from app.vehicle.presets import PRESETS, preset_vehicle
@@ -88,12 +87,15 @@ def channel_map(s: models.RunSession) -> dict[str, tuple[str, ...]]:
     return {role: (names if role in ROLES else NOT_A_CHANNEL) for role, names in cmap.items()}
 
 
-def _release_memory() -> None:
-    gc.collect()
-    try:
-        ctypes.CDLL("libc.so.6").malloc_trim(0)
-    except (OSError, AttributeError):  # not glibc
-        pass
+def timing_key(meta: dict | None) -> str | None:
+    """How a log's laps are timed: the source, and the start/finish line it was timed from. A summary is made
+    again when this changes (the log was re-timed), since its laps are the log's laps."""
+    meta = meta or {}
+    source, line = meta.get("lap_source"), meta.get("timed_line")
+    if not line:
+        return source
+    digest = hashlib.sha1(json.dumps(line, sort_keys=True).encode()).hexdigest()[:8]
+    return f"{(source or '')[:7]}:{digest}"
 
 
 def _row(db: Session, f: models.LoggerFile) -> models.TyreData:
@@ -102,7 +104,7 @@ def _row(db: Session, f: models.LoggerFile) -> models.TyreData:
         row = models.TyreData(file_id=f.id, tyre=PRESET_TYRES.get(PRESET), samples=0)
         db.add(row)
     key, label = logger_identity(f)
-    row.session_id, row.version, row.lap_source = f.session_id, version(), f.meta.get("lap_source")
+    row.session_id, row.version, row.lap_source = f.session_id, version(), timing_key(f.meta)
     row.car_key, row.car_label, row.preset = key, label, PRESET
     row.logged_on, row.updated_at = _date(f.meta.get("date")), datetime.now(UTC)
     return row
@@ -114,7 +116,7 @@ def summarise_file(db: Session, f: models.LoggerFile) -> models.TyreData:
     s = f.session
     ld = read_file(f)
     track = _track_for(db, s, ld)
-    data = load_session(ld, channel_map(s), beacons=f.meta.get("beacons"), line=_line(track))
+    data = load_session(ld, channel_map(s), beacons=f.meta.get("beacons"), line=track_line(track))
     sets = [r["start_s"] for r in measure_runs(ld)]
     ambient = logger_conditions(ld).get("ambient_c")
     try:
@@ -143,7 +145,7 @@ def pending(db: Session) -> list[int]:
         if Path(name).suffix.lower() not in LOG_FILES:
             continue
         got = have.get(fid)
-        if got is None or got[0] != current or got[1] != (meta or {}).get("lap_source") or got[2] == FAILED:
+        if got is None or got[0] != current or got[1] != timing_key(meta) or got[2] == FAILED:
             out.append(fid)
     return out
 
@@ -221,8 +223,12 @@ def process_next(quiet: bool = False) -> bool:
         _wait_for_quiet()
         if _stop.is_set():
             return False
-    with heavy.lock, dbmod.SessionLocal() as db:  # one log in memory at a time, across the server
-        todo = _todo(db)
+    with dbmod.SessionLocal() as db:
+        if not _todo(db):  # nothing to do: no need to wait for the lock
+            return False
+    # one log in memory at a time, across the server; the lock hands the memory back when it is let go
+    with heavy.lock, dbmod.SessionLocal() as db:
+        todo = _todo(db)  # again: another worker may have done it meanwhile
         if not todo:
             return False
         f = db.get(models.LoggerFile, todo[0])
@@ -239,7 +245,6 @@ def process_next(quiet: bool = False) -> bool:
             _note_failure(db, f, e)
         finally:
             _state["current"] = None
-            _release_memory()
     return True
 
 

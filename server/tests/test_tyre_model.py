@@ -265,3 +265,13 @@ def test_summaries_are_made_again_when_out_of_date(client):
     with db.SessionLocal() as d:
         row = d.query(models.TyreData).one()
         assert row.version == tyre_store.version() and row.status == "ok" and row.updated_at > first
+        # the log re-timed from another start/finish line: its laps changed, so its summary is made again
+        f = d.get(models.LoggerFile, row.file_id)
+        f.meta = {**f.meta, "lap_source": "gps", "timed_line": {"lat": 49.33, "lon": 8.57, "heading": 90.0}}
+        d.commit()
+    assert client.get("/tyre-model/status").json()["pending"] == 1
+    _summarise_now()
+    with db.SessionLocal() as d:
+        row = d.query(models.TyreData).one()
+        assert row.lap_source.startswith("gps:") and len(row.lap_source) <= 16
+    assert client.get("/tyre-model/status").json()["pending"] == 0
