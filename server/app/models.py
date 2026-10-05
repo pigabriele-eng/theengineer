@@ -44,6 +44,13 @@ class CornerPhase(enum.StrEnum):
     exit = "exit"
 
 
+class ImportStatus(enum.StrEnum):
+    queued = "queued"
+    running = "running"
+    done = "done"  # every log was tried; see ImportJob.errors for the ones that didn't import
+    failed = "failed"  # see ImportJob.message
+
+
 class Track(Base):
     __tablename__ = "tracks"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -184,3 +191,21 @@ class TyreMinimum(Base):
     cold_min_bar: Mapped[float | None] = mapped_column(Float)
     hot_min_bar: Mapped[float | None] = mapped_column(Float)
     source: Mapped[str | None] = mapped_column(String(255))  # P-Book edition and page
+
+
+class ImportJob(Base):
+    """One upload of several files (logs, .ldx, zips) imported in the background: a session per log."""
+    __tablename__ = "import_jobs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    filename: Mapped[str] = mapped_column(String(255))  # the uploaded files' names
+    # an ImportStatus; a plain string column, so a new status needs no database migration
+    status: Mapped[str] = mapped_column(String(16), default=ImportStatus.queued)
+    total: Mapped[int] = mapped_column(Integer, default=0)  # logs found in the upload
+    done: Mapped[int] = mapped_column(Integer, default=0)  # logs tried so far, imported or not
+    current: Mapped[str | None] = mapped_column(String(255))  # the log being imported now
+    session_ids: Mapped[list] = mapped_column(JSON, default=list)  # the sessions created
+    errors: Mapped[list] = mapped_column(JSON, default=list)  # [{"file", "error"}]: files that didn't import
+    skipped: Mapped[list] = mapped_column(JSON, default=list)  # [{"file", "reason"}]: files that aren't logs
+    message: Mapped[str | None] = mapped_column(Text)  # why the import failed or stopped early
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

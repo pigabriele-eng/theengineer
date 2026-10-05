@@ -2,6 +2,7 @@ import { Link, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, TextInput } from 'react-native';
 
+import { ImportLogs } from '@/components/ImportLogs';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { api, formatLap, Session, SessionKind } from '@/lib/api';
 
@@ -51,11 +52,17 @@ export default function SessionsScreen() {
           </Pressable>
         ))}
       </View>
+      <ImportLogs onProgress={load} />
       {error && <Text style={styles.error}>Can't reach the server: {error}</Text>}
       <FlatList
         data={sessions}
         keyExtractor={(s) => String(s.id)}
-        ListEmptyComponent={<Text style={styles.empty}>No sessions yet. Add one above, then upload a logger file.</Text>}
+        ListEmptyComponent={
+          <Text style={styles.empty}>
+            No sessions yet. Add one above and upload a logger file to it, or upload logs or a zip of a whole test: each
+            log becomes a session.
+          </Text>
+        }
         renderItem={({ item }) => (
           <Link href={{ pathname: '/session/[id]', params: { id: item.id } }} asChild>
             <Pressable style={styles.row}>
