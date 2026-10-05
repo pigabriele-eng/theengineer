@@ -14,8 +14,10 @@ from __future__ import annotations
 import gzip
 import logging
 import os
+import shutil
 import uuid
 import zlib
+from collections.abc import Iterator
 from functools import cache
 from pathlib import Path
 from typing import Protocol
@@ -25,6 +27,7 @@ import httpx
 COMPRESSED_SUFFIXES = (".ld", ".ldx", ".csv", ".txt")  # logs compress well; audio is compressed already
 COMPRESS_LEVEL = 4  # close to the smallest size for a fraction of the time of level 9
 CACHE_LIMIT_BYTES = 2 * 1024**3  # downloaded copies kept on the server's disk
+CHUNK_BYTES = 1024**2
 
 
 class StorageError(OSError):
@@ -38,12 +41,21 @@ class Storage(Protocol):
     def save(self, data: bytes, suffix: str) -> str:
         """Store new file contents and return their key."""
 
+    def save_file(self, path: Path, suffix: str) -> str:
+        """Store a copy of a local file, read in chunks rather than all at once, and return its key."""
+
     def local_path(self, key: str) -> Path:
         """A local file with the contents stored under the key. FileNotFoundError when there is none."""
 
 
 def _new_key(suffix: str) -> str:
     return f"{uuid.uuid4().hex}{suffix.lower()}"
+
+
+def _chunks(path: Path) -> Iterator[bytes]:
+    with path.open("rb") as f:
+        while chunk := f.read(CHUNK_BYTES):
+            yield chunk
 
 
 class LocalStorage:
@@ -57,6 +69,12 @@ class LocalStorage:
         key = _new_key(suffix)
         self.setup()
         (self.root / key).write_bytes(data)
+        return key
+
+    def save_file(self, path: Path, suffix: str) -> str:
+        key = _new_key(suffix)
+        self.setup()
+        shutil.copyfile(path, self.root / key)
         return key
 
     def local_path(self, key: str) -> Path:
@@ -102,15 +120,30 @@ class SupabaseStorage:
 
     def save(self, data: bytes, suffix: str) -> str:
         key = _new_key(suffix)
-        body = gzip.compress(data, COMPRESS_LEVEL) if key.endswith(COMPRESSED_SUFFIXES) else data
+        self._upload(key, gzip.compress(data, COMPRESS_LEVEL) if key.endswith(COMPRESSED_SUFFIXES) else data)
+        self._write_cache(key, [data])
+        return key
+
+    def save_file(self, path: Path, suffix: str) -> str:
+        """Only the compressed copy is held in memory (about 11 MB for a 90 MB log)."""
+        key = _new_key(suffix)
+        if key.endswith(COMPRESSED_SUFFIXES):
+            z = zlib.compressobj(COMPRESS_LEVEL, wbits=31)  # a gzip stream, as gzip.compress writes
+            body = b"".join([*(z.compress(chunk) for chunk in _chunks(path)), z.flush()])
+        else:
+            body = path.read_bytes()
+        self._upload(key, body)
+        del body
+        self._write_cache(key, _chunks(path))
+        return key
+
+    def _upload(self, key: str, body: bytes) -> None:
         r = self.client.post(self._url(key), content=body, headers={"Content-Type": "application/octet-stream"})
         if r.status_code == 413:
             raise StorageError(f"The file is {len(body) / 1e6:.0f} MB, more than the storage takes per file "
                                "(50 MB on Supabase's free plan)")
         if r.status_code >= 400:
             raise self._fail("store the file", r)
-        self._write_cache(key, [data])
-        return key
 
     def local_path(self, key: str) -> Path:
         p = self.cache_dir / key
@@ -185,6 +218,10 @@ def backend() -> Storage:
 
 def save(data: bytes, suffix: str) -> str:
     return backend().save(data, suffix)
+
+
+def save_file(path: Path, suffix: str) -> str:
+    return backend().save_file(path, suffix)
 
 
 def local_path(key: str) -> Path:

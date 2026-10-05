@@ -135,7 +135,21 @@ export type DebriefCorner = {
   spread_s: number;
 };
 
-type PickedFile = { uri: string; name: string; file?: File | Blob };
+// An upload of many files at once (logs, .ldx, CSV exports, zips), imported by the server in the background.
+export type ImportJob = {
+  id: number;
+  filename: string;
+  status: 'queued' | 'running' | 'done' | 'failed';
+  total: number; // logs found; 0 until the upload is unpacked
+  done: number;
+  current: string | null;
+  session_ids: number[];
+  errors: { file: string; error: string }[];
+  skipped: { file: string; reason: string }[];
+  message: string | null;
+};
+
+type PickedFile = { uri: string; name: string; file?: File | Blob; mimeType?: string };
 
 // On web we have a File or Blob; on iOS FormData takes a { uri, name, type } descriptor.
 const formFile = (f: PickedFile, type: string) =>
@@ -169,6 +183,13 @@ export const api = {
     form.append('file', formFile(file, 'application/octet-stream'));
     return request<SessionDetail>(`/sessions/${id}/files`, { method: 'POST', body: form });
   },
+  // Every file in one request; each log becomes a session. Follow the import with importJob.
+  importFiles: (files: PickedFile[]) => {
+    const form = new FormData();
+    for (const f of files) form.append('files', formFile(f, f.mimeType || 'application/octet-stream'));
+    return request<ImportJob>('/imports', { method: 'POST', body: form });
+  },
+  importJob: (id: number) => request<ImportJob>(`/imports/${id}`),
   createDebrief: (id: number, points: DebriefPointIn[]) =>
     request<Debrief>(`/sessions/${id}/debriefs`, json({ mode: 'individual', points })),
   recordDebrief: (id: number, audio: PickedFile, mode: DebriefMode, language: DebriefLanguage) => {

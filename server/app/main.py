@@ -8,13 +8,14 @@ from sqlalchemy.exc import DataError, IntegrityError
 from app import storage
 from app.auth import check_settings, require_user, require_user_or_query_token
 from app.db import create_tables
-from app.routers import catalog, debriefs, insights, sessions, tyres, vehicle
+from app.routers import catalog, debriefs, imports, insights, sessions, tyres, vehicle
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     check_settings()
     create_tables()
+    imports.fail_interrupted()
     storage.backend().setup()
     yield
 
@@ -23,7 +24,8 @@ app = FastAPI(title="The Engineer", lifespan=lifespan)
 # Any origin: the app signs in with a bearer token, not cookies.
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 signed_in = [Depends(require_user)]
-for r in (catalog.router, sessions.router, debriefs.router, insights.router, tyres.router, vehicle.router):
+for r in (catalog.router, sessions.router, imports.router, debriefs.router, insights.router, tyres.router,
+          vehicle.router):
     app.include_router(r, dependencies=signed_in)
 app.include_router(debriefs.media_router, dependencies=[Depends(require_user_or_query_token)])
 

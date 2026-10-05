@@ -1,4 +1,6 @@
 """Run sessions: logger uploads, lap lists, analysis and voice debriefs for one run."""
+import shutil
+import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
@@ -60,37 +62,54 @@ def upload_file(session_id: int, file: UploadFile, db: Session = Depends(get_db)
     s = _get(db, session_id)
     name = file.filename or ""
     ext = Path(name).suffix.lower()
-    logger = SUPPORTED.get(ext)
-    if logger is None:
+    if ext not in SUPPORTED:
         raise HTTPException(415, f"Unsupported file type '{ext}'. Supported now: MoTeC .ld and .ldx, "
                                  "and CSV exports from MoTeC i2, AiM Race Studio and Pi Toolbox (.csv, .txt)")
-    raw = file.file.read()  # a plain def (run in a worker thread), so parsing a big log doesn't stall other requests
+    # a plain def (run in a worker thread), so parsing a big log doesn't stall other requests
     if ext == ".ldx":
-        return _attach_ldx(db, s, name, raw)
+        return _attach_ldx(db, s, name, file.file.read())
+    with tempfile.TemporaryDirectory(prefix="theengineer-upload-") as tmp:
+        path = Path(tmp) / f"log{ext}"
+        with path.open("wb") as out:
+            shutil.copyfileobj(file.file, out, storage.CHUNK_BYTES)
+        add_log(db, s, path, name)
+    db.commit()
+    db.refresh(s)
+    return _with_best(s)
+
+
+def add_log(db: Session, s: models.RunSession, path: Path, name: str,
+            ldx_beacons: list[float] | None = None) -> models.LoggerFile:
+    """Read a logger file on the local disk (a MoTeC .ld log or a CSV export), store it and time its laps for the
+    session. The single-file upload and the import of many files both come through here. ldx_beacons are the
+    line crossings from the log's .ldx, when there is one. Flushed, not committed; HTTPException 422 when the file
+    can't be read."""
+    ext = Path(name).suffix.lower()
     try:
-        ld = read_ld(raw) if ext == ".ld" else read_csv_log(raw)
+        ld = read_ld(path) if ext == ".ld" else read_csv_log(path)
         beacons = ld.beacons if isinstance(ld, CsvLog) and len(ld.beacons) >= 2 else None
+        if ldx_beacons and len(ldx_beacons) >= 2:
+            beacons = ldx_beacons
         track = _track_for(db, s, ld)
         data = load_session(ld, _channel_map(s), beacons=beacons, line=_line(track))
     except (LdFormatError, ValueError) as e:
         raise HTTPException(422, str(e)) from e
 
-    key = storage.save(raw, ext)
+    key = storage.save_file(path, ext)
+    logger = SUPPORTED[ext]
     meta = {"event": ld.event_name, "event_session": ld.event_session, "venue": ld.venue,
             "device_serial": ld.device_serial, "date": ld.date, "time": ld.time,
             "duration_s": round(ld.duration, 1), "channels": len(ld.channels), "mapped_channels": data.sources}
     if isinstance(ld, CsvLog):
         logger = ld.logger
         meta.update({"format": "csv", "layout": ld.layout, "driver": ld.driver, "vehicle": ld.vehicle})
-        if beacons:
-            meta["beacons"] = beacons
+    if beacons:
+        meta["beacons"] = beacons
     rec = models.LoggerFile(session=s, logger=logger, filename=(name or key)[:255], path=key, meta=meta)
     db.add(rec)
     db.flush()
     _store_laps(db, s, rec, data, track)
-    db.commit()
-    db.refresh(s)
-    return _with_best(s)
+    return rec
 
 
 def _attach_ldx(db: Session, s: models.RunSession, name: str, raw: bytes) -> dict:
