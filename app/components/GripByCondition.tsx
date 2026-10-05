@@ -48,7 +48,7 @@ function gripTicks(lo: number, hi: number, n: number) {
 }
 
 const inWindow = (g: ConditionGroup, w: GripWindow | null) =>
-  !!w && w.confidence !== 'none' && g.from >= w.from - 1e-9 && g.to <= w.to + 1e-9;
+  !!w && (w.confidence === 'high' || w.confidence === 'medium') && g.from >= w.from - 1e-9 && g.to <= w.to + 1e-9;
 
 export function GripByCondition({ cond, condKey }: { cond: Condition; condKey: ConditionKey }) {
   const [table, setTable] = useState(false);

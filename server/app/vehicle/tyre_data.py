@@ -60,7 +60,7 @@ MIN_GROUP_LAPS = 4
 MIN_GROUP_SAMPLES = 200  # samples at or above GRIP_MU
 MIN_GROUP_BANDS = 3
 BOOT_CURVE = 30
-BOOT_GRIP = 200
+BOOT_GRIP = 400
 MIN_SESSIONS_REDRAW = 3  # spreads redraw whole sessions once there are this many
 SPREAD_PCT = (5, 95)  # a group's grip range: the middle 90 % of its redraws
 MIN_GAIN = 0.02  # a group must also have this much less grip than the best to count as clearly worse
@@ -452,14 +452,18 @@ def _bins(values: np.ndarray, spec: dict) -> list[tuple[float, float]]:
     return [(round(float(a) * step, 3), round(float(b) * step, 3)) for a, b in itertools.pairwise(edges)]
 
 
-def _window(bins: list[dict], spec: dict, axle: str) -> dict | None:
+def _window(bins: list[dict], spec: dict, axle: str, ref: Reference | None = None,
+            names: list[str] | None = None) -> dict | None:
     """The groups around the best one that are not clearly worse than it, and how sure that is. Only groups with
     a range (from at least MIN_SESSIONS_REDRAW sessions) take part.
 
     Clearly worse: the group's whole range lies below the best one's range, and its grip is at least MIN_GAIN
     below the best. Confidence is "high" when two groups or more are clearly worse and the window rests on at
-    least 5 sessions and 30 laps, "medium" when one is, and "none" when none is: then grip did not clearly change
-    with the condition."""
+    least 5 sessions and 30 laps, "medium" when one is, and "none" when none is, or when a group beyond a clearly
+    worse one is not worse itself (grip going up and down is scatter, not a window): then grip did not clearly
+    change with the condition. With the groups' rows and the reference, the window is also checked with each
+    session left out in turn (_leave_one_out): when one session carries it, the confidence drops a step ("high"
+    to "medium", "medium" to "low") and the text names that session."""
     usable = [b for b in bins if b["low"] is not None]
     if len(usable) < 2:
         return None
@@ -469,29 +473,31 @@ def _window(bins: list[dict], spec: dict, axle: str) -> dict | None:
     def clearly_worse(b: dict) -> bool:
         return b["high"] < floor and best["grip"] - b["grip"] >= MIN_GAIN - 1e-9
 
-    lo_i = hi_i = usable.index(best)
+    lo_i = hi_i = next(i for i, b in enumerate(usable) if b is best)
     while lo_i > 0 and not clearly_worse(usable[lo_i - 1]):
         lo_i -= 1
     while hi_i < len(usable) - 1 and not clearly_worse(usable[hi_i + 1]):
         hi_i += 1
     inside = usable[lo_i:hi_i + 1]
     worse = [b for b in usable if clearly_worse(b)]
+    stray = [b for i, b in enumerate(usable) if not lo_i <= i <= hi_i and not clearly_worse(b)]
     apart = [b for b in usable if b["high"] < floor]
     sessions = len(set().union(*(set(b["session_ids"]) for b in inside)))
     laps = sum(b["laps"] for b in inside)
-    if len(worse) >= 2 and sessions >= 5 and laps >= 30:
-        confidence = "high"
-    elif worse:
-        confidence = "medium"
-    else:
+    if stray or not worse:
         confidence = "none"
+    elif len(worse) >= 2 and sessions >= 5 and laps >= 30:
+        confidence = "high"
+    else:
+        confidence = "medium"
     edge = "low" if lo_i == 0 and hi_i < len(usable) - 1 else "high" if hi_i == len(usable) - 1 and lo_i > 0 \
         else None
     out = {"from": inside[0]["from"], "to": inside[-1]["to"], "open": edge, "grip": best["grip"],
            "confidence": confidence, "sessions": sessions, "laps": laps}
-    if not worse:
+    if confidence == "none":
         spread = max(b["grip"] for b in usable) - min(b["grip"] for b in usable)
-        why = f"under {MIN_GAIN * 100:.0f} %, too little to act on" if apart else "inside their scatter"
+        why = ("up and down with no one range best" if stray and worse
+               else f"under {MIN_GAIN * 100:.0f} %, too little to act on" if apart else "inside their scatter")
         over = _where(spec, usable[0]["from"], usable[-1]["to"], bare=True)
         out["text"] = (f"{axle.capitalize()}: no clear change with {spec['noun']} over {over}: the groups differ by "
                        f"up to {spread * 100:.0f} %, {why} ({sum(b['laps'] for b in usable)} laps).")
@@ -499,12 +505,20 @@ def _window(bins: list[dict], spec: dict, axle: str) -> dict | None:
     # the window's grip against the clearly worse groups', each averaged over its samples (the best group alone
     # would overstate it: it is the highest of several noisy groups)
     out["gain"] = round(_mean_grip(inside) - _mean_grip(worse), 4)
+    caveat = ""
+    if ref is not None and all("rows" in b for b in inside + worse):
+        lowest, who = _leave_one_out(inside, worse, ref)
+        out["gain_without_one"] = round(lowest, 4)
+        if lowest < MIN_GAIN - 1e-9:
+            confidence = out["confidence"] = {"high": "medium", "medium": "low"}[confidence]
+            name = names[who] if names and who is not None else "one session"
+            caveat = f": without {name} it is {max(lowest, 0) * 100:.0f} %"
     below = [b for b in worse if b["to"] <= inside[0]["from"]]
     above = [b for b in worse if b["from"] >= inside[-1]["to"]]
-    sides = " and ".join(_where(spec, g[0]["from"], g[-1]["to"]) for g in (below, above) if g)
-    out["text"] = (f"{axle.capitalize()}: most grip at {_where(spec, inside[0]['from'], inside[-1]['to'], edge)}, "
-                   f"about {out['gain'] * 100:.0f} % more than at {sides} "
-                   f"({laps} laps from {sessions} sessions; {confidence} confidence).")
+    sides = " and ".join(_where(spec, g[0]["from"], g[-1]["to"], lead=True) for g in (below, above) if g)
+    where = _where(spec, inside[0]["from"], inside[-1]["to"], edge, lead=True)
+    out["text"] = (f"{axle.capitalize()}: most grip {where}, about {out['gain'] * 100:.0f} % more than {sides} "
+                   f"({laps} laps from {sessions} sessions; {confidence} confidence{caveat}).")
     return out
 
 
@@ -512,27 +526,59 @@ def _mean_grip(groups: list[dict]) -> float:
     return sum(b["grip"] * b["samples"] for b in groups) / sum(b["samples"] for b in groups)
 
 
+def _leave_one_out(inside: list[dict], worse: list[dict], ref: Reference) -> tuple[float, int | None]:
+    """The window's gain (its grip over the clearly worse groups') with each session left out in turn: the
+    smallest, and the session (entry index) left out for it. Point estimates only: cheap, no redraws."""
+    nb = len(ref.alpha)
+    ents = np.unique(np.concatenate([b["rows"].ent for b in inside + worse]))
+    lowest, who = math.inf, None
+    for e in ents:
+        means = []
+        for groups in (inside, worse):
+            num = den = 0.0
+            for b in groups:
+                r = b["rows"]
+                keep = r.ent != e
+                a, n = _group_points(Rows(r.seg[keep], r.ent[keep], r.band[keep], r.n[keep], r.mu[keep],
+                                          r.alpha[keep], r.iqr[keep]), nb)
+                counted = np.where(np.isfinite(ref.alpha), n, 0.0)
+                if np.count_nonzero(counted) >= MIN_GROUP_BANDS and counted.sum() >= MIN_GROUP_SAMPLES:
+                    num += float(_grip(a, n, ref)) * counted.sum()
+                    den += counted.sum()
+            means.append(num / den if den else None)
+        gain = means[0] - means[1] if None not in means else 0.0
+        if gain < lowest:
+            lowest, who = gain, int(e)
+    return lowest, who
+
+
 def _num(spec: dict, x: float) -> str:
     return f"{x:.2f}" if spec["unit"] == "bar" else f"{x:.0f}"
 
 
-def _where(spec: dict, a: float, b: float, edge: str | None = None, bare: bool = False) -> str:
+def _where(spec: dict, a: float, b: float, edge: str | None = None, bare: bool = False, lead: bool = False) -> str:
     """A range of the condition in words; edge "low" or "high" when it runs to the edge of what was seen (the best
-    may lie beyond it). bare: without naming the temperature, when the sentence already does."""
+    may lie beyond it). bare: without naming the temperature or the tyre, when the sentence already does. lead:
+    with the preposition in front ("at 1.80 bar hot", "in the first 4 laps on the tyre")."""
     if spec["unit"] == "laps":
-        last = int(b) - 1
+        first, last = int(a), int(b) - 1
+        tyre = "" if bare else " on the tyre"
         if edge == "low":
-            return f"up to lap {last} on the tyre"
-        if edge == "high" or last >= 999:
-            return f"lap {int(a)} on the tyre and later"
-        return f"lap {int(a)} on the tyre" if last == int(a) else f"laps {int(a)}-{last} on the tyre"
+            text = "in " * lead + ("the first lap" if last == 1 else f"the first {last} laps") + tyre
+        elif edge == "high" or last >= 999:
+            text = f"{'from ' * lead}lap {first}{tyre} {'onwards' if lead else 'and later'}"
+        else:
+            text = "in " * lead + (f"lap {first}" if last == first else f"laps {first}-{last}") + tyre
+        return text
     unit = spec["unit"]
     suffix = " hot" if unit == "bar" else "" if bare else " TPMS temperature"
     if edge == "low":
-        return f"{_num(spec, b)} {unit}{suffix} or {'less' if unit == 'bar' else 'cooler'}"
-    if edge == "high":
-        return f"{_num(spec, a)} {unit}{suffix} or {'more' if unit == 'bar' else 'hotter'}"
-    return f"{_num(spec, a)}-{_num(spec, b)} {unit}{suffix}"
+        text = f"{_num(spec, b)} {unit}{suffix} or {'less' if unit == 'bar' else 'cooler'}"
+    elif edge == "high":
+        text = f"{_num(spec, a)} {unit}{suffix} or {'more' if unit == 'bar' else 'hotter'}"
+    else:
+        text = f"{_num(spec, a)}-{_num(spec, b)} {unit}{suffix}"
+    return "at " * lead + text
 
 
 def _conditions(p: Pool, fits: dict[str, dict], rng: np.random.Generator) -> dict:
@@ -550,7 +596,7 @@ def _conditions(p: Pool, fits: dict[str, dict], rng: np.random.Generator) -> dic
                 laps_used = np.unique(sub.seg)
                 row = {"from": lo, "to": hi, "laps": len(laps_used),
                        "session_ids": sorted({p.entries[p.laps[s]["entry"]].session_id for s in laps_used}),
-                       "grip": None, "low": None, "high": None, "samples": 0}
+                       "grip": None, "low": None, "high": None, "samples": 0, "rows": sub}
                 if len(laps_used) >= MIN_GROUP_LAPS:
                     g = _group_grip(sub, ref, rng)
                     if g:
@@ -562,9 +608,9 @@ def _conditions(p: Pool, fits: dict[str, dict], rng: np.random.Generator) -> dic
                 bins.pop()
             for b in bins:
                 b["sessions"] = len(b["session_ids"])
-            cond[ax] = {"bins": bins, "window": _window(bins, spec, ax)}
+            cond[ax] = {"bins": bins, "window": _window(bins, spec, ax, ref, [e.name for e in p.entries])}
             for b in bins:
-                del b["session_ids"]
+                del b["session_ids"], b["rows"]
         out[name] = cond
     return out
 

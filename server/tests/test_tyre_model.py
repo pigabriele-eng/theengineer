@@ -7,7 +7,18 @@ import pytest
 
 from app.analysis.laps import MASTER_HZ, Lap
 from app.vehicle.model import Vehicle
-from app.vehicle.tyre_data import Entry, fit_model, summarise
+from app.vehicle.tyre_data import (
+    CONDITIONS,
+    Entry,
+    Reference,
+    Rows,
+    _grip,
+    _group_points,
+    _where,
+    _window,
+    fit_model,
+    summarise,
+)
 from app.vehicle.tyre_fit import NotEnoughData, fit_tyres
 from tests.synthetic import simulate, write_ld
 from tests.test_vehicle import CAR, FRONT, REAR, _inverse, bicycle_session
@@ -173,6 +184,47 @@ def test_grip_against_pressure_shows_the_window():
     for ax in ("front", "rear"):
         w = model["conditions"]["temperature"][ax]["window"]
         assert w is None or w["confidence"] == "none"
+
+
+def _group(frm, to, rows, laps, low, high):
+    """A group of laps for _window, its grip worked out from its rows (entry, samples per band, slip angle)."""
+    ent = np.repeat([e for e, _, _ in rows], 3)
+    r = Rows(seg=np.arange(len(ent)), ent=ent, band=np.tile([2, 3, 4], len(rows)),
+             n=np.repeat([float(n) for _, n, _ in rows], 3), mu=np.zeros(len(ent)),
+             alpha=np.repeat([a for _, _, a in rows], 3), iqr=np.zeros(len(ent)))
+    a, n = _group_points(r, len(REF.alpha))
+    return {"from": frm, "to": to, "laps": laps, "session_ids": sorted({e + 1 for e, _, _ in rows}),
+            "grip": float(_grip(a, n, REF)), "low": low, "high": high, "samples": int(n.sum()), "rows": r}
+
+
+# the pool's slip angle is 1.0° in bands 2-4, and each degree less is worth 10 % more grip
+REF = Reference(alpha=np.array([np.nan, np.nan, 1.0, 1.0, 1.0]), per_deg=np.array([0, 0, 0.1, 0.1, 0.1]))
+
+
+def test_a_window_one_session_carries_is_not_trusted():
+    spec = CONDITIONS["pressure"]
+    # the low pressures look 8 % better, but nearly all of that is one session's laps (Run A, 0.0° where the
+    # others needed 1.0°); without it the groups are level
+    best = _group(1.60, 1.70, [(0, 1000, 0.0), *[(e, 50, 1.0) for e in range(1, 5)]], 30, 0.06, 0.10)
+    worse = [_group(lo, lo + 0.1, [(e, 100, 1.0) for e in range(5)], 20, -0.01, 0.01) for lo in (1.70, 1.80)]
+    assert best["grip"] == pytest.approx(0.0833, abs=0.001) and worse[0]["grip"] == pytest.approx(0.0)
+    bins = [best, *worse]
+    w = _window(bins, spec, "front")  # without the rows' check: two groups clearly worse, 5 sessions, 30 laps
+    assert w["confidence"] == "high" and "gain_without_one" not in w
+    w = _window(bins, spec, "front", REF, ["Run A", "Run B", "Run C", "Run D", "Run E"])
+    assert w["confidence"] == "medium" and w["gain_without_one"] == pytest.approx(0.0, abs=1e-9)
+    assert w["text"] == ("Front: most grip at 1.70 bar hot or less, about 8 % more than at 1.70-1.90 bar hot "
+                         "(30 laps from 5 sessions; medium confidence: without Run A it is 0 %).")
+    # a group beyond a clearly worse one that is as good as the best: up and down, no window
+    level = _group(1.90, 2.00, [(e, 100, 0.2) for e in range(5)], 20, 0.06, 0.10)
+    w = _window([*bins, level], spec, "front", REF)
+    assert w["confidence"] == "none" and "up and down with no one range best" in w["text"]
+    # laps on the tyre read as laps
+    laps = CONDITIONS["tyre_laps"]
+    assert _where(laps, 1, 13, "low", lead=True) == "in the first 12 laps on the tyre"
+    assert _where(laps, 13, 1000, "high", lead=True) == "from lap 13 on the tyre onwards"
+    assert _where(laps, 4, 6, lead=True) == "in laps 4-5 on the tyre"
+    assert _where(laps, 2, 21, bare=True) == "laps 2-20"
 
 
 # ---------- the API ----------
