@@ -10,7 +10,7 @@ from app.auth import check_settings, require_user, require_user_or_query_token
 from app.db import create_tables
 from app.routers import catalog, debriefs, imports, insights, sessions, trackmap, tyres, vehicle
 from app.routers import balance as report_balance
-from app.routers import report_grip, setups
+from app.routers import report_grip, setups, tyreprep
 
 
 @asynccontextmanager
@@ -34,6 +34,7 @@ app.include_router(trackmap.router, dependencies=signed_in)
 app.include_router(report_grip.router, dependencies=signed_in)
 app.include_router(report_balance.router, dependencies=signed_in)
 app.include_router(setups.router, dependencies=signed_in)
+app.include_router(tyreprep.router, dependencies=signed_in)
 app.include_router(debriefs.media_router, dependencies=[Depends(require_user_or_query_token)])
 
 
