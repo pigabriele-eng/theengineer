@@ -14,6 +14,7 @@ class CornerIn(BaseModel):
     code: str
     name: str | None = None
     apex_m: float | None = None
+    sector: str | None = None  # e.g. "T2-T5" on T2, T3, T4 and T5 to time them as one section
 
 
 class CornerOut(CornerIn, Orm):

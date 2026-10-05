@@ -9,6 +9,7 @@ import numpy as np
 
 from app.analysis.channels import PHASES
 from app.analysis.insights import (
+    CornerSpec,
     TECHNIQUE,
     LapRecord,
     Prepared,
@@ -68,7 +69,7 @@ def fingerprint(laps: list[LapRecord], prep: Prepared) -> dict:
 
 
 def compare_groups(runs: list[RunInput], group_of: dict[str, str], labels: dict[str, str] | None = None,
-                   corners: list[tuple[str, float]] | None = None) -> dict:
+                   corners: list[CornerSpec] | None = None) -> dict:
     """group_of maps each run name to "a" or "b"; labels names the two groups (driver names)."""
     labels = labels or {"a": "A", "b": "B"}
     prep = prepare(runs, corners)

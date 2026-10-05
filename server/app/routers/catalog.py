@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.db import get_db
+from app.known_tracks import fill_corners
 
 router = APIRouter()
 
@@ -13,8 +14,21 @@ router = APIRouter()
 def create_track(body: schemas.TrackIn, db: Session = Depends(get_db)):
     track = models.Track(name=body.name, length_m=body.length_m,
                          corners=[models.Corner(**c.model_dump()) for c in body.corners])
+    fill_corners(track)
     db.add(track)
     db.commit()
+    return track
+
+
+@router.put("/tracks/{track_id}/corners", response_model=schemas.TrackOut)
+def set_corners(track_id: int, body: list[schemas.CornerIn], db: Session = Depends(get_db)):
+    """Replace the track's corners: numbers, positions and which corners are analysed as one sector."""
+    track = db.get(models.Track, track_id)
+    if track is None:
+        raise HTTPException(404, "Track not found")
+    track.corners = [models.Corner(**c.model_dump()) for c in body]
+    db.commit()
+    db.refresh(track)
     return track
 
 

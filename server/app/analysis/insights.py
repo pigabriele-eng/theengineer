@@ -21,6 +21,10 @@ from app.analysis.scan import channel_scan
 from app.importers.motec import LdFile
 
 GROUP_WITHIN_M = 150  # official corners this close to a corner's slowest point share its section
+
+# An official corner: (code, metres from the line) or (code, metres, sector). Corners given the same sector
+# name are timed and compared as one section, whatever the speed trace would split them into.
+CornerSpec = tuple[str, float] | tuple[str, float, str | None]
 STRAIGHT_MIN_M = 250  # full throttle for at least this long makes a straight with a speed trap
 MEDALS = (("gold", 98.0), ("silver", 97.0), ("bronze", 95.0))  # % of the theoretical lap
 MIN_LAPS_FOR_TRENDS = 8
@@ -44,6 +48,7 @@ class Section:
     start: int
     end: int
     apex: int | None  # slowest point, or None for a section without a real corner
+    corners: list[str] = field(default_factory=list)  # the official numbers inside it
 
     def to_dict(self) -> dict:
         return {"code": self.code, "start_m": self.start, "end_m": self.end, "apex_m": self.apex}
@@ -78,7 +83,7 @@ class Prepared:
 
 # ---------- preparation ----------
 
-def prepare(runs: list[RunInput], corners: list[tuple[str, float]] | None = None) -> Prepared | None:
+def prepare(runs: list[RunInput], corners: list[CornerSpec] | None = None) -> Prepared | None:
     """Traces on one line for every clean lap, the car's limits and the theoretical lap."""
     for r in runs:
         if "phase" not in r.data.channels:
@@ -128,13 +133,14 @@ def _label(codes: list[str]) -> str:
     return f"{codes[0]}-{codes[-1]}"
 
 
-def make_sections(ref: dict[str, np.ndarray], corners: list[tuple[str, float]] | None = None
+def make_sections(ref: dict[str, np.ndarray], corners: list[CornerSpec] | None = None
                   ) -> tuple[list[Section], str]:
     """Split the lap at the fast points between corners.
 
     With the track's official corners, each section carries the official numbers inside it, grouped like
-    "T8/T9" or "T2-T4"; a flat-out kink far from any slow point gets its own section. Without them, the
-    slowest points are numbered C1, C2... so they are never mistaken for official numbers.
+    "T8/T9" or "T2-T4"; a flat-out kink far from any slow point gets its own section. Corners the track
+    puts in one sector become one section. Without official corners, the slowest points are numbered
+    C1, C2... so they are never mistaken for official numbers.
     """
     found = detect_corners(ref)
     n = len(ref["speed"])
@@ -143,8 +149,7 @@ def make_sections(ref: dict[str, np.ndarray], corners: list[tuple[str, float]] |
     if not corners:
         secs = [Section(f"C{i + 1}", c.start, c.end, c.apex) for i, c in enumerate(found)]
         return secs, "detected"
-    official = sorted(((code, int(apex)) for code, apex in corners if apex is not None and 0 <= apex < n),
-                      key=lambda c: c[1])
+    official = sorted(((c[0], int(c[1])) for c in corners if c[1] is not None and 0 <= c[1] < n), key=lambda c: c[1])
     secs: list[Section] = []
     for c in found:
         inside = [(code, a) for code, a in official if c.start <= a < c.end or (c is found[-1] and a >= c.start)]
@@ -158,19 +163,45 @@ def make_sections(ref: dict[str, np.ndarray], corners: list[tuple[str, float]] |
         after = [x for x in far if x[1] > c.apex]
         if before:
             split = (before[-1][1] + (near[0][1] if near else c.apex)) // 2
-            secs.append(Section(_label([x[0] for x in before]), start, split, None))
+            secs.append(Section(_label([x[0] for x in before]), start, split, None, [x[0] for x in before]))
             start = split
         end = c.end
         if after:
             split = ((near[-1][1] if near else c.apex) + after[0][1]) // 2
             end = split
-        secs.append(Section(_label([x[0] for x in near]) if near else f"C{len(secs) + 1}", start, end, c.apex))
+        secs.append(Section(_label([x[0] for x in near]) if near else f"C{len(secs) + 1}", start, end, c.apex,
+                            [x[0] for x in near]))
         if after:
-            secs.append(Section(_label([x[0] for x in after]), split, c.end, None))
+            secs.append(Section(_label([x[0] for x in after]), split, c.end, None, [x[0] for x in after]))
     secs[0].start, secs[-1].end = 0, n - 1
     for a, b in pairwise(secs):
         b.start = a.end
-    return secs, "official"
+    return _join_sectors(secs, corners, ref["speed"]), "official"
+
+
+def _join_sectors(secs: list[Section], corners: list[CornerSpec], speed: np.ndarray) -> list[Section]:
+    """Neighbouring sections whose corners all belong to one sector of the track become one section."""
+    sector = {c[0]: c[2] for c in corners if len(c) > 2 and c[2]}
+    if not sector:
+        return secs
+
+    def key(s: Section) -> str | None:
+        names = {sector.get(code) for code in s.corners}
+        return names.pop() if len(names) == 1 and None not in names else None
+
+    out: list[Section] = []
+    for s in secs:
+        last = out[-1] if out else None
+        if last is not None and key(s) is not None and key(s) == key(last):
+            apexes = [a for a in (last.apex, s.apex) if a is not None]
+            apex = min(apexes, key=lambda a: speed[a]) if apexes else None
+            out[-1] = Section("", last.start, s.end, apex, last.corners + s.corners)
+        else:
+            out.append(s)
+    for s in out:
+        if s.corners and key(s) is not None:
+            s.code = _label(s.corners)
+    return out
 
 
 # ---------- per lap, per section ----------
@@ -545,7 +576,7 @@ def _r(v, nd=3):
     return None if v is None else round(v, nd)
 
 
-def analyze_runs(runs: list[RunInput], corners: list[tuple[str, float]] | None = None) -> dict:
+def analyze_runs(runs: list[RunInput], corners: list[CornerSpec] | None = None) -> dict:
     prep = prepare(runs, corners)
     if prep is None:
         return {"laps": [], "sections": []}

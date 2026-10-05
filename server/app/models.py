@@ -63,6 +63,7 @@ class Corner(Base):
     code: Mapped[str] = mapped_column(String(16))  # T1, T2, ...
     name: Mapped[str | None] = mapped_column(String(120))  # Grundig hairpin
     apex_m: Mapped[float | None] = mapped_column(Float)
+    sector: Mapped[str | None] = mapped_column(String(32))  # corners with the same sector are analysed as one section
     track: Mapped[Track] = relationship(back_populates="corners")
 
 

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from app.analysis.insights import (
+    CornerSpec,
     Prepared,
     RunInput,
     Section,
@@ -241,7 +242,7 @@ def _tyres(claim: Claim, prep: Prepared) -> dict:
             "suggestion": SUGGEST[("tyre_drop", None)]}
 
 
-def check_debrief(points: list[dict], runs: list[RunInput], corners: list[tuple[str, float]] | None = None) -> dict:
+def check_debrief(points: list[dict], runs: list[RunInput], corners: list[CornerSpec] | None = None) -> dict:
     """points: [{"id", "text", "corner_code", "phase"}]. Returns a verdict per point."""
     prep = prepare(runs, corners)
     if prep is None:
