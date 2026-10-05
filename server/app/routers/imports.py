@@ -20,10 +20,11 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy import inspect, select, update
 from sqlalchemy.orm import Session
 
-from app import models, schemas, storage
+from app import heavy, models, schemas, storage
 from app.db import SessionLocal, get_db
 from app.importers import archive
 from app.importers.motec import read_ldx_beacons
+from app.routers import reports
 from app.routers.sessions import add_log
 
 router = APIRouter(prefix="/imports")
@@ -130,7 +131,8 @@ def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]]) -> No
                 db.commit()
                 run = _Run(db, job, found.archives, folder)
                 for i, item in enumerate(found.logs):
-                    run.add(item, ldx_for.get(i))
+                    with heavy.lock:  # never read a log while the report reads another
+                        run.add(item, ldx_for.get(i))
                     job.done = i + 1
                     db.commit()
                 run.finish_events()
@@ -143,6 +145,10 @@ def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]]) -> No
         job.current = None
         job.finished_at = _now()
         db.commit()
+        try:  # work out the reports of what was imported now, so they are ready when opened
+            reports.schedule_sessions(db, list(job.session_ids or []))
+        except Exception:
+            log.exception("Couldn't start the reports of import %s", job_id)
 
 
 class _Run:

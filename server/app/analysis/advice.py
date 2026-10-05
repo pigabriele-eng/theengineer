@@ -527,6 +527,8 @@ def lap_time_relations(prep: Prepared, per_lap: dict[str, list[dict]], extras: E
             continue
         name = f["channel"]
         vals = np.concatenate([m[name][1] if name in m else np.full(len(ts), np.nan) for _, ts, m in extras.scan])
+        if not f["unit"] and np.nanmin(vals) >= 0 and np.nanmax(vals) <= 1:
+            continue  # an on/off flag (a switch, a relay): no help in words
         scan_runs = [run for run, ts, _ in extras.scan for _ in ts]
         spread = float(np.nanpercentile(vals, 90) - np.nanpercentile(vals, 10)) if np.isfinite(vals).any() else 0
         digits = 0 if spread >= 20 else 1 if spread >= 2 else 2 if spread >= 0.2 else 3

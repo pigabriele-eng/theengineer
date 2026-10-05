@@ -22,6 +22,7 @@ def client(tmp_path, monkeypatch):
     import app.routers.debriefs
     import app.routers.imports
     import app.routers.insights
+    import app.routers.reports
     import app.routers.sessions
     import app.routers.trackmap
     import app.routers.tyres
@@ -30,6 +31,7 @@ def client(tmp_path, monkeypatch):
     importlib.reload(app.models)
     importlib.reload(app.routers.catalog)
     importlib.reload(app.routers.sessions)
+    importlib.reload(app.routers.reports)
     importlib.reload(app.routers.imports)
     importlib.reload(app.routers.debriefs)
     importlib.reload(app.routers.insights)
