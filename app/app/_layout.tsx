@@ -64,6 +64,7 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
           <Stack.Screen name="tools/tyre-fit" />
           <Stack.Screen name="tools/vehicle" />
           <Stack.Screen name="tools/stint" />
+          <Stack.Screen name="compare" options={{ title: 'Compare laps' }} />
         </Stack.Protected>
         <Stack.Protected guard={!signedIn}>
           <Stack.Screen name="sign-in" options={{ headerShown: false, title: 'Sign in' }} />
