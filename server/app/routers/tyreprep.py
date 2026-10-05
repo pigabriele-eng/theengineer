@@ -1,13 +1,16 @@
 """Tyre and qualifying preparation report over one session or a whole event: GET /report/tyre-prep."""
+import gc
+import logging
 import threading
 from collections import OrderedDict
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import models
+from app import heavy, models
 from app.analysis.laps import split_laps
 from app.analysis.tyreprep import aggregate, log_channels, reduce_session
 from app.db import get_db
@@ -17,13 +20,13 @@ from app.routers.tyres import logged_runs, minimum_rows
 from app.tyres.tpms import logger_conditions
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 # Reduced sessions, so a report over an event doesn't read every log again. Keyed by what the reduction depends
 # on: a new upload, new beacons, a learned timing line, a changed channel map or ambient makes a new key.
 CACHE_SIZE = 64
 _cache: OrderedDict[tuple, dict] = OrderedDict()
 _cache_lock = threading.Lock()
-_reduce_lock = threading.Lock()  # one log in memory at a time, however many reports are asked for at once
 
 
 def _track(db: Session, s: models.RunSession, f: models.LoggerFile) -> models.Track | None:
@@ -40,6 +43,18 @@ def _key(s: models.RunSession, logs: list[models.LoggerFile], main: models.Logge
             repr(line), repr(sorted(cmap.items()) if cmap else None), s.ambient_temp_c, s.track_temp_c)
 
 
+def _summarise(s: models.RunSession, main: models.LoggerFile, line) -> dict | None:
+    """Read the log and reduce it; the log and its 10 Hz channels are let go when this returns."""
+    ld = read_file(main)
+    laps, _ = split_laps(ld, main.meta.get("beacons"), line)
+    ch = log_channels(ld, _channel_map(s))
+    if ch is None:
+        return None
+    ambient = s.ambient_temp_c if s.ambient_temp_c is not None else logger_conditions(ld).get("ambient_c")
+    out = reduce_session(ch, laps, ambient)
+    return {**out, "day": main.meta.get("date") or "", "time": main.meta.get("time") or ""}
+
+
 def _reduce(db: Session, s: models.RunSession) -> tuple[dict | None, str | None]:
     """The session's main log (the longest) reduced to its summary, with the cold-to-hot pressure runs of all its
     logs; or why it can't be."""
@@ -53,26 +68,36 @@ def _reduce(db: Session, s: models.RunSession) -> tuple[dict | None, str | None]
         if key in _cache:
             _cache.move_to_end(key)
             return _cache[key], None
-    with _reduce_lock:
+    with heavy.lock:  # one log in memory at a time across every request and import
+        with _cache_lock:  # a request that waited its turn may find this session reduced already
+            if key in _cache:
+                return _cache[key], None
         try:
-            ld = read_file(main)
-            laps, _ = split_laps(ld, main.meta.get("beacons"), line)
-            ch = log_channels(ld, _channel_map(s))
-            if ch is None:
+            out = _summarise(s, main, line)
+            if out is None:
                 return None, "no speed channel"
-            ambient = s.ambient_temp_c if s.ambient_temp_c is not None else logger_conditions(ld).get("ambient_c")
-            out = reduce_session(ch, laps, ambient)
-            del ch, ld
-            out["day"] = main.meta.get("date") or ""
-            out["time"] = main.meta.get("time") or ""
             out["pressure_runs"] = logged_runs(db, session_ids=[s.id])
         except (LdFormatError, OSError, ValueError) as e:
             return None, f"the log can't be read ({e})"
+        except Exception:  # one log the analysis trips on leaves that session out, not the whole event
+            log.exception("Tyre prep: session %s left out", s.id)
+            return None, "the analysis couldn't make sense of this log"
+        finally:
+            gc.collect()  # hand the log's arrays back before the next session is read
     with _cache_lock:
         _cache[key] = out
         while len(_cache) > CACHE_SIZE:
             _cache.popitem(last=False)
     return out, None
+
+
+def _when(r: dict) -> tuple:
+    """Sessions in the order they ran: logs date them dd/mm/yyyy, so by the date itself, then the time of day."""
+    try:
+        day = datetime.strptime(r["day"], "%d/%m/%Y").date().isoformat()
+    except ValueError:
+        day = r["day"]
+    return day, r["time"], r["session_id"]
 
 
 @router.get("/report/tyre-prep")
@@ -101,7 +126,7 @@ def tyre_prep(session: int | None = None, event: int | None = None, db: Session 
         reduced.append({**out, "session_id": s.id, "name": name})
     if not reduced:
         raise HTTPException(404, "No readable logger file in " + ("this session" if session else "this event"))
-    reduced.sort(key=lambda r: (r["day"], r["time"], r["session_id"]))
+    reduced.sort(key=_when)
     series = ev.series if ev else None
     minimums, origin = minimum_rows(db, series)
     report = aggregate(reduced, [r for s in reduced for r in s["pressure_runs"]], minimums)

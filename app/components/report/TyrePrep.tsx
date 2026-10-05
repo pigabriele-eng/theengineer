@@ -523,7 +523,7 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 const styles = StyleSheet.create({
   wrap: { gap: 12 },
-  h2: { fontSize: 18, fontWeight: '700' },
+  h2: { fontSize: 20, fontWeight: '700' },
   h3: { fontSize: 13, fontWeight: '600', opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 },
   loading: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   error: { color: '#c8372d' },

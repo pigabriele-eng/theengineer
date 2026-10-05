@@ -264,7 +264,10 @@ def _ld(plan) -> bytes:
     return write_ld(channels)
 
 
-def test_report_endpoint(client):
+def test_report_endpoint(client, monkeypatch):
+    from app import heavy
+    from app.routers import tyreprep
+
     ev = client.post("/events", json={"name": "Test day", "series": "GT4 Germany"}).json()
     ids = []
     for name, plan in (("Q1", QUALI_THEN_LONG), ("Q2", QUALI_SLOW_WARM)):
@@ -272,8 +275,12 @@ def test_report_endpoint(client):
         r = client.post(f"/sessions/{s['id']}/files", files={"file": (f"{name}.ld", _ld(plan))})
         assert r.status_code == 201, r.text
         ids.append(s["id"])
+    locked = []  # every log is read holding the server-wide lock: one log in memory at a time
+    read = tyreprep.read_file
+    monkeypatch.setattr(tyreprep, "read_file", lambda f: locked.append(heavy.lock._is_owned()) or read(f))
     r = client.get(f"/report/tyre-prep?event={ev['id']}")
     assert r.status_code == 200, r.text
+    assert locked == [True, True]
     rep = r.json()
     assert rep["scope"]["event"] == ev["id"]
     assert [s["name"] for s in rep["sessions"]] == ["Q1", "Q2"]
@@ -290,3 +297,14 @@ def test_report_endpoint(client):
     assert client.get("/report/tyre-prep?session=999").status_code == 404
     empty = client.post("/sessions", json={"name": "Empty", "kind": "test"}).json()
     assert client.get(f"/report/tyre-prep?session={empty['id']}").status_code == 404
+    # a log the analysis trips on leaves its session out of the event, not the whole report
+    s = client.post("/sessions", json={"name": "Q3", "kind": "test", "event_id": ev["id"]}).json()
+    client.post(f"/sessions/{s['id']}/files", files={"file": ("Q3.ld", _ld(QUALI_SLOW_WARM))})
+
+    def trips(*_):
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(tyreprep, "log_channels", trips)
+    r = client.get(f"/report/tyre-prep?event={ev['id']}")
+    assert r.status_code == 200
+    assert [x["session"] for x in r.json()["skipped"]] == ["Q3"]
