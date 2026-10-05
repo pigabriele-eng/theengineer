@@ -1,10 +1,8 @@
 """Process a recorded debrief: transcribe, structure, and save the points against the session."""
 from __future__ import annotations
 
-from pathlib import Path
-
 from app import db as dbmod
-from app import models
+from app import models, storage
 from app.debrief import structure as structure_mod
 from app.debrief import transcribe as transcribe_mod
 
@@ -40,7 +38,7 @@ def process_debrief(debrief_id: int) -> None:
         ctx = context_for(s, d.mode)
         try:
             names = [n for _, n in ctx.corners if n]
-            tr = transcribe_mod.transcribe(Path(d.audio_path), d.language, key_terms=names)
+            tr = transcribe_mod.transcribe(storage.local_path(d.audio_path), d.language, key_terms=names)
             d.segments = [seg.__dict__ for seg in tr.segments]
             d.transcript = tr.text
             db.commit()
@@ -56,9 +54,10 @@ def process_debrief(debrief_id: int) -> None:
         d.points = []
         for p in result["points"]:
             corner = _match_corner(p["corner"], corners)
+            said = corner.code if corner else p["corner"]
             d.points.append(models.DebriefPoint(
-                section=p["section"], text=p["text"], speaker=p["speaker"], phase=p["phase"],
-                corner_code=corner.code if corner else p["corner"], corner_id=corner.id if corner else None,
+                section=p["section"], text=p["text"], speaker=_fit(p["speaker"]), phase=p["phase"],
+                corner_code=_fit(said), corner_id=corner.id if corner else None,
                 audio_start_s=p["audio_start_s"],
                 speaker_driver_id=s.driver_id if d.mode == "individual" and _is_driver(d.speakers, p) else None,
             ))
@@ -66,6 +65,11 @@ def process_debrief(debrief_id: int) -> None:
         db.commit()
     finally:
         db.close()
+
+
+def _fit(label: str | None, n: int = 16) -> str | None:
+    """Speaker and corner labels as said, cut to their column's length."""
+    return label[:n] if label else label
 
 
 def _is_driver(speakers: dict, point: dict) -> bool:

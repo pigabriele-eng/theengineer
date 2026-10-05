@@ -1,7 +1,8 @@
+"""Request and response bodies. Text fields are no longer than their database columns, which Postgres enforces."""
 import datetime as dt
 from typing import Self
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models import CornerPhase, DebriefMode, DebriefStatus, SessionKind
 
@@ -11,10 +12,10 @@ class Orm(BaseModel):
 
 
 class CornerIn(BaseModel):
-    code: str
-    name: str | None = None
+    code: str = Field(max_length=16)
+    name: str | None = Field(None, max_length=120)
     apex_m: float | None = None
-    sector: str | None = None  # e.g. "T2-T5" on T2, T3, T4 and T5 to time them as one section
+    sector: str | None = Field(None, max_length=32)  # e.g. "T2-T5" on T2, T3, T4 and T5 to time them as one section
 
 
 class CornerOut(CornerIn, Orm):
@@ -22,7 +23,7 @@ class CornerOut(CornerIn, Orm):
 
 
 class TrackIn(BaseModel):
-    name: str
+    name: str = Field(max_length=120)
     length_m: float | None = None
     corners: list[CornerIn] = []
 
@@ -35,7 +36,7 @@ class TrackOut(Orm):
 
 
 class DriverIn(BaseModel):
-    name: str
+    name: str = Field(max_length=120)
 
 
 class DriverOut(DriverIn, Orm):
@@ -43,8 +44,8 @@ class DriverOut(DriverIn, Orm):
 
 
 class CarIn(BaseModel):
-    name: str
-    team: str | None = None
+    name: str = Field(max_length=120)
+    team: str | None = Field(None, max_length=120)
     channel_map: dict[str, list[str]] | None = None
 
 
@@ -53,8 +54,8 @@ class CarOut(CarIn, Orm):
 
 
 class EventIn(BaseModel):
-    name: str
-    series: str | None = None
+    name: str = Field(max_length=160)
+    series: str | None = Field(None, max_length=80)
     track_id: int | None = None
     date: dt.date | None = None
 
@@ -66,12 +67,12 @@ class EventOut(EventIn, Orm):
 class SessionIn(BaseModel):
     event_id: int | None = None
     kind: SessionKind = SessionKind.test
-    name: str | None = None
+    name: str | None = Field(None, max_length=120)
     car_id: int | None = None
     driver_id: int | None = None
     track_temp_c: float | None = None
     ambient_temp_c: float | None = None
-    tyre_set: str | None = None
+    tyre_set: str | None = Field(None, max_length=60)
 
 
 class LapOut(Orm):
@@ -101,14 +102,14 @@ class SessionDetail(SessionOut):
 
 
 class DebriefPointIn(BaseModel):
-    section: str
+    section: str = Field(max_length=40)
     text: str
     speaker_driver_id: int | None = None
     corner_id: int | None = None
     phase: CornerPhase | None = None
     audio_start_s: float | None = None
-    speaker: str | None = None
-    corner_code: str | None = None
+    speaker: str | None = Field(None, max_length=16)
+    corner_code: str | None = Field(None, max_length=16)
 
 
 class DebriefPointOut(DebriefPointIn, Orm):
@@ -117,7 +118,7 @@ class DebriefPointOut(DebriefPointIn, Orm):
 
 class DebriefIn(BaseModel):
     mode: DebriefMode = DebriefMode.individual
-    language: str = "en"
+    language: str = Field("en", max_length=8)
     transcript: str | None = None
     points: list[DebriefPointIn] = []
 

@@ -1,0 +1,55 @@
+# Render Blueprint: the API server and the web app. Supabase holds the database, the uploaded files and the
+# sign-in; README.md ("Deploying") says where each value below comes from. Values marked `sync: false` are
+# asked for when the Blueprint is first applied and are then kept in the Render dashboard, never in this file.
+services:
+  - type: web
+    name: theengineer-api
+    runtime: python
+    rootDir: server
+    region: frankfurt
+    plan: free
+    buildCommand: pip install .
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.13"  # the 3.11 line CI tests on
+      - key: DATABASE_URL  # Supabase session pooler connection string
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY  # the publishable (anon) key
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY  # a secret (service_role) key: file storage
+        sync: false
+      - key: STORAGE_BUCKET
+        value: logs
+      - key: ALLOWED_EMAILS  # comma-separated; leave empty to let in every account that exists in Supabase
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: DEEPGRAM_API_KEY
+        sync: false
+
+  - type: web
+    name: theengineer-web
+    runtime: static
+    rootDir: app
+    buildCommand: npm ci && npx expo export --platform web --output-dir dist
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: NODE_VERSION
+        value: "22"  # as in CI
+      # The API's public address, e.g. https://theengineer-api.onrender.com (copy it from the theengineer-api page;
+      # the app adds https:// if it's left out). fromService can't give it: its host is the private-network name.
+      # EXPO_PUBLIC_ values are built into the web app, so change them with a new deploy of this site.
+      - key: EXPO_PUBLIC_API_URL
+        sync: false
+      - key: EXPO_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: EXPO_PUBLIC_SUPABASE_ANON_KEY
+        sync: false

@@ -1,13 +1,20 @@
+import os
+
 import pytest
 from fastapi.testclient import TestClient
+
+# Set TEST_DATABASE_URL to a throwaway Postgres database to run the API tests against Postgres instead of SQLite
+# (its tables are dropped before every test).
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/test.db")
+    monkeypatch.setenv("DATABASE_URL", TEST_DATABASE_URL or f"sqlite:///{tmp_path}/test.db")
     monkeypatch.setenv("STORAGE_DIR", str(tmp_path / "storage"))
-    monkeypatch.delenv("DEEPGRAM_API_KEY", raising=False)
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    for key in ("DEEPGRAM_API_KEY", "ANTHROPIC_API_KEY", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY",
+                "ALLOWED_EMAILS"):
+        monkeypatch.delenv(key, raising=False)  # sign-in off, files on the local disk
     import importlib
 
     import app.db
@@ -26,5 +33,8 @@ def client(tmp_path, monkeypatch):
     importlib.reload(app.routers.tyres)
     importlib.reload(app.routers.vehicle)
     importlib.reload(app.main)
+    if TEST_DATABASE_URL:
+        app.db.Base.metadata.drop_all(app.db.engine)
     with TestClient(app.main.app) as c:
         yield c
+    app.db.engine.dispose()

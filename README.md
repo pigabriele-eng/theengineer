@@ -31,7 +31,7 @@ Voice debriefs need two keys in the server's environment:
 
 Without them, recordings are still saved, and the report screen offers to process them again once the keys are set.
 
-By default the server uses SQLite (`theengineer.db`) and stores uploads in `./storage`. Set `DATABASE_URL` (for example a PostgreSQL URL) and `STORAGE_DIR` to change that.
+By default the server uses SQLite (`theengineer.db`) and stores uploads in `./storage`, and sign-in is off. Set `DATABASE_URL` (for example a PostgreSQL URL) and `STORAGE_DIR` to change that. To run the tests against Postgres, point `TEST_DATABASE_URL` at an empty throwaway database (its tables are dropped before each test).
 
 App:
 
@@ -45,6 +45,43 @@ npm run ios                          # iPhone simulator (macOS), or scan the QR 
 The app talks to `http://localhost:8000` unless `EXPO_PUBLIC_API_URL` is set. On a real iPhone, set it to your computer's address on the same network.
 
 Sign-in is off unless `EXPO_PUBLIC_SUPABASE_URL` is set. With it (and `EXPO_PUBLIC_SUPABASE_ANON_KEY`), the app shows an email and password sign-in screen, and sends the Supabase access token with every server request. Users are created in the Supabase dashboard; there is no sign-up in the app.
+
+## Deploying
+
+Supabase holds the database, the uploaded files and the logins; Render runs the API server and serves the web app. Both have free plans. [`render.yaml`](render.yaml) describes both Render services as a Blueprint.
+
+1. **Supabase**: create a project in a European region (Render runs the API in Frankfurt). In Authentication, turn off *Allow new users to sign up*, then add each person under Authentication → Users → *Add user*. Supabase checks the logins; the server only accepts a valid Supabase token on every request (except `/health`).
+2. **Render**: New → Blueprint, pick this repository, and fill in the values below when asked. `EXPO_PUBLIC_API_URL` is the API's own address, so if you don't know it yet, finish once, copy it from the `theengineer-api` page, set it on `theengineer-web` and deploy that again.
+3. **Supabase again**: Authentication → URL Configuration → *Site URL*: the web app's address (for example `https://theengineer-web.onrender.com`), so emails such as password resets link to it.
+
+API server (`theengineer-api`):
+
+| Variable | What it is | Where it comes from |
+| --- | --- | --- |
+| `DATABASE_URL` | Postgres connection string | Supabase → **Connect** (top of the project page) → *Session pooler*: `postgresql://postgres.<ref>:<password>@aws-<n>-<region>.pooler.supabase.com:5432/postgres`. Put the database password in place of `[YOUR-PASSWORD]` (the Database settings can reset it); percent-encode `@ : / ? #` if it has any. |
+| `SUPABASE_URL` | The project's API address, `https://<ref>.supabase.co` | Supabase → **Connect** |
+| `SUPABASE_ANON_KEY` | Public key the server sends with each token check | Project Settings → **API Keys**: the publishable key (`sb_publishable_...`), or the legacy `anon` key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Private key for file storage; server only, never in the app | Project Settings → **API Keys**: a secret key (`sb_secret_...`), or the legacy `service_role` key |
+| `STORAGE_BUCKET` | Storage bucket for logs and recordings (set to `logs`); created private on first start | – |
+| `ALLOWED_EMAILS` | Optional, comma-separated: only these accounts get in | – |
+| `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY` | Voice debriefs, as above | console.anthropic.com, console.deepgram.com |
+
+Web app (`theengineer-web`), built into the site at build time (change them, then deploy the site again):
+
+| Variable | Value |
+| --- | --- |
+| `EXPO_PUBLIC_API_URL` | The API's address, e.g. `https://theengineer-api.onrender.com` (the app adds `https://` if it's left out) |
+| `EXPO_PUBLIC_SUPABASE_URL` | Same as `SUPABASE_URL` |
+| `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Same as `SUPABASE_ANON_KEY` (the public one, never the secret key) |
+
+Why the session pooler: Supabase's direct connection is IPv6 only on the free plan and Render connects over IPv4, and Supabase recommends the session pooler for a long-running server on IPv4. The transaction pooler (port 6543) also works, since the server turns prepared statements off, but it is meant for serverless functions.
+
+Good to know:
+
+- The tables are created on the first start. There are no migrations yet: adding or changing a column on a table that already has data needs an `ALTER TABLE` (or a migration tool) at that point. The server switches on row level security for its tables, so Supabase's Data API, which anyone with the public key could call, sees nothing; the server itself connects as their owner.
+- Logs are stored gzip-compressed in Supabase Storage (a 90 MB MoTeC log is about 11 MB), which keeps them under the free plan's 50 MB per-file limit. The server keeps the files it reads in a local cache; Render's disk is emptied on every deploy and restart, so the first read after one downloads again.
+- Render's free plan has 512 MB of memory and sleeps after a while without requests (the first request then takes about a minute). Uploading or analysing one 90 MB Hockenheim log peaks at about 250–320 MB, insights over three of them together at about 370 MB; two such requests at the same time add up.
+- Free Supabase projects are paused after a period of inactivity; restore them from the Supabase dashboard.
 
 ## What works now
 

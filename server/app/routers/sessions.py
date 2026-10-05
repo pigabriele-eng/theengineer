@@ -1,14 +1,13 @@
 """Run sessions: logger uploads, lap lists, analysis and voice debriefs for one run."""
-import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app import models, schemas
+from app import models, schemas, storage
 from app.analysis.laps import SessionData, TimingLine, analyze, compare_laps, load_session
-from app.db import STORAGE_DIR, get_db
+from app.db import get_db
 from app.importers.csvlog import CsvLog, read_csv_log, read_log
 from app.importers.motec import LdFile, LdFormatError, read_ld, read_ldx_beacons
 from app.known_tracks import fill_corners
@@ -55,7 +54,7 @@ def get_session(session_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{session_id}/files", response_model=schemas.SessionDetail, status_code=201)
-async def upload_file(session_id: int, file: UploadFile, db: Session = Depends(get_db)):
+def upload_file(session_id: int, file: UploadFile, db: Session = Depends(get_db)):
     """Upload a MoTeC .ld log, the .ldx i2 saved next to it (its beacons give exact lap times), or a CSV export
     from MoTeC i2, AiM Race Studio or Pi Toolbox."""
     s = _get(db, session_id)
@@ -65,7 +64,7 @@ async def upload_file(session_id: int, file: UploadFile, db: Session = Depends(g
     if logger is None:
         raise HTTPException(415, f"Unsupported file type '{ext}'. Supported now: MoTeC .ld and .ldx, "
                                  "and CSV exports from MoTeC i2, AiM Race Studio and Pi Toolbox (.csv, .txt)")
-    raw = await file.read()
+    raw = file.file.read()  # a plain def (run in a worker thread), so parsing a big log doesn't stall other requests
     if ext == ".ldx":
         return _attach_ldx(db, s, name, raw)
     try:
@@ -76,9 +75,7 @@ async def upload_file(session_id: int, file: UploadFile, db: Session = Depends(g
     except (LdFormatError, ValueError) as e:
         raise HTTPException(422, str(e)) from e
 
-    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-    path = STORAGE_DIR / f"{uuid.uuid4().hex}{ext}"
-    path.write_bytes(raw)
+    key = storage.save(raw, ext)
     meta = {"event": ld.event_name, "event_session": ld.event_session, "venue": ld.venue,
             "device_serial": ld.device_serial, "date": ld.date, "time": ld.time,
             "duration_s": round(ld.duration, 1), "channels": len(ld.channels), "mapped_channels": data.sources}
@@ -87,7 +84,7 @@ async def upload_file(session_id: int, file: UploadFile, db: Session = Depends(g
         meta.update({"format": "csv", "layout": ld.layout, "driver": ld.driver, "vehicle": ld.vehicle})
         if beacons:
             meta["beacons"] = beacons
-    rec = models.LoggerFile(session=s, logger=logger, filename=name or path.name, path=str(path), meta=meta)
+    rec = models.LoggerFile(session=s, logger=logger, filename=(name or key)[:255], path=key, meta=meta)
     db.add(rec)
     db.flush()
     _store_laps(db, s, rec, data, track)
@@ -108,7 +105,7 @@ def _attach_ldx(db: Session, s: models.RunSession, name: str, raw: bytes) -> dic
         raise HTTPException(409, "Upload the .ld log first, then its .ldx")
     if len(beacons) >= 2:
         rec.meta = {**rec.meta, "beacons": beacons}
-        ld = read_ld(rec.path)
+        ld = read_file(rec)
         track = _track_for(db, s, ld)
         _store_laps(db, s, rec, load_session(ld, _channel_map(s), beacons=beacons, line=_line(track)), track)
     db.commit()
@@ -138,7 +135,7 @@ def _retime_counter_logs(db: Session, track: models.Track) -> None:
     for f in db.scalars(select(models.LoggerFile)).all():
         if f.meta.get("lap_source") != "counter":
             continue
-        ld = read_log(f.path)
+        ld = read_file(f)
         if _track_for(db, f.session, ld) is not track:
             continue
         data = load_session(ld, _channel_map(f.session), beacons=f.meta.get("beacons"), line=_line(track))
@@ -146,15 +143,21 @@ def _retime_counter_logs(db: Session, track: models.Track) -> None:
             _store_laps(db, f.session, f, data, track)
 
 
+def read_file(f: models.LoggerFile) -> LdFile:
+    """An uploaded log, read from wherever it is stored."""
+    return read_log(storage.local_path(f.path))
+
+
 def _track_for(db: Session, s: models.RunSession, ld: LdFile) -> models.Track | None:
     """The session's track, or the one named in the log header (created if it's new)."""
     if s.event and s.event.track:
         return s.event.track
-    if not ld.venue:
+    venue = ld.venue[:120]  # as long as Track.name can be
+    if not venue:
         return None
-    track = db.scalar(select(models.Track).where(models.Track.name == ld.venue))
+    track = db.scalar(select(models.Track).where(models.Track.name == venue))
     if track is None:
-        track = models.Track(name=ld.venue)
+        track = models.Track(name=venue)
         fill_corners(track)
         db.add(track)
         db.flush()
@@ -178,7 +181,7 @@ def load_main_file(db: Session, s: models.RunSession,
     if not files:
         raise HTTPException(404, "No logger file uploaded for this session")
     f = max(files, key=lambda f: f.meta.get("duration_s", 0))
-    ld = read_log(f.path)
+    ld = read_file(f)
     track = _track_for(db, s, ld)
     return f, load_session(ld, _channel_map(s), beacons=f.meta.get("beacons"), line=_line(track))
 
