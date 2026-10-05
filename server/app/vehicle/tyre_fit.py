@@ -145,6 +145,24 @@ def _road_wheel_angle(c: dict[str, np.ndarray], kappa: np.ndarray, ay_g: np.ndar
     return delta, info
 
 
+def yaw_rate_scale(v_kmh: np.ndarray, ay_g: np.ndarray, ax_g: np.ndarray, r: np.ndarray,
+                   r_dot: np.ndarray) -> float:
+    """The factor that corrects the yaw gyro (step 2 above): speed x yaw rate against lateral g in steady corners.
+
+    r is the yaw rate in rad/s, smoothed and signed like lateral g; r_dot its rate of change. Raises NotEnoughData
+    without steady cornering, or when the two disagree by more than a scale error (a unit problem instead).
+    """
+    v = np.maximum(v_kmh / 3.6, 1.0)
+    steady = ((v_kmh >= MIN_SPEED_KMH) & (np.abs(ay_g) >= 0.5) & (np.abs(ax_g) <= MAX_LONG_G)
+              & (np.abs(r_dot) <= MAX_YAW_ACCEL) & (np.abs(r) > 0.05))
+    if np.count_nonzero(steady) < MASTER_HZ:
+        raise NotEnoughData("No steady cornering in this log")
+    scale = float(np.median(ay_g[steady] * G / (v[steady] * r[steady])))
+    if not 0.7 < scale < 1.4:
+        raise NotEnoughData(f"Speed x yaw rate and lateral g disagree by a factor {scale:.2f}; check channel units")
+    return scale
+
+
 def session_samples(data: SessionData, car: Vehicle, steering_ratio: float | None = None,
                     ratio_source: str = "entered", out: Samples | None = None) -> Samples:
     """Quasi-steady cornering samples of one session, as (slip angle, mu) per axle. See the module docstring."""
@@ -166,13 +184,7 @@ def session_samples(data: SessionData, car: Vehicle, steering_ratio: float | Non
     if np.corrcoef(r, ay)[0, 1] < 0:
         r = -r
     r_dot_raw = smooth(np.gradient(r) * hz)
-    steady = ((v_kmh >= MIN_SPEED_KMH) & (np.abs(ay_g) >= 0.5) & (np.abs(ax_g) <= MAX_LONG_G)
-              & (np.abs(r_dot_raw) <= MAX_YAW_ACCEL) & (np.abs(r) > 0.05))
-    if np.count_nonzero(steady) < MASTER_HZ:
-        raise NotEnoughData("No steady cornering in this log")
-    scale = float(np.median(ay[steady] / (v[steady] * r[steady])))
-    if not 0.7 < scale < 1.4:
-        raise NotEnoughData(f"Speed x yaw rate and lateral g disagree by a factor {scale:.2f}; check channel units")
+    scale = yaw_rate_scale(v_kmh, ay_g, ax_g, r, r_dot_raw)
     r = r * scale
     r_dot = r_dot_raw * scale
     kappa = r / v
