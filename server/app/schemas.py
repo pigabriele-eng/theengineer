@@ -70,6 +70,7 @@ class SessionIn(BaseModel):
     car_id: int | None = None
     driver_id: int | None = None
     track_temp_c: float | None = None
+    ambient_temp_c: float | None = None
     tyre_set: str | None = None
 
 
