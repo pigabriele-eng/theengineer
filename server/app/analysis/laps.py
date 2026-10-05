@@ -21,9 +21,27 @@ DEFAULT_CHANNEL_MAP: dict[str, tuple[str, ...]] = {
     "rpm": ("nEngine", "Engine Speed", "RPM"),
     "lat": ("GPS Latitude",),
     "lon": ("GPS Longitude",),
-    "g_lat": ("aLat [m/s/s]", "G Force Lat", "Lateral Accel"),
-    "g_long": ("aLong [m/s/s]", "G Force Long", "Longitudinal Accel"),
+    "g_lat": ("gLat", "aLat [m/s/s]", "G Force Lat", "Lateral Accel"),
+    "g_long": ("gLong", "aLong [m/s/s]", "G Force Long", "Longitudinal Accel"),
+    "yaw": ("nYaw", "Yaw Rate", "Gyro Yaw Velocity", "Yaw Velocity"),
+    "steer_wheel": ("aSteerWheel", "Steering Wheel Angle"),
+    "brake_rear": ("pBrakeR", "Brake Pressure Rear", "Brake Press Rear"),
+    "wheel_fl": ("nWheelFL", "vWheelFL", "Wheel Speed FL"),
+    "wheel_fr": ("nWheelFR", "vWheelFR", "Wheel Speed FR"),
+    "wheel_rl": ("nWheelRL", "vWheelRL", "Wheel Speed RL"),
+    "wheel_rr": ("nWheelRR", "vWheelRR", "Wheel Speed RR"),
+    "tc": ("BInterventionCauseTC", "TC Active", "TC Intervention"),
+    "abs": ("NAbs", "ABS Active"),
+    "tyre_p_fl": ("pTyreFL", "Tyre Pres FL"), "tyre_p_fr": ("pTyreFR", "Tyre Pres FR"),
+    "tyre_p_rl": ("pTyreRL", "Tyre Pres RL"), "tyre_p_rr": ("pTyreRR", "Tyre Pres RR"),
+    "tyre_t_fl": ("TTyreFL", "Tyre Temp FL"), "tyre_t_fr": ("TTyreFR", "Tyre Temp FR"),
+    "tyre_t_rl": ("TTyreRL", "Tyre Temp RL"), "tyre_t_rr": ("TTyreRR", "Tyre Temp RR"),
 }
+# Roles that hold states or flags: sampled, not interpolated, onto the master clock.
+DISCRETE_ROLES = {"gear", "tc", "abs"}
+# Sensors that log a fixed value when they have no signal; those samples are dropped before resampling.
+NO_SIGNAL_BELOW = {"tyre_t_fl": -40, "tyre_t_fr": -40, "tyre_t_rl": -40, "tyre_t_rr": -40,
+                   "tyre_p_fl": 0.05, "tyre_p_fr": 0.05, "tyre_p_rl": 0.05, "tyre_p_rr": 0.05, "lat": 0.1, "lon": 0.1}
 
 MASTER_HZ = 100
 CLEAN_LAP_MARGIN = 1.05  # a clean lap is within 5 % of the session's best
@@ -72,8 +90,19 @@ def load_session(ld: LdFile, channel_map: dict[str, tuple[str, ...]] | None = No
         ch = ld.channel(*names)
         if ch is None:
             continue
-        v = np.interp(t, ch.times(), ch.values())
-        if role == "brake":
+        ct, cv = ch.times(), ch.values()
+        if role in NO_SIGNAL_BELOW:
+            ok = np.abs(cv) > NO_SIGNAL_BELOW[role] if role in ("lat", "lon") else cv > NO_SIGNAL_BELOW[role]
+            if np.count_nonzero(ok) < 2:
+                continue
+            ct, cv = ct[ok], cv[ok]
+        if role in DISCRETE_ROLES:
+            v = cv[np.clip(np.searchsorted(ct, t, side="right") - 1, 0, len(cv) - 1)].astype(float)
+        else:
+            v = np.interp(t, ct, cv)
+        if role.startswith("tyre_p") and np.nanmedian(v) > 50:  # some tyre systems log kPa
+            v = v / 100
+        if role in ("brake", "brake_rear"):
             v = np.abs(v)  # some cars log brake torque as a negative number
         if role in ("g_lat", "g_long") and "m/s" in (ch.unit + ch.name):
             v = v / 9.81

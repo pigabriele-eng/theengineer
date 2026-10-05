@@ -13,6 +13,18 @@ def speed_at(d: np.ndarray, pace: float) -> np.ndarray:
     return v * pace
 
 
+CORNER_G = 1.4  # lateral g at each apex on the quickest (pace 1.0) lap
+
+
+def curvature_at(d: np.ndarray) -> np.ndarray:
+    """Path curvature (1/m) that makes pace 1.0 corner at CORNER_G: the corners in the car's sensors.
+
+    The GPS track stays a simple circle; only the accelerometers and the gyro see these corners.
+    """
+    w = sum(np.exp(-((d - c) / 30.0) ** 2) for c in CORNERS_M)
+    return CORNER_G * 9.81 * w / (speed_at(d, 1.0) / 3.6) ** 2
+
+
 def simulate(
     paces=(0.9, 1.0, 0.97, 0.99), hz: int = 100
 ) -> tuple[dict[str, tuple[int, str, np.ndarray]], list[float]]:
@@ -36,6 +48,10 @@ def simulate(
     v = np.array(v_out)
     n = len(v)
     accel = np.gradient(v) * hz
+    kappa = curvature_at(np.array(dist))
+    g_lat = (v / 3.6) ** 2 * kappa / 9.81
+    g_long = accel / 3.6 / 9.81
+    yaw = np.degrees(v / 3.6 * kappa)
     throttle = np.where(accel >= 0, 100.0, 0.0)
     brake = np.where(accel < -5, -accel * 120.0, 0.0)
     steer = np.clip(150 - v, 0, None) * 2
@@ -65,6 +81,9 @@ def simulate(
         "rThrottlePedal": (50, "%", throttle[:: hz // 50]),
         "Brake Torque": (50, "Nm", -brake[:: hz // 50]),
         "aSteer": (50, "deg", steer[:: hz // 50]),
+        "gLat": (hz, "G", g_lat),
+        "gLong": (hz, "G", g_long),
+        "nYaw": (hz, "deg/s", yaw),
         "S/F Marker": (10, "", sf),
         "Lap Time": (1, "s", lt),
     }, lap_times
