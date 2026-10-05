@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import DataError, IntegrityError
 
-from app import storage
+from app import storage, timing
 from app.auth import check_settings, require_user, require_user_or_query_token
 from app.db import create_tables
 from app.routers import catalog, debriefs, imports, insights, sessions, tyres, vehicle
@@ -17,6 +17,7 @@ async def lifespan(_: FastAPI):
     create_tables()
     imports.fail_interrupted()
     storage.backend().setup()
+    timing.check_all_tracks()  # in the background: logs timed from an older start/finish line are re-timed
     yield
 
 

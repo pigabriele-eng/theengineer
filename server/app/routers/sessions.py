@@ -8,11 +8,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app import models, schemas, storage
-from app.analysis.laps import CornerSpec, SessionData, TimingLine, analyze, compare_laps, load_session
+from app.analysis.laps import CornerSpec, LapTiming, SessionData, analyze, compare_laps, load_session, time_laps
 from app.db import get_db
-from app.importers.csvlog import CsvLog, read_csv_log, read_log
+from app.importers.csvlog import CsvLog, read_csv_log
 from app.importers.motec import LdFile, LdFormatError, read_ld, read_ldx_beacons
 from app.known_tracks import fill_corners
+from app.timing import read_file, store_laps, track_line
+
+_line = track_line  # the track's start/finish line for lap timing (other routers import it by this name)
 
 router = APIRouter(prefix="/sessions")
 
@@ -32,7 +35,16 @@ def _with_best(s: models.RunSession) -> dict:
     clean = [l.time_s for l in s.laps if l.clean]
     out = schemas.SessionDetail.model_validate(s).model_dump()
     out["best_lap_s"] = min(clean) if clean else None
+    out["event_name"] = s.event.name if s.event else None
+    out["track_name"] = track_name(s)
     return out
+
+
+def track_name(s: models.RunSession) -> str | None:
+    """Where the session was driven: its event's track, else the venue in its logs' headers."""
+    if s.event and s.event.track:
+        return s.event.track.name
+    return next((f.meta["venue"] for f in s.files if f.meta.get("venue")), None)
 
 
 @router.post("", response_model=schemas.SessionOut, status_code=201)
@@ -45,7 +57,9 @@ def create_session(body: schemas.SessionIn, db: Session = Depends(get_db)):
 
 @router.get("", response_model=list[schemas.SessionOut])
 def list_sessions(db: Session = Depends(get_db)):
-    rows = db.scalars(select(models.RunSession).options(selectinload(models.RunSession.laps))
+    rows = db.scalars(select(models.RunSession)
+                      .options(selectinload(models.RunSession.laps), selectinload(models.RunSession.files),
+                               selectinload(models.RunSession.event).selectinload(models.Event.track))
                       .order_by(models.RunSession.created_at.desc())).all()
     return [_with_best(s) for s in rows]
 
@@ -72,10 +86,31 @@ def upload_file(session_id: int, file: UploadFile, db: Session = Depends(get_db)
         path = Path(tmp) / f"log{ext}"
         with path.open("wb") as out:
             shutil.copyfileobj(file.file, out, storage.CHUNK_BYTES)
-        add_log(db, s, path, name)
+        rec = add_log(db, s, path, name)
+        _attach_track(db, s, rec)
     db.commit()
     db.refresh(s)
     return _with_best(s)
+
+
+def _attach_track(db: Session, s: models.RunSession, rec: models.LoggerFile) -> None:
+    """Put the session at the track its log was driven at: a session with no event joins the event named in the
+    log header (made if it's new), and an event with no track gets this one. A zip import does this for the event
+    it makes."""
+    venue = (rec.meta.get("venue") or "")[:120]
+    track = db.scalar(select(models.Track).where(models.Track.name == venue)) if venue else None
+    if track is None:
+        return
+    if s.event is None:
+        from app.routers.imports import _date  # imports.py imports this module
+
+        name = ((rec.meta.get("event") or "").strip() or venue)[:160]
+        day = _date(rec.meta.get("date") or "")
+        same = select(models.Event).where(models.Event.name == name, models.Event.track_id == track.id,
+                                          models.Event.date == day)
+        s.event = db.scalars(same.order_by(models.Event.id)).first() or models.Event(name=name, track=track, date=day)
+    elif s.event.track is None:
+        s.event.track = track
 
 
 def add_log(db: Session, s: models.RunSession, path: Path, name: str,
@@ -91,7 +126,7 @@ def add_log(db: Session, s: models.RunSession, path: Path, name: str,
         if ldx_beacons and len(ldx_beacons) >= 2:
             beacons = ldx_beacons
         track = _track_for(db, s, ld)
-        data = load_session(ld, _channel_map(s), beacons=beacons, line=_line(track))
+        data = load_session(ld, _channel_map(s), beacons=beacons, line=track_line(track))
     except (LdFormatError, ValueError) as e:
         raise HTTPException(422, str(e)) from e
 
@@ -108,7 +143,7 @@ def add_log(db: Session, s: models.RunSession, path: Path, name: str,
     rec = models.LoggerFile(session=s, logger=logger, filename=(name or key)[:255], path=key, meta=meta)
     db.add(rec)
     db.flush()
-    _store_laps(db, s, rec, data, track)
+    store_laps(db, s, rec, LapTiming(data.laps, data.lap_source, data.timing_line), track)
     return rec
 
 
@@ -126,45 +161,10 @@ def _attach_ldx(db: Session, s: models.RunSession, name: str, raw: bytes) -> dic
         rec.meta = {**rec.meta, "beacons": beacons}
         ld = read_file(rec)
         track = _track_for(db, s, ld)
-        _store_laps(db, s, rec, load_session(ld, _channel_map(s), beacons=beacons, line=_line(track)), track)
+        store_laps(db, s, rec, time_laps(ld, beacons, track_line(track)), track)
     db.commit()
     db.refresh(s)
     return _with_best(s)
-
-
-def _store_laps(db: Session, s: models.RunSession, rec: models.LoggerFile, data: SessionData,
-                track: models.Track | None) -> None:
-    for old in [l for l in s.laps if l.file_id == rec.id]:
-        s.laps.remove(old)
-    db.flush()
-    for lap in data.laps:
-        db.add(models.Lap(session=s, file_id=rec.id, number=lap.number, time_s=lap.time,
-                          start_s=lap.start, clean=lap.clean))
-    rec.meta = {**rec.meta, "lap_source": data.lap_source}
-    # learn the start/finish line from a log that has a lap marker, so later logs without one get GPS timing
-    learnable = data.timing_line is not None and data.lap_source in ("beacons", "marker")
-    if track is not None and track.timing_line is None and learnable:
-        tl = data.timing_line
-        track.timing_line = {"lat": tl.lat, "lon": tl.lon, "heading": tl.heading}
-        _retime_counter_logs(db, track)
-
-
-def _retime_counter_logs(db: Session, track: models.Track) -> None:
-    """Logs from this track that only had the 1 Hz lap counter get GPS lap times now that the line is known."""
-    for f in db.scalars(select(models.LoggerFile)).all():
-        if f.meta.get("lap_source") != "counter":
-            continue
-        ld = read_file(f)
-        if _track_for(db, f.session, ld) is not track:
-            continue
-        data = load_session(ld, _channel_map(f.session), beacons=f.meta.get("beacons"), line=_line(track))
-        if data.lap_source == "gps":
-            _store_laps(db, f.session, f, data, track)
-
-
-def read_file(f: models.LoggerFile) -> LdFile:
-    """An uploaded log, read from wherever it is stored."""
-    return read_log(storage.local_path(f.path))
 
 
 def _track_for(db: Session, s: models.RunSession, ld: LdFile) -> models.Track | None:
@@ -191,10 +191,6 @@ def official_corners(track: models.Track | None) -> list[CornerSpec] | None:
     return known or None
 
 
-def _line(track: models.Track | None) -> TimingLine | None:
-    return TimingLine(**track.timing_line) if track and track.timing_line else None
-
-
 def _channel_map(s: models.RunSession) -> dict[str, tuple[str, ...]] | None:
     if s.car and s.car.channel_map:
         return {role: tuple(names) for role, names in s.car.channel_map.items()}
@@ -210,7 +206,7 @@ def load_main_file(db: Session, s: models.RunSession,
     f = max(files, key=lambda f: f.meta.get("duration_s", 0))
     ld = read_file(f)
     track = _track_for(db, s, ld)
-    return f, load_session(ld, _channel_map(s), beacons=f.meta.get("beacons"), line=_line(track)), track
+    return f, load_session(ld, _channel_map(s), beacons=f.meta.get("beacons"), line=track_line(track)), track
 
 
 @router.get("/{session_id}/analysis")
