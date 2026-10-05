@@ -73,6 +73,7 @@ class Samples:
     mu_r: list[np.ndarray] = field(default_factory=list)
     speed_kmh: list[np.ndarray] = field(default_factory=list)
     corner: list[np.ndarray] = field(default_factory=list)  # which corner each sample came from
+    index: list[np.ndarray] = field(default_factory=list)  # each sample's position on the session's 100 Hz clock
     corners: int = 0
     next_id: int = 0
     sessions: list[dict] = field(default_factory=list)
@@ -222,6 +223,7 @@ def session_samples(data: SessionData, car: Vehicle, steering_ratio: float | Non
     out.mu_r.append((side * fyr / fzr)[ok])
     out.speed_kmh.append(v_kmh[ok])
     out.corner.append(span[ok])
+    out.index.append(np.flatnonzero(ok))
     out.corners += len(used)
     out.sessions.append({"samples": int(np.count_nonzero(ok)), "corners": len(used), "corners_dropped": dropped,
                          "yaw_rate_scale": round(scale, 4), "steering": steering})

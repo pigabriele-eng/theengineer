@@ -25,6 +25,7 @@ from app.db import SessionLocal, get_db
 from app.importers import archive
 from app.importers.motec import read_ldx_beacons
 from app.routers.sessions import add_log
+from app.vehicle import tyre_store
 
 router = APIRouter(prefix="/imports")
 log = logging.getLogger(__name__)
@@ -103,12 +104,14 @@ def _work() -> None:
     while True:
         job_id, folder, uploads = _jobs.get()
         try:
-            run_import(job_id, folder, uploads)
+            with tyre_store.HEAVY:  # the tyre data job waits: one log in memory at a time
+                run_import(job_id, folder, uploads)
         except Exception:
             log.exception("Import %s failed", job_id)
         finally:
             shutil.rmtree(folder, ignore_errors=True)
             _jobs.task_done()
+            tyre_store.kick()
 
 
 def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]]) -> None:
