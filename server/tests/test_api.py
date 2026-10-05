@@ -32,8 +32,10 @@ def test_session_upload_analysis_and_debrief(client):
 
 def test_rejects_unsupported_files(client):
     s = client.post("/sessions", json={}).json()
-    r = client.post(f"/sessions/{s['id']}/files", files={"file": ("run.csv", b"a,b")})
+    r = client.post(f"/sessions/{s['id']}/files", files={"file": ("run.xrk", b"a,b")})
     assert r.status_code == 415
+    r = client.post(f"/sessions/{s['id']}/files", files={"file": ("run.csv", b"a,b")})
+    assert r.status_code == 422  # a CSV, but not a logger export
 
 
 def test_gps_lap_timing_learned_from_an_earlier_log(client):

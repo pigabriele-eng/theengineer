@@ -9,12 +9,14 @@ from sqlalchemy.orm import Session, selectinload
 from app import models, schemas
 from app.analysis.laps import SessionData, TimingLine, analyze, compare_laps, load_session
 from app.db import STORAGE_DIR, get_db
+from app.importers.csvlog import CsvLog, read_csv_log, read_log
 from app.importers.motec import LdFile, LdFormatError, read_ld, read_ldx_beacons
 from app.known_tracks import fill_corners
 
 router = APIRouter(prefix="/sessions")
 
-SUPPORTED = {".ld": "motec", ".ldx": "motec"}
+# .csv and .txt are logger exports (MoTeC i2, AiM Race Studio, Pi Toolbox); the logger is read from the file
+SUPPORTED = {".ld": "motec", ".ldx": "motec", ".csv": "csv", ".txt": "csv"}
 
 
 def _get(db: Session, session_id: int) -> models.RunSession:
@@ -53,32 +55,38 @@ def get_session(session_id: int, db: Session = Depends(get_db)):
 
 @router.post("/{session_id}/files", response_model=schemas.SessionDetail, status_code=201)
 async def upload_file(session_id: int, file: UploadFile, db: Session = Depends(get_db)):
-    """Upload a MoTeC .ld log, or the .ldx i2 saved next to it (its beacons give exact lap times)."""
+    """Upload a MoTeC .ld log, the .ldx i2 saved next to it (its beacons give exact lap times), or a CSV export
+    from MoTeC i2, AiM Race Studio or Pi Toolbox."""
     s = _get(db, session_id)
     name = file.filename or ""
     ext = Path(name).suffix.lower()
     logger = SUPPORTED.get(ext)
     if logger is None:
-        raise HTTPException(415, f"Unsupported file type '{ext}'. Supported now: MoTeC .ld and .ldx")
+        raise HTTPException(415, f"Unsupported file type '{ext}'. Supported now: MoTeC .ld and .ldx, "
+                                 "and CSV exports from MoTeC i2, AiM Race Studio and Pi Toolbox (.csv, .txt)")
     raw = await file.read()
     if ext == ".ldx":
         return _attach_ldx(db, s, name, raw)
     try:
-        ld = read_ld(raw)
+        ld = read_ld(raw) if ext == ".ld" else read_csv_log(raw)
+        beacons = ld.beacons if isinstance(ld, CsvLog) and len(ld.beacons) >= 2 else None
         track = _track_for(db, s, ld)
-        data = load_session(ld, _channel_map(s), line=_line(track))
+        data = load_session(ld, _channel_map(s), beacons=beacons, line=_line(track))
     except (LdFormatError, ValueError) as e:
         raise HTTPException(422, str(e)) from e
 
     STORAGE_DIR.mkdir(parents=True, exist_ok=True)
     path = STORAGE_DIR / f"{uuid.uuid4().hex}{ext}"
     path.write_bytes(raw)
-    rec = models.LoggerFile(
-        session=s, logger=logger, filename=name or path.name, path=str(path),
-        meta={"event": ld.event_name, "event_session": ld.event_session, "venue": ld.venue,
-              "device_serial": ld.device_serial, "date": ld.date, "time": ld.time,
-              "duration_s": round(ld.duration, 1), "channels": len(ld.channels), "mapped_channels": data.sources},
-    )
+    meta = {"event": ld.event_name, "event_session": ld.event_session, "venue": ld.venue,
+            "device_serial": ld.device_serial, "date": ld.date, "time": ld.time,
+            "duration_s": round(ld.duration, 1), "channels": len(ld.channels), "mapped_channels": data.sources}
+    if isinstance(ld, CsvLog):
+        logger = ld.logger
+        meta.update({"format": "csv", "layout": ld.layout, "driver": ld.driver, "vehicle": ld.vehicle})
+        if beacons:
+            meta["beacons"] = beacons
+    rec = models.LoggerFile(session=s, logger=logger, filename=name or path.name, path=str(path), meta=meta)
     db.add(rec)
     db.flush()
     _store_laps(db, s, rec, data, track)
@@ -127,9 +135,11 @@ def _store_laps(db: Session, s: models.RunSession, rec: models.LoggerFile, data:
 def _retime_counter_logs(db: Session, track: models.Track) -> None:
     """Logs from this track that only had the 1 Hz lap counter get GPS lap times now that the line is known."""
     for f in db.scalars(select(models.LoggerFile)).all():
-        if f.meta.get("lap_source") != "counter" or _track_for(db, f.session, read_ld(f.path)) is not track:
+        if f.meta.get("lap_source") != "counter":
             continue
-        ld = read_ld(f.path)
+        ld = read_log(f.path)
+        if _track_for(db, f.session, ld) is not track:
+            continue
         data = load_session(ld, _channel_map(f.session), beacons=f.meta.get("beacons"), line=_line(track))
         if data.lap_source == "gps":
             _store_laps(db, f.session, f, data, track)
@@ -167,7 +177,7 @@ def load_main_file(db: Session, s: models.RunSession,
     if not files:
         raise HTTPException(404, "No logger file uploaded for this session")
     f = max(files, key=lambda f: f.meta.get("duration_s", 0))
-    ld = read_ld(f.path)
+    ld = read_log(f.path)
     track = _track_for(db, s, ld)
     return f, load_session(ld, _channel_map(s), beacons=f.meta.get("beacons"), line=_line(track))
 
