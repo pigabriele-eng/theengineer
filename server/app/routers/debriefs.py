@@ -11,6 +11,7 @@ from app.analysis.laps import analyze
 from app.debrief.corners import corner_data
 from app.debrief.pipeline import process_debrief
 from app.debrief.transcribe import LANGUAGES
+from app.heavy import one_at_a_time
 from app.routers.sessions import _get as get_session
 from app.routers.sessions import load_main_file, official_corners
 
@@ -97,6 +98,7 @@ def debrief_audio(debrief_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/debriefs/{debrief_id}/corners")
+@one_at_a_time
 def debrief_corners(debrief_id: int, db: Session = Depends(get_db)):
     """Logged data for each corner the debrief mentions, keyed by the corner as tagged on the points."""
     d = _get(db, debrief_id)
