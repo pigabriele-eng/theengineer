@@ -59,6 +59,14 @@ export default function SessionScreen() {
         <Fact label="Theoretical best" value={formatLap(analysis?.theoretical_best)} />
         <Fact label="Laps" value={String(session?.laps.length ?? 0)} />
       </View>
+      {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
+      {session?.laps.some((l) => l.clean) && (
+        <Link href={{ pathname: '/report', params: { session: sessionId } }} asChild>
+          <Pressable style={StyleSheet.flatten([styles.button, { backgroundColor: tint }])}>
+            <Text style={styles.buttonText}>Report: how to go faster</Text>
+          </Pressable>
+        </Link>
+      )}
       {/* drawn from a clean lap; keyed so an upload that changes the laps redraws it */}
       {session?.laps.some((l) => l.clean) && <TrackMap key={`${session.files.length}-${best}`} session={sessionId} />}
 

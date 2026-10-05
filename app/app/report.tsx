@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, LayoutChangeEvent, Pressable, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 
 import { Bars, LineChart, LineSeries, useChartColors } from '@/components/ReportCharts';
+import { GripReport } from '@/components/report/GripReport';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
 import { formatLap } from '@/lib/api';
@@ -172,7 +173,9 @@ export default function ReportScreen() {
               ))}
             </Section>
 
-            {/* SLOT: grip usage and traction control (built by another worker) goes here. */}
+            <View style={styles.section}>
+              {'event' in scope ? <GripReport event={scope.event} /> : <GripReport session={scope.session} />}
+            </View>
             {/* SLOT: car balance and setup direction (built by another worker) goes here. */}
             {/* SLOT: tyres and qualifying preparation (built by another worker) goes here. */}
 
@@ -295,7 +298,7 @@ function Glance({ report, onPick, focus }: { report: Report; onPick: (code: stri
           {g.advice.filter((a) => a !== g.action).map((a) => (
             <Text key={a} style={styles.bullet}>• {a}</Text>
           ))}
-          {g.main_phase && <Text style={styles.note}>Most of it on {g.main_phase}.</Text>}
+          {g.main_phase && g.advice.length > 0 && <Text style={styles.note}>Most of it on {g.main_phase}.</Text>}
         </Pressable>
       ))}
       <Text style={styles.summary}>{report.summary}</Text>
