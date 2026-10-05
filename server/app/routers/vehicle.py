@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.heavy import one_at_a_time
 from app.routers.sessions import _get, load_main_file
 from app.vehicle.model import Change, Vehicle, compute, what_if
 from app.vehicle.presets import PRESETS, preset_detail, preset_vehicle
@@ -56,6 +57,7 @@ class TyreFitIn(BaseModel):
 
 
 @router.post("/tyre-fit")
+@one_at_a_time
 def tyre_fit(body: TyreFitIn, db: Session = Depends(get_db)):
     """A simplified lateral tyre curve per axle (peak mu, slip at peak, shape) fitted from the sessions' logs."""
     if body.vehicle is None and body.preset not in PRESETS:

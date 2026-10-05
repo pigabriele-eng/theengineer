@@ -1,14 +1,24 @@
-"""One heavy background step at a time in this server process.
+"""One memory-heavy job at a time.
 
-Reading a big log takes 200-300 MB at its peak, and the hosted server has 512 MB. The import of an upload and the
-report's work both run in background threads; each holds this lock while it reads one log, so the two never read
-logs at the same moment. Requests from the app are not held up by it.
+Reading a log and analysing it takes 100 to 300 MB while it runs, and the server has 512 MB on Render's free plan,
+so two at once can run it out of memory. Every request or background job that reads logs takes this lock first;
+the others wait their turn. It is re-entrant, so a job that already holds it can call code that takes it again.
 """
 import ctypes
+import functools
 import gc
 import threading
 
-lock = threading.RLock()  # re-entrant: the report's work holds it while it reduces a session it needs
+lock = threading.RLock()
+
+
+def one_at_a_time(fn):
+    """For an endpoint that reads logs: it waits until no other log-reading work is running."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with lock:
+            return fn(*args, **kwargs)
+    return wrapper
 
 
 def release_memory() -> None:

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 from app import models, schemas, storage
 from app.analysis.laps import CornerSpec, SessionData, TimingLine, analyze, compare_laps, load_session
 from app.db import get_db
+from app.heavy import one_at_a_time
 from app.importers.csvlog import CsvLog, read_csv_log, read_log
 from app.importers.motec import LdFile, LdFormatError, read_ld, read_ldx_beacons
 from app.known_tracks import fill_corners
@@ -56,6 +57,7 @@ def get_session(session_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{session_id}/files", response_model=schemas.SessionDetail, status_code=201)
+@one_at_a_time
 def upload_file(session_id: int, file: UploadFile, db: Session = Depends(get_db)):
     """Upload a MoTeC .ld log, the .ldx i2 saved next to it (its beacons give exact lap times), or a CSV export
     from MoTeC i2, AiM Race Studio or Pi Toolbox."""
@@ -214,6 +216,7 @@ def load_main_file(db: Session, s: models.RunSession,
 
 
 @router.get("/{session_id}/analysis")
+@one_at_a_time
 def session_analysis(session_id: int, file_id: int | None = None, reference_lap: int | None = None,
                      db: Session = Depends(get_db)):
     """Every clean lap against the reference lap, corner by corner. Corners carry the track's official numbers
@@ -224,6 +227,7 @@ def session_analysis(session_id: int, file_id: int | None = None, reference_lap:
 
 
 @router.get("/{session_id}/compare")
+@one_at_a_time
 def session_compare(session_id: int, lap: int, reference_lap: int | None = None, file_id: int | None = None,
                     step: float = 5.0, db: Session = Depends(get_db)):
     """Speed, throttle, brake and time delta of one lap against the reference lap, for charts, with the

@@ -325,6 +325,8 @@ def run_job(scope: str) -> None:
                 db.commit()
             row.current = "Working out the report"
             db.commit()
+            # the logs were read one per turn of the lock above; working out the report from the compact traces
+            # takes about 100 MB for a whole test, so it waits its turn too
             with heavy.lock:
                 result = compute(db, plan)
             row.result, row.result_signature = result, plan.signature
