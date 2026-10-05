@@ -78,7 +78,8 @@ def tyre_model(car: str, tyre: str | None = None, track: str | None = None, ambi
                ambient_max: float | None = None, db: Session = Depends(get_db)):
     """The tyre model of every summarised session of one car and tyre (the tyre with most sessions unless one is
     named), optionally only at one track or within an ambient temperature range: the curve per axle, grip against
-    TPMS temperature, hot pressure and laps on the tyre, advice first, and what it all rests on."""
+    TPMS temperature, hot pressure and laps on the tyre, advice first, and what it all rests on. When there is
+    nothing to fit, "empty" says why instead."""
     mine = [x for x in _listing(db) if x["car"] == car]
     if not mine:
         raise HTTPException(404, "No summarised session of this car yet")
@@ -112,9 +113,10 @@ def tyre_model(car: str, tyre: str | None = None, track: str | None = None, ambi
             "filters": {"track": track, "ambient_min": ambient_min, "ambient_max": ambient_max},
             "choices": {"tyres": [{"name": t, "sessions": n} for t, n in tyres.most_common()], "tracks": tracks},
             "status": tyre_store.status(db)}
+    # nothing to fit is an answer, not an error: the app says why and keeps its filters
     if not entries:
-        raise HTTPException(422, "No session of this car and tyre matches those filters")
-    key = (tuple(stamps), tuple((e.name, e.ambient_c) for e in entries))
+        return {**head, "empty": "No session of this car and tyre matches those filters."}
+    key = (tuple(stamps), tuple((e.name, e.ambient_c, e.tyre, e.track, e.date) for e in entries))
     with _cache_lock:
         model = _cache.get(key)
         if model is not None:
@@ -123,7 +125,7 @@ def tyre_model(car: str, tyre: str | None = None, track: str | None = None, ambi
         try:
             model = fit_model(entries)
         except NotEnoughData as e:
-            raise HTTPException(422, str(e)) from e
+            return {**head, "empty": str(e)}
         with _cache_lock:
             _cache[key] = model
             while len(_cache) > CACHE_SIZE:

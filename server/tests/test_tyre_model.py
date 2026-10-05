@@ -223,16 +223,16 @@ def test_tyre_model_api(client):
     # no lap timing in this log: one lap, too few to group by a condition
     assert m["basis"]["laps"] == 1 and m["conditions"]["pressure"]["front"] == {"bins": [], "window": None}
     assert client.get("/tyre-model", params={"car": "logger:1"}).status_code == 404
-    r = client.get("/tyre-model", params={"car": car["key"], "ambient_min": 30})
-    assert r.status_code == 422 and "matches" in r.json()["detail"]
+    r = client.get("/tyre-model", params={"car": car["key"], "ambient_min": 30}).json()
+    assert "matches" in r["empty"] and "axles" not in r and r["filters"]["ambient_min"] == 30
 
     # another tyre on the same car is kept apart
     r = client.patch(f"/tyre-model/sessions/{a['id']}", json={"tyre": "Pirelli P Zero DHH"})
     assert r.status_code == 200 and r.json()["tyre"] == "Pirelli P Zero DHH"
     m = client.get("/tyre-model", params={"car": car["key"]}).json()
-    assert m["tyre"] == "Pirelli P Zero DHH"
-    r = client.get("/tyre-model", params={"car": car["key"], "tyre": "Pirelli P Zero DHG"})
-    assert r.status_code == 422
+    assert m["tyre"] == "Pirelli P Zero DHH" and m["sessions"][0]["tyre"] == "Pirelli P Zero DHH"
+    r = client.get("/tyre-model", params={"car": car["key"], "tyre": "Pirelli P Zero DHG"}).json()
+    assert r["empty"] and r["choices"]["tyres"] == [{"name": "Pirelli P Zero DHH", "sessions": 1}]
     assert client.patch(f"/tyre-model/sessions/{a['id']}", json={"tyre": ""}).json()["tyre"] == "Pirelli P Zero DHG"
     assert client.patch(f"/tyre-model/sessions/{b['id']}", json={"tyre": "X"}).status_code == 200  # no cornering
     c = client.post("/sessions", json={}).json()

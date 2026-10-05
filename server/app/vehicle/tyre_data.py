@@ -68,7 +68,7 @@ LAPS_PER_BIN = 15  # laps are grouped by a condition into groups of about this m
 MAX_BINS = 8  # ... and at most this many groups
 CONDITIONS = {
     "temperature": {
-        "label": "TPMS temperature", "noun": "temperature", "unit": "°C", "key": "temp_c", "step": 1.0,
+        "label": "TPMS temperature", "noun": "TPMS temperature", "unit": "°C", "key": "temp_c", "step": 1.0,
         "note": "The TPMS sensor reads the air inside the tyre, which lags the tread and runs cooler than it. "
                 "Temperature, pressure and laps on the tyre rise together through a run."},
     "pressure": {
@@ -492,7 +492,7 @@ def _window(bins: list[dict], spec: dict, axle: str) -> dict | None:
     if not worse:
         spread = max(b["grip"] for b in usable) - min(b["grip"] for b in usable)
         why = f"under {MIN_GAIN * 100:.0f} %, too little to act on" if apart else "inside their scatter"
-        over = _where(spec, usable[0]["from"], usable[-1]["to"])
+        over = _where(spec, usable[0]["from"], usable[-1]["to"], bare=True)
         out["text"] = (f"{axle.capitalize()}: no clear change with {spec['noun']} over {over}: the groups differ by "
                        f"up to {spread * 100:.0f} %, {why} ({sum(b['laps'] for b in usable)} laps).")
         return out
@@ -516,9 +516,9 @@ def _num(spec: dict, x: float) -> str:
     return f"{x:.2f}" if spec["unit"] == "bar" else f"{x:.0f}"
 
 
-def _where(spec: dict, a: float, b: float, edge: str | None = None) -> str:
+def _where(spec: dict, a: float, b: float, edge: str | None = None, bare: bool = False) -> str:
     """A range of the condition in words; edge "low" or "high" when it runs to the edge of what was seen (the best
-    may lie beyond it)."""
+    may lie beyond it). bare: without naming the temperature, when the sentence already does."""
     if spec["unit"] == "laps":
         last = int(b) - 1
         if edge == "low":
@@ -527,7 +527,7 @@ def _where(spec: dict, a: float, b: float, edge: str | None = None) -> str:
             return f"lap {int(a)} on the tyre and later"
         return f"lap {int(a)} on the tyre" if last == int(a) else f"laps {int(a)}-{last} on the tyre"
     unit = spec["unit"]
-    suffix = " hot" if unit == "bar" else " TPMS temperature"
+    suffix = " hot" if unit == "bar" else "" if bare else " TPMS temperature"
     if edge == "low":
         return f"{_num(spec, b)} {unit}{suffix} or {'less' if unit == 'bar' else 'cooler'}"
     if edge == "high":
@@ -629,7 +629,9 @@ def fit_model(entries: list[Entry], seed: int = 0) -> dict:
         "with_tpms": sum(1 for lap in laps_used if lap["front"]["temp_c"] is not None),
         "with_tyre_laps": sum(1 for lap in laps_used if lap["tyre_lap"] is not None),
     }
-    advice = [_peak_text(ax, f) for ax, f in fits.items()]
+    for ax, f in fits.items():
+        f["advice"] = _peak_text(ax, f)
+    advice = [f["advice"] for f in fits.values()]
     for name in ("temperature", "pressure", "tyre_laps"):
         for ax in AXLE_WHEELS:
             w = conditions[name][ax]["window"]

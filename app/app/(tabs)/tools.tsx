@@ -23,7 +23,9 @@ const GROUPS: { name: string; tools: Tool[] }[] = [
       {
         href: '/tools/tyre-fit',
         title: 'Tyre fit',
-        blurb: 'A simple tyre curve fitted from logged lateral g, slip or steering and yaw, and load.',
+        blurb:
+          'Tyre curve per axle from one log, or built up from every log of the car: where grip peaks, and which ' +
+          'TPMS temperature and hot pressure give the most.',
       },
     ],
   },
