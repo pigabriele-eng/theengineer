@@ -1,8 +1,10 @@
 """Driver tagging and the driver comparison over many laps: synthetic data only."""
+import threading
 import time
 
 import numpy as np
 
+from app import heavy
 from app.analysis.compare import SIDES, LapSummary, RunSource, _habit_flags, _habits, compare_groups
 from app.analysis.insights import RunInput
 from app.analysis.laps import load_session
@@ -25,6 +27,7 @@ def test_many_laps_compared_one_run_at_a_time():
         def run() -> RunInput:
             # every run read before this one has already been reduced to its laps and freed
             assert all(r.data.channels == {} and r.ld is None for r in loaded)
+            assert not _free(heavy.lock)  # and no other request or job can read a log meanwhile
             r = RunInput(name, load_session(read_ld(logs[name])))
             loaded.append(r)
             return r
@@ -56,6 +59,21 @@ def test_many_laps_compared_one_run_at_a_time():
     n = len(res["delta_trace"]["gap_s"])
     assert n == len(res["speed_trace"]["a"]) == len(res["speed_trace"]["b"]) > 100
     assert res["delta_trace"]["gap_s"][-1] > 0.5
+    assert _free(heavy.lock)  # released once the runs are read
+
+
+def _free(lock) -> bool:
+    """Whether another thread could take the lock now."""
+    got = []
+
+    def take():
+        if lock.acquire(blocking=False):
+            got.append(True)
+            lock.release()
+    t = threading.Thread(target=take)
+    t.start()
+    t.join()
+    return bool(got)
 
 
 def test_a_side_without_clean_laps_is_reported():

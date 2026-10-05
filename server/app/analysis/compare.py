@@ -16,6 +16,7 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 
+from app import heavy
 from app.analysis.align import aligned_trace, track_line
 from app.analysis.channels import BRAKE, EXIT, MID, PHASES, POWER, TRAIL, TURNING_G, math_channels
 from app.analysis.insights import RunInput, _closed_sim, _first, _limit_laps, _wmean, _within, consistency, corr, \
@@ -287,25 +288,26 @@ def _read(sources: list[RunSource], corners: list[CornerSpec] | None,
     for done, src in enumerate(sorted(sources, key=lambda s: (s.best is None, s.best or 0.0))):
         if progress:
             progress(done, src.meta.get("session", src.name))
-        run = src.load()
-        clean = [l for l in run.data.laps if l.clean]
-        data = _slim(run.data) if clean else None
-        run.data.channels, run.ld = {}, None
-        del run
-        if data is not None:
-            math_channels(data)
-            if ref is None:
-                ref = _reference(data, src, min(clean, key=lambda l: l.time), corners)
-            for i, lap in enumerate(clean):
-                tr = aligned_trace(data, lap, ref.line, ref.align_length)
-                laps.append(_summarise(tr, src, lap, i, ref.sections))
-                del tr
-            del data
+        with heavy.lock:  # one log in memory at a time, across this job, imports and requests
+            run = src.load()
+            clean = [l for l in run.data.laps if l.clean]
+            data = _slim(run.data) if clean else None
+            run.data.channels, run.ld = {}, None
+            del run
+            if data is not None:
+                math_channels(data)
+                if ref is None:
+                    ref = _reference(data, src, min(clean, key=lambda l: l.time), corners)
+                for i, lap in enumerate(clean):
+                    tr = aligned_trace(data, lap, ref.line, ref.align_length)
+                    laps.append(_summarise(tr, src, lap, i, ref.sections))
+                    del tr
+                del data
+            release_memory()
         times = [l.time for l in clean]
         runs.append({"run": src.name, "side": src.side, **src.meta, "laps": len(times),
                      "best": min(times) if times else None,
                      "median": round(float(np.median(times)), 3) if times else None})
-        release_memory()
     return ref, laps, runs
 
 

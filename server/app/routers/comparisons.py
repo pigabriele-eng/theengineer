@@ -2,11 +2,11 @@
 many sessions as background jobs.
 
 A comparison reads every run of both sides, which takes a while on a small server, so the app starts a job and
-follows it (runs read so far) until the result is ready. One comparison runs at a time, so two never add up in
-memory. Jobs and their results live in the server's memory: a restart loses them and the app starts again.
+follows it (runs read so far) until the result is ready. Each run is read under the server's shared lock for log
+reading (app.heavy), so a comparison never holds a log in memory while another request or import does. Jobs and
+their results live in the server's memory: a restart loses them and the app starts again.
 """
 import logging
-import queue
 import threading
 import time
 import uuid
@@ -30,9 +30,6 @@ KEEP_FINISHED = 6  # finished comparisons kept for the app to collect
 GONE = "This comparison is no longer on the server (it restarted); start it again"
 
 _jobs: dict[str, dict] = {}
-_queue: queue.Queue = queue.Queue()
-_worker: threading.Thread | None = None
-_worker_lock = threading.Lock()
 
 
 @router.post("/compare/drivers/jobs", status_code=202)
@@ -43,8 +40,7 @@ def start_comparison(body: CompareIn, db: Session = Depends(get_db)):
     job = {"id": uuid.uuid4().hex, "status": "queued", "total": len(sources), "done": 0, "current": None,
            "error": None, "result": None, "finished": None}
     _jobs[job["id"]] = job
-    _queue.put((job["id"], body))
-    _start_worker()
+    threading.Thread(target=_work, args=(job, body), name=f"comparison-{job['id'][:8]}", daemon=True).start()
     return job
 
 
@@ -57,25 +53,12 @@ def get_comparison(job_id: str):
     return job
 
 
-def _start_worker() -> None:
-    global _worker
-    with _worker_lock:
-        if _worker is None or not _worker.is_alive():
-            _worker = threading.Thread(target=_work, name="comparisons", daemon=True)
-            _worker.start()
-
-
-def _work() -> None:
-    while True:
-        job_id, body = _queue.get()
-        try:
-            job = _jobs.get(job_id)
-            if job is not None:
-                _run(job, body)
-        finally:
-            release_memory()
-            _trim()
-            _queue.task_done()
+def _work(job: dict, body: CompareIn) -> None:
+    try:
+        _run(job, body)
+    finally:
+        release_memory()
+        _trim()
 
 
 def _run(job: dict, body: CompareIn) -> None:
@@ -104,7 +87,7 @@ def _run(job: dict, body: CompareIn) -> None:
 
 def _trim() -> None:
     """Keep the latest finished comparisons only: each result is about 0.1 MB."""
-    finished = sorted((j for j in _jobs.values() if j["finished"] is not None), key=lambda j: j["finished"])
+    finished = sorted((j for j in list(_jobs.values()) if j["finished"] is not None), key=lambda j: j["finished"])
     for j in finished[:-KEEP_FINISHED]:
         _jobs.pop(j["id"], None)
 
