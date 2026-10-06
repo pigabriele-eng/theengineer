@@ -62,6 +62,10 @@ def client(tmp_path, monkeypatch):
     for m in (app.setup.models, app.setup.results, app.setup.sheet, app.setup.suggest, app.setup.data,
               app.routers.setups):
         importlib.reload(m)
+    import app.laptags
+    import app.routers.stint
+    for m in (app.laptags, app.routers.stint):
+        importlib.reload(m)
     importlib.reload(app.main)
     if TEST_DATABASE_URL:
         app.db.Base.metadata.drop_all(app.db.engine)
