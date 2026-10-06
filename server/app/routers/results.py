@@ -10,6 +10,8 @@ the prep report's view: past years at a circuit, strong and weak circuits, makes
 """
 from __future__ import annotations
 
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -251,3 +253,56 @@ def backtest(car_number: str = "12", team: str | None = None, series: str = sync
         rounds = summary._rounds(db, series)
         team, _ = summary.team_of(rounds, car_number, None)
     return predict.backtest(sessions, car_number=car_number, team=team)
+
+
+# --- seasons set up ahead: calendar and entry lists --------------------------------------------------------------
+
+def _years(series: str) -> list[int]:
+    """The years whose calendar can be read: from the first season results are kept for to next year."""
+    return list(range(sync.FIRST_YEAR, date.today().year + 2))
+
+
+@router.get("/series")
+def series_list():
+    """The series whose calendars, entry lists and results the app reads."""
+    return [{"key": k, "name": a.NAME, "years": _years(k)} for k, a in sync.ADAPTERS.items()]
+
+
+@router.post("/calendar/sync", status_code=202)
+def calendar_sync(year: int, series: str = sync.DEFAULT_SERIES):
+    """Read a season's calendar (dates of every round, including those still to come) and the entry lists
+    published so far, in the background; follow it with GET /results/calendar or /results/status."""
+    _series(series)
+    started = sync.run_job(lambda: sync.sync_calendar(series, year))
+    return {"started": started, "sync": sync.state.as_dict()}
+
+
+def _entry(e: rm.ResultEntry) -> dict:
+    return {"car_number": e.car_number, "drivers": e.drivers, "team": e.team, "car_model": e.car_model,
+            "brand": e.brand, "car_class": e.car_class}
+
+
+@router.get("/calendar")
+def season_calendar(year: int, series: str = sync.DEFAULT_SERIES, db: Session = Depends(get_db)):
+    """A season's rounds with their first and last day; entries is the number of cars on the round's entry list
+    (0 until the series publishes one)."""
+    rows = db.scalars(select(rm.ResultCalendarRound).where(rm.ResultCalendarRound.series == _series(series),
+                                                     rm.ResultCalendarRound.year == year)
+                      .options(selectinload(rm.ResultCalendarRound.entries)).order_by(rm.ResultCalendarRound.order)).all()
+    fetched = max((r.fetched_at for r in rows if r.fetched_at), default=None)
+    status = "syncing" if sync.state.running else "loaded" if rows else "not loaded"
+    return {"series": series, "year": year, "status": status, "sync": sync.state.as_dict(),
+            "fetched_at": fetched.isoformat() if fetched else None,
+            "rounds": [{"round_id": r.round_id, "name": r.name, "venue": r.venue, "order": r.order,
+                        "start": r.start.isoformat() if r.start else None,
+                        "end": r.end.isoformat() if r.end else None, "entries": len(r.entries),
+                        "entry_list_url": r.entry_list_url} for r in rows]}
+
+
+@router.get("/entries")
+def entries(year: int, round_id: str, series: str = sync.DEFAULT_SERIES, db: Session = Depends(get_db)):
+    """The published entry list of one round (empty until the series publishes it)."""
+    row = db.scalar(select(rm.ResultCalendarRound).where(rm.ResultCalendarRound.series == _series(series),
+                                                   rm.ResultCalendarRound.year == year,
+                                                   rm.ResultCalendarRound.round_id == round_id))
+    return [_entry(e) for e in row.entries] if row else []

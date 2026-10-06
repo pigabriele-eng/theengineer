@@ -6,7 +6,6 @@ import { Bars, LineChart, LineSeries, useChartColors } from '@/components/Report
 import { Balance } from '@/components/report/Balance';
 import { GripReport } from '@/components/report/GripReport';
 import { TrackGrip } from '@/components/report/TrackGrip';
-import { TyrePrep } from '@/components/report/TyrePrep';
 import { SessionSwitcher, useEventFolder, useSessionEvent } from '@/components/SessionSwitcher';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
@@ -240,7 +239,13 @@ export default function ReportScreen() {
               {'event' in scope ? <Balance event={scope.event} /> : <Balance session={scope.session} />}
             </View>
             <View style={styles.section}>
-              {'event' in scope ? <TyrePrep event={scope.event} /> : <TyrePrep session={scope.session} />}
+              <Text style={styles.h2}>Tyres and qualifying preparation</Text>
+              <Link href={{ pathname: '/quali', params: 'event' in scope ? { event: scope.event }
+                : { session: scope.session } }} asChild>
+                <Pressable style={styles.smallButton}>
+                  <Text style={styles.smallButtonText}>Quali prep: warm-up, build laps, tyre windows and pressures</Text>
+                </Pressable>
+              </Link>
             </View>
           </>
         )}

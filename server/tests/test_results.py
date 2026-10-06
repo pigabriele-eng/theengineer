@@ -85,6 +85,18 @@ def test_names_and_times():
     assert venue_key("Hockenheim GP") == "hockenheim" and venue_key("Circuit Zandvoort") == "zandvoort"
 
 
+ENTRY_LIST = """
+<select id="filter_meeting_id" name="filter_meeting_id"><option value="0">Meeting</option>
+<option value="75" selected='selected' >Test Track</option><option value="76">Portimao</option></select>
+<table class="table"><thead class="table__head"><tr><th>Car #</th><th>Team</th><th>Driver 1</th><th>Driver 2</th>
+<th>Car</th><th>CAT</th></tr></thead><tbody class="table__body">
+<tr><td>12</td><td>Team Two</td><td><span class="table__text">Gabriel GAMMA</span><span class="flag"></td>
+<td><span class="table__text">Dan DELTA (R)</span></td><td>BMW M4 GT4 G82 EVO</td><td>Silver</td></tr>
+<tr><td>24</td><td>JSB Comp&eacute;tition</td><td>Nic ONE</td><td>Jul TWO</td>
+<td>Porsche 718 Cayman GT4 RS CS</td><td>Pro-Am</td></tr>
+</tbody></table>"""
+
+
 class FakeSite:
     """The series' site: one season, one round at the test track, two result sheets."""
     NAME = "Fake series"
@@ -102,6 +114,23 @@ class FakeSite:
     def round_sessions(client, season_id, round_id):
         from app.results.gt4europe import SessionLink
         return [SessionLink("Q1", "Qualifying 1", "https://x/q1.pdf"), SessionLink("R1", "Race 1", "https://x/r1.pdf")]
+
+    @staticmethod
+    def calendar(client, season_id):
+        from datetime import date
+
+        from app.results.gt4europe import CalendarRound
+        return [CalendarRound("75", "Test Track", 1, date(2026, 9, 18), date(2026, 9, 20)),
+                CalendarRound("76", "Algarve", 2, date(2026, 10, 15), date(2026, 10, 18))]
+
+    @staticmethod
+    def entry_list_urls(client, season_id):
+        return ["https://x/entry-list/2026/test-track"]
+
+    @staticmethod
+    def entry_list(client, url):
+        from app.results.gt4europe import parse_entry_list
+        return parse_entry_list(ENTRY_LIST)
 
     @staticmethod
     def fetch(client, url):
@@ -185,3 +214,20 @@ def test_a_car_set_by_hand_shows_before_any_results(client):
     body = client.put(f"/results/events/{ev['id']}/link", json={"car_number": "12", "year": 2027}).json()
     assert body["round"] is None and body["note"]
     assert (body["car_number"], body["car_number_from"]) == ("12", "set")
+
+
+def test_a_season_calendar_and_its_entry_lists(client, fake_site):
+    assert client.get("/results/series").json()[0]["key"] == "gt4-europe"
+    assert client.get("/results/calendar", params={"year": 2026}).json()["status"] == "not loaded"
+    fake_site.sync_calendar("gt4-europe", 2026)
+    cal = client.get("/results/calendar", params={"year": 2026}).json()
+    assert cal["status"] == "loaded"
+    assert [(r["round_id"], r["venue"], r["start"], r["end"], r["entries"]) for r in cal["rounds"]] == [
+        ("75", "test-track", "2026-09-18", "2026-09-20", 2), ("76", "portimao", "2026-10-15", "2026-10-18", 0)]
+    cars = client.get("/results/entries", params={"year": 2026, "round_id": "75"}).json()
+    assert cars[0] == {"car_number": "12", "drivers": ["Gabriel GAMMA", "Dan DELTA"], "team": "Team Two",
+                       "car_model": "BMW M4 GT4 G82 EVO", "brand": "BMW", "car_class": "Silver"}
+    assert cars[1]["team"] == "JSB Compétition" and cars[1]["car_class"] == "Pro-Am"
+    assert client.get("/results/entries", params={"year": 2026, "round_id": "76"}).json() == []
+    fake_site.sync_calendar("gt4-europe", 2026)  # read again: nothing doubled
+    assert len(client.get("/results/entries", params={"year": 2026, "round_id": "75"}).json()) == 2

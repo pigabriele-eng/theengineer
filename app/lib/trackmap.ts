@@ -36,6 +36,16 @@ export type TrackMapData = {
   event_fastest?: boolean;
 };
 
+/** The official corners a section code names: "T8/T9" is T8 and T9, "T2-T5" is T2 to T5, "T6" is T6. */
+export function cornersOf(code: string): string[] {
+  return code.split('/').flatMap((part) => {
+    const m = /^([A-Z]+)(\d+)(?:-[A-Z]*(\d+))?$/.exec(part.trim());
+    if (!m) return [part];
+    const from = Number(m[2]), to = m[3] ? Number(m[3]) : from;
+    return to >= from && to - from < 30 ? Array.from({ length: to - from + 1 }, (_, i) => `${m[1]}${from + i}`) : [part];
+  });
+}
+
 // Thrown when there is no map to draw for a known reason (no log, no clean lap, no GPS): not a failure.
 export class NoTrackMap extends Error {}
 

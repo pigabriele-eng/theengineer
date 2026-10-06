@@ -1,12 +1,12 @@
 // Charts for the stint tool. Colours: categorical slots of the validated chart palette (useChartColors) for the
 // loss/gain split of the fade (orange: slower, blue: quicker), and the balance report's diverging pair for the balance
 // (blue: understeer, red: oversteer, grey: within the normal). Values and labels always use text colours.
-import { useState } from 'react';
-import { LayoutChangeEvent, Platform, Pressable, StyleSheet } from 'react-native';
+import { useRef, useState } from 'react';
+import { LayoutChangeEvent, Platform, Pressable, StyleSheet, TextStyle } from 'react-native';
 import Svg, { Circle, Line, Path } from 'react-native-svg';
 
 import { useChartColors } from '@/components/ReportCharts';
-import { Text, View } from '@/components/Themed';
+import { Text, View, useThemeColor } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
 import { FadeRow, signed } from '@/lib/stint';
 
@@ -20,6 +20,48 @@ export const MIN_SHIFT = 0.15; // ° of understeer angle: a smaller shift reads 
 /** The colour of a balance shift: blue towards understeer, red towards oversteer, grey when it holds. */
 export function shiftColor(shift: number, pal: { under: string; over: string; neutral: string }) {
   return Math.abs(shift) < MIN_SHIFT ? pal.neutral : shift > 0 ? pal.under : pal.over;
+}
+
+/** Point at a corner to find it on the track map: on the web a mouse over it shows it and leaving clears it, and a
+ * tap (or a click) picks it; tapping the picked one again clears it, unless the mouse is over it. */
+export type OnCorner = (code: string | null) => void;
+
+// A corner the way the analysis names it ("T6", "T2-T5", "T8/T9"; C1, C2... on a track without official numbers).
+const CORNER = /(\b[TC]\d+(?:[-/][TC]?\d+)*)/;
+
+/** Text naming corners, with each corner of `codes` in it pointable: hover or tap it to find it on the map. */
+export function CornerText({ text, codes, focus, onCorner, style }: {
+  text: string; codes: string[]; focus?: string | null; onCorner?: OnCorner; style?: TextStyle;
+}) {
+  const tint = useThemeColor({}, 'tint');
+  const over = useRef<string | null>(null);
+  if (!onCorner) return <Text style={style}>{text}</Text>;
+  return (
+    <Text style={style}>
+      {text.split(CORNER).map((part, i) => {
+        if (i % 2 === 0 || !codes.includes(part)) return part;
+        const hover = Platform.OS === 'web' ? {
+          onPointerEnter: (e: any) => {
+            if (e.nativeEvent?.pointerType !== 'mouse') return;
+            over.current = part;
+            onCorner(part);
+          },
+          onPointerLeave: (e: any) => {
+            if (e.nativeEvent?.pointerType !== 'mouse') return;
+            over.current = null;
+            onCorner(null);
+          },
+        } : {};
+        return (
+          <Text key={i} {...hover} accessibilityRole="button" accessibilityLabel={`Show ${part} on the track map`}
+            onPress={() => onCorner(focus === part && over.current !== part ? null : part)}
+            style={StyleSheet.flatten([styles.corner, { textDecorationColor: tint }, focus === part && { color: tint }])}>
+            {part}
+          </Text>
+        );
+      })}
+    </Text>
+  );
 }
 
 function useWidth(): [number, (e: LayoutChangeEvent) => void] {
@@ -53,7 +95,7 @@ function CentreBar({ width, value, max, color, height = 12, faded = false }: {
 }
 
 /** The tyre fade split by phase, biggest loss first: s a lap, slower to the right, quicker to the left. */
-export function FadeBars({ rows }: { rows: FadeRow[] }) {
+export function FadeBars({ rows, focus, onCorner }: { rows: FadeRow[]; focus?: string | null; onCorner?: OnCorner }) {
   const c = useChartColors();
   const [width, onLayout] = useWidth();
   const max = Math.max(...rows.map((r) => Math.abs(r.per_lap)), 0.01);
@@ -80,9 +122,8 @@ export function FadeBars({ rows }: { rows: FadeRow[] }) {
                 faded={!r.clear} />
             )}
             {r.per_lap > 0 && r.corners.length > 0 && (
-              <Text style={styles.rowNote}>
-                mostly {r.corners.map((x) => `${x.code} (${x.per_lap.toFixed(3)})`).join(', ')}
-              </Text>
+              <CornerText style={styles.rowNote} codes={r.corners.map((x) => x.code)} focus={focus} onCorner={onCorner}
+                text={`mostly ${r.corners.map((x) => `${x.code} (${x.per_lap.toFixed(3)})`).join(', ')}`} />
             )}
           </View>
         ))}
@@ -118,11 +159,18 @@ export type ShiftRow = { label: string; early: number; late: number; shift: numb
 
 /** The balance early and late in the stint, per corner: a dumbbell from the early laps (ring) to the late laps
  * (dot), oversteer to the left of the car's normal, understeer to the right. */
-export function BalanceDumbbell({ rows, early, late }: { rows: ShiftRow[]; early: string; late: string }) {
+export function BalanceDumbbell({ rows, early, late, onCorner }: { rows: ShiftRow[]; early: string; late: string;
+  onCorner?: OnCorner }) {
   const c = useChartColors();
   const pal = useBalanceColors();
   const [width, onLayout] = useWidth();
   const [picked, setPicked] = useState<number | null>(null);
+  const over = useRef<number | null>(null); // the row under the mouse
+  // the row picked, and its corner shown on the map (the whole lap isn't a corner)
+  const pick = (i: number | null) => {
+    setPicked(i);
+    onCorner?.(i == null || rows[i]?.strong ? null : rows[i].label);
+  };
   const span = Math.max(1, Math.ceil(Math.max(...rows.flatMap((r) => [Math.abs(r.early), Math.abs(r.late)])) * 2) / 2);
   const H = 22;
   const x = (v: number) => 6 + ((v + span) / (2 * span)) * (width - 12);
@@ -143,8 +191,17 @@ export function BalanceDumbbell({ rows, early, late }: { rows: ShiftRow[]; early
       {rows.map((r, i) => {
         const col = shiftColor(r.shift, pal);
         return (
-          <Pressable key={r.label} onPress={() => setPicked(picked === i ? null : i)}
-            {...(Platform.OS === 'web' ? { onHoverIn: () => setPicked(i), onHoverOut: () => setPicked(null) } : {})}
+          <Pressable key={r.label} onPress={() => pick(picked === i && over.current !== i ? null : i)}
+            {...(Platform.OS === 'web' ? {
+              onHoverIn: () => {
+                over.current = i;
+                pick(i);
+              },
+              onHoverOut: () => {
+                over.current = null;
+                pick(null);
+              },
+            } : {})}
             accessibilityLabel={`${r.label}: ${signed(r.early)}° to ${signed(r.late)}°, ${signed(r.shift)}°`}
             style={StyleSheet.flatten([styles.dumbRow, picked === i && { backgroundColor: `${c.grid}88` }])}>
             <Text style={StyleSheet.flatten([styles.dumbLabel, r.strong && styles.strong])} numberOfLines={1}>
@@ -201,4 +258,5 @@ const styles = StyleSheet.create({
   dumbPlot: { flex: 1, backgroundColor: 'transparent' },
   dumbValue: { width: 50, fontSize: 13, textAlign: 'right', fontVariant: ['tabular-nums'] },
   readout: { fontSize: 12, opacity: 0.75, minHeight: 17 },
+  corner: { textDecorationLine: 'underline', textDecorationStyle: 'dotted' },
 });

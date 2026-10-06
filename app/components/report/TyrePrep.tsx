@@ -26,7 +26,7 @@ const SVG_FONT = Platform.OS === 'web' ? 'system-ui, -apple-system, "Segoe UI", 
 /** The tyre and qualifying preparation section of the report, for one session or a whole event: the recommended
  * warm-up first, then the warm-ups side by side, when the tyres were ready to push, each tyre's window on the
  * fastest laps with the cold pressures that land in it, and the long runs. */
-export function TyrePrep({ session, event }: { session?: number; event?: number }) {
+export function TyrePrep({ session, event, heading = true }: { session?: number; event?: number; heading?: boolean }) {
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -47,7 +47,7 @@ export function TyrePrep({ session, event }: { session?: number; event?: number 
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.h2}>Tyres and qualifying preparation</Text>
+      {heading && <Text style={styles.h2}>Tyres and qualifying preparation</Text>}
       {busy && (
         <View style={styles.loading}>
           <ActivityIndicator />

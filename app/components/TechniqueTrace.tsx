@@ -23,19 +23,25 @@ type Props = {
   to?: number;
   height?: number;
   title: string;
+  // the cursor as an index into the whole lap's points, when charts share it (TechniqueInputs); its own otherwise
+  cursor?: number | null;
+  onCursor?: (i: number | null) => void;
 };
 
 const PAD = { left: 40, right: 10, top: 22, bottom: 34 };
+export const TRACE_PAD_X = { left: PAD.left, right: PAD.right }; // charts under this one line up with it
 const SANS = Platform.select({ web: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' });
 
 export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selected, onSelect, corners, from, to,
-  height = 220, title }: Props) {
+  height = 220, title, cursor: sharedCursor, onCursor }: Props) {
   const c = useChartColors();
   const [width, setWidth] = useState(0);
-  const [cursor, setCursor] = useState<number | null>(null);
+  const [own, setOwn] = useState<number | null>(null);
   const last = driven.length - 1;
-  const i0 = Math.max(0, Math.floor((from ?? 0) / stepM));
-  const i1 = Math.min(last, Math.ceil((to ?? last * stepM) / stepM));
+  const [i0, i1] = pointRange(stepM, last, from, to);
+  const at = onCursor ? sharedCursor ?? null : own;
+  const cursor = at != null && at >= i0 && at <= i1 ? at - i0 : null; // index into the points shown
+  const setCursor = (k: number | null) => (onCursor ?? setOwn)(k == null ? null : k + i0);
   const x = useMemo(() => Array.from({ length: i1 - i0 + 1 }, (_, k) => (i0 + k) * stepM), [i0, i1, stepM]);
   const series = [
     { key: 'realistic', label: 'Realistic target', values: realistic.slice(i0, i1 + 1), color: c.axis,
@@ -198,6 +204,11 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
       </View>
     </View>
   );
+}
+
+/** The first and last of a trace's points (every stepM metres, last the final index) shown from..to metres. */
+export function pointRange(stepM: number, last: number, from?: number, to?: number): [number, number] {
+  return [Math.max(0, Math.floor((from ?? 0) / stepM)), Math.min(last, Math.ceil((to ?? last * stepM) / stepM))];
 }
 
 const styles = StyleSheet.create({

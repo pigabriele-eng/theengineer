@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 
 import { Bars, useChartColors } from '@/components/ReportCharts';
+import { TechniqueInputs } from '@/components/TechniqueInputs';
 import { TechniqueTrace } from '@/components/TechniqueTrace';
 import { SessionSwitcher, useEventFolder } from '@/components/SessionSwitcher';
 import { Text, View, useThemeColor } from '@/components/Themed';
@@ -233,33 +234,7 @@ export default function TechniqueScreen() {
 
         {check && answer && (
           <Section title="On the track">
-            <View style={wide ? styles.row : styles.column}>
-              <View style={wide ? styles.half : undefined}>
-                <TrackMap {...answer.map} highlight={mistake?.code}
-                  marks={check.mistakes.map((m, i) => ({ n: i + 1, at_m: m.at_m, from_m: m.start_m, to_m: m.end_m }))}
-                  selectedMark={selected} marksLengthM={answer.length_m} />
-              </View>
-              {check.trace && mistake && (
-                <View style={wide ? styles.half : undefined}>
-                  <TechniqueTrace stepM={check.trace.step_m} driven={check.trace.driven} perfect={check.trace.perfect}
-                    realistic={check.trace.realistic} bands={bandsOf(check)} selected={selected}
-                    onSelect={setSelected} corners={answer.corners ?? []}
-                    from={mistake.start_m - CLOSE_UP_M} to={mistake.end_m + CLOSE_UP_M}
-                    title={`Close-up of ${selected}. ${mistake.title} (${mistake.code})`} />
-                </View>
-              )}
-            </View>
-            {check.trace ? (
-              <TechniqueTrace stepM={check.trace.step_m} driven={check.trace.driven} perfect={check.trace.perfect}
-                realistic={check.trace.realistic} bands={bandsOf(check)} selected={selected} onSelect={setSelected}
-                corners={answer.corners ?? []} height={240} title="Speed over the whole lap" />
-            ) : (
-              <Text style={styles.note}>The speed trace of this lap isn&apos;t available; refresh to work it out.</Text>
-            )}
-            <Text style={styles.note}>
-              {Platform.OS === 'web' ? 'Hover over' : 'Drag across'} a chart to read the speeds; tap a numbered band or a
-              mistake above to see it on the map and close up.
-            </Text>
+            <OnTheTrack answer={answer} check={check} selected={selected} onSelect={setSelected} wide={wide} />
           </Section>
         )}
 
@@ -297,6 +272,72 @@ const METHOD = [
     'control on their own aren\'t mistakes: the event\'s quicker laps use more of both.',
   'Corners are named by their official numbers only.',
 ];
+
+/** The lap on the map and against perfect driving's speed (a close-up of the picked mistake, then the whole lap), with
+ * the driver's inputs under the whole lap's speed. One cursor runs through every chart. */
+function OnTheTrack({ answer, check, selected, onSelect, wide }: { answer: SessionTechnique; check: LapCheck;
+  selected: number | null; onSelect: (n: number) => void; wide: boolean }) {
+  const [cursor, setCursor] = useState<number | null>(null);
+  const mistake = check.mistakes[(selected ?? 0) - 1] ?? null;
+  const bands = useMemo(() => bandsOf(check), [check]);
+  // the map doesn't follow the cursor: kept as it is while the charts are scrubbed
+  const map = useMemo(() => (
+    <TrackMap {...answer.map} highlight={mistake?.code}
+      marks={check.mistakes.map((m, i) => ({ n: i + 1, at_m: m.at_m, from_m: m.start_m, to_m: m.end_m }))}
+      selectedMark={selected} marksLengthM={answer.length_m} />
+  ), [answer.map, answer.length_m, check, mistake?.code, selected]);
+  const tr = check.trace;
+  const corners = answer.corners ?? [];
+  const fastest = check.fastest;
+  const scope = answer.scope === 'event' ? 'event' : 'session';
+  return (
+    <>
+      <View style={wide ? styles.row : styles.column}>
+        <View style={wide ? styles.half : undefined}>{map}</View>
+        {tr && mistake && (
+          <View style={wide ? styles.half : undefined}>
+            <TechniqueTrace stepM={tr.step_m} driven={tr.driven} perfect={tr.perfect} realistic={tr.realistic}
+              bands={bands} selected={selected} onSelect={onSelect} corners={corners}
+              from={mistake.start_m - CLOSE_UP_M} to={mistake.end_m + CLOSE_UP_M}
+              title={`Close-up of ${selected}. ${mistake.title} (${mistake.code})`} cursor={cursor} onCursor={setCursor} />
+          </View>
+        )}
+      </View>
+      {tr ? (
+        <TechniqueTrace stepM={tr.step_m} driven={tr.driven} perfect={tr.perfect} realistic={tr.realistic}
+          bands={bands} selected={selected} onSelect={onSelect} corners={corners} height={wide ? 260 : 240}
+          title="Speed over the whole lap" cursor={cursor} onCursor={setCursor} />
+      ) : (
+        <Text style={styles.note}>The speed trace of this lap isn&apos;t available; refresh to work it out.</Text>
+      )}
+      {tr && (
+        <View style={styles.block}>
+          <Text style={styles.h3}>Your inputs</Text>
+          {fastest?.this_lap && (
+            <Text style={styles.note}>
+              This is the {scope}&apos;s fastest lap, the one the report measures from: there is no quicker lap to lay
+              under it.
+            </Text>
+          )}
+          {tr.inputs ? (
+            <TechniqueInputs stepM={tr.step_m} points={tr.driven.length} inputs={tr.inputs}
+              fastest={fastest && !fastest.this_lap ? fastest.inputs : null}
+              fastestLabel={fastest && !fastest.this_lap
+                ? `Fastest lap: ${fastest.run} L${fastest.number} · ${formatLap(fastest.time)}` : null}
+              phases={tr.model_phases} channels={answer.inputs} bands={bands} selected={selected} onSelect={onSelect}
+              corners={corners} cursor={cursor} onCursor={setCursor} tall={wide} />
+          ) : (
+            <Text style={styles.note}>This lap&apos;s inputs come with the new check, worked out in the background.</Text>
+          )}
+        </View>
+      )}
+      <Text style={styles.note}>
+        {Platform.OS === 'web' ? 'Hover over' : 'Drag across'} a chart to read the speeds and inputs at that point on
+        every chart; tap a numbered band or a mistake above to see it on the map and close up.
+      </Text>
+    </>
+  );
+}
 
 const bandsOf = (check: LapCheck) =>
   check.mistakes.map((m, i) => ({ n: i + 1, start_m: m.start_m, end_m: m.end_m, label: `${m.title} (${m.code})` }));
@@ -500,6 +541,7 @@ const styles = StyleSheet.create({
   head: { gap: 4 },
   h1: { fontSize: 24, fontWeight: '700' },
   h2: { fontSize: 20, fontWeight: '700' },
+  h3: { fontSize: 16, fontWeight: '700' },
   h4: { fontSize: 13, fontWeight: '600', opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 },
   sub: { opacity: 0.7 },
   note: { fontSize: 12, opacity: 0.65, lineHeight: 17 },

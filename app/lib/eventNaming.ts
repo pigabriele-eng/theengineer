@@ -20,7 +20,7 @@ export type EventMatch = {
 };
 
 export type NewEvent = Omit<EventMatch, 'why'> & {
-  zip: string | null; // the zip it was made for, without .zip
+  zip: string | null; // the zip it was made for, without .zip, or the dropped folder
   venue: string | null;
   log_event: string | null; // the event name in the logs' headers, e.g. GT4_ES_R05
   suggested_name: string;

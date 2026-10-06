@@ -109,9 +109,14 @@ export const eventsApi = {
   compare: (key: string, sessionIds: number[]) =>
     call<SideBySide>(`/events/${key}/compare?sessions=${sessionIds.join(',')}`),
   // Every file in one request, each log a session in the event given; without one, a zip makes an event of its own.
+  // On the web each file goes with the name given: a dropped folder's files with their path in it ("T01/D1S1/a.ld").
   importInto: (files: PickedFile[], eventId: number | null) => {
     const form = new FormData();
-    for (const f of files) form.append('files', formFile(f, f.mimeType || 'application/octet-stream'));
+    for (const f of files) {
+      const part = formFile(f, f.mimeType || 'application/octet-stream');
+      if (f.file) form.append('files', part, f.name);
+      else form.append('files', part);
+    }
     if (eventId != null) form.append('event_id', String(eventId));
     return call<ImportJob>('/imports', { method: 'POST', body: form });
   },

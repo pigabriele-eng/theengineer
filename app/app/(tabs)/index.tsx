@@ -1,16 +1,17 @@
-import { Link, useFocusEffect, useRouter } from 'expo-router';
+import { Link, useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
 
 import { DriverLinks } from '@/components/DriverPicker';
 import { FilterBar, PlanForm, plannedLine, RemovePlanned } from '@/components/EventFilter';
-import { ImportLogs } from '@/components/ImportLogs';
 import { PrepButton, usePrepAvailability } from '@/components/PrepButton';
 import { RenameEvent } from '@/components/RenameEvent';
+import { SeasonsLink } from '@/components/SeasonsLink';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
 import { CalendarState, calendarApi, countByWhen, defaultFilter, Filter, filtered, Plan, todayIso, whenOf } from '@/lib/calendar';
 import { dateRange, eventsApi, FolderSummary } from '@/lib/events';
+import { launchEvent } from '@/lib/openCurrent';
 import { PrepAvailability } from '@/lib/prep';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -18,7 +19,8 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 /** Events as folders, newest first: each a test or a race weekend with its dates, track, sessions and best lap. Open
  * one for its sessions by day. Sessions in no event have a folder of their own, first, so they get filed. A filter
  * shows past, current (from the day before to the last day) or upcoming events, opening on what's on now; planned
- * events (made here or from the racing calendar) wait under Upcoming until their data comes in. */
+ * events (made here or from the racing calendar) wait under Upcoming until their data comes in. Opened while an event
+ * is on, the app goes straight on to that event's page (lib/openCurrent.ts). */
 export default function SessionsScreen() {
   const [folders, setFolders] = useState<FolderSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -26,6 +28,7 @@ export default function SessionsScreen() {
   const [calendar, setCalendar] = useState<CalendarState | null>(null);
   const [filter, setFilter] = useState<Filter | null>(null); // null: what the list opens on
   const router = useRouter();
+  const navigation = useNavigation();
   const tint = useThemeColor({}, 'tint');
   const background = useThemeColor({}, 'background');
   const prep = usePrepAvailability(); // events whose track has past data: the Prep report button
@@ -48,6 +51,14 @@ export default function SessionsScreen() {
     return () => clearTimeout(t);
   }, [calendar, load]);
 
+  // Opened on this list while an event is on: on to its page, once per launch (Back comes back here). Not when they've
+  // gone elsewhere or started making an event while the list was loading.
+  useEffect(() => {
+    if (!folders) return;
+    const ev = launchEvent(folders, todayIso());
+    if (ev && navigation.isFocused() && !making) router.push({ pathname: '/event/[id]', params: { id: ev.key } });
+  }, [folders, making, navigation, router]);
+
   const today = todayIso();
   const counts = countByWhen(folders ?? [], today);
   const active = filter ?? defaultFilter(counts);
@@ -58,7 +69,12 @@ export default function SessionsScreen() {
   return (
     <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.outer}>
       <View style={styles.page}>
-        <ImportLogs onProgress={load} events={folders} />
+        {/* uploads have a page of their own (the Upload tab): one big drop box */}
+        <Link href="/upload" asChild>
+          <Pressable style={StyleSheet.flatten([styles.linkButton, styles.upload, { borderColor: tint }])}>
+            <Text style={StyleSheet.flatten([styles.linkText, { color: tint }])}>Upload runs and files</Text>
+          </Pressable>
+        </Link>
         {making ? (
           <View style={styles.panel}>
             <Text style={styles.panelTitle}>New event</Text>
@@ -104,6 +120,7 @@ export default function SessionsScreen() {
               load();
             }} />
         )}
+        {folders && <SeasonsLink />}
         {shown && shown.length === 0 && folders && folders.length > 0 && (
           <Text style={styles.empty}>{EMPTY[active]}</Text>
         )}
@@ -194,6 +211,7 @@ const styles = StyleSheet.create({
   page: { width: '100%', maxWidth: 820, alignSelf: 'center', gap: 12 },
   links: { flexDirection: 'row', gap: 8 },
   linkButton: { flex: 1, borderWidth: 1, borderRadius: 8, paddingVertical: 10, alignItems: 'center' },
+  upload: { flex: 0, paddingVertical: 14 },
   linkText: { fontWeight: '600', fontSize: 15 },
   panel: { borderWidth: 1, borderColor: '#8884', borderRadius: 10, padding: 12, gap: 8 },
   panelTitle: { fontSize: 16, fontWeight: '700' },

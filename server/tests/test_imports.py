@@ -216,3 +216,45 @@ def test_ldx_pairs_prefer_the_log_next_to_them():
                                      ("a/../../b.ld", False), ("D:\\a.ld", False), ("./a/./b.ld", True)])
 def test_entry_names(name, ok):
     assert (archive._parts(name) is not None) == ok
+
+
+def test_a_dropped_folder_is_grouped_like_a_zip_of_it(client):
+    # a folder dropped onto the app: each file is sent with its path from the dropped folder down
+    job = upload(client, ("Hockenheim test/01_D1S1/20250505-1.ld", log_bytes()),
+                 ("Hockenheim test/01_D1S1/20250505-1.ldx", ldx_bytes()),
+                 ("Hockenheim test/02_D1S2/20250505-2.ld", log_bytes()),
+                 ("Hockenheim test/02_D1S2/schd0372.bmo", b"\x00" * 100),
+                 ("Hockenheim test/.DS_Store", b"x"),
+                 ("loose.ld", log_bytes()))
+    assert job["status"] == "done" and job["errors"] == [] and job["total"] == 3
+    assert job["filename"] == "Hockenheim test, loose.ld"
+    assert sorted(job["skipped"], key=lambda s: s["file"]) == [
+        {"file": "Hockenheim test/.DS_Store", "reason": "hidden or system file"},
+        {"file": "Hockenheim test/02_D1S2/schd0372.bmo", "reason": "not a logger file"}]
+    runs = sessions_by_name(client, job)
+    assert set(runs) == {"01_D1S1", "02_D1S2", "Session 1"}
+    assert len(runs["01_D1S1"]["files"][0]["meta"]["beacons"]) == 5  # its .ldx, next to it
+    assert all(len(s["laps"]) == 4 for s in runs.values())
+    (event,) = client.get("/events").json()
+    assert event["name"] == "Hockenheim test"
+    assert runs["01_D1S1"]["event_id"] == runs["02_D1S2"]["event_id"] == event["id"]
+    assert runs["Session 1"]["event_id"] is None
+    # the app offers to name the event the folder made, as for a zip
+    made = client.get(f"/imports/{job['id']}/events").json()["events"]
+    assert [(e["id"], e["zip"]) for e in made] == [(event["id"], "Hockenheim test")]
+
+
+def test_a_dropped_run_folder_and_a_zip_in_a_folder(client):
+    job = upload(client, ("03_D1S3/x.ld", log_bytes()), ("03_D1S3/x.ldx", ldx_bytes()),
+                 ("season/day1.zip", make_zip({"01_D1S1/a.ld": log_bytes()})),
+                 ("/etc/evil.ld", log_bytes()), ("runs/../../up.ld", log_bytes()))
+    assert job["status"] == "done" and job["errors"] == [] and job["skipped"] == []
+    runs = sessions_by_name(client, job)
+    # a log alone in the dropped folder is named after it; an absolute path or '..' keeps only the file's name
+    assert set(runs) == {"03_D1S3", "01_D1S1", "Session 1", "Session 1 (2)"}
+    assert len(runs["03_D1S3"]["files"][0]["meta"]["beacons"]) == 5
+    events = {e["id"]: e["name"] for e in client.get("/events").json()}
+    assert sorted(events.values()) == ["03_D1S3", "season"]  # a zip in a dropped folder joins its event
+    assert events[runs["01_D1S1"]["event_id"]] == "season"
+    assert events[runs["03_D1S3"]["event_id"]] == "03_D1S3"
+    assert runs["Session 1"]["event_id"] is None

@@ -6,6 +6,7 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import { authEnabled, useAuthSession } from '@/lib/auth';
+import { NoteLaunch } from '@/lib/openCurrent';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -53,6 +54,8 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
   // Every route other than sign-in must be listed in the first group: a route left out stays reachable when signed out.
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+      {/* where the app was opened: on the event list while an event is on, it goes on to that event's page */}
+      <NoteLaunch />
       <Stack>
         <Stack.Protected guard={signedIn}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
@@ -60,6 +63,7 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
           <Stack.Screen name="session/[id]" options={{ title: 'Session' }} />
           <Stack.Screen name="report" options={{ title: 'Report' }} />
           <Stack.Screen name="technique" options={{ title: 'Technique check' }} />
+          <Stack.Screen name="quali" options={{ title: 'Quali prep' }} />
           <Stack.Screen name="debrief/[id]" options={{ title: 'Debrief report' }} />
           <Stack.Screen name="tools/pressures" />
           <Stack.Screen name="tools/tyre-temps" />
@@ -69,6 +73,7 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
           <Stack.Screen name="tools/setup" />
           <Stack.Screen name="tools/calendar" options={{ title: 'Racing calendar' }} />
           <Stack.Screen name="garage" options={{ title: 'Cars, drivers and teams' }} />
+          <Stack.Screen name="seasons" options={{ title: 'Seasons' }} />
           <Stack.Screen name="drivers/tag" options={{ title: 'Tag drivers' }} />
           <Stack.Screen name="drivers/compare" options={{ title: 'Compare drivers' }} />
           <Stack.Screen name="compare" options={{ title: 'Compare laps' }} />
