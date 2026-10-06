@@ -308,7 +308,7 @@ def _tyre_model(db: Session, car: str) -> tuple[dict | None, dict | None]:
     """The pooled tyre model of the car (every track, its usual tyre): what it rests on, and its conditions."""
     # tyre-kind hook: once sessions carry a tyre kind (seasons.tyre_kind_for_session), fit the pool of that kind here
     try:
-        m = tyre_model_router.tyre_model(car=car, tyre=None, track=None, ambient_min=None, ambient_max=None, db=db)
+        m = tyre_model_router.tyre_model(car=car, tyre_kind=None, track=None, ambient_min=None, ambient_max=None, db=db)
     except HTTPException:  # no summarised session of this car yet
         return None, None
     if m.get("empty") or not m.get("conditions"):
