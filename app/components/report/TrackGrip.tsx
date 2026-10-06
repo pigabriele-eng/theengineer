@@ -15,7 +15,7 @@ import { Text, useThemeColor } from '@/components/Themed';
 import { useSeriesColors } from '@/components/TraceChart';
 import { formatLap } from '@/lib/api';
 import { fetchTrackGrip, GripSession, pct, TrackGripAnswer, TrackGripResult } from '@/lib/trackGrip';
-import { Fonts, themed, useTheme } from '@/constants/Theme';
+import { chartPlate, Fonts, themed, useTheme } from '@/constants/Theme';
 
 const POLL_MS = 4000;
 const C = { left: 44, right: 12, top: 22, bottom: 44, height: 230 };
@@ -343,7 +343,7 @@ const useStyles = themed((c) => ({
   calloutText: { fontSize: 16, lineHeight: 23 },
   para: { lineHeight: 20 },
   method: { gap: 6 },
-  chart: { gap: 4, maxWidth: 760 },
+  chart: { gap: 4, maxWidth: 760, ...chartPlate(c) },
   chartTitle: { fontSize: 13, fontWeight: '600' },
   readout: { fontSize: 13, minHeight: 36, fontVariant: ['tabular-nums'] },
   legend: { fontSize: 12, opacity: 0.6, lineHeight: 17 },

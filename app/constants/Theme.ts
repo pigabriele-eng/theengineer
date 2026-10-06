@@ -1,7 +1,7 @@
 // The app's look in one place: type, shape and spacing shared by every screen, the race-track picture behind the
 // pages, and the hooks screens take their colours (constants/Colors.ts) and styles from. A screen never writes a
 // colour, a corner radius or a label style of its own.
-import { ImageSourcePropType, Platform, StyleSheet, TextStyle } from 'react-native';
+import { ImageSourcePropType, Platform, StyleSheet, TextStyle, ViewStyle } from 'react-native';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors, { INK, Palette, PhaseKey, Scheme } from '@/constants/Colors';
@@ -28,6 +28,12 @@ export const Radius = {
 };
 
 export const Space = { page: 16, card: 12, gap: 8 };
+
+/** The solid plate under a chart, so the race-track picture never shows through a plot: spread it into the chart's
+ * root style. A chart that measures its own root takes PLATE_PAD off each side. */
+export const chartPlate = (c: Palette): ViewStyle => ({ backgroundColor: c.chart.surface, borderRadius: Radius.card,
+  padding: PLATE_PAD });
+export const PLATE_PAD = Space.gap;
 
 export const Type = {
   // section labels ("TYRES", "SETUP"...)

@@ -6,7 +6,7 @@ import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
 
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
-import { byScheme, Fonts, Radius, themed } from '@/constants/Theme';
+import { byScheme, chartPlate, Fonts, PLATE_PAD, Radius, themed } from '@/constants/Theme';
 
 const PALETTE = byScheme((c) => ({
   s1: c.chart.series[0], s2: c.chart.series[1], s3: c.chart.series[2], grid: c.chart.grid, axis: c.chart.muted,
@@ -24,13 +24,14 @@ export function Bars({ rows, unit = 's', digits = 2, max }: {
   digits?: number;
   max?: number; // shared scale across several bar charts
 }) {
+  const styles = useStyles();
   const c = useChartColors();
   const [width, setWidth] = useState(0);
   const top = max ?? Math.max(...rows.map((r) => r.value), 0.001);
   const LABEL = 100, VALUE = 58, ROW = 26, BAR = 14;
   const plot = Math.max(width - LABEL - VALUE, 10);
   return (
-    <View onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}>
+    <View style={styles.plate} onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width - 2 * PLATE_PAD)}>
       {width > 0 && (
         <Svg width={width} height={rows.length * ROW} accessibilityLabel={rows.map((r) =>
           `${r.label} ${r.value.toFixed(digits)} ${unit}`).join(', ')}>
@@ -248,7 +249,8 @@ export function niceTicks(lo: number, hi: number, count: number) {
 }
 
 const useStyles = themed((c) => ({
-  chart: { gap: 6 },
+  chart: { gap: 6, ...chartPlate(c) },
+  plate: chartPlate(c),
   chartTitle: { fontSize: 13, fontWeight: '600' },
   legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, backgroundColor: 'transparent' },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },

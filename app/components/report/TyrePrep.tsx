@@ -17,7 +17,7 @@ import { Text, useThemeColor } from '@/components/Themed';
 import { useSeriesColors } from '@/components/TraceChart';
 import { formatLap } from '@/lib/api';
 import { Advice, fetchTyrePrep, fixed, signed, Sim, SimPoint, TyrePrep as Report, WHEELS } from '@/lib/tyreprep';
-import { Fonts, Palette, Radius, themed, useTheme } from '@/constants/Theme';
+import { chartPlate, Fonts, Palette, Radius, themed, useTheme } from '@/constants/Theme';
 
 const PEAK_LAPS = 6; // flying laps shown lap by lap in the comparison
 // SVG text takes the browser's default (serif) face on web: give it the system sans the rest of the app uses
@@ -585,7 +585,7 @@ const useStyles = themed((c) => ({
   runName: { fontSize: 13, fontWeight: '600' },
   cell: { justifyContent: 'center', borderBottomWidth: 1, borderColor: c.separator, paddingRight: 6 },
   legend: { fontSize: 12, opacity: 0.6, lineHeight: 17, marginTop: 4 },
-  chart: { gap: 4, maxWidth: 760 },
+  chart: { gap: 4, maxWidth: 760, ...chartPlate(c) },
   chartTitle: { fontSize: 13, fontWeight: '600' },
   legendRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },

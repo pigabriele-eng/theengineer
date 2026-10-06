@@ -4,7 +4,7 @@ import Svg, { Line, Path, Text as SvgText } from 'react-native-svg';
 
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
-import { byScheme } from '@/constants/Theme';
+import { byScheme, chartPlate, themed } from '@/constants/Theme';
 
 // Categorical slots 1 and 2 of the validated chart palette, light and dark steps.
 export const SERIES = byScheme((c) => ({ reference: c.chart.series[0], compare: c.chart.series[1] }));
@@ -54,6 +54,7 @@ function placeLabels(markers: Marker[], xAt: (at: number) => number) {
 /** One channel against distance. Charts on a screen share `cursor` so scrubbing one moves all. */
 export function TraceChart({ title, unit, distance, series, cursor, onCursor, markers = [], domain, zeroLine,
   height = 140 }: Props) {
+  const styles = useStyles();
   const [width, setWidth] = useState(0);
   const muted = useThemeColor({}, 'text');
   const n = distance.length;
@@ -138,9 +139,9 @@ export function TraceChart({ title, unit, distance, series, cursor, onCursor, ma
   );
 }
 
-const styles = StyleSheet.create({
-  wrap: { gap: 2 },
+const useStyles = themed((c) => ({
+  wrap: { gap: 2, ...chartPlate(c) },
   head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap' },
   title: { fontSize: 13, fontWeight: '600', opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 },
   values: { fontSize: 13, fontVariant: ['tabular-nums'] },
-});
+}));

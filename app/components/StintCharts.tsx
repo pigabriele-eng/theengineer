@@ -9,7 +9,7 @@ import { useChartColors } from '@/components/ReportCharts';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
 import { FadeRow, signed } from '@/lib/stint';
-import { byScheme, deltaColor, phaseColor, useTheme } from '@/constants/Theme';
+import { byScheme, chartPlate, deltaColor, phaseColor, themed, useTheme } from '@/constants/Theme';
 
 const BALANCE = byScheme((c) => c.balance);
 export const useBalanceColors = () => BALANCE[useColorScheme() === 'dark' ? 'dark' : 'light'];
@@ -31,6 +31,7 @@ const CORNER = /(\b[TC]\d+(?:[-/][TC]?\d+)*)/;
 export function CornerText({ text, codes, focus, onCorner, style }: {
   text: string; codes: string[]; focus?: string | null; onCorner?: OnCorner; style?: TextStyle;
 }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   const over = useRef<string | null>(null);
   if (!onCorner) return <Text style={style}>{text}</Text>;
@@ -94,13 +95,14 @@ function CentreBar({ width, value, max, color, height = 12, faded = false }: {
 
 /** The tyre fade split by phase, biggest loss first: s a lap, slower to the right, quicker to the left. */
 export function FadeBars({ rows, focus, onCorner }: { rows: FadeRow[]; focus?: string | null; onCorner?: OnCorner }) {
+  const styles = useStyles();
   const theme = useTheme();
   const c = useChartColors();
   const [width, onLayout] = useWidth();
   const max = Math.max(...rows.map((r) => Math.abs(r.per_lap)), 0.01);
   const top = rows.find((r) => r.clear && r.per_lap > 0)?.key;
   return (
-    <View style={styles.block}>
+    <View style={styles.chart}>
       <View style={styles.legend}>
         <Key color={theme.delta.loss} label="Slower as the stint goes on" />
         <Key color={theme.delta.gain} label="Quicker" />
@@ -133,6 +135,7 @@ export function FadeBars({ rows, focus, onCorner }: { rows: FadeRow[]; focus?: s
 
 function Key({ color, label, faded = false, ring = false }: { color: string; label: string; faded?: boolean;
   ring?: boolean }) {
+  const styles = useStyles();
   return (
     <View style={styles.legendItem}>
       <View style={StyleSheet.flatten([ring ? styles.ring : styles.swatch, ring ? { borderColor: color } :
@@ -145,6 +148,7 @@ function Key({ color, label, faded = false, ring = false }: { color: string; lab
 /** A change as a bar from the centre: grip in % (orange falls, blue rises) or balance in ° (blue/red). */
 export function ChangeBar({ value, max, color, faded }: { value: number | null; max: number; color: string;
   faded?: boolean }) {
+  const styles = useStyles();
   const [width, onLayout] = useWidth();
   return (
     <View onLayout={onLayout} style={styles.changeBar}>
@@ -160,6 +164,7 @@ export type ShiftRow = { label: string; early: number; late: number; shift: numb
  * (dot), oversteer to the left of the car's normal, understeer to the right. */
 export function BalanceDumbbell({ rows, early, late, onCorner }: { rows: ShiftRow[]; early: string; late: string;
   onCorner?: OnCorner }) {
+  const styles = useStyles();
   const c = useChartColors();
   const pal = useBalanceColors();
   const [width, onLayout] = useWidth();
@@ -175,7 +180,7 @@ export function BalanceDumbbell({ rows, early, late, onCorner }: { rows: ShiftRo
   const x = (v: number) => 6 + ((v + span) / (2 * span)) * (width - 12);
   const sel = picked != null ? rows[picked] : null;
   return (
-    <View style={styles.block}>
+    <View style={styles.chart}>
       <View style={styles.legend}>
         <Key color={c.axis} label={`Early laps (${early})`} ring />
         <Key color={pal.under} label={`Late laps (${late}): towards understeer`} />
@@ -234,8 +239,9 @@ export function BalanceDumbbell({ rows, early, late, onCorner }: { rows: ShiftRo
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   block: { gap: 10, backgroundColor: 'transparent' },
+  chart: { gap: 10, ...chartPlate(c) },
   legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 14, rowGap: 4, backgroundColor: 'transparent' },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },
   swatch: { width: 12, height: 12, borderRadius: 3 },
@@ -258,4 +264,4 @@ const styles = StyleSheet.create({
   dumbValue: { width: 50, fontSize: 13, textAlign: 'right', fontVariant: ['tabular-nums'] },
   readout: { fontSize: 12, opacity: 0.75, minHeight: 17 },
   corner: { textDecorationLine: 'underline', textDecorationStyle: 'dotted' },
-});
+}));

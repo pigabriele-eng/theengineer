@@ -8,7 +8,7 @@ import Svg, { Circle, Line, Path, Rect, Text as SvgText } from 'react-native-svg
 
 import { niceTicks, useChartColors } from '@/components/ReportCharts';
 import { Text, View } from '@/components/Themed';
-import { Fonts, Palette, phaseColor, Radius, themed, useTheme } from '@/constants/Theme';
+import { chartPlate, Fonts, Palette, phaseColor, Radius, themed, useTheme } from '@/constants/Theme';
 
 export type Band = { n: number; start_m: number; end_m: number; label: string; phase?: string };
 
@@ -228,7 +228,7 @@ export function pointRange(stepM: number, last: number, from?: number, to?: numb
 }
 
 const useStyles = themed((c) => ({
-  chart: { gap: 6 },
+  chart: { gap: 6, ...chartPlate(c) },
   title: { fontSize: 13, fontWeight: '600' },
   legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, backgroundColor: 'transparent' },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },

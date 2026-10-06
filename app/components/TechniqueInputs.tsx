@@ -11,7 +11,7 @@ import { niceTicks, useChartColors } from '@/components/ReportCharts';
 import { Band, bandFill, pointRange, TRACE_PAD_X } from '@/components/TechniqueTrace';
 import { Text, View } from '@/components/Themed';
 import { InputRole, Inputs, MODEL_PHASES } from '@/lib/technique';
-import { Fonts, phaseColor, useTheme } from '@/constants/Theme';
+import { chartPlate, Fonts, phaseColor, PLATE_PAD, themed, useTheme } from '@/constants/Theme';
 
 type Props = {
   stepM: number;
@@ -54,6 +54,7 @@ type Geometry = {
 
 export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, phases, channels, bands, selected,
   onSelect, corners, from, to, cursor, onCursor, tall }: Props) {
+  const styles = useStyles();
   const theme = useTheme();
   const c = useChartColors();
   const [width, setWidth] = useState(0);
@@ -98,7 +99,7 @@ export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, 
   const sources = have.map((ch) => channels?.[ch.role]?.channel).filter((s): s is string => !!s);
 
   return (
-    <View style={styles.wrap} onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}>
+    <View style={styles.wrap} onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width - 2 * PLATE_PAD)}>
       <View style={styles.legend}>
         <LegendLine color={c.s1} label="This lap" />
         {fastest && fastestLabel && <LegendLine color={c.axis} label={fastestLabel} thin />}
@@ -141,6 +142,7 @@ export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, 
 }
 
 function LegendLine({ color, label, thin }: { color: string; label: string; thin?: boolean }) {
+  const styles = useStyles();
   return (
     <View style={styles.legendItem}>
       <Svg width={16} height={4}>
@@ -197,6 +199,7 @@ type ChannelProps = {
 
 function Channel({ geo, title, unit, digits, role, values, under, bands, selected, cursor, height, corners }:
   ChannelProps) {
+  const styles = useStyles();
   const theme = useTheme();
   const c = useChartColors();
   const { i0, i1, stepM, px, width } = geo;
@@ -319,8 +322,8 @@ function Channel({ geo, title, unit, digits, role, values, under, bands, selecte
   );
 }
 
-const styles = StyleSheet.create({
-  wrap: { gap: 6 },
+const useStyles = themed((c) => ({
+  wrap: { gap: 6, ...chartPlate(c) },
   head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 8,
     backgroundColor: 'transparent' },
   title: { fontSize: 12, fontWeight: '600', opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 },
@@ -334,4 +337,4 @@ const styles = StyleSheet.create({
   legendText: { fontSize: 12, opacity: 0.75 },
   swatch: { width: 12, height: 8, borderRadius: 2 },
   note: { fontSize: 12, opacity: 0.65, lineHeight: 17 },
-});
+}));

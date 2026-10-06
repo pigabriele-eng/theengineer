@@ -7,7 +7,7 @@ import Svg, { Circle, G, Line, Path, Rect, Text as SvgText } from 'react-native-
 
 import { Text, View } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
-import { byScheme, Fonts, inkOn, Radius, ramp, themed } from '@/constants/Theme';
+import { byScheme, chartPlate, Fonts, inkOn, Radius, ramp, themed } from '@/constants/Theme';
 
 // Slots 1 and 2 of the validated chart palette, a grey for context, ink, and two one-hue ramps (grip in blue,
 // traction control in orange), each stepped for its own mode; status colours for the verdicts.
@@ -425,7 +425,7 @@ export function GripMap({ x, y, step, modes, labels, describe }: {
 }
 
 const useStyles = themed((c) => ({
-  chart: { gap: 4 },
+  chart: { gap: 4, ...chartPlate(c) },
   readout: { fontSize: 12, lineHeight: 16, minHeight: 32, fontVariant: ['tabular-nums'] },
   hint: { opacity: 0.55 },
   legendRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },

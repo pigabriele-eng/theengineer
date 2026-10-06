@@ -7,7 +7,7 @@ import Svg, { Circle, G, Line, Path, Text as SvgText } from 'react-native-svg';
 import { LegendItem, Readout, useChartColors } from '@/components/report/GripCharts';
 import { Text, View } from '@/components/Themed';
 import { AxleFit } from '@/lib/vehicle';
-import { Fonts, Palette, Radius, themed } from '@/constants/Theme';
+import { chartPlate, Fonts, Palette, Radius, themed } from '@/constants/Theme';
 
 type Axle = 'front' | 'rear';
 export type Curves = { alpha_deg: number[]; front: number[]; rear: number[] };
@@ -252,7 +252,7 @@ export const useTableStyles = themed(tableStyleSheet);
 
 const useStyles = themed((c) => ({
   ...tableStyleSheet(c),
-  chart: { gap: 6 },
+  chart: { gap: 6, ...chartPlate(c) },
   legendRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
   legendText: { fontSize: 12, opacity: 0.75 },
   card: { gap: 4, padding: 12, borderRadius: Radius.card, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface },

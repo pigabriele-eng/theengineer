@@ -216,7 +216,7 @@ const useStyles = themed((c) => ({
   page: { width: '100%', maxWidth: 820, alignSelf: 'center', gap: 12 },
   links: { flexDirection: 'row', gap: 8 },
   linkButton: { flex: 1, borderWidth: 1, borderRadius: Radius.control, paddingVertical: 10, alignItems: 'center' },
-  upload: { flex: 0, paddingVertical: 14 },
+  upload: { flexGrow: 0, flexBasis: 'auto', paddingVertical: 14 }, // its own height (flex: 0 on the web squeezed it to its padding)
   linkText: { fontWeight: '600', fontSize: 15 },
   panel: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 12, gap: 8, backgroundColor: c.surface },
   panelTitle: { fontSize: 16, fontWeight: '700' },
