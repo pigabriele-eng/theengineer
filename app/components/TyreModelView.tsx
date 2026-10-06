@@ -1,22 +1,25 @@
 // The tyre model built from every log of a car: what the data say first (where the peak sits, which pressure and
 // temperature give the most grip, how sure), then the curve, grip against each condition and the sessions it rests
 // on. Logs are summarised in the background; this view follows that and refits as summaries come in.
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, TextInput } from 'react-native';
 
 import { GripByCondition } from '@/components/GripByCondition';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { AxleCard, CurveChart, useAxleColors } from '@/components/TyreCurve';
+import { eventLabel } from '@/lib/toolLists';
 import {
   AXLES,
   ConditionKey,
   GripWindow,
   ModelCar,
   ModelSession,
+  NOT_SET,
   SummaryStatus,
   TyreModel,
   tyreModelApi,
+  TyreNotSet,
 } from '@/lib/tyreModel';
 
 const CONDITIONS: { key: ConditionKey; title: string }[] = [
@@ -35,7 +38,7 @@ export function TyreModelView() {
   const [cars, setCars] = useState<ModelCar[] | null>(null);
   const [status, setStatus] = useState<SummaryStatus | null>(null);
   const [car, setCar] = useState<string | null>(null);
-  const [tyre, setTyre] = useState<string | null>(null);
+  const [tyreKind, setTyreKind] = useState<number | typeof NOT_SET | null>(null); // null: the car's most used
   const [track, setTrack] = useState<string | null>(null);
   const [ambientText, setAmbientText] = useState({ min: '', max: '' });
   const [ambient, setAmbient] = useState<{ min: number | null; max: number | null }>({ min: null, max: null });
@@ -53,9 +56,17 @@ export function TyreModelView() {
     setCar((c) => (c && r.cars.some((x) => x.key === c) ? c : (r.cars[0]?.key ?? null)));
   }, []);
 
+  // the tyre on view may have no session left (its events set to another tyre): back to the car's most used
+  const carTyres = cars?.find((x) => x.key === car)?.tyres;
+  useEffect(() => {
+    if (carTyres && tyreKind != null && !carTyres.some((t) => (t.id ?? NOT_SET) === tyreKind)) setTyreKind(null);
+  }, [carTyres, tyreKind]);
+
+  // again on coming back: a tyre set on an event moves its sessions to that tyre's model
   useFocusEffect(
     useCallback(() => {
       loadCars().catch((e) => setError(e.message));
+      setReload((r) => r + 1);
     }, [loadCars]),
   );
 
@@ -74,7 +85,7 @@ export function TyreModelView() {
     setBusy(true);
     setError(null);
     tyreModelApi
-      .model({ car, tyre, track, ambient_min: ambient.min, ambient_max: ambient.max })
+      .model({ car, tyreKind, track, ambient_min: ambient.min, ambient_max: ambient.max })
       .then(
         (m) => live && setModel(m),
         (e) => {
@@ -87,7 +98,7 @@ export function TyreModelView() {
     return () => {
       live = false;
     };
-  }, [car, tyre, track, ambient, summarised, reload]);
+  }, [car, tyreKind, track, ambient, summarised, reload]);
 
   const applyAmbient = () => {
     const parse = (s: string) => (s.trim() ? Number(s.replace(',', '.')) : null);
@@ -130,7 +141,7 @@ export function TyreModelView() {
                   style={chip(c.key === car)}
                   onPress={() => {
                     setCar(c.key);
-                    setTyre(null);
+                    setTyreKind(null);
                     setTrack(null);
                   }}>
                   <Text style={c.key === car ? { color: tint } : undefined}>
@@ -142,18 +153,20 @@ export function TyreModelView() {
           ) : (
             <Text style={styles.h2}>{current.label}</Text>
           )}
-          <Filter label="Tyre">
+          <Filter label="Tyre (one model per tyre)">
             {current.tyres.map((t) => {
-              const on = (model?.tyre ?? tyre) === t.name;
+              const key = t.id ?? NOT_SET;
+              const on = (model ? (model.tyre_kind?.id ?? NOT_SET) : tyreKind) === key;
               return (
-                <Pressable key={t.name} style={chip(on)} onPress={() => setTyre(t.name)}>
-                  <Text style={on ? { color: tint } : undefined}>
+                <Pressable key={key} style={chip(on)} onPress={() => setTyreKind(key)}>
+                  <Text style={on ? { color: tint } : t.id == null ? styles.dimText : undefined}>
                     {t.name} · {t.sessions}
                   </Text>
                 </Pressable>
               );
             })}
           </Filter>
+          {current.not_set.sessions > 0 && <SetOnEvent notSet={current.not_set} />}
           {current.tracks.length > 0 && (
             <Filter label="Track">
               <Pressable style={chip(track == null)} onPress={() => setTrack(null)}>
@@ -206,17 +219,39 @@ export function TyreModelView() {
 
       {busy && !model && <ActivityIndicator />}
       {error && <Text style={styles.error}>{error}</Text>}
-      {model && (
-        <ModelResult
-          model={model}
-          busy={busy}
-          onTyreChanged={() => {
-            setTyre(null); // the tyre on view may be gone: back to the car's most used
-            setReload((r) => r + 1);
-            loadCars().catch(() => {});
-          }}
-        />
-      )}
+      {model && <ModelResult model={model} busy={busy} />}
+    </View>
+  );
+}
+
+// Sessions whose event names no tyre count for no tyre's model: where to set it.
+function SetOnEvent({ notSet }: { notSet: TyreNotSet }) {
+  const router = useRouter();
+  const tint = useThemeColor({}, 'tint');
+  const n = notSet.sessions;
+  return (
+    <View style={styles.prompt}>
+      <Text style={styles.note}>
+        {n} session{n === 1 ? '' : 's'} of this car {n === 1 ? 'has' : 'have'} no tyre set, so{' '}
+        {n === 1 ? 'it is' : 'they are'} pooled apart as "Tyre not set". Set the tyre on the event and{' '}
+        {n === 1 ? 'it joins' : 'they join'} that tyre's model:
+      </Text>
+      <View style={styles.chips}>
+        {notSet.events.map((e) =>
+          e.event_id != null ? (
+            <Pressable
+              key={e.event_id}
+              onPress={() => router.push({ pathname: '/event/[id]', params: { id: e.event_id! } })}
+              accessibilityRole="link">
+              <Text style={[styles.linkText, { color: tint }]}>{eventLabel(e)}</Text>
+            </Pressable>
+          ) : (
+            <Text key="none" style={styles.note}>
+              {eventLabel(e)} (put {e.sessions === 1 ? 'it' : 'them'} in an event first)
+            </Text>
+          ),
+        )}
+      </View>
     </View>
   );
 }
@@ -277,7 +312,7 @@ function windowText(axle: string, w: GripWindow | null) {
   return w?.text ?? `${axle === 'front' ? 'Front' : 'Rear'}: not enough laps from three sessions or more to compare yet.`;
 }
 
-function ModelResult({ model, busy, onTyreChanged }: { model: TyreModel; busy: boolean; onTyreChanged: () => void }) {
+function ModelResult({ model, busy }: { model: TyreModel; busy: boolean }) {
   const colors = useAxleColors();
   const [cond, setCond] = useState<ConditionKey>('pressure');
   const tint = useThemeColor({}, 'tint');
@@ -287,7 +322,7 @@ function ModelResult({ model, busy, onTyreChanged }: { model: TyreModel; busy: b
       <View style={styles.advice}>
         <Text style={styles.h2}>What the data say</Text>
         <Text style={styles.sub}>
-          {model.tyre}. {basisLine(model)}
+          {model.tyre_kind ? model.tyre : 'Tyre not set: sessions whose event names no tyre'}. {basisLine(model)}
         </Text>
         <Text style={styles.subhead}>Where the peak sits</Text>
         {AXLES.map((a) => (
@@ -326,7 +361,7 @@ function ModelResult({ model, busy, onTyreChanged }: { model: TyreModel; busy: b
         <Text style={styles.note}>{c.note}</Text>
       </View>
 
-      <Sessions sessions={model.sessions} onTyreChanged={onTyreChanged} />
+      <Sessions sessions={model.sessions} />
 
       <View style={styles.section}>
         <Text style={styles.subhead}>How it is estimated</Text>
@@ -340,7 +375,7 @@ function ModelResult({ model, busy, onTyreChanged }: { model: TyreModel; busy: b
   );
 }
 
-function Sessions({ sessions, onTyreChanged }: { sessions: ModelSession[]; onTyreChanged: () => void }) {
+function Sessions({ sessions }: { sessions: ModelSession[] }) {
   const [open, setOpen] = useState(false);
   const shown = open ? sessions : sessions.slice(0, 4);
   return (
@@ -350,7 +385,7 @@ function Sessions({ sessions, onTyreChanged }: { sessions: ModelSession[]; onTyr
         Slip shift: how far each session's slip angles were moved to line up with the others at low grip.
       </Text>
       {shown.map((s) => (
-        <SessionRow key={`${s.session_id}-${s.name}`} s={s} onTyreChanged={onTyreChanged} />
+        <SessionRow key={`${s.session_id}-${s.name}`} s={s} />
       ))}
       {sessions.length > 4 && (
         <Pressable onPress={() => setOpen((o) => !o)} accessibilityRole="button">
@@ -361,25 +396,8 @@ function Sessions({ sessions, onTyreChanged }: { sessions: ModelSession[]; onTyr
   );
 }
 
-function SessionRow({ s, onTyreChanged }: { s: ModelSession; onTyreChanged: () => void }) {
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(s.tyre ?? '');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const text = useThemeColor({}, 'text');
-  const save = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      await tyreModelApi.setTyre(s.session_id, value);
-      setEditing(false);
-      onTyreChanged();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  };
+function SessionRow({ s }: { s: ModelSession }) {
+  const router = useRouter();
   const shift = (x: number) => `${x > 0 ? '+' : x < 0 ? '−' : ''}${Math.abs(x).toFixed(2)}°`;
   return (
     <View style={styles.sessionRow}>
@@ -395,33 +413,18 @@ function SessionRow({ s, onTyreChanged }: { s: ModelSession; onTyreChanged: () =
         {s.laps} laps, {s.samples.toLocaleString()} samples · slip shift front {shift(s.slip_shift_deg.front)}, rear{' '}
         {shift(s.slip_shift_deg.rear)}
       </Text>
-      {editing ? (
-        <View style={styles.editRow}>
-          <TextInput
-            style={[styles.input, styles.tyreInput, { color: text }]}
-            value={value}
-            onChangeText={setValue}
-            placeholder="The car's usual tyre"
-            placeholderTextColor="#8888"
-            maxLength={80}
-            autoFocus
-            onSubmitEditing={save}
-          />
-          <Pressable style={styles.chip} onPress={save} disabled={saving}>
-            <Text>{saving ? 'Saving…' : 'Save'}</Text>
-          </Pressable>
-          <Pressable style={styles.chip} onPress={() => setEditing(false)}>
-            <Text>Cancel</Text>
-          </Pressable>
-        </View>
-      ) : (
-        <Pressable onPress={() => setEditing(true)} accessibilityRole="button" accessibilityLabel={`Change the tyre of ${s.name}`}>
+      {s.event_id != null ? (
+        <Pressable
+          onPress={() => router.push({ pathname: '/event/[id]', params: { id: s.event_id! } })}
+          accessibilityRole="link"
+          accessibilityLabel={`Set the tyre of ${s.name} on its event`}>
           <Text style={styles.note}>
-            Tyre: {s.tyre ?? '–'} <Text style={styles.link}>change</Text>
+            Tyre: {s.tyre ?? '–'} <Text style={styles.link}>set on the event</Text>
           </Text>
         </Pressable>
+      ) : (
+        <Text style={styles.note}>Tyre: {s.tyre ?? '–'}</Text>
       )}
-      {error && <Text style={styles.error}>{error}</Text>}
     </View>
   );
 }
@@ -452,9 +455,10 @@ const styles = StyleSheet.create({
     width: 72,
     fontVariant: ['tabular-nums'],
   },
-  tyreInput: { width: 200, flexShrink: 1 },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   sessionRow: { gap: 2, paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#8884' },
   sessionHead: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' },
-  editRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  prompt: { gap: 4 },
+  linkText: { fontSize: 13, textDecorationLine: 'underline' },
+  dimText: { opacity: 0.7 },
 });

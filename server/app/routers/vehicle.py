@@ -3,9 +3,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app import catalog
 from app.db import get_db
 from app.heavy import one_at_a_time
 from app.routers.sessions import _get, load_main_file
+from app.vehicle import specs as vehicle_specs
 from app.vehicle.model import Change, Vehicle, compute, what_if
 from app.vehicle.presets import PRESETS, preset_detail, preset_vehicle
 from app.vehicle.tyre_fit import NotEnoughData, fit_tyres
@@ -24,6 +26,38 @@ def get_preset(key: str):
     if key not in PRESETS:
         raise HTTPException(404, "No such car preset")
     return preset_detail(key)
+
+
+@router.get("/vehicles")
+def list_vehicles(session_id: int | None = None, db: Session = Depends(get_db)):
+    """The garage's vehicles for the Vehicle tool, and the vehicle of the session named (its event's, else its
+    car's)."""
+    return {"vehicles": vehicle_specs.listing(db),
+            "session_vehicle_id": vehicle_specs.session_vehicle(db, _get(db, session_id).id)
+            if session_id is not None else None}
+
+
+def _vehicle(db: Session, vehicle_id: int) -> catalog.VehicleModel:
+    v = db.get(catalog.VehicleModel, vehicle_id)
+    if v is None:
+        raise HTTPException(404, "Vehicle not found")
+    return v
+
+
+@router.get("/vehicles/{vehicle_id}")
+def get_vehicle(vehicle_id: int, db: Session = Depends(get_db)):
+    """The vehicle's inputs for /vehicle/model, like a preset: its stored specs, the rest from the preset its name
+    points to, and which it still needs."""
+    return vehicle_specs.detail(_vehicle(db, vehicle_id))
+
+
+@router.put("/vehicles/{vehicle_id}/specs")
+def save_vehicle_specs(vehicle_id: int, body: Vehicle, db: Session = Depends(get_db)):
+    """Store these inputs as the vehicle's specs (anything else in its specs is kept)."""
+    v = _vehicle(db, vehicle_id)
+    v.specs = {**(v.specs or {}), **body.model_dump()}
+    db.commit()
+    return vehicle_specs.detail(v)
 
 
 @router.post("/model")

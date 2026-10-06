@@ -156,6 +156,61 @@ def test_pressure_calculator_learns_from_uploaded_logs(client):
     assert not rr["flags"]  # no rear minimum entered
 
 
+def test_pressure_calculator_per_tyre_kind(client):
+    """A tyre learns its pressure rise only from the sessions on it (the tyre their event names) and is checked
+    against its own P-Book figures; sessions with no tyre set count for none."""
+    dhg = client.post("/catalog/tyres", json={"brand": "Pirelli", "compound": "P Zero DHG", "specs": {
+        "cold_min_bar": {"front": 1.45}, "hot_target_bar": {"front": 1.9, "rear": 2.0},
+        "source": "Test P-Book p.3"}}).json()
+    s9m = client.post("/catalog/tyres", json={"brand": "Michelin", "compound": "S9M"}).json()
+    events = {name: client.post("/events", json={"name": name}).json()["id"] for name in ("On DHG", "On S9M", "Unset")}
+    assert client.put(f"/events/{events['On DHG']}/info", json={"tyre_kind_id": dhg["id"]}).status_code == 200
+    assert client.put(f"/events/{events['On S9M']}/info", json={"tyre_kind_id": s9m["id"]}).status_code == 200
+    for i, (event, rise) in enumerate([("On DHG", 0.50), ("On DHG", 0.50), ("On DHG", 0.50), ("On S9M", 0.20),
+                                       ("Unset", 0.90)]):
+        s = client.post("/sessions", json={"name": f"Run {i + 1}", "event_id": events[event]}).json()
+        r = client.post(f"/sessions/{s['id']}/files", files={"file": (f"run{i}.ld", one_run(1.30, 20.0, rise))})
+        assert r.status_code == 201
+
+    kinds = client.get("/tyres/kinds").json()
+    assert [(t["label"], t["sessions"]) for t in kinds["tyres"]] == [("Pirelli P Zero DHG", 3), ("Michelin S9M", 1)]
+    book = kinds["tyres"][0]["pbook"]
+    assert book["origin"] == "tyre" and book["cold_min_bar"] == {"front": 1.45, "rear": None}
+    assert book["hot_target_bar"] == {"front": 1.9, "rear": 2.0} and book["source"] == "Test P-Book p.3"
+    assert kinds["tyres"][1]["pbook"]["origin"] is None
+    unset = {"event_id": events["Unset"], "name": "Unset", "sessions": 1}
+    assert kinds["not_set"] == {"sessions": 1, "events": [unset]}
+
+    assert client.get("/tyres/runs", params={"tyre_kind_id": dhg["id"]}).json()["summary"]["FL"]["runs"] == 3
+    assert client.get("/tyres/runs", params={"tyre_kind_id": s9m["id"]}).json()["summary"]["FL"]["runs"] == 1
+    assert client.get("/tyres/runs", params={"tyre_kind_id": 999}).status_code == 404
+
+    body = {"targets": {"FL": 1.9, "RR": 2.0}, "set_c": 20}
+    plan = client.post("/tyres/pressures", json={**body, "tyre_kind_id": dhg["id"]}).json()
+    fl, rr = plan["corners"]
+    assert plan["tyre"] == {"id": dhg["id"], "label": "Pirelli P Zero DHG"} and fl["data"]["runs"] == 3
+    assert fl["data"]["cold_bar"] == pytest.approx(1.9 - 0.50, abs=0.02)
+    assert any("P-Book cold minimum of 1.45 bar (Test P-Book p.3)" in f for f in fl["flags"]) and not rr["flags"]
+    plan = client.post("/tyres/pressures", json={**body, "tyre_kind_id": s9m["id"]}).json()
+    assert plan["corners"][0]["data"]["runs"] == 1
+    assert plan["corners"][0]["data"]["cold_bar"] == pytest.approx(1.9 - 0.20, abs=0.02)
+    assert "No P-Book minimums entered for Michelin S9M" in plan["minimums"]["message"]
+
+    # no session on a tyre yet: the data answer says why
+    new = client.post("/catalog/tyres", json={"brand": "Hankook", "compound": "Z207"}).json()
+    plan = client.post("/tyres/pressures", json={**body, "tyre_kind_id": new["id"]}).json()
+    data = plan["corners"][0]["data"]
+    assert data["runs"] == 0 and "Set the tyre on your events" in data["text"]
+
+    # minimums entered for the tyre by name in the older per-series table stand in until the tyre has its own
+    client.put("/tyres/minimums", json={"series": "Test Cup", "rows": [
+        {"tyre": "Michelin S9M", "axle": "rear", "hot_min_bar": 1.8, "source": "Cup P-Book"}]})
+    book = next(t for t in client.get("/tyres/kinds").json()["tyres"] if t["id"] == s9m["id"])["pbook"]
+    assert book["origin"] == "series" and book["hot_min_bar"]["rear"] == 1.8 and book["series"] == ["Test Cup"]
+    plan = client.post("/tyres/pressures", json={"targets": {"RL": 1.7}, "tyre_kind_id": s9m["id"]}).json()
+    assert any("below the P-Book hot minimum of 1.80 bar (Cup P-Book)" in f for f in plan["corners"][0]["flags"])
+
+
 def test_pyrometer_rules():
     readings = {
         "FL": {"inside": 98, "middle": 92, "outside": 82, "camber_deg": -3.5},  # spread 16: too much camber

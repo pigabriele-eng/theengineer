@@ -259,3 +259,49 @@ def test_vehicle_api(client):
     r = client.post("/vehicle/tyre-fit", json={"session_ids": [s["id"]], "steering_ratio": 15})
     assert r.status_code == 422
     assert "Not enough" in r.json()["detail"] or "steady cornering" in r.json()["detail"]
+
+
+def test_vehicle_tool_per_garage_vehicle(client):
+    """The vehicle model takes a garage vehicle's stored specs, the rest from the preset its name points to; a
+    session's setup goes on top of its vehicle's specs."""
+    bmw = client.post("/catalog/vehicles", json={"name": "BMW M4 GT4 Evo (G82)", "specs": {
+        "mass_kg": 1600, "track_front_mm": 1660, "weight_note": "on scales, May"}}).json()
+    other = client.post("/catalog/vehicles", json={"name": "Other GT4", "specs": {"mass_kg": 1500}}).json()
+    listed = client.get("/vehicle/vehicles").json()
+    assert [(v["name"], v["template"]) for v in listed["vehicles"]] == [
+        ("BMW M4 GT4 Evo (G82)", "bmw-m4-gt4-evo"), ("Other GT4", "generic")]
+    assert listed["session_vehicle_id"] is None
+
+    d = client.get(f"/vehicle/vehicles/{bmw['id']}").json()
+    assert d["vehicle"]["mass_kg"] == 1600 and d["values"]["mass_kg"]["confidence"] == "stored"
+    assert d["vehicle"]["wheelbase_mm"] == 2857 and d["values"]["wheelbase_mm"]["confidence"] == "published"
+    assert d["base"]["key"] == "bmw-m4-gt4-evo" and d["missing"] == [] and d["stored"] == ["mass_kg", "track_front_mm"]
+    assert client.post("/vehicle/model", json=d["vehicle"]).status_code == 200
+    o = client.get(f"/vehicle/vehicles/{other['id']}").json()
+    assert o["base"] is None and o["vehicle"]["mass_kg"] == 1500 and "wheelbase_mm" in o["missing"]
+    assert o["vehicle"]["roll_centre_front_mm"] == 0.0  # the model's default, marked as such
+    assert o["values"]["roll_centre_front_mm"]["confidence"] == "unknown"
+    assert client.get("/vehicle/vehicles/999").status_code == 404
+
+    # the tool's inputs saved as the vehicle's specs; anything else in them stays
+    saved = client.put(f"/vehicle/vehicles/{bmw['id']}/specs", json={**d["vehicle"], "cog_height_mm": 450}).json()
+    assert saved["vehicle"]["cog_height_mm"] == 450 and saved["values"]["cog_height_mm"]["confidence"] == "stored"
+    raw = next(v for v in client.get("/catalog/vehicles").json() if v["id"] == bmw["id"])
+    assert raw["specs"]["weight_note"] == "on scales, May" and raw["specs"]["cog_height_mm"] == 450
+
+    # a session's vehicle is its car's; its setup sheet goes on top of that vehicle's specs
+    car = client.post("/cars", json={"name": "BMW M4 GT4 #21"}).json()
+    client.put(f"/catalog/cars/{car['id']}/vehicle", json={"vehicle_model_id": bmw["id"]})
+    s = client.post("/sessions", json={"name": "Run 1", "car_id": car["id"]}).json()
+    assert client.get("/vehicle/vehicles", params={"session_id": s["id"]}).json()["session_vehicle_id"] == bmw["id"]
+    sheet = client.put(f"/sessions/{s['id']}/setup", json={"values": {"arb_front": 2, "spring_rate_front": 150}})
+    assert sheet.json()["template"] == "bmw-m4-gt4-evo"
+    v = client.get(f"/sessions/{s['id']}/setup/vehicle").json()
+    assert v["vehicle_model"] == {"id": bmw["id"], "name": "BMW M4 GT4 Evo (G82)"}
+    assert (v["vehicle"]["track_front_mm"], v["vehicle"]["cog_height_mm"]) == (1660, 450)
+    assert (v["vehicle"]["arb_front_setting"], v["vehicle"]["spring_front_n_per_mm"]) == (2, 150)
+    # another vehicle picked: its specs, or why they can't be used yet
+    r = client.get(f"/sessions/{s['id']}/setup/vehicle", params={"vehicle_model_id": other["id"]})
+    assert r.status_code == 404 and "Other GT4 has no" in r.json()["detail"]
+    r = client.get(f"/sessions/{s['id']}/setup/suggestions", params={"vehicle_model_id": other["id"]})
+    assert r.status_code == 200
