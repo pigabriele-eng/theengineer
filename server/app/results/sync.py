@@ -6,8 +6,9 @@ corrected classification a new file name, "..._ResultList_2.0.PDF"), unless the 
 takes the heavy lock so it never runs beside a log being analysed.
 
 On the live server, start() at startup loads every season from FIRST_YEAR that isn't loaded yet and checks the
-current season once a day; while one of our events linked to a round is on (from the day before it to two days
-after), that round is fetched again every REFRESH_MINUTES.
+current season, this year's and next year's calendars and the entry lists once a day; while one of our events
+linked to a round is on (from the day before it to two days after), that round is fetched again every
+REFRESH_MINUTES.
 """
 from __future__ import annotations
 
@@ -25,7 +26,7 @@ from app import db as app_db  # SessionLocal is looked up when used: the tests s
 from app import heavy, models
 from app.results import gt4europe
 from app.results import models as rm
-from app.results.resultlist import parse_pdf
+from app.results.resultlist import brand_of, class_name, parse_pdf
 from app.results.venues import venue_key
 
 log = logging.getLogger(__name__)
@@ -137,6 +138,11 @@ def sync(series: str = DEFAULT_SERIES, years: list[int] | None = None, round_id:
 def start(series: str = DEFAULT_SERIES, years: list[int] | None = None, round_id: str | None = None,
           force: bool = False) -> bool:
     """Run a sync in the background; False when one is already running."""
+    return run_job(lambda: sync(series, years, round_id, force))
+
+
+def run_job(job) -> bool:
+    """Run one sync job (results or calendar) in the background; False when one is already running."""
     with state.lock:
         if state.running:
             return False
@@ -144,7 +150,7 @@ def start(series: str = DEFAULT_SERIES, years: list[int] | None = None, round_id
 
     def run() -> None:
         try:
-            sync(series, years, round_id, force)
+            job()
         except Exception as e:
             log.exception("results sync failed")
             state.errors.append(str(e))
@@ -154,6 +160,56 @@ def start(series: str = DEFAULT_SERIES, years: list[int] | None = None, round_id
     state.thread = threading.Thread(target=run, name="results-sync", daemon=True)
     state.thread.start()
     return True
+
+
+def sync_calendar(series: str, year: int, client: httpx.Client | None = None) -> None:
+    """A season's calendar (every round, run or still to come, with its dates) and the entry lists published so
+    far. A round's entries are replaced each time its list is read, so late changes come through."""
+    adapter = ADAPTERS[series]
+    own = client is None
+    client = client or httpx.Client()
+    try:
+        ids = adapter.seasons(client)
+        if year not in ids:
+            raise ValueError(f"{adapter.NAME} has no {year} season on its site yet")
+        with app_db.SessionLocal() as db:
+            state.what = f"{year} calendar"
+            rounds = adapter.calendar(client, ids[year])
+            urls = adapter.entry_list_urls(client, ids[year])
+            state.total = len(rounds) + len(urls)
+            have = {r.round_id: r for r in db.scalars(select(rm.ResultCalendarRound).where(
+                rm.ResultCalendarRound.series == series, rm.ResultCalendarRound.year == year)).all()}
+            now = datetime.now(UTC)
+            for r in rounds:
+                row = have.get(r.round_id) or rm.ResultCalendarRound(series=series, year=year, round_id=r.round_id)
+                row.name, row.venue, row.order, row.start, row.end = (r.name, venue_key(r.name), r.order,
+                                                                      r.start, r.end)
+                row.fetched_at = now
+                db.add(row)
+                have[r.round_id] = row
+                state.done += 1
+            db.flush()
+            for url in urls:
+                state.what = f"{year} entry list {url.rsplit('/', 1)[-1]}"
+                try:
+                    meeting, entries = adapter.entry_list(client, url)
+                except Exception as e:
+                    log.warning("results: entry list %s: %s", url, e)
+                    state.errors.append(f"{url}: {e}")
+                    continue
+                row = have.get(meeting or "")
+                if row is not None and entries:
+                    row.entry_list_url = url
+                    row.entries = [rm.ResultEntry(car_number=e.car_number, drivers=e.drivers, team=e.team,
+                                                    car_model=e.car_model, brand=brand_of(e.car_model),
+                                                    car_class=class_name(e.car_class) if e.car_class else None)
+                                   for e in entries]
+                state.done += 1
+                time.sleep(PAUSE_S)
+            db.commit()
+    finally:
+        if own:
+            client.close()
 
 
 def wait_idle(timeout: float = 120) -> None:
@@ -197,6 +253,9 @@ def _loop() -> None:
                 last_season_check = time.monotonic()
                 start()  # seasons not loaded yet, and new sheets of the current one
                 wait_idle(3600)
+                for year in (date.today().year, date.today().year + 1):  # calendars and new entry lists
+                    run_job(lambda y=year: sync_calendar(DEFAULT_SERIES, y))
+                    wait_idle(600)
         except Exception:
             log.exception("results refresh failed")
         time.sleep(REFRESH_MINUTES * 60)

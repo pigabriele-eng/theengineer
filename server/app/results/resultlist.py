@@ -132,7 +132,7 @@ def _header(lines: list[str], out: ResultList) -> None:
 _CLASS = re.compile(r"^\s*(Silver(?:\s*Cup)?|Pro-?\s?Am(?:\s*Cup)?|PAM|Am(?:\s*Cup)?|Pro)(?=[A-Z\s]|$)\s*(.*)$", re.I)
 
 
-def _class_name(c: str) -> str:
+def class_name(c: str) -> str:
     low = re.sub(r"[\s-]", "", c.lower())
     if low.startswith("silver"):
         return "Silver"
@@ -152,7 +152,7 @@ def _class_and_model(left: str) -> tuple[str | None, str | None]:
     starts = lambda t: any(t.lower().startswith(k) for k, _ in _BRANDS)  # noqa: E731
     if model and not starts(model) and starts(model[1:]):  # a cut-off sub-cup name ("Pro-AM Cup S...")
         model = model[1:]
-    return _class_name(m.group(1)), model or None
+    return class_name(m.group(1)), model or None
 
 
 def _drivers(text: str) -> list[str]:
