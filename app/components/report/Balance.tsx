@@ -243,7 +243,7 @@ function CarLimits({ r }: { r: BalanceReport }) {
           ))}
           {small > 0 && (
             <Text style={styles.small}>
-              {small} other section{small === 1 ? '' : 's'} under 0.03 s each, or already beating the 95 % target.
+              {small} other section{small === 1 ? '' : 's'} under 0.03 s each, or already beating the realistic target.
             </Text>
           )}
         </>
@@ -275,7 +275,7 @@ function FocusView({ focus }: { focus: Focus }) {
   const laps = [
     { label: `Fastest lap (${lapName(focus.reference.lap)})`, color: pal.reference },
     { label: `Quickest pass (${lapName(focus.best.lap)})`, color: pal.compare },
-    { label: 'Theoretical at 95 % grip', color: pal.third },
+    { label: 'Realistic target', color: pal.third },
   ];
   const gMax = Math.max(...t.reference_g, ...t.best_g, ...t.held_g);
   return (

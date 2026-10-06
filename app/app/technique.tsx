@@ -150,9 +150,10 @@ export default function TechniqueScreen() {
             </Text>
           )}
           <Text style={styles.note}>
-            Every mistake on the lap against perfect driving: the lap&apos;s own line driven at the car&apos;s limits,
-            as the {answer?.scope === 'session' ? 'session' : 'whole event'} shows them. Each costs what a driver can
-            find: the time against the car at {Math.round((head?.grip ?? 0.95) * 100)}% of its grip.
+            Every mistake on the lap against perfect driving: the lap&apos;s own line driven at the best the car has
+            shown at every place of the track, across the {answer?.scope === 'session' ? 'session' : 'whole event'}.
+            Each costs what a driver can find: the time against the realistic target, the grip a quick lap usually
+            shows at each place.
           </Text>
         </View>
 
@@ -276,16 +277,18 @@ export default function TechniqueScreen() {
 
 
 const METHOD = [
-  'Perfect driving is the theoretical lap on this lap\'s own line: the car at the limits it shows across the ' +
-    'event (grip in every direction at each speed, its braking and its acceleration), braking at the last moment ' +
-    'and back to full throttle as soon as the grip allows.',
+  'Perfect driving is the theoretical lap on this lap\'s own line. At every place of the track (every 5 m) it ' +
+    'takes the most cornering the car has shown there across the event, and the hardest braking and drive it ' +
+    'showed there while cornering that hard (the 90th percentile of the quick laps, never less than the fastest ' +
+    'lap), braking at the last moment and back to full throttle as soon as the grip allows. A banked corner keeps ' +
+    'its own grip and lends it to no other.',
   'The lap is cut where the driver\'s actions change (lift, brake point, release, slowest point, throttle ' +
     'pick-up, full throttle, any lift on a straight). Each piece costs the time lost from its start to its end, ' +
     'with perfect driving taking over from wherever the driver left the car: so a slow exit is charged with the ' +
     'time it costs all the way down the next straight. The pieces add up to the whole gap.',
-  'No car holds its peak grip all the way through a long corner, as the perfect lap does, so each cost is the ' +
-    'time against the realistic target (the car at 95% of its grip, as in the report): the time a driver can find. ' +
-    'The rest of the gap, the perfect lap\'s optimism, is shown on its own.',
+  'No lap puts the best of every place together, as the perfect lap does, so each cost is the time against the ' +
+    'realistic target (the same lap at the grip a quick lap usually shows at each place, as in the report): the ' +
+    'time a driver can find. The rest of the gap, the perfect lap\'s optimism, is shown on its own.',
   'Where the pedals were at the limit (flat out, braking with the ABS working, driving out with the traction ' +
     'control working) and the car still fell short, that is the car on the day, not a mistake. ABS and traction ' +
     'control on their own aren\'t mistakes: the event\'s quicker laps use more of both.',
@@ -339,9 +342,9 @@ function LapSummary({ check }: { check: LapCheck }) {
       <View style={styles.tiles}>
         <Tile label={`Lap ${check.number}`} value={formatLap(check.time)} detail={check.run} />
         <Tile label="Realistic target" value={formatLap(check.realistic)}
-          detail={`${s2(check.time - check.realistic)} to find · the car at 95% of its grip`} />
+          detail={`${s2(check.time - check.realistic)} to find · a quick lap's usual grip at each place`} />
         <Tile label="Perfect driving" value={formatLap(check.perfect)}
-          detail={`${s2(check.gap)} away · the car at its limits everywhere`} />
+          detail={`${s2(check.gap)} away · the car's best at every place`} />
       </View>
       <Text style={styles.summary}>
         {check.mistakes.length
@@ -416,8 +419,9 @@ function BudgetView({ check }: { check: LapCheck }) {
         not the pedals.
       </Text>
       <Text style={styles.budgetLine}>
-        <Text style={styles.bold}>Optimism {s2(b.optimism)}</Text>: perfect driving holds the car&apos;s peak grip
-        through every corner, which no car does; the realistic target takes 95% of it.
+        <Text style={styles.bold}>Optimism {s2(b.optimism)}</Text>: perfect driving takes the best the car has
+        shown at every place, which no single lap puts together; the realistic target takes what a quick lap usually
+        shows there.
       </Text>
       {b.pit_lane > 0 && (
         <Text style={styles.budgetLine}>

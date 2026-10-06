@@ -4,6 +4,10 @@ The grip envelope (g-g diagram) is the 98th percentile of combined g in each dir
 the car has shown it can do, often, not a single spike. Straight-line braking and power-limited acceleration
 are kept against speed in finer steps, because downforce and drag change them along a straight. Full-throttle
 acceleration is the upper quartile, gear changes included: the driver cannot add to it.
+
+This envelope measures how much of its grip a lap used. The theoretical lap and the realistic target drive at the
+limits the car has shown at each place instead (local_limits.py): one envelope for the whole track would lend one
+corner's grip (a banked one, say) to every other.
 """
 from __future__ import annotations
 

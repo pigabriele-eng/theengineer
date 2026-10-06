@@ -50,7 +50,7 @@ export type LapSplit = {
 
 export type CarLimitRow = {
   code: string;
-  car: number; // s the quickest pass leaves against the car holding 95 % of its grip
+  car: number; // s the quickest pass leaves against the realistic target (0 where it beats it)
   driving: number;
   optimism: number;
   where: string | null; // braking, mid-corner or on the throttle
