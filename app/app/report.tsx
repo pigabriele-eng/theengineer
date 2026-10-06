@@ -10,6 +10,7 @@ import { SessionSwitcher, useEventFolder, useSessionEvent } from '@/components/S
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
 import { formatLap } from '@/lib/api';
+import { TrackShapeData } from '@/lib/trackshape';
 import {
   fetchReport,
   Habit,
@@ -52,6 +53,7 @@ export default function ReportScreen() {
   const [error, setError] = useState<string | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
   const [mapY, setMapY] = useState(0);
+  const [shape, setShape] = useState<TrackShapeData | null>(null); // the track's shape, once the map has it
   const scroll = useRef<ScrollView>(null);
   const background = useThemeColor({}, 'background');
   const { width } = useWindowDimensions();
@@ -121,8 +123,8 @@ export default function ReportScreen() {
   // the sessions have clean laps (the report is ready or being worked out), so the other sections have data too
   const hasLaps = report != null || working || answer?.sessions.some((s) => s.included) === true;
   const highlight = focus ?? report?.gains[0]?.code ?? undefined;
-  const map = 'event' in scope ? <TrackMap event={scope.event} highlight={highlight} />
-    : <TrackMap session={scope.session} highlight={highlight} />;
+  const map = 'event' in scope ? <TrackMap event={scope.event} highlight={highlight} withShape onShape={setShape} />
+    : <TrackMap session={scope.session} highlight={highlight} withShape onShape={setShape} />;
 
   return (
     <ScrollView ref={scroll} style={{ backgroundColor: background }} contentContainerStyle={styles.outer}>
@@ -198,6 +200,8 @@ export default function ReportScreen() {
             </View>
           </View>
         )}
+        {/* banked corners grip more than the tyres would on a flat road: say which, by number */}
+        {hasLaps && shape?.banked_note ? <Text style={styles.bullet}>{shape.banked_note}</Text> : null}
 
         {report && (
           <>

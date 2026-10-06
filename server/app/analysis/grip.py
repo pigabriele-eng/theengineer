@@ -27,7 +27,7 @@ import numpy as np
 
 from app.analysis.align import TrackLine, aligned_trace, track_line
 from app.analysis.channels import BRAKE, EXIT, MID, POWER, TRAIL, math_channels
-from app.analysis.insights import LapRecord, _within, corr, grip_limits
+from app.analysis.insights import LapRecord, _within, corr, grip_limits, road_shape
 from app.analysis.laps import CornerSpec, Lap, SessionData, Section, lap_length, make_sections
 from app.analysis.limits import CarLimits
 from app.importers.motec import LdFile
@@ -226,9 +226,11 @@ class Report:
         self.s = study
         self.laps = study.laps
         self.ref = min(self.laps, key=lambda x: x.time)
-        self.limits: CarLimits = grip_limits(self.laps)
-        self.sections, self.numbering = make_sections(self.ref.trace, study.corners)
         self.n = len(self.ref.trace["speed"])
+        shape = road_shape(self.laps)  # banked corners, crests and compressions
+        self.limits: CarLimits = grip_limits(self.laps, shape)
+        self.shaped = shape.shaped_on(self.n) if shape is not None else np.zeros(self.n, bool)
+        self.sections, self.numbering = make_sections(self.ref.trace, study.corners)
         self.use = {x.key: self.limits.use(x.trace["speed"], x.trace["ax"], x.trace["ay"], at=slice(None))
                     .astype(np.float32) for x in self.laps}
         self.dt = {x.key: _dt(x.trace["t"]) for x in self.laps}
@@ -430,11 +432,16 @@ class Report:
         return lim
 
     def _gg(self, x: LapRecord) -> dict:
+        """The lap's g every GG_STEP_M metres while braking and cornering, per unit of the road's vertical load there
+        as the grip limit is (load: 1 on a level road), so a banked corner's g reads against the same edge; shaped:
+        the points on a banked corner, a crest or a compression."""
         tr = x.trace
         idx = np.arange(0, self.n, GG_STEP_M)
         idx = idx[tr["phase"][idx] < POWER]
+        load = np.broadcast_to(self.limits.load_at(idx), idx.shape)
         return {"m": idx.tolist(), "speed": np.round(tr["speed"][idx], 0).tolist(),
-                "ax": np.round(tr["ax"][idx], 2).tolist(), "ay": np.round(tr["ay"][idx], 2).tolist(),
+                "ax": np.round(tr["ax"][idx] / load, 2).tolist(), "ay": np.round(tr["ay"][idx] / load, 2).tolist(),
+                "load": np.round(load, 2).tolist(), "shaped": self.shaped[idx].tolist(),
                 "use": np.round(100 * self.use[x.key][idx], 0).tolist(), "phase": tr["phase"][idx].tolist(),
                 **self._lap_id(x)}
 

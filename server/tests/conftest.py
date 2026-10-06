@@ -91,6 +91,8 @@ def client(tmp_path, monkeypatch):
     importlib.reload(app.routers.tyres)
     importlib.reload(app.routers.vehicle)
     importlib.reload(app.routers.trackmap)
+    import app.routers.trackshape
+    importlib.reload(app.routers.trackshape)
     importlib.reload(app.routers.balance)
     import app.routers.technique
     importlib.reload(app.routers.technique)
