@@ -1,5 +1,5 @@
 // An event's name and its first and last day: to make an event (Sessions tab, before an upload) or change one.
-import { useState } from 'react';
+import { ReactNode, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, TextInput } from 'react-native';
 
 import { Text, View, useThemeColor } from '@/components/Themed';
@@ -7,12 +7,13 @@ import { parseDay, typedDay } from '@/lib/events';
 
 export type EventFormValue = { name: string; start: string | null; end: string | null };
 
-export function EventForm({ initial, submitLabel, onSubmit, onCancel, datesHint }: {
+export function EventForm({ initial, submitLabel, onSubmit, onCancel, datesHint, extra }: {
   initial?: Partial<EventFormValue>;
   submitLabel: string;
   onSubmit: (v: EventFormValue) => Promise<unknown>;
   onCancel?: () => void;
   datesHint?: string;
+  extra?: ReactNode; // more fields, under the name (a planned event's venue)
 }) {
   const [name, setName] = useState(initial?.name ?? '');
   const [start, setStart] = useState(typedDay(initial?.start ?? null));
@@ -46,6 +47,7 @@ export function EventForm({ initial, submitLabel, onSubmit, onCancel, datesHint 
       <Text style={styles.label}>Name</Text>
       <TextInput value={name} onChangeText={setName} placeholder="e.g. GT4 Germany Hockenheim" placeholderTextColor="#888"
         style={input} maxLength={160} accessibilityLabel="Event name" />
+      {extra}
       <View style={styles.dates}>
         <View style={styles.date}>
           <Text style={styles.label}>First day</Text>

@@ -5,7 +5,8 @@ time (a log can take a while to analyse, and one at a time keeps memory low), an
 Jobs that were queued or running when the server stopped are marked failed when it starts again.
 
 By default the logs of each uploaded zip go into a new event named after the zip, and loose logs into no event; with
-event_id every log goes into that event (picked or made in the app before the upload). The events an import made are
+event_id every log goes into that event (picked or made in the app before the upload). Without one, a log recorded at
+a planned event's venue on one of its days goes into that event (plans.planned_for). The events an import made are
 remembered (ImportEvent), so the app can offer to name them or join them to the race weekend they belong to.
 """
 import ctypes
@@ -24,7 +25,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from sqlalchemy import inspect, select, update
 from sqlalchemy.orm import Session
 
-from app import empty_runs, heavy, models, schemas, storage
+from app import empty_runs, heavy, models, plans, schemas, storage
 from app.analysis.emptyrun import NoLaps
 from app.db import SessionLocal, get_db
 from app.importers import archive
@@ -196,8 +197,12 @@ class _Run:
             db.add(s)
             db.flush()
             rec = add_log(db, s, path, item.name, beacons)
+            # no event picked: a planned event at the log's venue on its day, if there is one
+            target = db.get(models.Event, self.target) if self.target is not None else plans.planned_for(db, rec.meta)
+            if target is not None and target.id != self.target:
+                self.names |= set(db.scalars(select(models.RunSession.name)
+                                             .where(models.RunSession.event_id == target.id)).all()) - {None}
             s.name = self._unique(item.folder or rec.meta.get("event_session") or item.stem)
-            target = db.get(models.Event, self.target) if self.target is not None else None
             if target is not None:  # gone if it was deleted during the import: then as without one
                 s.event = target
                 db.flush()

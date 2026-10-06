@@ -306,3 +306,49 @@ class ImportEvent(Base):
     job_id: Mapped[int] = mapped_column(Integer, index=True)
     event_id: Mapped[int] = mapped_column(Integer)
     archive: Mapped[str | None] = mapped_column(String(255))  # the zip it was made for, as uploaded
+
+
+# ---------- planned events and the racing calendar (routers/planned.py) ----------
+# Their event ids have no foreign key: the events router deletes events without knowing these tables, and a row whose
+# event is gone is simply not read (and cleared at the next calendar sync).
+
+class EventPlan(Base):
+    """A planned event, made by hand with its venue or from the calendar. Uploads whose log date and venue match it
+    go into it."""
+    __tablename__ = "event_plans"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    venue: Mapped[str | None] = mapped_column(String(255))  # as typed, or the calendar entry's location
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class CalendarFeed(Base):
+    """The racing calendar the server reads now and then. Its secret iCal address is never sent back to the app in
+    full and never logged."""
+    __tablename__ = "calendar_feeds"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    url: Mapped[str] = mapped_column(Text)
+    auto_add: Mapped[bool] = mapped_column(default=True)  # new calendar entries become events without asking
+    name: Mapped[str | None] = mapped_column(String(160))  # the calendar's own name
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # the last try
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # the last one that worked
+    error: Mapped[str | None] = mapped_column(Text)  # what went wrong with the last try, in words
+    summary: Mapped[dict | None] = mapped_column(JSON)  # what the last sync changed
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class CalendarEntry(Base):
+    """One calendar entry and the event it is in the app. Title, location and days are the calendar's as last read,
+    so a change made in the calendar is told apart from one made in the app."""
+    __tablename__ = "calendar_entries"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uid: Mapped[str] = mapped_column(String(255), unique=True, index=True)  # the calendar event's UID
+    title: Mapped[str] = mapped_column(String(160))
+    location: Mapped[str | None] = mapped_column(String(255))
+    start: Mapped[date] = mapped_column(Date)
+    end: Mapped[date] = mapped_column(Date)  # the last day
+    included: Mapped[bool] = mapped_column(default=True)  # off: no event for it, until switched on again
+    event_id: Mapped[int | None] = mapped_column(Integer)
+    made_event: Mapped[bool] = mapped_column(default=False)  # the sync made the event (not one already there)
+    named: Mapped[str | None] = mapped_column(String(160))  # the name the sync gave the event; another: renamed by hand
+    seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

@@ -21,7 +21,8 @@ export function NameNewEvent({ ev, onSettled }: { ev: NewEvent; onSettled: (s: S
   const background = useThemeColor({}, 'background');
   const found = [dateRange(ev.start, ev.end), ev.venue ?? ev.track, plural(ev.sessions, 'session'),
     ev.best_lap_s != null ? `best ${formatLap(ev.best_lap_s)}` : null].filter(Boolean).join(' · ');
-  const why = (m: EventMatch) => (m.why === 'event' && ev.log_event ? `same event, ${ev.log_event}` : 'same track, same weekend');
+  const why = (m: EventMatch) => (m.why === 'event' && ev.log_event ? `same event, ${ev.log_event}`
+    : m.why === 'planned' ? 'planned at this track, no data yet' : 'same track, same weekend');
 
   const join = async (m: EventMatch) => {
     setJoining(m.id);

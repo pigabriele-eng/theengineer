@@ -1,23 +1,28 @@
 import { Link, useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
 
 import { DriverLinks } from '@/components/DriverPicker';
-import { EventForm } from '@/components/EventForm';
+import { FilterBar, PlanForm, plannedLine, RemovePlanned } from '@/components/EventFilter';
 import { ImportLogs } from '@/components/ImportLogs';
 import { RenameEvent } from '@/components/RenameEvent';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
+import { CalendarState, calendarApi, countByWhen, defaultFilter, Filter, filtered, Plan, todayIso, whenOf } from '@/lib/calendar';
 import { dateRange, eventsApi, FolderSummary } from '@/lib/events';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** Events as folders, newest first: each a test or a race weekend with its dates, track, sessions and best lap. Open
- * one for its sessions by day. Sessions in no event have a folder of their own, first, so they get filed. */
+ * one for its sessions by day. Sessions in no event have a folder of their own, first, so they get filed. A filter
+ * shows past, current (from the day before to the last day) or upcoming events, opening on what's on now; planned
+ * events (made here or from the racing calendar) wait under Upcoming until their data comes in. */
 export default function SessionsScreen() {
   const [folders, setFolders] = useState<FolderSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [making, setMaking] = useState(false);
+  const [calendar, setCalendar] = useState<CalendarState | null>(null);
+  const [filter, setFilter] = useState<Filter | null>(null); // null: what the list opens on
   const router = useRouter();
   const tint = useThemeColor({}, 'tint');
   const background = useThemeColor({}, 'background');
@@ -30,8 +35,21 @@ export default function SessionsScreen() {
       },
       (e) => setError((e as Error).message),
     );
+    calendarApi.state().then(setCalendar, () => {}); // the list works without it
   }, []);
   useFocusEffect(load);
+  // the calendar is being read in the background: look again shortly
+  useEffect(() => {
+    if (!calendar?.feed?.syncing) return;
+    const t = setTimeout(load, 3000);
+    return () => clearTimeout(t);
+  }, [calendar, load]);
+
+  const today = todayIso();
+  const counts = countByWhen(folders ?? [], today);
+  const active = filter ?? defaultFilter(counts);
+  const shown = folders ? filtered(folders, active, today) : null;
+  const plans = new Map((calendar?.plans ?? []).map((p) => [p.event_id, p]));
 
   const timed = folders?.some((f) => f.best_lap_s != null) ?? false;
   return (
@@ -41,12 +59,14 @@ export default function SessionsScreen() {
         {making ? (
           <View style={styles.panel}>
             <Text style={styles.panelTitle}>New event</Text>
-            <EventForm submitLabel="Make the event" onCancel={() => setMaking(false)}
-              onSubmit={async (v) => {
-                const ev = await eventsApi.create(v);
+            <PlanForm onCancel={() => setMaking(false)}
+              onMade={(ev) => {
                 setMaking(false);
                 load();
-                router.push({ pathname: '/event/[id]', params: { id: ev.key } });
+                // on now: open it to upload into it; else show it where it is in the list
+                const when = whenOf(ev, today);
+                if (when === 'current') router.push({ pathname: '/event/[id]', params: { id: ev.key } });
+                else setFilter(when);
               }} />
           </View>
         ) : (
@@ -74,25 +94,49 @@ export default function SessionsScreen() {
             event of its own. Or make an event first and upload into it.
           </Text>
         )}
-        {folders && folders.length > 0 && <Text style={styles.h2}>Events</Text>}
-        {folders?.map((f) => (
-          <FolderCard key={f.key} f={f} onRenamed={(name) => {
-            setFolders((all) => all?.map((x) => (x.key === f.key ? { ...x, name } : x)) ?? all);
-            load();
-          }} />
+        {folders && (
+          <FilterBar filter={active} counts={counts} onPick={setFilter} calendar={calendar}
+            onSynced={(c) => {
+              setCalendar(c);
+              load();
+            }} />
+        )}
+        {shown && shown.length === 0 && folders && folders.length > 0 && (
+          <Text style={styles.empty}>{EMPTY[active]}</Text>
+        )}
+        {shown?.map((f) => (
+          <FolderCard key={f.key} f={f} plan={f.id != null ? plans.get(f.id) : undefined} onChanged={load}
+            onRenamed={(name) => {
+              setFolders((all) => all?.map((x) => (x.key === f.key ? { ...x, name } : x)) ?? all);
+              load();
+            }} />
         ))}
       </View>
     </ScrollView>
   );
 }
 
-function FolderCard({ f, onRenamed }: { f: FolderSummary; onRenamed: (name: string) => void }) {
+const EMPTY: Record<Filter, string> = {
+  current: 'Nothing on today or tomorrow.',
+  upcoming: 'Nothing planned yet. Plan a test or a race weekend with ＋ New event, or bring them in from your racing calendar.',
+  past: 'No past events yet.',
+  all: 'No events yet.',
+};
+
+function FolderCard({ f, plan, onRenamed, onChanged }: {
+  f: FolderSummary;
+  plan?: Plan;
+  onRenamed: (name: string) => void;
+  onChanged: () => void;
+}) {
   const [renaming, setRenaming] = useState(false);
   const tint = useThemeColor({}, 'tint');
   const range = dateRange(f.start, f.end);
   const loose = f.id == null;
-  const sub = [loose ? null : f.track, plural(f.sessions, 'session'), f.clean_laps ? plural(f.clean_laps, 'clean lap') : null]
-    .filter(Boolean).join(' · ');
+  const planned = !loose && f.sessions === 0; // no data yet
+  const sub = planned ? plannedLine(f, plan)
+    : [loose ? null : f.track, plural(f.sessions, 'session'), f.clean_laps ? plural(f.clean_laps, 'clean lap') : null]
+      .filter(Boolean).join(' · ');
   if (renaming && f.id != null) {
     return (
       <View style={StyleSheet.flatten([styles.card, styles.editing])}>
@@ -113,22 +157,27 @@ function FolderCard({ f, onRenamed }: { f: FolderSummary; onRenamed: (name: stri
           <View style={styles.cardText}>
             <Text style={styles.title} numberOfLines={2}>{f.name}</Text>
             <Text style={styles.date} numberOfLines={1}>
-              {loose ? 'Open to move them into an event' : range ?? 'No dates yet'}
+              {loose ? 'Open to move them into an event' : range ?? (planned ? 'Days not set yet' : 'No dates yet')}
             </Text>
             <Text style={styles.sub} numberOfLines={2}>{sub}</Text>
           </View>
-          <View style={styles.right}>
-            <Text style={styles.time}>{formatLap(f.best_lap_s)}</Text>
-            {f.best_session && <Text style={styles.sub} numberOfLines={1}>{f.best_session}</Text>}
-          </View>
+          {!planned && (
+            <View style={styles.right}>
+              <Text style={styles.time}>{formatLap(f.best_lap_s)}</Text>
+              {f.best_session && <Text style={styles.sub} numberOfLines={1}>{f.best_session}</Text>}
+            </View>
+          )}
           <Text style={styles.chevron}>›</Text>
         </Pressable>
       </Link>
       {!loose && (
-        <Pressable onPress={() => setRenaming(true)} accessibilityRole="button" accessibilityLabel={`Rename ${f.name}`}
-          hitSlop={8} style={styles.rename}>
-          <Text style={StyleSheet.flatten([styles.renameText, { color: tint }])}>✎ Rename</Text>
-        </Pressable>
+        <View style={styles.cardActions}>
+          <Pressable onPress={() => setRenaming(true)} accessibilityRole="button" accessibilityLabel={`Rename ${f.name}`}
+            hitSlop={8} style={styles.rename}>
+            <Text style={StyleSheet.flatten([styles.renameText, { color: tint }])}>✎ Rename</Text>
+          </Pressable>
+          {planned && <RemovePlanned f={f} plan={plan} onRemoved={onChanged} />}
+        </View>
       )}
     </View>
   );
@@ -144,11 +193,12 @@ const styles = StyleSheet.create({
   panelTitle: { fontSize: 16, fontWeight: '700' },
   error: { color: '#c8372d' },
   empty: { opacity: 0.6, marginTop: 24, textAlign: 'center', lineHeight: 20 },
-  h2: { fontSize: 13, fontWeight: '700', opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8 },
   card: { borderWidth: 1, borderColor: '#8884', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, gap: 6 },
   cardLink: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   loose: { borderStyle: 'dashed' },
   editing: { gap: 8 },
+  cardActions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 18, rowGap: 8,
+    backgroundColor: 'transparent' },
   rename: { alignSelf: 'flex-start', paddingVertical: 2 },
   renameText: { fontWeight: '600', fontSize: 14 },
   cardText: { flex: 1, gap: 2, backgroundColor: 'transparent' },
