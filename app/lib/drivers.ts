@@ -6,8 +6,6 @@ export type Driver = { id: number; name: string };
 // Sessions from GET /sessions carry these too; the shared Session type leaves them out.
 export type Tagged = Session & { driver_id?: number | null; car_id?: number | null; event_id?: number | null };
 
-export type EventRow = { id: number; name: string; date: string | null; track_id: number | null };
-
 // One driver for a session: an existing one by id, or by name (an existing driver of that name, else a new one).
 // Neither clears the driver.
 export type DriverPick = { driver_id?: number | null; driver_name?: string };
@@ -30,7 +28,6 @@ const send = (method: string, body: unknown): RequestInit => ({
 
 export const driversApi = {
   list: () => request<Driver[]>('/drivers'),
-  events: () => request<EventRow[]>('/events'),
   // Many sessions at once: a selection, whole events, or both.
   assign: (pick: DriverPick, sessionIds: number[], eventIds: number[] = []) =>
     request<{ driver: Driver | null; session_ids: number[] }>(
