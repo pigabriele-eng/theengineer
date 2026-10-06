@@ -22,6 +22,7 @@ import {
   SPEED_LABEL,
   Strength,
 } from '@/lib/balance';
+import { quickestLapsLine } from '@/lib/grip';
 
 type Props = { session?: number; event?: number };
 
@@ -96,6 +97,7 @@ function ReportView({ r }: { r: BalanceReport }) {
         {r.scope.track ? ` · ${r.scope.track}` : ''} · {r.laps} clean laps · fastest {r.reference.lap_time} (
         {r.reference.run} lap {r.reference.lap})
       </Text>
+      {r.quickest_laps && <Text style={styles.dim}>{quickestLapsLine(r.quickest_laps)}</Text>}
       <Text style={styles.headline}>{nb(r.headline)}</Text>
 
       {r.recommendations.length > 0 && (

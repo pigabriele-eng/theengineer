@@ -136,7 +136,15 @@ export type GripResult = {
   gg?: { fastest: GgLap; typical: GgLap };
   map?: { x: number[]; y: number[]; step_m: number; grip_use: (number | null)[]; tc: (number | null)[] | null } | null;
   channels?: { accelerometers: boolean; tc: string | null; tyre_temps: boolean; brake_unit: string };
+  quickest_laps?: QuickestLaps; // a long event is worked out from its quickest laps only
 };
+
+/** How many of how many clean laps a long event's report used (only there when it left some out). */
+export type QuickestLaps = { used: number; of: number };
+
+export function quickestLapsLine(q: QuickestLaps): string {
+  return `Worked out from the quickest ${q.used} of ${q.of} clean laps, to keep within the server's memory.`;
+}
 
 export type GripScope = { session?: number; event?: number };
 

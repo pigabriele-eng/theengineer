@@ -77,6 +77,16 @@ def test_model_of_one_log_matches_the_single_log_fit(lapped):
         fit_model([])
 
 
+def test_a_log_whose_corners_are_all_left_out_says_why():
+    """Cornering, but a gyro bias keeps every corner's body slip from closing, so every corner is left out and no
+    sample is left: a clear reason, not an IndexError (that marked the log unreadable, to be read again at every
+    start)."""
+    data = _with_laps_and_tpms(bicycle_session(levels=(0.5, 0.9, 1.25), speeds=(100.0, 140.0)))
+    data.channels["yaw"] = data.channels["yaw"] + 1.0  # deg/s
+    with pytest.raises(NotEnoughData, match="lateral g and yaw rate disagree on 6 of its corners"):
+        summarise(data, Vehicle(**CAR))
+
+
 # ---------- many summaries -> model ----------
 
 LOADS = {"mass_kg": CAR["mass_kg"], "front_weight_fraction": CAR["front_weight_fraction"], "cog_height_mm": 450,
@@ -237,10 +247,11 @@ def test_confidence_follows_the_refits_and_reads_plainly():
 
 # ---------- the API ----------
 
-def _bicycle_ld() -> bytes:
-    """A short bicycle-model log as a MoTeC file, with TPMS."""
+def _bicycle_ld(yaw_bias: float = 0.0) -> bytes:
+    """A short bicycle-model log as a MoTeC file, with TPMS. yaw_bias: a gyro offset, deg/s."""
     data = bicycle_session(levels=(0.5, 0.7, 0.9, 1.1, 1.25, 1.33), speeds=(100.0, 140.0))
     c = data.channels
+    c["yaw"] = c["yaw"] + yaw_bias
     t1 = np.arange(0, len(data.t) / MASTER_HZ, 1.0)
     channels = {"vCar": (MASTER_HZ, "km/h", c["speed"]), "gLat": (MASTER_HZ, "G", c["g_lat"]),
                 "gLong": (MASTER_HZ, "G", c["g_long"]), "nYaw": (MASTER_HZ, "deg/s", c["yaw"]),
@@ -310,6 +321,23 @@ def test_tyre_model_api(client):
     cars = client.get("/tyre-model/cars").json()["cars"]
     assert sorted(x["key"] for x in cars) == sorted([f"car:{new_car['id']}", "logger:12345"])
     assert {x["label"] for x in cars} == {"GT4 #7", "BMW M4 GT4 EVO (G82), logger 12345"}
+
+
+def test_a_log_with_no_usable_cornering_is_noted_not_failed(client):
+    """Every corner left out (a gyro bias here): the log is noted as without steady cornering, with the reason, and
+    isn't read again at the next start, as an unreadable one is."""
+    from app import db, models
+
+    s = client.post("/sessions", json={}).json()
+    client.post(f"/sessions/{s['id']}/files", files={"file": ("a.ld", _bicycle_ld(yaw_bias=1.0))})
+    tyre_store = _summarise_now()
+    status = client.get("/tyre-model/status").json()
+    assert (status["pending"], status["summarised"], status["without_cornering"], status["failed"]) == (0, 0, 1, 0)
+    with db.SessionLocal() as d:
+        row = d.query(models.TyreData).one()
+        assert row.status == "none" and row.samples == 0 and row.summary is None
+        assert row.message.startswith("No steady cornering the tyre data can use in this log: lateral g and yaw rate")
+        assert tyre_store.pending(d) == []
 
 
 def test_summaries_are_made_again_when_out_of_date(client):

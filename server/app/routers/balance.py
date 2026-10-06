@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app import heavy, models
 from app.analysis.balance import Collected, analyse, car_geometry, collect, prepared
+from app.analysis.quickest import keep_quickest, lap_cap
 from app.analysis.setup_advice import report
 from app.db import get_db
 from app.routers.sessions import _get, load_main_file, official_corners
@@ -67,7 +68,8 @@ def balance_report(session: int | None = None, event: int | None = None, db: Ses
     oversteer, and how strong) per section on entry, mid-corner and exit.
 
     For an event, every session with clean laps is read one at a time and reduced to its laps' few channels before
-    the next is loaded, so the whole event fits in a small server's memory."""
+    the next is loaded, so the whole event fits in a small server's memory; a long event works from its quickest
+    laps only (analysis/quickest.py): quickest_laps then says how many of how many clean laps."""
     kind, sid, name, sessions = _scope(db, session, event)
     usable = [s for s in sessions if s.files and _best_clean(s) is not None]
     if not usable:
@@ -106,6 +108,7 @@ def _build(db: Session, kind: str, sid: int, name: str, sessions: list[models.Ru
                 col.sessions.append({"name": label, "session_id": s.id, "laps": 0, "note": "Driven at another track"})
                 continue
             collect(label, data, geo, col, driver=s.driver.name if s.driver else None, meta={"session_id": s.id})
+            col.laps = keep_quickest(col.laps)
             track = track or t
         except Exception:
             if kind == "session":
@@ -123,4 +126,7 @@ def _build(db: Session, kind: str, sid: int, name: str, sessions: list[models.Ru
     if prep is None:
         raise HTTPException(422, f"No clean laps to analyse in this {kind}")
     out = report(analyse(prep, corners), geo.to_dict(), col.sessions, preset)
-    return {"scope": {"kind": kind, "id": sid, "name": name, "track": track.name if track else None}, **out}
+    result = {"scope": {"kind": kind, "id": sid, "name": name, "track": track.name if track else None}, **out}
+    if (cap := lap_cap(len(col.laps), sum(x["laps"] for x in col.sessions))) is not None:
+        result["quickest_laps"] = cap
+    return result

@@ -10,6 +10,7 @@ from app import heavy, models
 from app.analysis import grip
 from app.analysis.grip import GripStudy
 from app.analysis.laps import SessionData, load_session
+from app.analysis.quickest import keep_quickest, lap_cap
 from app.db import get_db
 from app.importers.motec import LdFile
 from app.routers.sessions import _channel_map, _get, _line, _track_for, official_corners, read_file
@@ -40,7 +41,9 @@ def grip_report(session: int | None = None, event: int | None = None, db: Sessio
     The car's grip limit (98th percentile of combined g in each direction and speed band), the g-g diagram with
     it, grip use per lap, per corner and per phase, lap time against grip use, where the quick laps use more grip
     than the slow ones, and traction control: where it cuts in on the exits, what it costs, and how it follows
-    the rear tyre temperature. The logs are read one at a time, so an event needs no more memory than one log.
+    the rear tyre temperature. The logs are read one at a time, so an event needs no more memory than one log, and
+    a long event works from its quickest laps only (analysis/quickest.py): quickest_laps then says how many of how
+    many clean laps.
     """
     if (session is None) == (event is None):
         raise HTTPException(422, "Give either ?session=<id> or ?event=<id>")
@@ -102,8 +105,11 @@ def _build(db: Session, sessions: list[models.RunSession], track: models.Track |
         del ld  # the log's pages are let go before the math channels are made
         study.add_laps(name, data, s.driver.name if s.driver else None)
         del data
+        _keep_quickest(study)
         heavy.release_memory()
     result = study.report()
+    if (cap := lap_cap(len(study.laps), sum(r["clean_laps"] for r in study.runs))) is not None:
+        result["quickest_laps"] = cap
     notes = result.setdefault("notes", [])
     if skipped:
         n = len(skipped)
@@ -112,6 +118,15 @@ def _build(db: Session, sessions: list[models.RunSession], track: models.Track |
         notes.append(f"Could not read the log of {', '.join(unread)}; left out.")
     heavy.release_memory()
     return result
+
+
+def _keep_quickest(study: GripStudy) -> None:
+    """A long event keeps only its quickest laps (analysis/quickest.py), with their state."""
+    kept = keep_quickest(study.laps)
+    if kept is not study.laps:
+        keys = {x.key for x in kept}
+        study.laps = kept
+        study.state = {k: v for k, v in study.state.items() if k in keys}
 
 
 def _read(db: Session, s: models.RunSession) -> tuple[LdFile, SessionData, models.Track | None]:

@@ -127,6 +127,15 @@ def summarise(data: SessionData, car: Vehicle, set_starts: list[float] | None = 
     """One log's tyre data, lap by lap and per axle (see the module docstring). NotEnoughData if it has no steady
     cornering. set_starts: when each tyre set went out cold (tpms.measure_runs), for the laps on the tyre."""
     s = session_samples(data, car, out=Samples())
+    info = s.sessions[0]
+    # cornering, but none of it usable (every corner left out at tyre_fit's step 3, body slip, or none of it steady):
+    # said as such, so the log isn't taken for unreadable and read again at every start
+    if not info["samples"]:
+        dropped = info["corners_dropped"]
+        why = (f"lateral g and yaw rate disagree on {dropped} of its corners, so they are left out, and no other "
+               "corner holds steady cornering between two straights" if dropped else
+               "no corner holds steady cornering between two straights")
+        raise NotEnoughData(f"No steady cornering the tyre data can use in this log: {why}")
     idx = s.index[0]
     t = idx / MASTER_HZ
     c = data.channels
@@ -155,7 +164,6 @@ def summarise(data: SessionData, car: Vehicle, set_starts: list[float] | None = 
             temp, bar = _axle_state(c, span, fast, axle)
             row[axle] = {"temp_c": _r(temp, 1), "bar": _r(bar, 3), **_bands(al[sel], mu[sel])}
         laps.append(row)
-    info = s.sessions[0]
     return {
         "version": VERSION,
         "samples": info["samples"], "corners": info["corners"], "corners_dropped": info["corners_dropped"],
