@@ -23,6 +23,7 @@ import {
   ReportScope,
   SectionReport,
 } from '@/lib/report';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 const POLL_MS = 2000;
 const WIDE = 900;
@@ -44,6 +45,7 @@ const lapTick = (v: number) => {
 /** How to go faster, for a whole event (every session of a test) or one session: the advice first, then corner by
  * corner what to change and the evidence, then trends, consistency and what goes with lap time. */
 export default function ReportScreen() {
+  const styles = useStyles();
   const params = useLocalSearchParams<{ event?: string; session?: string }>();
   const scope: ReportScope | null = params.event ? { event: Number(params.event) }
     : params.session ? { session: Number(params.session) } : null;
@@ -54,7 +56,6 @@ export default function ReportScreen() {
   const [mapY, setMapY] = useState(0);
   const [shape, setShape] = useState<TrackShapeData | null>(null); // the track's shape, once the map has it
   const scroll = useRef<ScrollView>(null);
-  const background = useThemeColor({}, 'background');
   const { width } = useWindowDimensions();
   const wide = width >= WIDE;
   const router = useRouter();
@@ -126,7 +127,7 @@ export default function ReportScreen() {
     : <TrackMap session={scope.session} highlight={highlight} withShape onShape={setShape} />;
 
   return (
-    <ScrollView ref={scroll} style={{ backgroundColor: background }} contentContainerStyle={styles.outer}>
+    <ScrollView ref={scroll} contentContainerStyle={styles.outer}>
       <Stack.Screen options={{ title: answer ? `Report · ${answer.title}` : 'Report' }} />
       <View style={styles.page}>
         <View style={styles.head}>
@@ -285,6 +286,7 @@ export default function ReportScreen() {
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  const styles = useStyles();
   return (
     <View style={styles.section}>
       <Text style={styles.h2}>{title}</Text>
@@ -294,6 +296,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 function Progress({ answer }: { answer: ReportAnswer }) {
+  const styles = useStyles();
   const c = useChartColors();
   const p = answer.progress;
   const share = p && p.total ? p.done / p.total : 0;
@@ -316,6 +319,8 @@ function Progress({ answer }: { answer: ReportAnswer }) {
 // ---------- at a glance ----------
 
 function Glance({ report, onPick, focus }: { report: Report; onPick: (code: string) => void; focus: string | null }) {
+  const theme = useTheme();
+  const styles = useStyles();
   const h = report.headline;
   const sc = h.score;
   const border = useChartColors().grid;
@@ -357,7 +362,7 @@ function Glance({ report, onPick, focus }: { report: Report; onPick: (code: stri
       )}
       {report.gains.map((g, i) => (
         <Pressable key={g.code} accessibilityRole="button" onPress={() => onPick(g.code)}
-          style={StyleSheet.flatten([styles.gain, { borderColor: g.code === focus ? '#8888' : border }])}>
+          style={StyleSheet.flatten([styles.gain, { borderColor: g.code === focus ? theme.tint : border }])}>
           <View style={styles.gainHead}>
             <Text style={styles.gainRank}>{i + 1}</Text>
             <Text style={styles.gainCode}>{g.code}</Text>
@@ -376,6 +381,7 @@ function Glance({ report, onPick, focus }: { report: Report; onPick: (code: stri
 }
 
 function Tile({ label, value, detail }: { label: string; value: string; detail: string }) {
+  const styles = useStyles();
   return (
     <View style={styles.tile}>
       <Text style={styles.label}>{label}</Text>
@@ -397,6 +403,7 @@ const fmtHabit = (v: number | null, unit: string) => {
 function DrivingCard({ section: s, report, wide, onMap }: {
   section: SectionReport; report: Report; wide: boolean; onMap: () => void;
 }) {
+  const styles = useStyles();
   const c = useChartColors();
   const [all, setAll] = useState(false);
   const t = s.times;
@@ -465,6 +472,7 @@ function DrivingCard({ section: s, report, wide, onMap }: {
 }
 
 function HabitRow({ habit: h }: { habit: Habit }) {
+  const styles = useStyles();
   const link = h.link === 'strong' ? 'strong link' : h.link === 'clear' ? 'clear link' : h.link === 'weak' ? 'weak link'
     : null;
   return (
@@ -520,6 +528,7 @@ function SectionSpeed({ section: s, report }: { section: SectionReport; report: 
 // ---------- trends and consistency ----------
 
 function Trends({ report }: { report: Report }) {
+  const styles = useStyles();
   const c = useChartColors();
   const tr = report.trends;
   const byRun = useMemo(() => {
@@ -605,6 +614,7 @@ function Trends({ report }: { report: Report }) {
 // ---------- what goes with lap time ----------
 
 function Relations({ relations, laps }: { relations: Relation[]; laps: number }) {
+  const styles = useStyles();
   if (relations.length === 0) {
     return (
       <Text style={styles.note}>
@@ -639,6 +649,7 @@ function Relations({ relations, laps }: { relations: Relation[]; laps: number })
 }
 
 function RelationRow({ r }: { r: Relation }) {
+  const styles = useStyles();
   return (
     <View style={styles.relation}>
       <Text style={styles.relationText}>{r.text}</Text>
@@ -649,7 +660,7 @@ function RelationRow({ r }: { r: Relation }) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   outer: { paddingVertical: 16, alignItems: 'center' },
   page: { width: '100%', maxWidth: 1100, paddingHorizontal: 16, gap: 20 },
   pad: { padding: 16 },
@@ -660,31 +671,31 @@ const styles = StyleSheet.create({
   h4: { fontSize: 13, fontWeight: '600', opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 },
   sub: { opacity: 0.7 },
   note: { fontSize: 12, opacity: 0.65, lineHeight: 17 },
-  error: { color: '#c8372d' },
+  error: { color: c.error },
   row: { flexDirection: 'row', gap: 24, alignItems: 'flex-start' },
   column: { gap: 16 },
   half: { flex: 1, minWidth: 0, gap: 12 },
   block: { gap: 8 },
   section: { gap: 12 },
-  banner: { gap: 8, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#8884' },
+  banner: { gap: 8, padding: 12, borderRadius: Radius.card, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface },
   bannerText: { fontSize: 14 },
-  progress: { gap: 8, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#8884' },
+  progress: { gap: 8, padding: 12, borderRadius: Radius.card, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface },
   meter: { height: 6, borderRadius: 3, overflow: 'hidden' },
   meterFill: { height: 6, borderRadius: 3 },
-  smallButton: { alignSelf: 'flex-start', borderWidth: 1, borderColor: '#8886', borderRadius: 6, paddingHorizontal: 12,
+  smallButton: { alignSelf: 'flex-start', borderWidth: 1, borderColor: c.borderStrong, borderRadius: Radius.control, paddingHorizontal: 12,
     paddingVertical: 6 },
   smallButtonText: { fontWeight: '600' },
   glance: { gap: 10 },
   scoreRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 },
   label: { fontSize: 12, opacity: 0.65, textTransform: 'uppercase', letterSpacing: 0.5 },
   hero: { fontSize: 48, fontWeight: '600', lineHeight: 56 },
-  medal: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, alignItems: 'flex-end', gap: 2 },
+  medal: { borderWidth: 1, borderRadius: Radius.control, paddingHorizontal: 12, paddingVertical: 8, alignItems: 'flex-end', gap: 2 },
   medalText: { fontSize: 18, fontWeight: '700' },
   scores: { fontSize: 13, opacity: 0.8 },
   tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   tile: { flexBasis: '46%', flexGrow: 1, gap: 2 },
   tileValue: { fontSize: 22, fontWeight: '600' },
-  gain: { borderWidth: 1, borderRadius: 8, padding: 12, gap: 4 },
+  gain: { borderWidth: 1, borderRadius: Radius.control, padding: 12, gap: 4 },
   gainHead: { flexDirection: 'row', alignItems: 'baseline', gap: 10, backgroundColor: 'transparent' },
   gainRank: { fontSize: 14, opacity: 0.6, fontWeight: '700' },
   gainCode: { fontSize: 18, fontWeight: '700', flex: 1 },
@@ -692,7 +703,7 @@ const styles = StyleSheet.create({
   gainAction: { fontSize: 15, fontWeight: '600' },
   bullet: { fontSize: 14, lineHeight: 20 },
   summary: { fontSize: 14, lineHeight: 20, opacity: 0.85 },
-  card: { borderWidth: 1, borderRadius: 10, padding: 14, gap: 10 },
+  card: { borderWidth: 1, borderRadius: Radius.card, padding: 14, gap: 10 },
   cardHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 },
   cardCode: { fontSize: 22, fontWeight: '700', textDecorationLine: 'underline' },
   cardGain: { fontSize: 15, fontWeight: '600' },
@@ -704,15 +715,15 @@ const styles = StyleSheet.create({
   bold: { fontWeight: '700' },
   link: { fontSize: 13, fontWeight: '600', textDecorationLine: 'underline', paddingVertical: 4 },
   table: { gap: 0 },
-  tr: { flexDirection: 'row', paddingVertical: 5, borderBottomWidth: 1, borderColor: '#8882', gap: 6 },
+  tr: { flexDirection: 'row', paddingVertical: 5, borderBottomWidth: 1, borderColor: c.separator, gap: 6 },
   th: { flex: 1, fontSize: 11, opacity: 0.65, textTransform: 'uppercase', textAlign: 'right' },
   td: { flex: 1, fontSize: 13, textAlign: 'right', fontVariant: ['tabular-nums'] },
   runCol: { flex: 2, textAlign: 'left' },
-  relation: { gap: 2, paddingVertical: 6, borderBottomWidth: 1, borderColor: '#8882' },
+  relation: { gap: 2, paddingVertical: 6, borderBottomWidth: 1, borderColor: c.separator },
   relationText: { fontSize: 15, lineHeight: 21 },
-  sessionRow: { paddingVertical: 8, borderBottomWidth: 1, borderColor: '#8882', gap: 2 },
+  sessionRow: { paddingVertical: 8, borderBottomWidth: 1, borderColor: c.separator, gap: 2 },
   sessionName: { fontSize: 15, fontWeight: '600' },
   sessionMeta: { fontSize: 13, opacity: 0.7 },
   dim: { opacity: 0.45 },
   method: { fontSize: 13, lineHeight: 19, opacity: 0.8 },
-});
+}));

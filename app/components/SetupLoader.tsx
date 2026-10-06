@@ -6,6 +6,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-nati
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { SetupListItem, setupApi, SetupVehicle } from '@/lib/setup';
 import { Vehicle } from '@/lib/vehicle';
+import { Radius, themed } from '@/constants/Theme';
 
 export function SetupLoader({
   initial,
@@ -16,6 +17,7 @@ export function SetupLoader({
   ready: boolean; // the preset is in the form, so a loaded setup isn't overwritten by it
   onLoad: (v: Vehicle) => void;
 }) {
+  const styles = useStyles();
   const [runs, setRuns] = useState<SetupListItem[]>([]);
   const [loaded, setLoaded] = useState<SetupVehicle | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
@@ -84,12 +86,12 @@ export function SetupLoader({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   box: { gap: 6 },
   title: { fontWeight: '600' },
   chips: { gap: 8 },
-  chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6 },
+  chip: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: c.surface },
   sub: { opacity: 0.8 },
   note: { fontSize: 12, opacity: 0.7 },
-  error: { color: '#c8372d' },
-});
+  error: { color: c.error },
+}));

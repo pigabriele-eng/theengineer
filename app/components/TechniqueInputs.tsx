@@ -11,6 +11,7 @@ import { niceTicks, useChartColors } from '@/components/ReportCharts';
 import { Band, pointRange, TRACE_PAD_X } from '@/components/TechniqueTrace';
 import { Text, View } from '@/components/Themed';
 import { InputRole, Inputs, MODEL_PHASES } from '@/lib/technique';
+import { Fonts } from '@/constants/Theme';
 
 type Props = {
   stepM: number;
@@ -40,7 +41,7 @@ const CHANNELS: { role: InputRole; title: string; unit: string; digits: number; 
 const PAD = { ...TRACE_PAD_X, top: 4, bottom: 4 };
 const STRIP = 8;
 const AXIS_ROW = 18; // corner labels under the last chart
-const SANS = Platform.select({ web: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' });
+const SANS = Fonts.sans;
 
 type Geometry = {
   width: number;

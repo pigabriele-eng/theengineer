@@ -14,6 +14,7 @@ import {
   Opportunity,
   TraceRole,
 } from '@/lib/compare';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 // Colours of the laps in a result, by the slot each lap was given when it was picked.
 export function useLapColors(slots: number[]) {
@@ -29,6 +30,7 @@ type Colors = ReturnType<typeof useLapColors>;
 
 /** A short stroke of the lap's colour: the key for a lap wherever its name is written. */
 export function LineKey({ color }: { color: string }) {
+  const styles = useStyles();
   return <View style={[styles.key, { backgroundColor: color }]} />;
 }
 
@@ -49,6 +51,7 @@ type GlanceProps = {
 /** Where the time is for one lap: the sections where the other laps were quicker, biggest first, with the phase
  * and what the driver did differently there. */
 export const WhereTheTimeIs = memo(function WhereTheTimeIs({ data, colors, focus, onFocus, onShow }: GlanceProps) {
+  const styles = useStyles();
   const lap = data.laps[focus];
   const opp = data.opportunities[focus];
   const tint = useThemeColor({}, 'tint');
@@ -111,7 +114,9 @@ const CELL = 74;
 
 /** Section times on the official corner numbers: the quickest in each section in bold, the others as the gap to it. */
 export const SectionTable = memo(function SectionTable({ data, colors, ideal, onPick }: TableProps) {
-  const wash = '#8882';
+  const theme = useTheme();
+  const styles = useStyles();
+  const wash = theme.fill;
   return (
     <View style={styles.section}>
       <Text style={styles.h2}>Section times</Text>
@@ -203,6 +208,7 @@ const CHARTS: { role: TraceRole; title: string; unit: string; height: number; do
 /** Every lap on one distance axis: time gained or lost against the reference, then speed, pedals, steering and
  * gear, with one crosshair across all of them. Zoom to a section to see a corner in detail. */
 export function CompareTraces({ data, colors, ideal, zoom, onZoom, cursor, onCursor }: TracesProps) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   const tr = data.traces;
   const section = data.sections.find((s) => s.code === zoom) ?? null;
@@ -285,7 +291,7 @@ export function CompareTraces({ data, colors, ideal, zoom, onZoom, cursor, onCur
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   section: { gap: 10, backgroundColor: 'transparent' },
   h2: { fontSize: 18, fontWeight: '700' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
@@ -294,25 +300,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     borderWidth: 1,
-    borderColor: '#8884',
-    borderRadius: 16,
+    borderColor: c.border,
+    borderRadius: Radius.chip,
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 4, backgroundColor: c.surface,
   },
   key: { width: 14, height: 3, borderRadius: 2 },
   lead: { lineHeight: 20 },
-  card: { borderWidth: 1, borderColor: '#8883', borderRadius: 10, padding: 12, gap: 6 },
+  card: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 12, gap: 6, backgroundColor: c.surface },
   cardHead: { flexDirection: 'row', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' },
   code: { fontSize: 20, fontWeight: '700' },
   loss: { fontSize: 20, fontWeight: '600' },
-  phase: { borderWidth: 1, borderColor: '#8886', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 1 },
+  phase: { borderWidth: 1, borderColor: c.borderStrong, borderRadius: Radius.card, paddingHorizontal: 8, paddingVertical: 1, backgroundColor: c.surface },
   phaseText: { fontSize: 13 },
   versus: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   why: { lineHeight: 20 },
   show: { fontSize: 13, opacity: 0.6 },
   sub: { opacity: 0.7, flexShrink: 1 },
   note: { fontSize: 12, opacity: 0.6, lineHeight: 17 },
-  row: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderColor: '#8882' },
+  row: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderColor: c.separator },
   cell: { fontVariant: ['tabular-nums'], fontSize: 13, paddingVertical: 6, paddingHorizontal: 6, textAlign: 'right' },
   cellBox: { paddingVertical: 4, paddingHorizontal: 6, alignItems: 'flex-end', gap: 2 },
   colHead: { flexDirection: 'row', alignItems: 'center', gap: 4 },
@@ -322,4 +328,4 @@ const styles = StyleSheet.create({
   rowName: { fontWeight: '600' },
   best: { fontWeight: '700' },
   at: { opacity: 0.7, fontVariant: ['tabular-nums'] },
-});
+}));

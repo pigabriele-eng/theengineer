@@ -24,6 +24,7 @@ import {
   Side,
   SIDES,
 } from '@/lib/drivers';
+import { Radius, themed } from '@/constants/Theme';
 
 type Mode = 'drivers' | 'sessions';
 const POLL_MS = 1000;
@@ -32,6 +33,7 @@ const MAX_POLL_FAILURES = 20;
 // Two drivers (or two groups of sessions) at one track and car, over all their clean laps. ?event=<id> opens on the
 // track and car of that event's sessions.
 export default function CompareDriversScreen() {
+  const styles = useStyles();
   const { event } = useLocalSearchParams<{ event?: string }>();
   const [groups, setGroups] = useState<OptionGroup[] | null>(null);
   const [groupIdx, setGroupIdx] = useState(0);
@@ -44,7 +46,7 @@ export default function CompareDriversScreen() {
   const [error, setError] = useState<string | null>(null);
   const failures = useRef(0);
   const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
+  const onTint = useThemeColor({}, 'onTint');
   const text = useThemeColor({}, 'text');
   const series = useSeriesColors();
   const colors: Record<Side, string> = { a: series.reference, b: series.compare };
@@ -136,7 +138,7 @@ export default function CompareDriversScreen() {
   const chip = (on: boolean) => StyleSheet.flatten([styles.chip, on && { borderColor: tint }]);
 
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container}>
       <Stack.Screen options={{ title: 'Compare drivers' }} />
       <Text style={styles.intro}>
         Two drivers, or two groups of sessions, in the same car at the same track, over all their clean laps: where each
@@ -185,7 +187,7 @@ export default function CompareDriversScreen() {
             <DriverSides group={group} driverOf={driverOf} setDriverOf={setDriverOf} colors={colors} chip={chip} tint={tint} />
           ) : (
             <SessionSides group={group} sideOf={sideOf} setSideOf={setSideOf} names={names} setNames={setNames}
-              colors={colors} tint={tint} text={text} background={background} />
+              colors={colors} tint={tint} text={text} onTint={onTint} />
           )}
 
           <Pressable
@@ -193,9 +195,9 @@ export default function CompareDriversScreen() {
             disabled={!!problem || running}
             style={StyleSheet.flatten([styles.button, { backgroundColor: tint }, (!!problem || running) && styles.disabled])}>
             {running ? (
-              <ActivityIndicator color={background} />
+              <ActivityIndicator color={onTint} />
             ) : (
-              <Text style={StyleSheet.flatten([styles.buttonText, { color: background }])}>
+              <Text style={StyleSheet.flatten([styles.buttonText, { color: onTint }])}>
                 {problem ??
                   `Compare ${sides.a.label} and ${sides.b.label} (${sides.a.session_ids.length + sides.b.session_ids.length} sessions)`}
               </Text>
@@ -232,6 +234,7 @@ function DriverSides({ group, driverOf, setDriverOf, colors, chip, tint }: {
   chip: (on: boolean) => object;
   tint: string;
 }) {
+  const styles = useStyles();
   const untagged = group.sessions.filter((s) => s.driver_id == null).length;
   return (
     <View style={styles.block}>
@@ -269,7 +272,7 @@ function DriverSides({ group, driverOf, setDriverOf, colors, chip, tint }: {
   );
 }
 
-function SessionSides({ group, sideOf, setSideOf, names, setNames, colors, tint, text, background }: {
+function SessionSides({ group, sideOf, setSideOf, names, setNames, colors, tint, text, onTint }: {
   group: OptionGroup;
   sideOf: Record<number, Side>;
   setSideOf: (s: Record<number, Side>) => void;
@@ -278,8 +281,9 @@ function SessionSides({ group, sideOf, setSideOf, names, setNames, colors, tint,
   colors: Record<Side, string>;
   tint: string;
   text: string;
-  background: string;
+  onTint: string;
 }) {
+  const styles = useStyles();
   const toggle = (id: number, side: Side) => {
     const next = { ...sideOf };
     if (next[id] === side) delete next[id];
@@ -320,7 +324,7 @@ function SessionSides({ group, sideOf, setSideOf, names, setNames, colors, tint,
                 accessibilityState={{ checked: on }}
                 accessibilityLabel={`${s.name} in ${names[side] || `group ${side.toUpperCase()}`}`}
                 style={StyleSheet.flatten([styles.sideToggle, on && { backgroundColor: colors[side], borderColor: colors[side] }])}>
-                <Text style={on ? { color: background, fontWeight: '700' } : { color: tint }}>{side.toUpperCase()}</Text>
+                <Text style={on ? { color: onTint, fontWeight: '700' } : { color: tint }}>{side.toUpperCase()}</Text>
               </Pressable>
             );
           })}
@@ -331,6 +335,7 @@ function SessionSides({ group, sideOf, setSideOf, names, setNames, colors, tint,
 }
 
 function Results({ result, colors }: { result: Comparison; colors: Record<Side, string> }) {
+  const styles = useStyles();
   const { labels, summary } = result;
   const biggest = [...result.sections].filter((s) => s.clear).sort((x, y) => Math.abs(y.delta_s) - Math.abs(x.delta_s))[0];
   const [selected, setSelected] = useState<string | null>(biggest?.code ?? result.sections[0]?.code ?? null);
@@ -466,7 +471,7 @@ function Results({ result, colors }: { result: Comparison; colors: Record<Side, 
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   container: { padding: 16, gap: 12, maxWidth: 900, width: '100%', alignSelf: 'center' },
   intro: { opacity: 0.7, lineHeight: 20 },
   block: { gap: 8 },
@@ -475,9 +480,9 @@ const styles = StyleSheet.create({
   sub: { opacity: 0.7, lineHeight: 19 },
   dim: { opacity: 0.5 },
   note: { fontSize: 12, opacity: 0.6, lineHeight: 17 },
-  error: { color: '#c8372d' },
+  error: { color: c.error },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, flex: 1 },
-  chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6 },
+  chip: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: c.surface },
   chipSub: { fontSize: 12, opacity: 0.6, fontVariant: ['tabular-nums'] },
   segment: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
   sideRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
@@ -486,15 +491,15 @@ const styles = StyleSheet.create({
   link: { fontSize: 14 },
   names: { flexDirection: 'row', gap: 12, flexWrap: 'wrap' },
   nameBox: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 150 },
-  input: { flex: 1, minWidth: 0, borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 16 },
-  sessionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderBottomWidth: 1, borderColor: '#8882' },
+  input: { flex: 1, minWidth: 0, borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, paddingHorizontal: 10, paddingVertical: 8, fontSize: 16, backgroundColor: c.surface },
+  sessionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderBottomWidth: 1, borderColor: c.separator },
   sessionText: { flex: 1, backgroundColor: 'transparent' },
   sessionName: { fontWeight: '600' },
-  sideToggle: { width: 40, height: 34, borderRadius: 8, borderWidth: 1, borderColor: '#8884', alignItems: 'center', justifyContent: 'center' },
+  sideToggle: { width: 40, height: 34, borderRadius: 8, borderWidth: 1, borderColor: c.border, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface },
   button: { borderRadius: 8, padding: 14, alignItems: 'center' },
   disabled: { opacity: 0.5 },
   buttonText: { fontWeight: '600', fontSize: 16, textAlign: 'center' },
-  progress: { height: 4, borderRadius: 2, backgroundColor: '#8883', overflow: 'hidden' },
+  progress: { height: 4, borderRadius: 2, backgroundColor: c.fill, overflow: 'hidden' },
   progressFill: { height: 4 },
   results: { gap: 10, marginTop: 8 },
   headline: { fontSize: 22, fontWeight: '700', lineHeight: 28 },
@@ -506,8 +511,8 @@ const styles = StyleSheet.create({
   kpiSub: { fontSize: 12, opacity: 0.65, fontVariant: ['tabular-nums'] },
   sectionLine: { fontSize: 15, lineHeight: 21 },
   legendRow: { flexDirection: 'row', gap: 16, flexWrap: 'wrap' },
-  runRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6, borderBottomWidth: 1, borderColor: '#8882' },
+  runRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6, borderBottomWidth: 1, borderColor: c.separator },
   runName: { flex: 1 },
   runCell: { width: 72, textAlign: 'right', fontVariant: ['tabular-nums'] },
   head: { fontWeight: '600', opacity: 0.7, fontSize: 13 },
-});
+}));

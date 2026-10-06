@@ -4,9 +4,9 @@
 import { ImageSourcePropType, Platform, StyleSheet, TextStyle } from 'react-native';
 
 import { useColorScheme } from '@/components/useColorScheme';
-import Colors, { Palette, Scheme } from '@/constants/Colors';
+import Colors, { INK, Palette, PhaseKey, Scheme } from '@/constants/Colors';
 
-export type { Palette, Scheme } from '@/constants/Colors';
+export type { Palette, PhaseKey, Scheme } from '@/constants/Colors';
 
 export const Fonts = {
   // the system sans everywhere (SVG text on the web would otherwise fall back to a serif face)
@@ -58,6 +58,58 @@ export function themed<T extends StyleSheet.NamedStyles<T> | StyleSheet.NamedSty
     const scheme = useColorScheme();
     return (sheets[scheme] ??= StyleSheet.create(factory(Colors[scheme])));
   };
+}
+
+// The phase names the analyses use, onto the five driving phases of the colour coding
+const PHASE_OF: Record<string, PhaseKey> = {
+  braking: 'braking',
+  entry: 'turnIn',
+  trail: 'turnIn',
+  'turn-in': 'turnIn',
+  'mid-corner': 'mid',
+  mid: 'mid',
+  'at the grip limit': 'mid',
+  exit: 'traction',
+  traction: 'traction',
+  'full throttle': 'throttle',
+  power: 'throttle',
+};
+
+/** The colour of a driving phase ("braking", "entry", "mid-corner", "exit", "full throttle", or the stint tool's
+ * "trail", "mid", "power"); grey for a name that isn't a phase. */
+export function phaseColor(c: Palette, phase: string): string {
+  const k = PHASE_OF[phase.toLowerCase()];
+  return k ? c.phase[k] : c.chart.other;
+}
+
+/** The colour of a time difference in seconds (negative: quicker), stronger with its size against `scale` (the size
+ * that counts as big on this screen). `wash`: the soft step for a background, else the colour for text and marks. */
+export function deltaColor(c: Palette, seconds: number, scale: number, wash = false): string {
+  const even = Math.abs(seconds) < 0.005;
+  if (!wash) return even ? c.delta.even : seconds < 0 ? c.delta.gain : c.delta.loss;
+  if (even) return 'transparent';
+  const steps = seconds < 0 ? c.delta.gainSteps : c.delta.lossSteps;
+  const k = Math.min(steps.length - 1, Math.floor((Math.abs(seconds) / Math.max(scale, 1e-6)) * steps.length));
+  return steps[k];
+}
+
+const hexRgb = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+
+/** A step along a two-colour ramp, t from 0 to 1. */
+export function ramp([lo, hi]: string[], t: number) {
+  const k = Math.max(0, Math.min(1, t));
+  const a = hexRgb(lo);
+  const b = hexRgb(hi);
+  return `#${a.map((v, i) => Math.round(v + (b[i] - v) * k).toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** Near-black or white for text on a filled colour, whichever reads. */
+export function inkOn(fill: string) {
+  const [r, g, b] = hexRgb(fill).map((v) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.35 ? INK.onLight : INK.onDark;
 }
 
 /** Light and dark versions of a set of colours made from the tokens, picked with `[scheme]`. */

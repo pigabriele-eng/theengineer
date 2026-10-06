@@ -24,6 +24,7 @@ import {
   NO_EVENT,
 } from '@/lib/events';
 import { Garage, garageApi, RunFields } from '@/lib/garage';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 // A run row as the server sends it, with its driver and car ids
 type Run = FolderSession & { driver_id?: number | null; car_id?: number | null };
@@ -37,6 +38,7 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
  * Sessions are relabelled, picked and moved here. /event/none holds the sessions in no event. ?compare=3,12 keeps the
  * sessions side by side in the address. */
 export default function EventScreen() {
+  const styles = useStyles();
   const params = useLocalSearchParams<{ id: string; compare?: string }>();
   const key = params.id === NO_EVENT ? NO_EVENT : String(Number(params.id));
   const router = useRouter();
@@ -56,7 +58,6 @@ export default function EventScreen() {
   const scroll = useRef<ScrollView>(null);
   const compareY = useRef(0);
   const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
   const { width } = useWindowDimensions();
   const wide = width >= WIDE;
   const prep = usePrepAvailability(); // events whose track has past data: the Prep report button
@@ -329,7 +330,7 @@ export default function EventScreen() {
   ) : null;
 
   return (
-    <View style={[styles.screen, { backgroundColor: background }]}>
+    <View style={styles.screen}>
       <Stack.Screen options={{ title }} />
       <ScrollView ref={scroll} style={styles.grow} contentContainerStyle={styles.outer}>
         <View style={styles.page}>
@@ -401,8 +402,9 @@ function SessionRow({ s, color, picked, full, onToggle, editing, onEdit, onSaved
   note: string | null;
   onNoteClose: () => void;
 }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
+  const onTint = useThemeColor({}, 'onTint');
   const detail = [
     s.log_session && !s.name.includes(s.log_session) ? s.log_session : null,
     s.time,
@@ -416,7 +418,7 @@ function SessionRow({ s, color, picked, full, onToggle, editing, onEdit, onSaved
           accessibilityState={{ checked: picked }} accessibilityLabel={`Side by side: ${s.name}`}
           style={StyleSheet.flatten([styles.check, picked && { borderColor: tint, backgroundColor: tint },
             full && !picked && styles.dim])}>
-          {picked && <Text style={StyleSheet.flatten([styles.tick, { color: background }])}>✓</Text>}
+          {picked && <Text style={StyleSheet.flatten([styles.tick, { color: onTint }])}>✓</Text>}
         </Pressable>
         <View style={styles.rowText}>
           {editing ? (
@@ -471,6 +473,8 @@ function SessionRow({ s, color, picked, full, onToggle, editing, onEdit, onSaved
 
 /** A session made by hand in this event (no logs yet: to upload one to it, or for a debrief). */
 function AddSession({ eventId, onAdded }: { eventId: number | null; onAdded: () => void }) {
+  const styles = useStyles();
+  const theme = useTheme();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -495,7 +499,7 @@ function AddSession({ eventId, onAdded }: { eventId: number | null; onAdded: () 
   };
   return (
     <View style={styles.editRow}>
-      <TextInput value={name} onChangeText={setName} placeholder="Label, e.g. FP2" placeholderTextColor="#888"
+      <TextInput value={name} onChangeText={setName} placeholder="Label, e.g. FP2" placeholderTextColor={theme.textMuted}
         maxLength={120} style={StyleSheet.flatten([styles.input, { color: text }])} onSubmitEditing={add} />
       <Pressable onPress={add} accessibilityRole="button" style={StyleSheet.flatten([styles.barButton, { borderColor: tint }])}>
         <Text style={StyleSheet.flatten([styles.barButtonText, { color: tint }])}>Add</Text>
@@ -505,7 +509,7 @@ function AddSession({ eventId, onAdded }: { eventId: number | null; onAdded: () 
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   screen: { flex: 1 },
   grow: { flex: 1 },
   outer: { padding: 16, paddingBottom: 32 },
@@ -513,35 +517,35 @@ const styles = StyleSheet.create({
   head: { gap: 6 },
   h1: { fontSize: 24, fontWeight: '700', flexShrink: 1 },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' },
-  renameButton: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 },
+  renameButton: { borderWidth: 1, borderRadius: Radius.control, paddingHorizontal: 10, paddingVertical: 4 },
   renameText: { fontWeight: '600', fontSize: 14 },
   h2: { fontSize: 18, fontWeight: '700' },
   sub: { opacity: 0.65, fontSize: 13 },
   note: { fontSize: 12, opacity: 0.6 },
-  notice: { fontSize: 13, opacity: 0.8, borderLeftWidth: 3, borderColor: '#8886', paddingLeft: 8 },
-  error: { color: '#c8372d' },
+  notice: { fontSize: 13, opacity: 0.8, borderLeftWidth: 3, borderColor: c.borderStrong, paddingLeft: 8 },
+  error: { color: c.error },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 },
-  action: { borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7 },
+  action: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, paddingHorizontal: 12, paddingVertical: 7 },
   actionText: { fontWeight: '600', fontSize: 14 },
   quiet: { borderStyle: 'dashed' },
-  danger: { borderColor: '#c8372d' },
-  dangerText: { color: '#c8372d' },
-  panel: { borderWidth: 1, borderColor: '#8884', borderRadius: 10, padding: 12, gap: 8, marginTop: 6 },
+  danger: { borderColor: c.error },
+  dangerText: { color: c.error },
+  panel: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 12, gap: 8, marginTop: 6, backgroundColor: c.surface },
   confirm: { fontSize: 15, lineHeight: 21 },
   columns: { flexDirection: 'row', gap: 24, alignItems: 'flex-start' },
   left: { flex: 1, minWidth: 360, maxWidth: 480 },
   right: { flex: 1.4 },
   list: { gap: 12 },
   compare: { gap: 8, marginTop: 8 },
-  quick: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 9, gap: 2 },
+  quick: { borderWidth: 1, borderRadius: Radius.control, paddingHorizontal: 12, paddingVertical: 9, gap: 2 },
   quickText: { fontWeight: '600', fontSize: 15 },
   day: { gap: 0 },
   dayTitle: { fontSize: 12, fontWeight: '700', opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5,
-    paddingTop: 8, paddingBottom: 4, borderBottomWidth: 1, borderColor: '#8884' },
-  sessionBox: { borderBottomWidth: 1, borderColor: '#8882' },
+    paddingTop: 8, paddingBottom: 4, borderBottomWidth: 1, borderColor: c.border },
+  sessionBox: { borderBottomWidth: 1, borderColor: c.separator },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10 },
-  check: { width: 22, height: 22, borderRadius: 5, borderWidth: 1.5, borderColor: '#8888', alignItems: 'center',
-    justifyContent: 'center' },
+  check: { width: 22, height: 22, borderRadius: 5, borderWidth: 1.5, borderColor: c.borderStrong, alignItems: 'center',
+    justifyContent: 'center', backgroundColor: c.surface },
   tick: { fontSize: 14, fontWeight: '800', lineHeight: 16 },
   rowEditing: { alignItems: 'flex-start' },
   rowText: { flex: 1, gap: 4, backgroundColor: 'transparent' },
@@ -550,7 +554,7 @@ const styles = StyleSheet.create({
   name: { fontSize: 16, fontWeight: '600', flexShrink: 1 },
   pencil: { fontSize: 13 },
   detailPress: { alignSelf: 'stretch' },
-  kind: { borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1, backgroundColor: '#8882' },
+  kind: { borderRadius: Radius.tag, paddingHorizontal: 5, paddingVertical: 1, backgroundColor: c.fill },
   kindText: { fontSize: 11, fontWeight: '600', opacity: 0.8 },
   open: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'stretch', paddingLeft: 6 },
   time: { fontSize: 16, fontVariant: ['tabular-nums'] },
@@ -558,12 +562,12 @@ const styles = StyleSheet.create({
   dim: { opacity: 0.4 },
   picker: { paddingLeft: 32 },
   editRow: { flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'wrap' },
-  input: { flex: 1, minWidth: 140, borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 10,
-    paddingVertical: 8, fontSize: 15 },
+  input: { flex: 1, minWidth: 140, borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, paddingHorizontal: 10,
+    paddingVertical: 8, fontSize: 15, backgroundColor: c.surface },
   addLink: { paddingVertical: 8 },
   bar: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 10,
-    borderTopWidth: 1, borderColor: '#8884', flexWrap: 'wrap' },
+    borderTopWidth: 1, borderColor: c.border, flexWrap: 'wrap' },
   barText: { fontWeight: '600', marginRight: 'auto' },
-  barButton: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7 },
+  barButton: { borderWidth: 1, borderRadius: Radius.control, paddingHorizontal: 12, paddingVertical: 7 },
   barButtonText: { fontWeight: '600' },
-});
+}));

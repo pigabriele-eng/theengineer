@@ -18,6 +18,7 @@ import {
   TyreModel,
   tyreModelApi,
 } from '@/lib/tyreModel';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 const CONDITIONS: { key: ConditionKey; title: string }[] = [
   { key: 'pressure', title: 'Hot pressure' },
@@ -32,6 +33,8 @@ const day = (iso: string) => {
 const POLL_MS = 5000;
 
 export function TyreModelView() {
+  const styles = useStyles();
+  const theme = useTheme();
   const [cars, setCars] = useState<ModelCar[] | null>(null);
   const [status, setStatus] = useState<SummaryStatus | null>(null);
   const [car, setCar] = useState<string | null>(null);
@@ -174,7 +177,7 @@ export function TyreModelView() {
               value={ambientText.min}
               onChangeText={(v) => setAmbientText((a) => ({ ...a, min: v }))}
               placeholder="from"
-              placeholderTextColor="#8888"
+              placeholderTextColor={theme.textMuted}
               keyboardType="numbers-and-punctuation"
               onSubmitEditing={applyAmbient}
             />
@@ -183,7 +186,7 @@ export function TyreModelView() {
               value={ambientText.max}
               onChangeText={(v) => setAmbientText((a) => ({ ...a, max: v }))}
               placeholder="to"
-              placeholderTextColor="#8888"
+              placeholderTextColor={theme.textMuted}
               keyboardType="numbers-and-punctuation"
               onSubmitEditing={applyAmbient}
             />
@@ -222,6 +225,7 @@ export function TyreModelView() {
 }
 
 function Filter({ label, children }: { label: string; children: React.ReactNode }) {
+  const styles = useStyles();
   return (
     <View style={styles.filter}>
       <Text style={styles.filterLabel}>{label}</Text>
@@ -231,6 +235,7 @@ function Filter({ label, children }: { label: string; children: React.ReactNode 
 }
 
 function StatusLine({ status }: { status: SummaryStatus | null }) {
+  const styles = useStyles();
   if (!status) return null;
   const parts = [`${status.summarised} log${status.summarised === 1 ? '' : 's'} in the model`];
   if (status.without_cornering) parts.push(`${status.without_cornering} without steady cornering`);
@@ -264,6 +269,7 @@ function basisLine(m: TyreModel) {
 
 /** "Front: most grip at ..." with the axle in bold. */
 function Said({ text }: { text: string }) {
+  const styles = useStyles();
   const i = text.indexOf(': ');
   return (
     <Text style={styles.said}>
@@ -278,6 +284,7 @@ function windowText(axle: string, w: GripWindow | null) {
 }
 
 function ModelResult({ model, busy, onTyreChanged }: { model: TyreModel; busy: boolean; onTyreChanged: () => void }) {
+  const styles = useStyles();
   const colors = useAxleColors();
   const [cond, setCond] = useState<ConditionKey>('pressure');
   const tint = useThemeColor({}, 'tint');
@@ -341,6 +348,7 @@ function ModelResult({ model, busy, onTyreChanged }: { model: TyreModel; busy: b
 }
 
 function Sessions({ sessions, onTyreChanged }: { sessions: ModelSession[]; onTyreChanged: () => void }) {
+  const styles = useStyles();
   const [open, setOpen] = useState(false);
   const shown = open ? sessions : sessions.slice(0, 4);
   return (
@@ -362,6 +370,8 @@ function Sessions({ sessions, onTyreChanged }: { sessions: ModelSession[]; onTyr
 }
 
 function SessionRow({ s, onTyreChanged }: { s: ModelSession; onTyreChanged: () => void }) {
+  const styles = useStyles();
+  const theme = useTheme();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(s.tyre ?? '');
   const [saving, setSaving] = useState(false);
@@ -402,7 +412,7 @@ function SessionRow({ s, onTyreChanged }: { s: ModelSession; onTyreChanged: () =
             value={value}
             onChangeText={setValue}
             placeholder="The car's usual tyre"
-            placeholderTextColor="#8888"
+            placeholderTextColor={theme.textMuted}
             maxLength={80}
             autoFocus
             onSubmitEditing={save}
@@ -426,10 +436,10 @@ function SessionRow({ s, onTyreChanged }: { s: ModelSession; onTyreChanged: () =
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   wrap: { gap: 16 },
   section: { gap: 8 },
-  advice: { gap: 6, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#8885' },
+  advice: { gap: 6, padding: 12, borderRadius: Radius.card, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface },
   adviceBlock: { gap: 4, marginTop: 4 },
   h2: { fontSize: 18, fontWeight: '700' },
   sub: { opacity: 0.7 },
@@ -438,23 +448,23 @@ const styles = StyleSheet.create({
   bold: { fontWeight: '600' },
   note: { fontSize: 12, opacity: 0.7 },
   link: { fontSize: 13, opacity: 0.75, textDecorationLine: 'underline' },
-  error: { color: '#c8372d' },
+  error: { color: c.error },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' },
-  chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6 },
+  chip: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: c.surface },
   filter: { gap: 4 },
   filterLabel: { fontSize: 12, opacity: 0.7 },
   input: {
     borderWidth: 1,
-    borderColor: '#8884',
-    borderRadius: 6,
+    borderColor: c.border,
+    borderRadius: Radius.control,
     paddingHorizontal: 8,
     paddingVertical: 6,
     width: 72,
-    fontVariant: ['tabular-nums'],
+    fontVariant: ['tabular-nums'], backgroundColor: c.surface,
   },
   tyreInput: { width: 200, flexShrink: 1 },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  sessionRow: { gap: 2, paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#8884' },
+  sessionRow: { gap: 2, paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: c.border },
   sessionHead: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' },
   editRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-});
+}));

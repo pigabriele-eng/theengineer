@@ -9,16 +9,18 @@ import { Text, View, useThemeColor } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
 import { EventMatch, namingApi, NewEvent } from '@/lib/eventNaming';
 import { dateRange } from '@/lib/events';
+import { Radius, themed } from '@/constants/Theme';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 export type Settled = { text: string; id: number; name: string }; // what was done, and the event to open
 
 export function NameNewEvent({ ev, onSettled }: { ev: NewEvent; onSettled: (s: Settled) => void }) {
+  const styles = useStyles();
   const [joining, setJoining] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
+  const onTint = useThemeColor({}, 'onTint');
   const found = [dateRange(ev.start, ev.end), ev.venue ?? ev.track, plural(ev.sessions, 'session'),
     ev.best_lap_s != null ? `best ${formatLap(ev.best_lap_s)}` : null].filter(Boolean).join(' · ');
   const why = (m: EventMatch) => (m.why === 'event' && ev.log_event ? `same event, ${ev.log_event}`
@@ -46,12 +48,12 @@ export function NameNewEvent({ ev, onSettled }: { ev: NewEvent; onSettled: (s: S
           {ev.matches.map((m) => (
             <Pressable key={m.id} onPress={() => join(m)} disabled={joining != null} accessibilityRole="button"
               style={StyleSheet.flatten([styles.join, { borderColor: tint, backgroundColor: tint }])}>
-              {joining === m.id ? <ActivityIndicator color={background} /> : (
+              {joining === m.id ? <ActivityIndicator color={onTint} /> : (
                 <>
-                  <Text style={StyleSheet.flatten([styles.joinText, { color: background }])}>
+                  <Text style={StyleSheet.flatten([styles.joinText, { color: onTint }])}>
                     Put its {plural(ev.sessions, 'session')} into {m.name}
                   </Text>
-                  <Text style={StyleSheet.flatten([styles.joinSub, { color: background }])}>
+                  <Text style={StyleSheet.flatten([styles.joinSub, { color: onTint }])}>
                     {[dateRange(m.start, m.end), plural(m.sessions, 'session'), why(m)].filter(Boolean).join(' · ')}
                   </Text>
                 </>
@@ -74,6 +76,7 @@ export function NameNewEvent({ ev, onSettled }: { ev: NewEvent; onSettled: (s: S
 
 /** What was done with a new event, and a link to the event it ended up in. */
 export function SettledLine({ s }: { s: Settled }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   return (
     <View style={styles.done}>
@@ -88,19 +91,19 @@ export function SettledLine({ s }: { s: Settled }) {
   );
 }
 
-const styles = StyleSheet.create({
-  card: { borderWidth: 1.5, borderColor: '#8886', borderRadius: 10, padding: 12, gap: 8 },
+const useStyles = themed((c) => ({
+  card: { borderWidth: 1.5, borderColor: c.borderStrong, borderRadius: Radius.card, padding: 12, gap: 8, backgroundColor: c.surface },
   label: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
   block: { gap: 8, backgroundColor: 'transparent' },
   title: { fontSize: 17, fontWeight: '700' },
   or: { fontSize: 14, opacity: 0.75, marginTop: 4 },
-  join: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 9, gap: 2, minHeight: 44,
+  join: { borderWidth: 1, borderRadius: Radius.control, paddingHorizontal: 12, paddingVertical: 9, gap: 2, minHeight: 44,
     justifyContent: 'center' },
   joinText: { fontWeight: '700', fontSize: 15 },
   joinSub: { fontSize: 12, opacity: 0.85 },
   found: { fontSize: 13, opacity: 0.65 },
-  error: { color: '#c8372d' },
+  error: { color: c.error },
   done: { gap: 2 },
   doneText: { fontWeight: '600' },
   open: { fontWeight: '600' },
-});
+}));

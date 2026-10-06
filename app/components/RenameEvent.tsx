@@ -5,6 +5,7 @@ import { ActivityIndicator, Pressable, StyleSheet, TextInput } from 'react-nativ
 
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { eventsApi, Folder } from '@/lib/events';
+import { Radius, themed } from '@/constants/Theme';
 
 export function RenameEvent({ id, initial, onSaved, onCancel, cancelLabel = 'Cancel', autoFocus = true, large }: {
   id: number;
@@ -15,12 +16,13 @@ export function RenameEvent({ id, initial, onSaved, onCancel, cancelLabel = 'Can
   autoFocus?: boolean;
   large?: boolean;
 }) {
+  const styles = useStyles();
   const [value, setValue] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tint = useThemeColor({}, 'tint');
   const text = useThemeColor({}, 'text');
-  const background = useThemeColor({}, 'background');
+  const onTint = useThemeColor({}, 'onTint');
 
   const save = async () => {
     const name = value.trim();
@@ -43,8 +45,8 @@ export function RenameEvent({ id, initial, onSaved, onCancel, cancelLabel = 'Can
           style={StyleSheet.flatten([styles.input, large && styles.large, { color: text }])} />
         <Pressable onPress={save} disabled={busy} accessibilityRole="button"
           style={StyleSheet.flatten([styles.save, { borderColor: tint, backgroundColor: tint }])}>
-          {busy ? <ActivityIndicator color={background} />
-            : <Text style={StyleSheet.flatten([styles.saveText, { color: background }])}>Save</Text>}
+          {busy ? <ActivityIndicator color={onTint} />
+            : <Text style={StyleSheet.flatten([styles.saveText, { color: onTint }])}>Save</Text>}
         </Pressable>
         <Pressable onPress={onCancel} disabled={busy} accessibilityRole="button" hitSlop={6} style={styles.cancel}>
           <Text style={{ color: tint }}>{cancelLabel}</Text>
@@ -55,14 +57,14 @@ export function RenameEvent({ id, initial, onSaved, onCancel, cancelLabel = 'Can
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   box: { gap: 4, backgroundColor: 'transparent' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', backgroundColor: 'transparent' },
-  input: { flex: 1, minWidth: 160, borderWidth: 1, borderColor: '#8886', borderRadius: 8, paddingHorizontal: 10,
-    paddingVertical: 8, fontSize: 16 },
+  input: { flex: 1, minWidth: 160, borderWidth: 1, borderColor: c.borderStrong, borderRadius: Radius.control, paddingHorizontal: 10,
+    paddingVertical: 8, fontSize: 16, backgroundColor: c.surface },
   large: { fontSize: 20, fontWeight: '700' },
-  save: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 16, paddingVertical: 8, minWidth: 64, alignItems: 'center' },
+  save: { borderWidth: 1, borderRadius: Radius.control, paddingHorizontal: 16, paddingVertical: 8, minWidth: 64, alignItems: 'center' },
   saveText: { fontWeight: '700' },
   cancel: { paddingVertical: 8 },
-  error: { color: '#c8372d' },
-});
+  error: { color: c.error },
+}));

@@ -9,11 +9,9 @@ import { useChartColors } from '@/components/ReportCharts';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
 import { FadeRow, signed } from '@/lib/stint';
+import { byScheme } from '@/constants/Theme';
 
-const BALANCE = {
-  light: { under: '#2a78d6', over: '#e34948', neutral: '#898781' },
-  dark: { under: '#3987e5', over: '#e66767', neutral: '#898781' },
-};
+const BALANCE = byScheme((c) => c.balance);
 export const useBalanceColors = () => BALANCE[useColorScheme() === 'dark' ? 'dark' : 'light'];
 export const MIN_SHIFT = 0.15; // ° of understeer angle: a smaller shift reads as holding (as the server's words)
 

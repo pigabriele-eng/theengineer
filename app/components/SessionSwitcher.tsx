@@ -7,6 +7,7 @@ import { Pressable, ScrollView, StyleSheet } from 'react-native';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { api, formatLap } from '@/lib/api';
 import { dateRange, dayTitle, eventsApi, Folder, FolderSession } from '@/lib/events';
+import { Radius, themed } from '@/constants/Theme';
 
 /** An event with its sessions by day: null when there is none (eventId null) or until it is loaded. While eventId
  * is not known yet (undefined) the last event is kept, so a screen switching between sessions doesn't flicker. */
@@ -55,6 +56,7 @@ export function SessionSwitcher({ folder, current, onPick, onWhole, onlyTimed = 
   onlyTimed?: boolean; // only sessions with a clean lap (what a report or a technique check can show)
   link?: boolean; // the event's name links to its page
 }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   const days = folder.days
     .map((d) => ({ ...d, sessions: d.sessions.filter((s) => !onlyTimed || s.best_lap_s != null) }))
@@ -114,17 +116,17 @@ export function SessionSwitcher({ folder, current, onPick, onWhole, onlyTimed = 
   );
 }
 
-const styles = StyleSheet.create({
-  box: { gap: 8, borderWidth: 1, borderColor: '#8883', borderRadius: 10, padding: 10, backgroundColor: 'transparent' },
+const useStyles = themed((c) => ({
+  box: { gap: 8, borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 10, backgroundColor: 'transparent' },
   head: { flexDirection: 'row', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', backgroundColor: 'transparent' },
   event: { fontSize: 15, fontWeight: '700', flexShrink: 1 },
   sub: { fontSize: 12, opacity: 0.6 },
   day: { gap: 4, backgroundColor: 'transparent' },
   dayTitle: { fontSize: 11, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
   row: { flexDirection: 'row', gap: 6, backgroundColor: 'transparent' },
-  chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5,
-    maxWidth: 170 },
+  chip: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, paddingHorizontal: 10, paddingVertical: 5,
+    maxWidth: 170, backgroundColor: c.surface },
   name: { fontSize: 14, fontWeight: '600' },
   detail: { fontSize: 12, opacity: 0.65, fontVariant: ['tabular-nums'] },
   dim: { opacity: 0.45 },
-});
+}));

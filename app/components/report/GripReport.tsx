@@ -19,10 +19,12 @@ import {
 } from '@/lib/grip';
 
 import { ChartColors, Dumbbell, GgDiagram, GripMap, inkOn, LegendItem, ramp, Scatter, useChartColors } from './GripCharts';
+import { Radius, themed } from '@/constants/Theme';
 
 type Props = { session?: number; event?: number };
 
 export function GripReport({ session, event }: Props) {
+  const styles = useStyles();
   const [data, setData] = useState<GripResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -69,6 +71,7 @@ export function GripReport({ session, event }: Props) {
 export default GripReport;
 
 function Report({ data }: { data: GripResult }) {
+  const styles = useStyles();
   const c = useChartColors();
   const sections = data.sections ?? [];
   const sectionAt = (m: number) => sections.find((s) => m >= s.start_m && m < s.end_m)?.code ?? '';
@@ -140,6 +143,7 @@ function Report({ data }: { data: GripResult }) {
 }
 
 function HeadlineTile({ h }: { h: Headline }) {
+  const styles = useStyles();
   return (
     <View style={styles.tile}>
       <Text style={styles.tileLabel}>{h.label}</Text>
@@ -154,6 +158,7 @@ function HeadlineTile({ h }: { h: Headline }) {
 }
 
 function LapsVsGrip({ data, c }: { data: GripResult; c: ChartColors }) {
+  const styles = useStyles();
   const g = data.grip!;
   const laps = (data.laps ?? []).filter((l) => l.grip_use != null);
   const vt = g.vs_time;
@@ -189,6 +194,7 @@ function LapsVsGrip({ data, c }: { data: GripResult; c: ChartColors }) {
 }
 
 function PhaseGap({ data, c }: { data: GripResult; c: ChartColors }) {
+  const styles = useStyles();
   const ph = data.grip!.phases;
   return (
     <View style={styles.block}>
@@ -217,6 +223,7 @@ function PhaseGap({ data, c }: { data: GripResult; c: ChartColors }) {
 const MIN_PHASE_S = 0.3; // a phase shorter than this in a corner is left blank
 
 function SectionTable({ sections, c }: { sections: GripSection[]; c: ChartColors }) {
+  const styles = useStyles();
   const fill = (u: number) => ramp(c.seq, (u - 60) / 40);
   return (
     <View style={styles.block}>
@@ -289,6 +296,7 @@ function SectionTable({ sections, c }: { sections: GripSection[]; c: ChartColors
 }
 
 function GgBlock({ data, c, sectionAt }: { data: GripResult; c: ChartColors; sectionAt: (m: number) => string }) {
+  const styles = useStyles();
   const lim = data.limits!;
   const gg = data.gg!;
   // start on the speed band that holds the most of the fastest lap's corners
@@ -354,6 +362,7 @@ const VERDICT: Record<Verdict, { label: string; color: keyof ChartColors | null 
 };
 
 function VerdictBadge({ v, c }: { v: Verdict; c: ChartColors }) {
+  const styles = useStyles();
   const color = VERDICT[v].color;
   return (
     <View style={styles.badge}>
@@ -376,6 +385,7 @@ const ZONE_COLUMNS: { title: string; width: number; compact?: boolean; value: (z
 ];
 
 function TractionControl({ data, c }: { data: GripResult; c: ChartColors }) {
+  const styles = useStyles();
   const [width, setWidth] = useState(0);
   const tc = data.tc!;
   if (!tc.available) {
@@ -555,14 +565,14 @@ function TractionControl({ data, c }: { data: GripResult; c: ChartColors }) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   wrap: { gap: 20 },
   block: { gap: 8 },
   loading: { gap: 8, paddingVertical: 16 },
   h2: { fontSize: 20, fontWeight: '700' },
   h3: { fontSize: 16, fontWeight: '700', marginTop: 4 },
   dim: { opacity: 0.65, lineHeight: 20 },
-  error: { color: '#c8372d' },
+  error: { color: c.error },
   bold: { fontWeight: '700' },
   caption: { fontSize: 12, opacity: 0.7, lineHeight: 17 },
   note: { lineHeight: 20 },
@@ -571,10 +581,10 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     flexBasis: 260,
     borderWidth: 1,
-    borderColor: '#8883',
-    borderRadius: 12,
+    borderColor: c.border,
+    borderRadius: Radius.card,
     padding: 12,
-    gap: 4,
+    gap: 4, backgroundColor: c.surface,
   },
   tileLabel: { fontSize: 12, opacity: 0.65, textTransform: 'uppercase', letterSpacing: 0.5 },
   tileValue: { fontSize: 28, fontWeight: '600' },
@@ -584,10 +594,10 @@ const styles = StyleSheet.create({
   legendText: { fontSize: 12, opacity: 0.75 },
   legendDot: { width: 9, height: 9, borderRadius: 5 },
   tabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  tab: { borderWidth: 1, borderColor: '#8884', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
+  tab: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: c.surface },
   tabText: { fontSize: 13, opacity: 0.7 },
   tabOn: { fontSize: 13, fontWeight: '600' },
-  trow: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderColor: '#8882', paddingVertical: 3 },
+  trow: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderColor: c.separator, paddingVertical: 3 },
   th: { fontSize: 11, fontWeight: '600', opacity: 0.65 },
   td: { fontSize: 13, fontVariant: ['tabular-nums'] },
   num: { textAlign: 'right', paddingRight: 6 },
@@ -598,7 +608,7 @@ const styles = StyleSheet.create({
   cell: { height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 4 },
   cellValue: { fontSize: 12, fontWeight: '600', fontVariant: ['tabular-nums'] },
   cellGap: { fontSize: 10, fontVariant: ['tabular-nums'] },
-  noteRow: { gap: 2, paddingVertical: 6, borderBottomWidth: 1, borderColor: '#8882' },
+  noteRow: { gap: 2, paddingVertical: 6, borderBottomWidth: 1, borderColor: c.separator },
   noteHead: { fontSize: 14 },
   facts: { flexDirection: 'row', flexWrap: 'wrap', gap: 24 },
   fact: { gap: 2 },
@@ -607,6 +617,6 @@ const styles = StyleSheet.create({
   verdictCol: { flexGrow: 1, flexShrink: 1, minWidth: 100, maxWidth: 140, paddingLeft: 10 },
   subtle: { fontSize: 11, opacity: 0.6, fontVariant: ['tabular-nums'] },
   badgeText: { fontSize: 12 },
-  zoneCard: { borderWidth: 1, borderColor: '#8883', borderRadius: 12, padding: 12, gap: 6 },
+  zoneCard: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 12, gap: 6, backgroundColor: c.surface },
   zoneHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
-});
+}));

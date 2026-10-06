@@ -5,6 +5,7 @@ import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 import { EventForm } from '@/components/EventForm';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { dateRange, eventsApi, FolderSummary, NO_EVENT } from '@/lib/events';
+import { Radius, themed } from '@/constants/Theme';
 
 export function MoveSessions({ fromKey, count, onMove, onCancel }: {
   fromKey: string; // the folder they are in now
@@ -12,6 +13,7 @@ export function MoveSessions({ fromKey, count, onMove, onCancel }: {
   onMove: (toKey: string, toName: string) => Promise<void>;
   onCancel: () => void;
 }) {
+  const styles = useStyles();
   const [folders, setFolders] = useState<FolderSummary[] | null>(null);
   const [making, setMaking] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -81,13 +83,13 @@ export function MoveSessions({ fromKey, count, onMove, onCancel }: {
   );
 }
 
-const styles = StyleSheet.create({
-  box: { gap: 4, borderWidth: 1, borderColor: '#8884', borderRadius: 10, padding: 12 },
+const useStyles = themed((c) => ({
+  box: { gap: 4, borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 12, backgroundColor: c.surface },
   title: { fontSize: 16, fontWeight: '700', marginBottom: 4 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1,
-    borderColor: '#8882' },
+    borderColor: c.separator },
   grow: { flex: 1, backgroundColor: 'transparent' },
   name: { fontSize: 15, fontWeight: '600' },
   sub: { fontSize: 12, opacity: 0.6 },
-  error: { color: '#c8372d' },
-});
+  error: { color: c.error },
+}));

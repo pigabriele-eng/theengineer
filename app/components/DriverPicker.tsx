@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, TextInput } from 'react-native';
 
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { Driver, DriverPick } from '@/lib/drivers';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 // The choice being made: a driver's id, a new name, or null for "no driver".
 export type Choice = { id: number } | { name: string } | null;
@@ -18,6 +19,8 @@ export function DriverChoice({ drivers, value, onChange, allowNone = true }: {
   onChange: (c: Choice | undefined) => void;
   allowNone?: boolean;
 }) {
+  const styles = useStyles();
+  const theme = useTheme();
   const tint = useThemeColor({}, 'tint');
   const text = useThemeColor({}, 'text');
   const typed = value != null && 'name' in value ? value.name : '';
@@ -43,8 +46,8 @@ export function DriverChoice({ drivers, value, onChange, allowNone = true }: {
         value={typed}
         onChangeText={(name) => onChange(name ? { name } : undefined)}
         placeholder={drivers.length ? 'Or a new driver: name' : 'Driver name'}
-        placeholderTextColor="#888"
-        style={StyleSheet.flatten([styles.input, { color: text, borderColor: typed ? tint : '#8884' }])}
+        placeholderTextColor={theme.textMuted}
+        style={StyleSheet.flatten([styles.input, { color: text, borderColor: typed ? tint : theme.border }])}
         maxLength={120}
       />
       {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
@@ -57,20 +60,21 @@ export function DriverChoice({ drivers, value, onChange, allowNone = true }: {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   choice: { gap: 8 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 5 },
-  input: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 16 },
+  chip: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 12, paddingVertical: 5, backgroundColor: c.surface },
+  input: { borderWidth: 1, borderRadius: Radius.control, paddingHorizontal: 12, paddingVertical: 8, fontSize: 16 },
   dim: { opacity: 0.5 },
   garage: { alignSelf: 'flex-start' },
   links: { flexDirection: 'row', gap: 8 },
-  linkButton: { flex: 1, borderWidth: 1, borderRadius: 8, paddingVertical: 10, alignItems: 'center' },
+  linkButton: { flex: 1, borderWidth: 1, borderRadius: Radius.control, paddingVertical: 10, alignItems: 'center' },
   linkText: { fontWeight: '600', fontSize: 16 },
-});
+}));
 
 // The Sessions tab's way in: tag sessions with their drivers, and compare two drivers over many laps.
 export function DriverLinks() {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   // Link asChild hands its child's style to a web anchor, which can't take a style array: one object
   const button = StyleSheet.flatten([styles.linkButton, { borderColor: tint }]);

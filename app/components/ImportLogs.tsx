@@ -16,6 +16,7 @@ import { api, ImportJob } from '@/lib/api';
 import { dateRange, eventsApi, FolderSummary } from '@/lib/events';
 import { untimedRuns } from '@/lib/emptyRuns';
 import { namingApi, NewEvent } from '@/lib/eventNaming';
+import { Radius, themed } from '@/constants/Theme';
 
 // The browser's file dialog filters by extension. iOS and Android filter by MIME type only, and a .ld log has
 // none, so there every file can be picked and the server skips what isn't a log.
@@ -38,6 +39,7 @@ export function ImportLogs({ onProgress, events, into }: {
   events?: FolderSummary[] | null; // the events to offer; without them (and without into) no choice is shown
   into?: { id: number; name: string }; // upload into this event, no choice
 }) {
+  const styles = useStyles();
   const [uploading, setUploading] = useState<number | null>(null); // how many files are being sent
   const [job, setJob] = useState<ImportJob | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -213,6 +215,7 @@ export function ImportLogs({ onProgress, events, into }: {
 }
 
 function Progress({ job }: { job: ImportJob }) {
+  const styles = useStyles();
   if (job.total === 0) return <Text style={styles.sub}>Unpacking the upload…</Text>;
   return (
     <Text style={styles.sub}>
@@ -223,6 +226,7 @@ function Progress({ job }: { job: ImportJob }) {
 }
 
 function Summary({ job, onHide, tint }: { job: ImportJob; onHide: () => void; tint: string }) {
+  const styles = useStyles();
   const imported = job.session_ids.length;
   const byReason = new Map<string, string[]>();
   for (const s of job.skipped) byReason.set(s.reason, [...(byReason.get(s.reason) ?? []), shortName(s.file)]);
@@ -264,20 +268,20 @@ function Summary({ job, onHide, tint }: { job: ImportJob; onHide: () => void; ti
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   box: { gap: 6 },
   into: { gap: 6 },
   intoLabel: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
   chips: { flexDirection: 'row', gap: 6 },
-  chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5,
-    maxWidth: 220, justifyContent: 'center' },
+  chip: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, paddingHorizontal: 10, paddingVertical: 5,
+    maxWidth: 220, justifyContent: 'center', backgroundColor: c.surface },
   chipSub: { fontSize: 11, opacity: 0.6 },
-  form: { borderWidth: 1, borderColor: '#8884', borderRadius: 10, padding: 12 },
-  button: { borderWidth: 1, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, alignItems: 'center' },
+  form: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 12, backgroundColor: c.surface },
+  button: { borderWidth: 1, borderRadius: Radius.control, paddingVertical: 10, paddingHorizontal: 12, alignItems: 'center' },
   buttonText: { fontWeight: '600', fontSize: 16, textAlign: 'center' },
   summary: { gap: 4 },
   headline: { fontWeight: '600' },
   sub: { opacity: 0.7 },
-  error: { color: '#c8372d' },
-  warn: { color: '#b26b00' },
-});
+  error: { color: c.error },
+  warn: { color: c.warning },
+}));

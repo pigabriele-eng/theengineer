@@ -7,6 +7,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch, TextInput
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { CalendarEntry, CalendarState, calendarApi, clockLabel, syncSummary, todayIso } from '@/lib/calendar';
 import { dateRange } from '@/lib/events';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 const STEPS = [
   'On a computer, open calendar.google.com (the Google Calendar phone app doesn’t show this address).',
@@ -21,10 +22,10 @@ const STEPS = [
 ];
 
 export default function CalendarScreen() {
+  const styles = useStyles();
   const [state, setState] = useState<CalendarState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [replacing, setReplacing] = useState(false);
-  const background = useThemeColor({}, 'background');
 
   const load = useCallback(() => {
     calendarApi.state().then(
@@ -45,7 +46,7 @@ export default function CalendarScreen() {
 
   const feed = state?.feed ?? null;
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.outer}>
+    <ScrollView contentContainerStyle={styles.outer}>
       <Stack.Screen options={{ title: 'Racing calendar' }} />
       <View style={styles.page}>
         <Text style={styles.intro}>
@@ -76,6 +77,8 @@ function Connect({ replacing, autoAdd, onConnected, onCancel }: {
   onConnected: (s: CalendarState) => void;
   onCancel: () => void;
 }) {
+  const styles = useStyles();
+  const theme = useTheme();
   const [url, setUrl] = useState('');
   const [auto, setAuto] = useState(autoAdd);
   const [busy, setBusy] = useState(false);
@@ -112,7 +115,7 @@ function Connect({ replacing, autoAdd, onConnected, onCancel }: {
       ))}
       <Text style={styles.label}>Secret address in iCal format</Text>
       <TextInput value={url} onChangeText={setUrl} secureTextEntry autoCapitalize="none" autoCorrect={false}
-        placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" placeholderTextColor="#888"
+        placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" placeholderTextColor={theme.textMuted}
         style={StyleSheet.flatten([styles.input, { color: text }])} accessibilityLabel="Secret address in iCal format" />
       <Text style={styles.note}>
         This address is a key to your calendar: paste it only here, never in a chat or an email. The server keeps it
@@ -138,6 +141,7 @@ function Connect({ replacing, autoAdd, onConnected, onCancel }: {
 }
 
 function AutoAdd({ value, onChange }: { value: boolean; onChange: (on: boolean) => void }) {
+  const styles = useStyles();
   return (
     <View style={styles.switchRow}>
       <View style={styles.switchText}>
@@ -158,6 +162,7 @@ function Connected({ state, onChange, onReplace }: {
   onChange: (s: CalendarState) => void;
   onReplace: () => void;
 }) {
+  const styles = useStyles();
   const feed = state.feed!;
   const [busy, setBusy] = useState<string | null>(null); // what is being done
   const [error, setError] = useState<string | null>(null);
@@ -254,6 +259,7 @@ function EntryRow({ e, past, busy, onSwitch }: {
   busy: boolean;
   onSwitch: (on: boolean) => void;
 }) {
+  const styles = useStyles();
   const state = !e.included ? 'Not in the app' : e.has_data ? 'In the app, with data' : 'In the app, planned';
   return (
     <View style={StyleSheet.flatten([styles.entry, past && styles.past])}>
@@ -271,7 +277,7 @@ function EntryRow({ e, past, busy, onSwitch }: {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   outer: { padding: 16, paddingBottom: 40 },
   page: { width: '100%', maxWidth: 720, alignSelf: 'center', gap: 14 },
   intro: { fontSize: 15, lineHeight: 21 },
@@ -282,30 +288,30 @@ const styles = StyleSheet.create({
   stepNo: { width: 18, fontWeight: '700', opacity: 0.7 },
   stepText: { flex: 1, fontSize: 14, lineHeight: 20 },
   label: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 6 },
-  input: { borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 9,
-    fontSize: 16 },
+  input: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, paddingHorizontal: 12, paddingVertical: 9,
+    fontSize: 16, backgroundColor: c.surface },
   note: { fontSize: 13, opacity: 0.65, lineHeight: 18 },
-  error: { color: '#c8372d' },
-  warn: { color: '#b26b00' },
+  error: { color: c.error },
+  warn: { color: c.warning },
   buttons: { flexDirection: 'row', alignItems: 'center', gap: 16 },
-  button: { borderWidth: 1.5, borderRadius: 8, paddingHorizontal: 22, paddingVertical: 10, minWidth: 120,
+  button: { borderWidth: 1.5, borderRadius: Radius.control, paddingHorizontal: 22, paddingVertical: 10, minWidth: 120,
     alignItems: 'center' },
   buttonText: { fontWeight: '700', fontSize: 16 },
   plain: { paddingVertical: 10 },
-  box: { borderWidth: 1, borderColor: '#8884', borderRadius: 10, padding: 14, gap: 6 },
+  box: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 14, gap: 6, backgroundColor: c.surface },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4, backgroundColor: 'transparent' },
-  action: { borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
+  action: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, paddingHorizontal: 14, paddingVertical: 8 },
   actionText: { fontWeight: '600' },
-  danger: { borderColor: '#c8372d' },
-  dangerText: { color: '#c8372d' },
+  danger: { borderColor: c.error },
+  dangerText: { color: c.error },
   confirm: { gap: 8, marginTop: 6, backgroundColor: 'transparent' },
   switchRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   switchText: { flex: 1, gap: 2, backgroundColor: 'transparent' },
   switchTitle: { fontSize: 15, fontWeight: '600' },
-  entry: { flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderColor: '#8884',
-    borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
+  entry: { flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderColor: c.border,
+    borderRadius: Radius.card, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: c.surface },
   past: { opacity: 0.7 },
   entryTitle: { fontSize: 16, fontWeight: '600' },
   entryState: { fontSize: 13, fontWeight: '600', opacity: 0.8 },
   off: { opacity: 0.5 },
-});
+}));

@@ -18,6 +18,7 @@ import {
   TrackMapData,
 } from '@/lib/trackmap';
 import { featureMid, featureSpan, TrackShapeData } from '@/lib/trackshape';
+import { byScheme, Fonts, Radius, themed } from '@/constants/Theme';
 
 type Props = {
   session?: number; // draw this session's best clean lap
@@ -31,30 +32,23 @@ type Props = {
   maxHeight?: number; // the most the drawing may take, px (it never grows past its usual size)
   compact?: boolean; // the drawing alone: no title, switch, legend or caption (a map pinned on a phone)
   onNone?: () => void; // there's no map to draw (no log, no clean lap, no GPS): the map shows nothing
+  // sections in colours of their own (code -> colour), as the cards naming them wear them; the others stay grey
+  sectionColors?: Record<string, string>;
+  sectionKey?: string; // what those colours say, under the map
 };
 
 export type MapMark = { n: number; at_m: number; from_m: number; to_m: number };
 
-// Chart chrome and ramps from the validated palette: neutral inks for the track and its sections, the blue
-// categorical slot for the emphasised section, the one-hue blue ramp for speed (slow near the surface).
-const PALETTE = {
-  light: {
-    ink: '#0b0b0b',
-    secondary: '#52514e',
-    muted: '#898781',
-    casing: '#c3c2b7',
-    accent: '#2a78d6',
-    speed: ['#b7d3f6', '#86b6ef', '#5598e7', '#2a78d6', '#1c5cab', '#104281', '#0d366b'],
-  },
-  dark: {
-    ink: '#ffffff',
-    secondary: '#c3c2b7',
-    muted: '#898781',
-    casing: '#383835',
-    accent: '#3987e5',
-    speed: ['#184f95', '#256abf', '#3987e5', '#5598e7', '#86b6ef', '#9ec5f4', '#cde2fb'],
-  },
-};
+// Chart chrome and ramps from the validated palette: neutral inks for the track and its sections, the highlight colour
+// for the emphasised section, the one-hue blue ramp for speed (slow near the surface).
+const PALETTE = byScheme((c) => ({
+  ink: c.chart.ink,
+  secondary: c.chart.ink2,
+  muted: c.chart.muted,
+  casing: c.chart.axis,
+  accent: c.chart.series[0],
+  speed: c.chart.speed,
+}));
 
 const PAD = 34; // room round the track for labels
 // label size, track stroke, emphasised stroke and chequer square (the start/finish tick is 2 squares along the
@@ -62,7 +56,7 @@ const PAD = 34; // room round the track for labels
 const sizes = (width: number) =>
   width >= 700 ? { font: 13, track: 7, strong: 10, check: 5 } : { font: 12, track: 5, strong: 8, check: 4 };
 // SVG text on the web falls back to a serif face; use the system sans like the rest of the app
-const SANS = Platform.select({ web: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' });
+const SANS = Fonts.sans;
 
 type Mode = 'sections' | 'speed';
 
@@ -136,7 +130,8 @@ function layout(map: TrackMapData, width: number, maxHeight?: number) {
  * the analysis numbers them, the start/finish line and the direction of travel. Tap or hover a section for
  * its distances; switch to speed to colour the lap by speed. */
 export function TrackMap({ session, event, highlight, marks, selectedMark, marksLengthM, withShape, onShape, maxHeight,
-  compact, onNone }: Props) {
+  compact, onNone, sectionColors, sectionKey }: Props) {
+  const styles = useStyles();
   const shape = useTrackShape(withShape ? { session, event } : {});
   const [map, setMap] = useState<TrackMapData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -145,9 +140,9 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
   const [width, setWidth] = useState(0);
   const [active, setActive] = useState<string | null>(null);
   const [heightAt, setHeightAt] = useState<number | null>(null); // the metre read on the height strip
-  const c = PALETTE[useColorScheme() === 'dark' ? 'dark' : 'light'];
+  const c = PALETTE[useColorScheme()];
   const sc = useShapeColors();
-  const surface = useThemeColor({}, 'background');
+  const surface = useThemeColor({}, 'surface');
 
   useEffect(() => {
     let live = true;
@@ -245,6 +240,7 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
   })();
 
   const tone = (k: number, code: string) => {
+    if (sectionColors?.[code]) return sectionColors[code];
     if (emphasised(code)) return c.accent;
     return k % 2 ? c.muted : c.secondary;
   };
@@ -388,6 +384,7 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
           <Text style={styles.detail}>
             {detail ?? `${Platform.OS === 'web' ? 'Hover or tap' : 'Tap'} a section for where it starts and ends.`}
           </Text>
+          {mode === 'sections' && sectionKey ? <Text style={styles.small}>{sectionKey}</Text> : null}
           <View style={styles.legend}>
             <Svg width={12} height={18}>
               <Chequer x={1.5} y={1} size={4} ink={c.ink} paper={surface} />
@@ -433,12 +430,12 @@ function Chequer({ x, y, size, ink, paper }: { x: number; y: number; size: numbe
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   wrap: { gap: 6 },
   head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
   title: { fontSize: 13, fontWeight: '600', opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 },
   toggle: { flexDirection: 'row', gap: 6 },
-  toggleItem: { borderWidth: 1, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 },
+  toggleItem: { borderWidth: 1, borderRadius: Radius.control, paddingHorizontal: 10, paddingVertical: 4 },
   toggleText: { fontSize: 13, fontWeight: '600' },
   legend: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   ramp: { flexDirection: 'row', gap: 1 },
@@ -448,4 +445,4 @@ const styles = StyleSheet.create({
   note: { fontSize: 12, opacity: 0.6 },
   strip: { marginTop: 8 },
   gone: { display: 'none' },
-});
+}));

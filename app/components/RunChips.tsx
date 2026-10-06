@@ -21,6 +21,7 @@ import {
   RunFields,
   RunSet,
 } from '@/lib/garage';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 export type PickerKind = 'driver' | 'car';
 export type RunRef = { id: number; name: string; driver_id?: number | null; driver?: string | null; car_id?: number | null };
@@ -62,6 +63,7 @@ export function RunChips({ run, garage, open, onOpen }: {
   open: PickerKind | null;
   onOpen: (what: PickerKind | null) => void;
 }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   // a driver made a moment ago is named by the run until the garage is loaded again
   const driver = garage?.drivers.find((d) => d.id === run.driver_id)
@@ -106,6 +108,8 @@ function DriverList({ run, garage, onPick, onClose }: {
   onPick: (fields: RunFields) => Promise<void> | void;
   onClose: () => void;
 }) {
+  const styles = useStyles();
+  const theme = useTheme();
   const [typing, setTyping] = useState(false);
   const [name, setName] = useState('');
   const tint = useThemeColor({}, 'tint');
@@ -139,7 +143,7 @@ function DriverList({ run, garage, onPick, onClose }: {
       )}
       {typing ? (
         <View style={styles.inputRow}>
-          <TextInput value={name} onChangeText={setName} placeholder="New driver's name" placeholderTextColor="#888"
+          <TextInput value={name} onChangeText={setName} placeholder="New driver's name" placeholderTextColor={theme.textMuted}
             autoFocus maxLength={120} onSubmitEditing={add} accessibilityLabel="New driver's name"
             style={StyleSheet.flatten([styles.input, { color: text }])} />
           <Pressable onPress={add} accessibilityRole="button" style={StyleSheet.flatten([styles.button, { borderColor: tint }])}>
@@ -171,6 +175,8 @@ function CarList({ run, garage, onPick, onClose }: {
   onPick: (fields: RunFields) => Promise<void> | void;
   onClose: () => void;
 }) {
+  const styles = useStyles();
+  const theme = useTheme();
   const [adding, setAdding] = useState(false);
   const [number, setNumber] = useState('');
   const [model, setModel] = useState(garage.models[0] ?? '');
@@ -207,10 +213,10 @@ function CarList({ run, garage, onPick, onClose }: {
       {adding ? (
         <View style={styles.newCar}>
           <View style={styles.inputRow}>
-            <TextInput value={number} onChangeText={setNumber} placeholder="No." placeholderTextColor="#888" autoFocus
+            <TextInput value={number} onChangeText={setNumber} placeholder="No." placeholderTextColor={theme.textMuted} autoFocus
               maxLength={8} accessibilityLabel="Car number" onSubmitEditing={add}
               style={StyleSheet.flatten([styles.input, styles.number, { color: text }])} />
-            <TextInput value={model} onChangeText={setModel} placeholder="Model" placeholderTextColor="#888"
+            <TextInput value={model} onChangeText={setModel} placeholder="Model" placeholderTextColor={theme.textMuted}
               maxLength={100} accessibilityLabel="Car model" onSubmitEditing={add}
               style={StyleSheet.flatten([styles.input, { color: text }])} />
             <Pressable onPress={add} disabled={busy} accessibilityRole="button"
@@ -250,6 +256,7 @@ function CarList({ run, garage, onPick, onClose }: {
 }
 
 function PanelHead({ title, onClose }: { title: string; onClose: () => void }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   return (
     <View style={styles.panelHead}>
@@ -262,6 +269,7 @@ function PanelHead({ title, onClose }: { title: string; onClose: () => void }) {
 }
 
 function GarageLink() {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   return (
     // Link asChild hands its child's style to a web anchor, which can't take a style array: one object
@@ -283,6 +291,7 @@ export function RunNameEditor({ id, name, kind, logSession, onSaved, onCancel, s
   onCancel: () => void;
   save: (id: number, body: { name: string; kind: SessionKind }) => Promise<unknown>;
 }) {
+  const styles = useStyles();
   const [value, setValue] = useState(name);
   const [k, setK] = useState<SessionKind>(kind);
   const [busy, setBusy] = useState(false);
@@ -347,6 +356,7 @@ export function RunHeader({ run, kind, logSession, onChanged }: {
   logSession?: string | null;
   onChanged: () => void;
 }) {
+  const styles = useStyles();
   const { garage, reload } = useGarage();
   const [open, setOpen] = useState<PickerKind | null>(null);
   const [editing, setEditing] = useState(false);
@@ -403,38 +413,38 @@ export function RunHeader({ run, kind, logSession, onChanged }: {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   header: { gap: 8, backgroundColor: 'transparent' },
   titleLine: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', backgroundColor: 'transparent' },
   titlePress: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 },
   title: { fontSize: 22, fontWeight: '700', flexShrink: 1 },
   pencil: { fontSize: 15 },
-  kind: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, backgroundColor: '#8882' },
+  kind: { borderRadius: Radius.tag, paddingHorizontal: 6, paddingVertical: 2, backgroundColor: c.fill },
   kindText: { fontSize: 12, fontWeight: '600', opacity: 0.8 },
-  notice: { fontSize: 13, opacity: 0.8, borderLeftWidth: 3, borderColor: '#8886', paddingLeft: 8 },
+  notice: { fontSize: 13, opacity: 0.8, borderLeftWidth: 3, borderColor: c.borderStrong, paddingLeft: 8 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, backgroundColor: 'transparent' },
-  chip: { borderWidth: 1, borderColor: '#8886', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 4,
-    maxWidth: 180 },
-  unset: { borderStyle: 'dashed', borderColor: '#8888' },
+  chip: { borderWidth: 1, borderColor: c.borderStrong, borderRadius: Radius.chip, paddingHorizontal: 10, paddingVertical: 4,
+    maxWidth: 180, backgroundColor: c.surface },
+  unset: { borderStyle: 'dashed', borderColor: c.borderStrong },
   chipText: { fontSize: 13, fontWeight: '600' },
   dim: { opacity: 0.6 },
-  panel: { borderWidth: 1, borderColor: '#8884', borderRadius: 10, padding: 10, gap: 8, marginBottom: 10 },
+  panel: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 10, gap: 8, marginBottom: 10, backgroundColor: c.surface },
   panelHead: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: 'transparent' },
   panelTitle: { flex: 1, fontWeight: '700', fontSize: 15 },
   group: { fontSize: 11, fontWeight: '700', opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
   options: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, backgroundColor: 'transparent' },
-  option: { borderWidth: 1, borderColor: '#8886', borderRadius: 18, paddingHorizontal: 14, paddingVertical: 8 },
+  option: { borderWidth: 1, borderColor: c.borderStrong, borderRadius: Radius.chip, paddingHorizontal: 14, paddingVertical: 8 },
   optionText: { fontSize: 15, fontWeight: '600' },
   optionSub: { fontSize: 11, opacity: 0.6 },
-  small: { borderWidth: 1, borderColor: '#8884', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 4 },
+  small: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: c.surface },
   smallText: { fontSize: 14 },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', backgroundColor: 'transparent' },
-  input: { flex: 1, minWidth: 120, borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 10,
-    paddingVertical: 8, fontSize: 15 },
+  input: { flex: 1, minWidth: 120, borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, paddingHorizontal: 10,
+    paddingVertical: 8, fontSize: 15, backgroundColor: c.surface },
   number: { flex: 0, minWidth: 64, width: 64 },
   nameInput: { fontSize: 16, fontWeight: '600' },
   newCar: { gap: 8, backgroundColor: 'transparent' },
-  button: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8, minWidth: 64, alignItems: 'center' },
+  button: { borderWidth: 1, borderRadius: Radius.control, paddingHorizontal: 14, paddingVertical: 8, minWidth: 64, alignItems: 'center' },
   buttonText: { fontWeight: '600' },
   garageLink: { alignSelf: 'flex-start', paddingVertical: 2 },
   garageText: { fontSize: 13 },
@@ -442,5 +452,5 @@ const styles = StyleSheet.create({
   kindLabel: { fontSize: 11, fontWeight: '700', opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5,
     alignSelf: 'center' },
   note: { fontSize: 12, opacity: 0.6 },
-  error: { color: '#c8372d' },
-});
+  error: { color: c.error },
+}));

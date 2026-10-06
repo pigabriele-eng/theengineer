@@ -14,6 +14,7 @@ import {
   vehicleApi,
   WhatIfResult,
 } from '@/lib/vehicle';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 type Axle = 'front' | 'rear';
 type Field = { key: keyof Vehicle; label: string; unit: string; percent?: boolean };
@@ -56,6 +57,8 @@ const toText = (v: Vehicle, f: Field) => {
 };
 
 export default function VehicleScreen() {
+  const styles = useStyles();
+  const theme = useTheme();
   const params = useLocalSearchParams<{ session?: string }>(); // ?session=<id> loads that run's setup sheet
   const [preset, setPreset] = useState<Preset | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
@@ -70,7 +73,6 @@ export default function VehicleScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
   const text = useThemeColor({}, 'text');
 
   const fill = (v: Vehicle) => {
@@ -146,7 +148,7 @@ export default function VehicleScreen() {
           </Text>
         </View>
         <TextInput
-          style={[styles.input, { color: text, borderColor: '#8884' }]}
+          style={[styles.input, { color: text, borderColor: theme.border }]}
           value={form[f.key] ?? ''}
           onChangeText={(t) => setForm((s) => ({ ...s, [f.key]: t }))}
           keyboardType="decimal-pad"
@@ -186,7 +188,7 @@ export default function VehicleScreen() {
             </View>
           ) : (
             <TextInput
-              style={[styles.input, { color: text, borderColor: '#8884' }]}
+              style={[styles.input, { color: text, borderColor: theme.border }]}
               value={b.rate}
               onChangeText={(t) => setBar({ rate: t })}
               keyboardType="decimal-pad"
@@ -195,11 +197,11 @@ export default function VehicleScreen() {
         </View>
         <Text style={styles.unit}>Rate at each setting, softest first (empty: one rate)</Text>
         <TextInput
-          style={[styles.input, styles.wide, { color: text, borderColor: '#8884' }]}
+          style={[styles.input, styles.wide, { color: text, borderColor: theme.border }]}
           value={b.rates}
           onChangeText={(t) => setBar({ rates: t })}
           placeholder="e.g. 20, 30, 40, 50, 60"
-          placeholderTextColor="#8888"
+          placeholderTextColor={theme.textMuted}
         />
         {showSources && prov && <Text style={styles.note}>{prov.note}</Text>}
       </View>
@@ -207,7 +209,7 @@ export default function VehicleScreen() {
   };
 
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container}>
       <Stack.Screen options={{ title: 'Vehicle model' }} />
       <Text style={styles.intro}>
         Weight transfer, roll stiffness and ride frequencies from springs, bars and motion ratios
@@ -266,7 +268,7 @@ export default function VehicleScreen() {
             style={[styles.button, { backgroundColor: tint, opacity: picked.length ? 1 : 0.5 }]}
             onPress={compare}
             disabled={!picked.length || busy}>
-            {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Compare</Text>}
+            {busy ? <ActivityIndicator color={theme.onTint} /> : <Text style={styles.buttonText}>Compare</Text>}
           </Pressable>
           {whatIf && (
             <View style={styles.card}>
@@ -322,6 +324,7 @@ function whatIfOptions(bars: Record<Axle, BarState>): { label: string; change: C
 const fmt = (x: number) => (Math.abs(x) >= 100 ? x.toFixed(0) : Math.abs(x) >= 10 ? x.toFixed(1) : x.toFixed(2));
 
 function Results({ r }: { r: ModelResult }) {
+  const styles = useStyles();
   const f = r.axles.front;
   const b = r.axles.rear;
   const lt = (a: 'front' | 'rear', part: 'geometric' | 'elastic' | 'unsprung' | 'total') =>
@@ -376,6 +379,7 @@ function Results({ r }: { r: ModelResult }) {
 }
 
 function Pair({ label, a, b }: { label: string; a: string; b: string }) {
+  const styles = useStyles();
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
@@ -386,6 +390,7 @@ function Pair({ label, a, b }: { label: string; a: string; b: string }) {
 }
 
 function Fact({ label, value }: { label: string; value: string }) {
+  const styles = useStyles();
   return (
     <View style={styles.fact}>
       <Text style={styles.factLabel}>{label}</Text>
@@ -395,6 +400,7 @@ function Fact({ label, value }: { label: string; value: string }) {
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
+  const styles = useStyles();
   return (
     <View style={styles.section}>
       <Text style={styles.h2}>{title}</Text>
@@ -403,19 +409,19 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   container: { padding: 16, gap: 16, paddingBottom: 48 },
   intro: { opacity: 0.8 },
   section: { gap: 8 },
   h2: { fontSize: 18, fontWeight: '700' },
-  field: { gap: 4, paddingVertical: 4, borderBottomWidth: 1, borderColor: '#8882' },
+  field: { gap: 4, paddingVertical: 4, borderBottomWidth: 1, borderColor: c.separator },
   fieldRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   fieldLabel: { flex: 1, gap: 1 },
   unit: { fontSize: 12, opacity: 0.6 },
   note: { fontSize: 12, opacity: 0.7 },
   input: {
     borderWidth: 1,
-    borderRadius: 6,
+    borderRadius: Radius.control,
     paddingHorizontal: 8,
     paddingVertical: 6,
     width: 96,
@@ -427,15 +433,15 @@ const styles = StyleSheet.create({
   step: { fontSize: 24, fontWeight: '600', paddingHorizontal: 6 },
   stepValue: { fontVariant: ['tabular-nums'] },
   button: { borderRadius: 8, padding: 14, alignItems: 'center' },
-  buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-  error: { color: '#c8372d' },
-  card: { gap: 6, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#8883' },
+  buttonText: { color: c.onTint, fontWeight: '600', fontSize: 16 },
+  error: { color: c.error },
+  card: { gap: 6, padding: 12, borderRadius: Radius.card, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface },
   row: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
   rowLabel: { flex: 1 },
   col: { width: 64, textAlign: 'right', fontVariant: ['tabular-nums'] },
   num: { fontVariant: ['tabular-nums'] },
   delta: { width: 64, textAlign: 'right', fontWeight: '600' },
-  deltaRow: { gap: 2, paddingVertical: 4, borderBottomWidth: 1, borderColor: '#8882' },
+  deltaRow: { gap: 2, paddingVertical: 4, borderBottomWidth: 1, borderColor: c.separator },
   subhead: { fontWeight: '600', marginTop: 4 },
   sub: { opacity: 0.7 },
   summary: { fontWeight: '600' },
@@ -444,6 +450,6 @@ const styles = StyleSheet.create({
   factLabel: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
   factValue: { fontSize: 22, fontWeight: '600', fontVariant: ['tabular-nums'] },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6 },
+  chip: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: c.surface },
   dim: { opacity: 0.5 },
-});
+}));

@@ -5,6 +5,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, useWin
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { dayLabel } from '@/lib/events';
 import { carLong, Garage, garageApi, GarageCar, GarageDriver, GarageTeam, Logger } from '@/lib/garage';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 const WIDE = 900;
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -14,11 +15,11 @@ type Editing = { kind: 'car' | 'driver' | 'team'; id: number | null } | null; //
 /** Cars (number, model, team, logger, drivers), drivers (team, cars) and teams: add, change and remove them here.
  * Runs are tagged on the event page and the session page, with the driver and car chips. */
 export default function GarageScreen() {
+  const styles = useStyles();
   const [garage, setGarage] = useState<Garage | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const background = useThemeColor({}, 'background');
   const { width } = useWindowDimensions();
   const wide = width >= WIDE;
 
@@ -105,7 +106,7 @@ export default function GarageScreen() {
   );
 
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.outer}>
+    <ScrollView contentContainerStyle={styles.outer}>
       <Stack.Screen options={{ title: 'Cars, drivers and teams' }} />
       <View style={styles.page}>
         <Text style={styles.intro}>
@@ -150,6 +151,7 @@ const loggerWords = (l: Logger) =>
     .filter(Boolean).join(' · ');
 
 function Section({ title, add, onAdd, children }: { title: string; add?: string; onAdd?: () => void; children: ReactNode }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   return (
     <View style={styles.section}>
@@ -173,6 +175,7 @@ function Item({ title, sub, open, onPress, children }: {
   onPress: () => void;
   children: ReactNode;
 }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   return (
     <View style={styles.item}>
@@ -189,6 +192,7 @@ function Item({ title, sub, open, onPress, children }: {
 }
 
 function Chip({ label, on, onPress, dashed }: { label: string; on: boolean; onPress: () => void; dashed?: boolean }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   return (
     <Pressable onPress={onPress} accessibilityRole="button" accessibilityState={{ selected: on }}
@@ -199,6 +203,7 @@ function Chip({ label, on, onPress, dashed }: { label: string; on: boolean; onPr
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
+  const styles = useStyles();
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{label}</Text>
@@ -211,6 +216,8 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 type TeamPick = { id: number | null } | { name: string };
 
 function TeamChoice({ teams, value, onChange }: { teams: GarageTeam[]; value: TeamPick; onChange: (t: TeamPick) => void }) {
+  const styles = useStyles();
+  const theme = useTheme();
   const text = useThemeColor({}, 'text');
   const typing = 'name' in value;
   return (
@@ -221,7 +228,7 @@ function TeamChoice({ teams, value, onChange }: { teams: GarageTeam[]; value: Te
       <Chip label="No team" on={'id' in value && value.id == null} onPress={() => onChange({ id: null })} dashed />
       {typing ? (
         <TextInput value={value.name} onChangeText={(name) => onChange({ name })} placeholder="New team" autoFocus
-          placeholderTextColor="#888" maxLength={120} accessibilityLabel="New team's name"
+          placeholderTextColor={theme.textMuted} maxLength={120} accessibilityLabel="New team's name"
           style={StyleSheet.flatten([styles.input, styles.inlineInput, { color: text }])} />
       ) : (
         <Chip label="+ New team" on={false} onPress={() => onChange({ name: '' })} dashed />
@@ -241,15 +248,16 @@ function FormButtons({ busy, onSave, onCancel, removeLabel, removeQuestion, onRe
   removeQuestion?: string;
   onRemove?: () => void;
 }) {
+  const styles = useStyles();
   const [confirm, setConfirm] = useState(false);
   const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
+  const onTint = useThemeColor({}, 'onTint');
   return (
     <View style={styles.buttons}>
       <Pressable onPress={onSave} disabled={busy} accessibilityRole="button"
         style={StyleSheet.flatten([styles.save, { backgroundColor: tint }])}>
-        {busy ? <ActivityIndicator color={background} />
-          : <Text style={StyleSheet.flatten([styles.saveText, { color: background }])}>Save</Text>}
+        {busy ? <ActivityIndicator color={onTint} />
+          : <Text style={StyleSheet.flatten([styles.saveText, { color: onTint }])}>Save</Text>}
       </Pressable>
       <Pressable onPress={onCancel} hitSlop={8} accessibilityRole="button">
         <Text style={{ color: tint }}>Cancel</Text>
@@ -287,6 +295,8 @@ function CarForm({ car, garage, onDone, onCancel }: {
   onDone: (message?: string) => void;
   onCancel: () => void;
 }) {
+  const styles = useStyles();
+  const theme = useTheme();
   const [number, setNumber] = useState(car?.number ?? '');
   const [model, setModel] = useState(car?.model ?? (car ? car.name : garage.models[0] ?? ''));
   const [team, setTeam] = useState<TeamPick>({ id: car?.team_id ?? null });
@@ -317,12 +327,12 @@ function CarForm({ car, garage, onDone, onCancel }: {
     <View style={styles.form}>
       <View style={styles.formRow}>
         <Field label="Number">
-          <TextInput value={number} onChangeText={setNumber} placeholder="21" placeholderTextColor="#888" maxLength={8}
+          <TextInput value={number} onChangeText={setNumber} placeholder="21" placeholderTextColor={theme.textMuted} maxLength={8}
             accessibilityLabel="Car number" style={StyleSheet.flatten([styles.input, styles.number, { color: text }])} />
         </Field>
         <View style={styles.grow}>
           <Field label="Model">
-            <TextInput value={model} onChangeText={setModel} placeholder="BMW M4 GT4 Evo (G82)" placeholderTextColor="#888"
+            <TextInput value={model} onChangeText={setModel} placeholder="BMW M4 GT4 Evo (G82)" placeholderTextColor={theme.textMuted}
               maxLength={100} accessibilityLabel="Car model" style={StyleSheet.flatten([styles.input, { color: text }])} />
           </Field>
         </View>
@@ -347,7 +357,7 @@ function CarForm({ car, garage, onDone, onCancel }: {
           })}
         </View>
         <View style={styles.formRow}>
-          <TextInput value={serial} onChangeText={setSerial} placeholder="Serial number" placeholderTextColor="#888"
+          <TextInput value={serial} onChangeText={setSerial} placeholder="Serial number" placeholderTextColor={theme.textMuted}
             keyboardType="number-pad" maxLength={12} onSubmitEditing={typedSerial} accessibilityLabel="Logger serial number"
             style={StyleSheet.flatten([styles.input, styles.serial, { color: text }])} />
           <Pressable onPress={typedSerial} accessibilityRole="button" hitSlop={8}>
@@ -383,6 +393,8 @@ function DriverForm({ driver, garage, onDone, onCancel }: {
   onDone: (message?: string) => void;
   onCancel: () => void;
 }) {
+  const styles = useStyles();
+  const theme = useTheme();
   const [name, setName] = useState(driver?.name ?? '');
   const [team, setTeam] = useState<TeamPick>({ id: driver?.team_id ?? null });
   const [carIds, setCarIds] = useState<number[]>(driver?.car_ids ?? []);
@@ -397,7 +409,7 @@ function DriverForm({ driver, garage, onDone, onCancel }: {
   return (
     <View style={styles.form}>
       <Field label="Name">
-        <TextInput value={name} onChangeText={setName} placeholder="Name" placeholderTextColor="#888" maxLength={120}
+        <TextInput value={name} onChangeText={setName} placeholder="Name" placeholderTextColor={theme.textMuted} maxLength={120}
           autoFocus={!driver} accessibilityLabel="Driver's name" style={StyleSheet.flatten([styles.input, { color: text }])} />
       </Field>
       <Field label="Team">
@@ -426,6 +438,8 @@ function DriverForm({ driver, garage, onDone, onCancel }: {
 }
 
 function TeamForm({ team, onDone, onCancel }: { team?: GarageTeam; onDone: (message?: string) => void; onCancel: () => void }) {
+  const styles = useStyles();
+  const theme = useTheme();
   const [name, setName] = useState(team?.name ?? '');
   const { busy, error, run } = useSaver(onDone);
   const text = useThemeColor({}, 'text');
@@ -437,7 +451,7 @@ function TeamForm({ team, onDone, onCancel }: { team?: GarageTeam; onDone: (mess
   return (
     <View style={styles.form}>
       <Field label="Name">
-        <TextInput value={name} onChangeText={setName} placeholder="Team name" placeholderTextColor="#888" maxLength={120}
+        <TextInput value={name} onChangeText={setName} placeholder="Team name" placeholderTextColor={theme.textMuted} maxLength={120}
           autoFocus={!team} onSubmitEditing={save} accessibilityLabel="Team name"
           style={StyleSheet.flatten([styles.input, { color: text }])} />
       </Field>
@@ -453,7 +467,7 @@ function TeamForm({ team, onDone, onCancel }: { team?: GarageTeam; onDone: (mess
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   outer: { padding: 16, paddingBottom: 32 },
   page: { width: '100%', maxWidth: 1180, alignSelf: 'center', gap: 20 },
   intro: { opacity: 0.7, lineHeight: 20 },
@@ -462,34 +476,34 @@ const styles = StyleSheet.create({
   section: { gap: 6 },
   sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
   h2: { fontSize: 18, fontWeight: '700' },
-  add: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 },
+  add: { borderWidth: 1, borderRadius: Radius.control, paddingHorizontal: 12, paddingVertical: 6 },
   addText: { fontWeight: '600' },
-  item: { borderBottomWidth: 1, borderColor: '#8882', paddingVertical: 8, gap: 8 },
+  item: { borderBottomWidth: 1, borderColor: c.separator, paddingVertical: 8, gap: 8 },
   itemHead: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   itemText: { flex: 1, gap: 2, backgroundColor: 'transparent' },
   itemTitle: { fontSize: 16, fontWeight: '600' },
   sub: { opacity: 0.65, fontSize: 13 },
   note: { fontSize: 12, opacity: 0.6 },
-  notice: { fontSize: 13, opacity: 0.85, borderLeftWidth: 3, borderColor: '#8886', paddingLeft: 8 },
+  notice: { fontSize: 13, opacity: 0.85, borderLeftWidth: 3, borderColor: c.borderStrong, paddingLeft: 8 },
   dim: { opacity: 0.45 },
-  error: { color: '#c8372d' },
-  form: { gap: 12, borderWidth: 1, borderColor: '#8884', borderRadius: 10, padding: 12, marginBottom: 8 },
+  error: { color: c.error },
+  form: { gap: 12, borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 12, marginBottom: 8, backgroundColor: c.surface },
   formRow: { flexDirection: 'row', gap: 10, alignItems: 'center', flexWrap: 'wrap' },
   grow: { flex: 1, minWidth: 180 },
   field: { gap: 6 },
   label: { fontSize: 11, fontWeight: '700', opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
-  input: { borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 15 },
+  input: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, paddingHorizontal: 10, paddingVertical: 8, fontSize: 15, backgroundColor: c.surface },
   number: { width: 80 },
   serial: { width: 160 },
   inlineInput: { minWidth: 140, paddingVertical: 5 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  chip: { borderWidth: 1, borderColor: '#8886', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6,
-    maxWidth: '100%' },
+  chip: { borderWidth: 1, borderColor: c.borderStrong, borderRadius: Radius.chip, paddingHorizontal: 12, paddingVertical: 6,
+    maxWidth: '100%', backgroundColor: c.surface },
   dashed: { borderStyle: 'dashed' },
   chipText: { fontSize: 14 },
   buttons: { flexDirection: 'row', alignItems: 'center', gap: 16, flexWrap: 'wrap' },
   save: { borderRadius: 8, paddingHorizontal: 18, paddingVertical: 9, minWidth: 80, alignItems: 'center' },
   saveText: { fontWeight: '600' },
   remove: { marginLeft: 'auto', flexShrink: 1 },
-  danger: { color: '#c8372d' },
-});
+  danger: { color: c.error },
+}));

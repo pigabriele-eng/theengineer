@@ -4,12 +4,10 @@ import Svg, { Line, Path, Text as SvgText } from 'react-native-svg';
 
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
+import { byScheme } from '@/constants/Theme';
 
 // Categorical slots 1 and 2 of the validated chart palette, light and dark steps.
-export const SERIES = {
-  light: { reference: '#2a78d6', compare: '#eb6834' },
-  dark: { reference: '#3987e5', compare: '#d95926' },
-};
+export const SERIES = byScheme((c) => ({ reference: c.chart.series[0], compare: c.chart.series[1] }));
 export const useSeriesColors = () => SERIES[useColorScheme() === 'dark' ? 'dark' : 'light'];
 
 type Series = { values: number[]; color: string };

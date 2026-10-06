@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View as RNView } from 'react-native';
 
 import { Text, useThemeColor } from '@/components/Themed';
+import { Radius, themed } from '@/constants/Theme';
 
 export type Dropped = { file: File; path: string };
 
@@ -21,6 +22,7 @@ export function DropZone({ accept, onFiles, onPick, busy, title, hint }: {
   title: string;
   hint?: string;
 }) {
+  const styles = useStyles();
   const box = useRef<RNView>(null);
   const [over, setOver] = useState(false); // files are being dragged over the box
   const [note, setNote] = useState<{ text: string; warn: boolean } | null>(null);
@@ -165,13 +167,13 @@ async function walk(entry: FileSystemEntry): Promise<Dropped[]> {
   return (await Promise.all(children.map(walk))).flat();
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   wrap: { gap: 6 },
-  zone: { borderWidth: 2, borderStyle: 'dashed', borderRadius: 10, paddingVertical: 22, paddingHorizontal: 16,
+  zone: { borderWidth: 2, borderStyle: 'dashed', borderRadius: Radius.card, paddingVertical: 22, paddingHorizontal: 16,
     alignItems: 'center', justifyContent: 'center', gap: 4, minHeight: 84 },
-  over: { borderStyle: 'solid', backgroundColor: '#8882' },
+  over: { borderStyle: 'solid', backgroundColor: c.fill },
   title: { fontWeight: '600', fontSize: 16, textAlign: 'center' },
   hint: { fontSize: 13, opacity: 0.65, textAlign: 'center' },
   note: { opacity: 0.7 },
-  warn: { color: '#b26b00' },
-});
+  warn: { color: c.warning },
+}));

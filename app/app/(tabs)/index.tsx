@@ -13,6 +13,7 @@ import { CalendarState, calendarApi, countByWhen, defaultFilter, Filter, filtere
 import { dateRange, eventsApi, FolderSummary } from '@/lib/events';
 import { launchEvent } from '@/lib/openCurrent';
 import { PrepAvailability } from '@/lib/prep';
+import { Radius, themed } from '@/constants/Theme';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -22,6 +23,7 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
  * events (made here or from the racing calendar) wait under Upcoming until their data comes in. Opened while an event
  * is on, the app goes straight on to that event's page (lib/openCurrent.ts). */
 export default function SessionsScreen() {
+  const styles = useStyles();
   const [folders, setFolders] = useState<FolderSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [making, setMaking] = useState(false);
@@ -30,7 +32,6 @@ export default function SessionsScreen() {
   const router = useRouter();
   const navigation = useNavigation();
   const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
   const prep = usePrepAvailability(); // events whose track has past data: the Prep report button
 
   const load = useCallback(() => {
@@ -67,7 +68,7 @@ export default function SessionsScreen() {
 
   const timed = folders?.some((f) => f.best_lap_s != null) ?? false;
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.outer}>
+    <ScrollView contentContainerStyle={styles.outer}>
       <View style={styles.page}>
         <ImportLogs onProgress={load} events={folders} />
         {making ? (
@@ -145,6 +146,7 @@ function FolderCard({ f, plan, prep, onRenamed, onChanged }: {
   onRenamed: (name: string) => void;
   onChanged: () => void;
 }) {
+  const styles = useStyles();
   const [renaming, setRenaming] = useState(false);
   const tint = useThemeColor({}, 'tint');
   const range = dateRange(f.start, f.end);
@@ -200,17 +202,17 @@ function FolderCard({ f, plan, prep, onRenamed, onChanged }: {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   outer: { padding: 16, paddingBottom: 32 },
   page: { width: '100%', maxWidth: 820, alignSelf: 'center', gap: 12 },
   links: { flexDirection: 'row', gap: 8 },
-  linkButton: { flex: 1, borderWidth: 1, borderRadius: 8, paddingVertical: 10, alignItems: 'center' },
+  linkButton: { flex: 1, borderWidth: 1, borderRadius: Radius.control, paddingVertical: 10, alignItems: 'center' },
   linkText: { fontWeight: '600', fontSize: 15 },
-  panel: { borderWidth: 1, borderColor: '#8884', borderRadius: 10, padding: 12, gap: 8 },
+  panel: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 12, gap: 8, backgroundColor: c.surface },
   panelTitle: { fontSize: 16, fontWeight: '700' },
-  error: { color: '#c8372d' },
+  error: { color: c.error },
   empty: { opacity: 0.6, marginTop: 24, textAlign: 'center', lineHeight: 20 },
-  card: { borderWidth: 1, borderColor: '#8884', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, gap: 6 },
+  card: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, paddingHorizontal: 14, paddingVertical: 12, gap: 6, backgroundColor: c.surface },
   cardLink: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   loose: { borderStyle: 'dashed' },
   editing: { gap: 8 },
@@ -225,4 +227,4 @@ const styles = StyleSheet.create({
   right: { alignItems: 'flex-end', maxWidth: 120, backgroundColor: 'transparent' },
   time: { fontSize: 18, fontVariant: ['tabular-nums'] },
   chevron: { fontSize: 22, opacity: 0.4 },
-});
+}));

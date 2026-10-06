@@ -5,6 +5,7 @@ import { Text, View, useThemeColor } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
 import { OfficialSessionRow, PredictedQuali, PredictedRace, PrepOfficial } from '@/lib/prep';
 import { resultsApi } from '@/lib/results';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 const pct = (v: number | null | undefined) => (v == null ? null : `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(2)} %`);
 const range = (r: [number, number] | null | undefined, f: (v: number) => string) =>
@@ -17,6 +18,8 @@ const temps = (w: { air_c: number | null; track_c: number | null }) =>
 /** Our car number for the official results: shown with where it came from, and asked for when it isn't known. Saved
  * on this event (the results' own link), so every screen that shows results uses it. */
 export function CarNumber({ eventId, data, onSaved }: { eventId: number; data: PrepOfficial; onSaved: () => void }) {
+  const styles = useStyles();
+  const theme = useTheme();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(data.car_number ?? '');
   const [saving, setSaving] = useState(false);
@@ -54,7 +57,7 @@ export function CarNumber({ eventId, data, onSaved }: { eventId: number; data: P
     <View style={styles.ask}>
       <Text style={styles.label}>Which car number is ours?</Text>
       <View style={styles.row}>
-        <TextInput value={value} onChangeText={setValue} placeholder="e.g. 12" placeholderTextColor="#888"
+        <TextInput value={value} onChangeText={setValue} placeholder="e.g. 12" placeholderTextColor={theme.textMuted}
           inputMode="numeric" maxLength={6} accessibilityLabel="Our car number" onSubmitEditing={save}
           style={StyleSheet.flatten([styles.input, { color: text }])} />
         <Pressable accessibilityRole="button" onPress={save} disabled={saving || !value.trim()}
@@ -79,6 +82,7 @@ export function OfficialResults({ eventId, data, onChanged }: {
   data: PrepOfficial | null;
   onChanged: () => void;
 }) {
+  const styles = useStyles();
   if (!data) return <ActivityIndicator />;
   if (!data.loaded) return <Text style={styles.note}>{data.note}</Text>;
   const ours = !!data.car_number;
@@ -108,6 +112,7 @@ export function OfficialResults({ eventId, data, onChanged }: {
 }
 
 function SessionCell({ s, ours }: { s: OfficialSessionRow; ours: boolean }) {
+  const styles = useStyles();
   const quali = s.code.startsWith('Q');
   const sub = !s.dry ? 'wet' : quali && s.to_fastest_pct != null ? `${pct(s.to_fastest_pct)} to the fastest` : null;
   return (
@@ -125,6 +130,7 @@ function SessionCell({ s, ours }: { s: OfficialSessionRow; ours: boolean }) {
 }
 
 function Makes({ makes }: { makes: NonNullable<PrepOfficial['makes']> }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   return (
     <View style={styles.block}>
@@ -154,6 +160,7 @@ function Makes({ makes }: { makes: NonNullable<PrepOfficial['makes']> }) {
 
 /** The prediction for this round: places as likely ranges, our lap and pole, why, and how far to trust it. */
 export function Prediction({ data }: { data: PrepOfficial | null }) {
+  const styles = useStyles();
   const [more, setMore] = useState(false);
   const p = data?.prediction;
   if (!data || !p) return null;
@@ -175,6 +182,7 @@ export function Prediction({ data }: { data: PrepOfficial | null }) {
 }
 
 function QualiCell({ code, q }: { code: string; q: PredictedQuali }) {
+  const styles = useStyles();
   return (
     <View style={styles.cell}>
       <Text style={styles.cellLabel}>{code}</Text>
@@ -190,6 +198,7 @@ function QualiCell({ code, q }: { code: string; q: PredictedQuali }) {
 }
 
 function RaceCell({ code, r }: { code: string; r: PredictedRace }) {
+  const styles = useStyles();
   return (
     <View style={styles.cell}>
       <Text style={styles.cellLabel}>{code}</Text>
@@ -200,29 +209,29 @@ function RaceCell({ code, r }: { code: string; r: PredictedRace }) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   block: { gap: 8 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' },
-  ask: { gap: 6, borderWidth: 1, borderStyle: 'dashed', borderColor: '#8886', borderRadius: 10, padding: 10 },
+  ask: { gap: 6, borderWidth: 1, borderStyle: 'dashed', borderColor: c.borderStrong, borderRadius: Radius.card, padding: 10, backgroundColor: c.surface },
   label: { fontSize: 14, fontWeight: '700' },
   note: { fontSize: 12.5, opacity: 0.65, lineHeight: 18 },
   para: { fontSize: 14.5, lineHeight: 21 },
   link: { fontSize: 13.5, opacity: 0.7, textDecorationLine: 'underline' },
   linkText: { fontSize: 13.5, fontWeight: '600' },
-  error: { color: '#c8372d' },
-  input: { borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8,
-    fontSize: 16, width: 110 },
-  button: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
+  error: { color: c.error },
+  input: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, paddingHorizontal: 12, paddingVertical: 8,
+    fontSize: 16, width: 110, backgroundColor: c.surface },
+  button: { borderWidth: 1, borderRadius: Radius.control, paddingHorizontal: 14, paddingVertical: 8 },
   buttonText: { fontWeight: '700', fontSize: 14 },
   off: { opacity: 0.5 },
-  year: { borderTopWidth: 1, borderColor: '#8883', paddingTop: 8, gap: 6 },
+  year: { borderTopWidth: 1, borderColor: c.separator, paddingTop: 8, gap: 6 },
   yearHead: { fontSize: 15, fontWeight: '700' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  cell: { minWidth: 150, flexGrow: 1, flexBasis: 150, gap: 1, borderWidth: 1, borderColor: '#8883', borderRadius: 8,
-    padding: 8 },
+  cell: { minWidth: 150, flexGrow: 1, flexBasis: 150, gap: 1, borderWidth: 1, borderColor: c.border, borderRadius: Radius.card,
+    padding: 8, backgroundColor: c.surface },
   cellLabel: { fontSize: 11.5, opacity: 0.6, fontWeight: '700' },
   cellValue: { fontSize: 18, fontWeight: '800', fontVariant: ['tabular-nums'] },
-  make: { flexDirection: 'row', gap: 8, alignItems: 'baseline', borderTopWidth: 1, borderColor: '#8882', paddingTop: 4 },
+  make: { flexDirection: 'row', gap: 8, alignItems: 'baseline', borderTopWidth: 1, borderColor: c.separator, paddingTop: 4 },
   makeName: { flex: 1.4, fontSize: 14 },
   makeNum: { flex: 1, fontSize: 14, textAlign: 'right', fontVariant: ['tabular-nums'] },
-});
+}));

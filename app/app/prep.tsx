@@ -19,6 +19,7 @@ import {
   refreshPrep,
   SetupRun,
 } from '@/lib/prep';
+import { Radius, themed } from '@/constants/Theme';
 
 const POLL_MS = 2000;
 const WIDE = 900;
@@ -39,6 +40,7 @@ const span = (r: [number, number] | null | undefined, unit: string) =>
  * way through each, quali prep, pressures, the setup to open with, how the car behaved on each setup, and each
  * driver's recurring technique points. */
 export default function PrepScreen() {
+  const styles = useStyles();
   const params = useLocalSearchParams<{ event?: string; car?: string }>();
   const eventId = params.event ? Number(params.event) : null;
   const car = params.car ?? null;
@@ -50,7 +52,6 @@ export default function PrepScreen() {
   const [officialRound, setOfficialRound] = useState(0); // the car number set: ask again
   const [error, setError] = useState<string | null>(null);
   const [round, setRound] = useState(0); // a refresh starts the polling again
-  const background = useThemeColor({}, 'background');
   const { width } = useWindowDimensions();
   const wide = width >= WIDE;
 
@@ -119,7 +120,7 @@ export default function PrepScreen() {
   const pickCar = (k: string) => router.setParams({ car: k });
 
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.outer}>
+    <ScrollView contentContainerStyle={styles.outer}>
       <Stack.Screen options={{ title: answer ? `Prep · ${answer.event.name}` : 'Prep report' }} />
       <View style={styles.page}>
         <View style={styles.head}>
@@ -176,6 +177,7 @@ export default function PrepScreen() {
 }
 
 function CarPicker({ answer, onPick }: { answer: PrepAnswer; onPick: (key: string) => void }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   const choices = [...answer.cars.map((c) => ({ key: c.key, label: `${c.label} (${c.events})` })),
     ...(answer.cars.length > 1 ? [{ key: 'any', label: 'Every car here' }] : [])];
@@ -197,6 +199,7 @@ function CarPicker({ answer, onPick }: { answer: PrepAnswer; onPick: (key: strin
 }
 
 function Progress({ answer }: { answer: PrepAnswer }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   const p = answer.progress;
   const share = p && p.total ? Math.min(p.done / p.total, 1) : 0;
@@ -220,6 +223,7 @@ function Progress({ answer }: { answer: PrepAnswer }) {
 function Body({ report, weather, wide, official, officialPart, openEvent }: { report: PrepReport;
   weather: PrepWeather | null; wide: boolean; official: PrepOfficial | null; officialPart: ReactNode;
   openEvent: (id: number) => void }) {
+  const styles = useStyles();
   return (
     <>
       <Briefing report={report} weather={weather} official={official} />
@@ -266,6 +270,7 @@ function OfficialSections({ eventId, official, reload }: { eventId: number; offi
 }
 
 function Section({ title, children, sub }: { title: string; children: ReactNode; sub?: string | null }) {
+  const styles = useStyles();
   return (
     <View style={styles.section}>
       <Text style={styles.h2}>{title}</Text>
@@ -277,6 +282,7 @@ function Section({ title, children, sub }: { title: string; children: ReactNode;
 
 function Briefing({ report, weather, official }: { report: PrepReport; weather: PrepWeather | null;
   official: PrepOfficial | null }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   const f = weather?.forecast?.summary;
   // the official results and the prediction go right after the lap time to aim for
@@ -312,6 +318,7 @@ function Briefing({ report, weather, official }: { report: PrepReport; weather: 
 
 function Performance({ rows, weather, official, wide, openEvent }: { rows: PerfRow[]; weather: PrepWeather | null;
   official: PrepOfficial | null; wide: boolean; openEvent: (id: number) => void }) {
+  const styles = useStyles();
   const sky = (id: number) => weather?.past.find((p) => p.event_id === id)?.summary?.text ?? null;
   // the official sessions held during the event: their conditions and temperatures at the start
   const sheets = (id: number) => (official?.weather[String(id)] ?? []).map((w) =>
@@ -391,6 +398,7 @@ function Performance({ rows, weather, official, wide, openEvent }: { rows: PerfR
 }
 
 function Stat({ label, value, sub }: { label: string; value: string; sub?: string | null }) {
+  const styles = useStyles();
   return (
     <View style={styles.stat}>
       <Text style={styles.statLabel}>{label}</Text>
@@ -401,6 +409,7 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
 }
 
 function Corners({ corners }: { corners: PrepReport['corners'] }) {
+  const styles = useStyles();
   const [all, setAll] = useState(false);
   const rows = all ? corners.rows : corners.rows.slice(0, CORNERS_SHOWN);
   if (!corners.rows.length) {
@@ -421,6 +430,7 @@ function Corners({ corners }: { corners: PrepReport['corners'] }) {
 }
 
 function Corner({ r }: { r: CornerRow }) {
+  const styles = useStyles();
   const years = Object.values(r.per_event);
   return (
     <View style={styles.corner}>
@@ -447,6 +457,7 @@ function Corner({ r }: { r: CornerRow }) {
 }
 
 function Quali({ report }: { report: PrepReport }) {
+  const styles = useStyles();
   const router = useRouter();
   const q = report.quali;
   if (!q) return null;
@@ -473,6 +484,7 @@ function Quali({ report }: { report: PrepReport }) {
 }
 
 function Pressures({ report, weather }: { report: PrepReport; weather: PrepWeather | null }) {
+  const styles = useStyles();
   const router = useRouter();
   const p = report.pressures;
   if (!p) return null;
@@ -502,6 +514,7 @@ const AGREEMENT: Record<string, string> = {
 };
 
 function Setup({ report }: { report: PrepReport }) {
+  const styles = useStyles();
   const rec = report.recommendation;
   if (!rec) return null;
   return (
@@ -535,6 +548,7 @@ function Setup({ report }: { report: PrepReport }) {
 }
 
 function Runs({ report }: { report: PrepReport }) {
+  const styles = useStyles();
   const [all, setAll] = useState(false);
   const s = report.setups;
   if (!s.runs.length) return null;
@@ -553,6 +567,7 @@ function Runs({ report }: { report: PrepReport }) {
 }
 
 function Run({ r }: { r: SetupRun }) {
+  const styles = useStyles();
   return (
     <View style={styles.run}>
       <Text style={styles.cellStrong}>
@@ -571,6 +586,7 @@ function Run({ r }: { r: SetupRun }) {
 }
 
 function Technique({ report }: { report: PrepReport }) {
+  const styles = useStyles();
   const drivers = report.technique.filter((d) => d.habits.length);
   if (!drivers.length) return null;
   return (
@@ -586,6 +602,7 @@ function Technique({ report }: { report: PrepReport }) {
 }
 
 function Method({ lines }: { lines: string[] }) {
+  const styles = useStyles();
   const [open, setOpen] = useState(false);
   return (
     <View style={styles.section}>
@@ -597,7 +614,7 @@ function Method({ lines }: { lines: string[] }) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   pad: { padding: 16 },
   outer: { padding: 16, paddingBottom: 40 },
   page: { width: '100%', maxWidth: 980, alignSelf: 'center', gap: 16 },
@@ -609,45 +626,45 @@ const styles = StyleSheet.create({
   para: { fontSize: 14.5, lineHeight: 21 },
   label: { fontWeight: '700' },
   link: { fontSize: 14, opacity: 0.7, textDecorationLine: 'underline' },
-  error: { color: '#c8372d' },
-  banner: { borderWidth: 1, borderColor: '#8884', borderRadius: 10, padding: 12, gap: 8 },
+  error: { color: c.error },
+  banner: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 12, gap: 8, backgroundColor: c.surface },
   bannerText: { fontSize: 15, lineHeight: 21 },
-  smallButton: { alignSelf: 'flex-start', borderWidth: 1, borderColor: '#8886', borderRadius: 8, paddingHorizontal: 12,
+  smallButton: { alignSelf: 'flex-start', borderWidth: 1, borderColor: c.borderStrong, borderRadius: Radius.control, paddingHorizontal: 12,
     paddingVertical: 6 },
   smallButtonText: { fontSize: 13.5, fontWeight: '600' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center' },
-  chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 4 },
+  chip: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: c.surface },
   chipText: { fontSize: 13 },
   progress: { gap: 6 },
   progressText: { fontSize: 14 },
-  track: { height: 6, borderRadius: 3, backgroundColor: '#8883', overflow: 'hidden' },
+  track: { height: 6, borderRadius: 3, backgroundColor: c.fill, overflow: 'hidden' },
   fill: { height: 6, borderRadius: 3 },
-  brief: { borderWidth: 1.5, borderRadius: 12, padding: 14, gap: 12 },
+  brief: { borderWidth: 1.5, borderRadius: Radius.chip, padding: 14, gap: 12 },
   briefTitle: { fontSize: 13, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.6, opacity: 0.7 },
   item: { gap: 2 },
   itemTitle: { fontSize: 15, fontWeight: '700' },
   itemText: { fontSize: 14.5, lineHeight: 21 },
   section: { gap: 8 },
   tr: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, backgroundColor: 'transparent' },
-  trBlock: { borderTopWidth: 1, borderColor: '#8883', paddingVertical: 8, gap: 2 },
+  trBlock: { borderTopWidth: 1, borderColor: c.separator, paddingVertical: 8, gap: 2 },
   th: { fontSize: 12, fontWeight: '700', opacity: 0.6, paddingBottom: 4 },
   cFirst: { flex: 1.6, backgroundColor: 'transparent' },
   cNum: { flex: 1, textAlign: 'right', alignItems: 'flex-end', backgroundColor: 'transparent' },
   cell: { fontSize: 15, fontVariant: ['tabular-nums'] },
   cellStrong: { fontSize: 15, fontWeight: '700', fontVariant: ['tabular-nums'] },
   cards: { gap: 10 },
-  card: { borderWidth: 1, borderColor: '#8884', borderRadius: 10, padding: 10, gap: 6 },
+  card: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 10, gap: 6, backgroundColor: c.surface },
   cardHead: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
   delta: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'], marginLeft: 'auto' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   stat: { minWidth: 92, gap: 1 },
   statLabel: { fontSize: 11.5, opacity: 0.6, fontWeight: '600' },
   statValue: { fontSize: 16, fontWeight: '700', fontVariant: ['tabular-nums'] },
-  corner: { borderTopWidth: 1, borderColor: '#8883', paddingTop: 10, gap: 4 },
+  corner: { borderTopWidth: 1, borderColor: c.separator, paddingTop: 10, gap: 4 },
   cornerHead: { flexDirection: 'row', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' },
   code: { fontSize: 17, fontWeight: '800' },
   cornerGain: { fontSize: 14, fontWeight: '600' },
-  suggestion: { borderLeftWidth: 3, borderColor: '#8886', paddingLeft: 10, gap: 2 },
-  run: { borderTopWidth: 1, borderColor: '#8883', paddingTop: 6, gap: 1 },
+  suggestion: { borderLeftWidth: 3, borderColor: c.borderStrong, paddingLeft: 10, gap: 2 },
+  run: { borderTopWidth: 1, borderColor: c.separator, paddingTop: 6, gap: 1 },
   driver: { gap: 2 },
-});
+}));

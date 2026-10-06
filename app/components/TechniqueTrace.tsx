@@ -7,6 +7,7 @@ import Svg, { Circle, Line, Path, Rect, Text as SvgText } from 'react-native-svg
 
 import { niceTicks, useChartColors } from '@/components/ReportCharts';
 import { Text, View } from '@/components/Themed';
+import { Fonts, Radius, themed } from '@/constants/Theme';
 
 export type Band = { n: number; start_m: number; end_m: number; label: string };
 
@@ -30,10 +31,11 @@ type Props = {
 
 const PAD = { left: 40, right: 10, top: 22, bottom: 34 };
 export const TRACE_PAD_X = { left: PAD.left, right: PAD.right }; // charts under this one line up with it
-const SANS = Platform.select({ web: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' });
+const SANS = Fonts.sans;
 
 export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selected, onSelect, corners, from, to,
   height = 220, title, cursor: sharedCursor, onCursor }: Props) {
+  const styles = useStyles();
   const c = useChartColors();
   const [width, setWidth] = useState(0);
   const [own, setOwn] = useState<number | null>(null);
@@ -211,14 +213,14 @@ export function pointRange(stepM: number, last: number, from?: number, to?: numb
   return [Math.max(0, Math.floor((from ?? 0) / stepM)), Math.min(last, Math.ceil((to ?? last * stepM) / stepM))];
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   chart: { gap: 6 },
   title: { fontSize: 13, fontWeight: '600' },
   legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, backgroundColor: 'transparent' },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },
   legendText: { fontSize: 12, opacity: 0.75 },
   bandKey: { width: 14, height: 10, borderWidth: StyleSheet.hairlineWidth },
-  tip: { position: 'absolute', borderWidth: 1, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 6, gap: 2,
+  tip: { position: 'absolute', borderWidth: 1, borderRadius: Radius.control, paddingHorizontal: 8, paddingVertical: 6, gap: 2,
     minWidth: 130, maxWidth: 220 },
   tipHead: { fontSize: 11, opacity: 0.7, fontVariant: ['tabular-nums'] },
   tipRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },
@@ -226,4 +228,4 @@ const styles = StyleSheet.create({
   tipValue: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
   tipLabel: { fontSize: 12, opacity: 0.7 },
   tipBand: { fontSize: 12, fontWeight: '600', marginTop: 2 },
-});
+}));

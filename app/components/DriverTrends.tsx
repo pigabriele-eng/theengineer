@@ -19,10 +19,14 @@ import {
   TechniqueRow,
   valueWords,
 } from '@/lib/drivers';
+import { Radius, themed } from '@/constants/Theme';
 
 type Colors = Record<Side, string>;
 
-const Dot = ({ color }: { color: string }) => <View style={StyleSheet.flatten([styles.dot, { backgroundColor: color }])} />;
+const Dot = ({ color }: { color: string }) => {
+  const styles = useStyles();
+  return <View style={StyleSheet.flatten([styles.dot, { backgroundColor: color }])} />;
+};
 
 // ---------- where the time goes: one diverging bar per section, in lap order ----------
 
@@ -32,6 +36,7 @@ export function SectionDeltaChart({ result, colors, selected, onSelect }: {
   selected: string | null;
   onSelect: (code: string) => void;
 }) {
+  const styles = useStyles();
   const [hover, setHover] = useState<string | null>(null);
   const muted = useThemeColor({}, 'text');
   const { labels } = result;
@@ -112,10 +117,11 @@ export function sectionWords(s: SectionResult, labels: Record<Side, string>): st
 const STRIP = { left: 8, right: 8, row: 34, top: 6, axis: 22 };
 
 export function LapStrip({ result, section, colors }: { result: Comparison; section: SectionResult; colors: Colors }) {
+  const styles = useStyles();
   const [width, setWidth] = useState(0);
   const [hit, setHit] = useState<{ side: Side; i: number } | null>(null);
   const ink = useThemeColor({}, 'text');
-  const surface = useThemeColor({}, 'background');
+  const surface = useThemeColor({}, 'surface');
   const lapsOf = { a: result.laps.filter((l) => l.side === 'a'), b: result.laps.filter((l) => l.side === 'b') };
   const session = (run: string) => result.runs.find((r) => r.run === run)?.session ?? run;
   const all = [...section.times.a, ...section.times.b];
@@ -218,6 +224,7 @@ export function LapStrip({ result, section, colors }: { result: Comparison; sect
 const SHOWN = 6;
 
 export function TechniqueList({ result, section, colors }: { result: Comparison; section: SectionResult; colors: Colors }) {
+  const styles = useStyles();
   const [all, setAll] = useState(false);
   const tint = useThemeColor({}, 'tint');
   const { labels } = result;
@@ -269,6 +276,7 @@ function worthWords(r: TechniqueRow, labels: Record<Side, string>): string {
 
 // One section's habits for both drivers, or a single line when neither has one there.
 export function SectionHabits({ result, code, colors }: { result: Comparison; code: string; colors: Colors }) {
+  const styles = useStyles();
   const has = (side: Side) => result.habits[side].some((h) => h.sections.some((s) => s.code === code));
   if (!SIDES.some(has)) return <Text style={styles.dim}>Neither driver has a repeated habit here that costs time.</Text>;
   return (
@@ -286,6 +294,7 @@ export function HabitList({ result, side, colors, only }: {
   colors: Colors;
   only?: string; // one section's habits
 }) {
+  const styles = useStyles();
   const habits = result.habits[side]
     .map((h) => ({ ...h, sections: only ? h.sections.filter((s) => s.code === only) : h.sections }))
     .filter((h) => h.sections.length > 0);
@@ -307,6 +316,7 @@ export function HabitList({ result, side, colors, only }: {
 }
 
 function HabitCard({ habit, perLap }: { habit: Habit; perLap: boolean }) {
+  const styles = useStyles();
   return (
     <View style={styles.habit}>
       <View style={styles.techHead}>
@@ -340,6 +350,7 @@ const STYLE_ROWS: [string, string, (v: number) => string][] = [
 ];
 
 export function StyleTable({ result, colors }: { result: Comparison; colors: Colors }) {
+  const styles = useStyles();
   const rows = STYLE_ROWS.filter(([k]) => SIDES.every((s) => result.summary[s].style[k] != null));
   return (
     <View>
@@ -368,15 +379,15 @@ export function StyleTable({ result, colors }: { result: Comparison; colors: Col
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   chart: { gap: 6 },
   dot: { width: 10, height: 10, borderRadius: 5 },
   legendRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 },
   legendText: { fontSize: 13, opacity: 0.8, flexShrink: 1 },
-  barRow: { paddingVertical: 6, paddingHorizontal: 6, borderRadius: 6, borderWidth: 1, borderColor: 'transparent', gap: 2 },
-  hover: { backgroundColor: '#8881' },
-  selected: { backgroundColor: '#8881', borderColor: '#8886' },
+  barRow: { paddingVertical: 6, paddingHorizontal: 6, borderRadius: Radius.control, borderWidth: 1, borderColor: 'transparent', gap: 2 },
+  hover: { backgroundColor: c.fill },
+  selected: { backgroundColor: c.fill, borderColor: c.borderStrong },
   barLine: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   code: { width: 66, fontWeight: '600', fontVariant: ['tabular-nums'] },
   track: { flex: 1, height: 18, justifyContent: 'center' },
@@ -391,7 +402,7 @@ const styles = StyleSheet.create({
   note: { fontSize: 12, opacity: 0.6, lineHeight: 17 },
   readout: { fontSize: 13, minHeight: 36, fontVariant: ['tabular-nums'] },
   list: { gap: 10 },
-  techRow: { gap: 4, paddingBottom: 8, borderBottomWidth: 1, borderColor: '#8882' },
+  techRow: { gap: 4, paddingBottom: 8, borderBottomWidth: 1, borderColor: c.separator },
   techHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' },
   techLabel: { fontWeight: '600', fontSize: 15, flexShrink: 1 },
   worth: { fontSize: 13, opacity: 0.7, fontVariant: ['tabular-nums'] },
@@ -400,13 +411,13 @@ const styles = StyleSheet.create({
   techValue: { fontVariant: ['tabular-nums'] },
   techDiff: { opacity: 0.7, fontSize: 13 },
   habitOwner: { fontWeight: '700', fontSize: 16 },
-  habit: { gap: 4, paddingBottom: 8, borderBottomWidth: 1, borderColor: '#8882' },
+  habit: { gap: 4, paddingBottom: 8, borderBottomWidth: 1, borderColor: c.separator },
   habitLine: { lineHeight: 20, fontVariant: ['tabular-nums'] },
   habitCode: { fontWeight: '600' },
   advice: { opacity: 0.7, fontSize: 13, lineHeight: 18 },
-  tableRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 5, borderBottomWidth: 1, borderColor: '#8882', gap: 8 },
+  tableRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 5, borderBottomWidth: 1, borderColor: c.separator, gap: 8 },
   tableLabel: { flex: 1 },
   tableCellHead: { width: 92, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4 },
   tableCell: { width: 92, textAlign: 'right', fontVariant: ['tabular-nums'] },
   head: { fontWeight: '600', opacity: 0.7, fontSize: 13 },
-});
+}));

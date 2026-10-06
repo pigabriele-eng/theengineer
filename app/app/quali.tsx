@@ -12,7 +12,6 @@ export default function QualiScreen() {
   const params = useLocalSearchParams<{ event?: string; session?: string }>();
   const event = params.event ? Number(params.event) : null;
   const session = event == null && params.session ? Number(params.session) : null;
-  const background = useThemeColor({}, 'background');
   const router = useRouter();
   // the event's sessions, to switch between the whole event and one session without going back
   const sessionEvent = useSessionEvent(session);
@@ -22,7 +21,7 @@ export default function QualiScreen() {
     return <Text style={styles.pad}>Open quali prep from an event on the Sessions tab, or from a session.</Text>;
   }
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.outer}>
+    <ScrollView contentContainerStyle={styles.outer}>
       <Stack.Screen options={{ title: folder ? `Quali prep · ${folder.name}` : 'Quali prep' }} />
       <View style={styles.page}>
         <View style={styles.head}>

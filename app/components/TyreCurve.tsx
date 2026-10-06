@@ -7,13 +7,14 @@ import Svg, { Circle, G, Line, Path, Text as SvgText } from 'react-native-svg';
 import { LegendItem, Readout, useChartColors } from '@/components/report/GripCharts';
 import { Text, View } from '@/components/Themed';
 import { AxleFit } from '@/lib/vehicle';
+import { Fonts, Palette, Radius, themed } from '@/constants/Theme';
 
 type Axle = 'front' | 'rear';
 export type Curves = { alpha_deg: number[]; front: number[]; rear: number[] };
 export type Binned = Record<Axle, { alpha_deg: number[]; mu: number[]; count: number[] }>;
 
 // SVG text falls back to a serif face on the web; use the page's sans-serif instead.
-export const CHART_FONT = Platform.OS === 'web' ? 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' : undefined;
+export const CHART_FONT = Fonts.sans;
 
 /** Front and rear in the app's series colours: front the reference blue, rear the compare orange. */
 export function useAxleColors() {
@@ -68,6 +69,7 @@ export function CurveChart({ curves, binned, fits, height: fixed }: {
   fits: Record<Axle, AxleFit>;
   height?: number; // grows with the width unless given
 }) {
+  const styles = useStyles();
   const { width, at, props } = usePointer();
   const height = fixed ?? Math.round(Math.min(Math.max(width * 0.45, 240), 340));
   const [table, setTable] = useState(false);
@@ -199,6 +201,7 @@ export function CurveChart({ curves, binned, fits, height: fixed }: {
 
 /** One axle's fitted curve in numbers. */
 export function AxleCard({ title, f, color }: { title: string; f: AxleFit; color: string }) {
+  const styles = useStyles();
   const range = (r?: [number, number], digits = 2) => (r ? ` (${r[0].toFixed(digits)}–${r[1].toFixed(digits)})` : '');
   return (
     <View style={styles.card}>
@@ -228,6 +231,7 @@ export function AxleCard({ title, f, color }: { title: string; f: AxleFit; color
 }
 
 export function Row({ label, value }: { label: string; value: string }) {
+  const styles = useStyles();
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
@@ -236,21 +240,22 @@ export function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-export const tableStyles = StyleSheet.create({
-  table: { borderWidth: 1, borderColor: '#8883', borderRadius: 8, overflow: 'hidden' },
-  tr: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#8884' },
+const tableStyleSheet = (c: Palette) => StyleSheet.create({
+  table: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, overflow: 'hidden', backgroundColor: c.surface },
+  tr: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth, borderColor: c.separator },
   td: { flex: 1, paddingHorizontal: 8, paddingVertical: 4, fontSize: 13 },
   th: { fontWeight: '600', opacity: 0.8 },
   num: { fontVariant: ['tabular-nums'], textAlign: 'right' },
   link: { fontSize: 13, opacity: 0.75, textDecorationLine: 'underline' },
 });
+export const useTableStyles = themed(tableStyleSheet);
 
-const styles = StyleSheet.create({
-  ...tableStyles,
+const useStyles = themed((c) => ({
+  ...tableStyleSheet(c),
   chart: { gap: 6 },
   legendRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
   legendText: { fontSize: 12, opacity: 0.75 },
-  card: { gap: 4, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#8883' },
+  card: { gap: 4, padding: 12, borderRadius: Radius.card, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   swatch: { width: 10, height: 10, borderRadius: 5 },
   subhead: { fontWeight: '600' },
@@ -258,4 +263,4 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
   rowLabel: { opacity: 0.7, flexShrink: 0 },
   rowValue: { fontVariant: ['tabular-nums'], textAlign: 'right', flexShrink: 1 },
-});
+}));

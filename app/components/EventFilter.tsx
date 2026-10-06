@@ -8,6 +8,7 @@ import { EventForm } from '@/components/EventForm';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { CalendarState, calendarApi, clockLabel, Filter, FILTERS, Plan } from '@/lib/calendar';
 import { Folder, FolderSummary } from '@/lib/events';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 export function FilterBar({ filter, counts, onPick, calendar, onSynced }: {
   filter: Filter;
@@ -16,6 +17,7 @@ export function FilterBar({ filter, counts, onPick, calendar, onSynced }: {
   calendar: CalendarState | null; // null: not known (yet)
   onSynced: (c: CalendarState) => void;
 }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   return (
     <View style={styles.bar}>
@@ -42,6 +44,7 @@ function CalendarLine({ calendar, onSynced, tint }: {
   onSynced: (c: CalendarState) => void;
   tint: string;
 }) {
+  const styles = useStyles();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const feed = calendar.feed;
@@ -90,6 +93,7 @@ function CalendarLine({ calendar, onSynced, tint }: {
 /** Remove a planned event (no data yet): the button and, once tapped, the question. In a wrapping row: the question
  * takes a line of its own. */
 export function RemovePlanned({ f, plan, onRemoved }: { f: FolderSummary; plan?: Plan; onRemoved: () => void }) {
+  const styles = useStyles();
   const [asking, setAsking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tint = useThemeColor({}, 'tint');
@@ -138,6 +142,8 @@ export const plannedLine = (f: FolderSummary, plan?: Plan) =>
 
 /** A new event with its venue: a planned event that uploads from that venue on its days go into. */
 export function PlanForm({ onCancel, onMade }: { onCancel: () => void; onMade: (f: Folder) => void }) {
+  const styles = useStyles();
+  const theme = useTheme();
   const [venue, setVenue] = useState('');
   const text = useThemeColor({}, 'text');
   return (
@@ -147,7 +153,7 @@ export function PlanForm({ onCancel, onMade }: { onCancel: () => void; onMade: (
       extra={
         <>
           <Text style={styles.label}>Venue</Text>
-          <TextInput value={venue} onChangeText={setVenue} placeholder="e.g. Hockenheimring" placeholderTextColor="#888"
+          <TextInput value={venue} onChangeText={setVenue} placeholder="e.g. Hockenheimring" placeholderTextColor={theme.textMuted}
             style={StyleSheet.flatten([styles.input, { color: text }])} maxLength={255} accessibilityLabel="Venue" />
         </>
       }
@@ -155,27 +161,27 @@ export function PlanForm({ onCancel, onMade }: { onCancel: () => void; onMade: (
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   bar: { gap: 8, marginTop: 8 },
   chips: { flexDirection: 'row', gap: 6 },
   chip: { flexGrow: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'baseline', gap: 5,
-    borderWidth: 1, borderColor: '#8884', borderRadius: 18, paddingHorizontal: 8, paddingVertical: 7 },
+    borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 8, paddingVertical: 7, backgroundColor: c.surface },
   chipText: { fontSize: 15 },
   count: { fontSize: 12, opacity: 0.6, fontVariant: ['tabular-nums'] },
   calRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 4 },
   calText: { fontSize: 13, opacity: 0.75, flexShrink: 1 },
   calLink: { fontSize: 13, fontWeight: '600' },
-  warn: { color: '#b26b00', opacity: 1 },
+  warn: { color: c.warning, opacity: 1 },
   removeButton: { paddingVertical: 2 },
   removeText: { fontWeight: '600', fontSize: 14 },
   confirm: { width: '100%', gap: 8, backgroundColor: 'transparent' },
   confirmText: { fontSize: 15, lineHeight: 21 },
   actions: { flexDirection: 'row', gap: 8, backgroundColor: 'transparent' },
-  action: { borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
-  danger: { borderColor: '#c8372d' },
-  dangerText: { color: '#c8372d', fontWeight: '600' },
-  error: { color: '#c8372d' },
+  action: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, paddingHorizontal: 14, paddingVertical: 8 },
+  danger: { borderColor: c.error },
+  dangerText: { color: c.error, fontWeight: '600' },
+  error: { color: c.error },
   label: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
-  input: { borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 9,
-    fontSize: 16 },
-});
+  input: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, paddingHorizontal: 12, paddingVertical: 9,
+    fontSize: 16, backgroundColor: c.surface },
+}));

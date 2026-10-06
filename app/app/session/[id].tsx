@@ -13,8 +13,11 @@ import { TrackMap } from '@/components/TrackMap';
 import { UntimedNote } from '@/components/UntimedNote';
 import { Analysis, api, Debrief, DETECTED_CORNERS_NOTE, formatLap, SessionDetail } from '@/lib/api';
 import { Tagged } from '@/lib/drivers';
+import { themed, useTheme } from '@/constants/Theme';
 
 export default function SessionScreen() {
+  const styles = useStyles();
+  const theme = useTheme();
   const { id } = useLocalSearchParams<{ id: string }>();
   const sessionId = Number(id);
   const [session, setSession] = useState<SessionDetail | null>(null);
@@ -23,7 +26,6 @@ export default function SessionScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
   const router = useRouter();
   // the other sessions of its event, to switch to without going back: the page stays where it is, the last
   // session's numbers dimmed until the new one's arrive
@@ -73,7 +75,7 @@ export default function SessionScreen() {
   const stale = (session != null && session.id !== sessionId) || (analysisFor != null && analysisFor !== sessionId);
 
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container}>
       <Stack.Screen
         options={{
           title: [title, session?.track_name].filter(Boolean).join(' · '),
@@ -130,7 +132,7 @@ export default function SessionScreen() {
 
         <Pressable style={[styles.button, { backgroundColor: tint }]} onPress={upload} disabled={busy}>
           {busy ? (
-            <ActivityIndicator color="#fff" />
+            <ActivityIndicator color={theme.onTint} />
           ) : (
             <Text style={styles.buttonText}>Upload a logger file (MoTeC .ld/.ldx, or a CSV export)</Text>
           )}
@@ -229,6 +231,7 @@ export default function SessionScreen() {
 
 // The session's name with the track it was driven at under it.
 function HeaderTitle({ title, venue }: { title: string; venue?: string | null }) {
+  const styles = useStyles();
   return (
     <View style={styles.headerTitle}>
       <Text style={styles.headerName} numberOfLines={1}>
@@ -244,6 +247,7 @@ function HeaderTitle({ title, venue }: { title: string; venue?: string | null })
 }
 
 function Fact({ label, value }: { label: string; value: string }) {
+  const styles = useStyles();
   return (
     <View style={styles.fact}>
       <Text style={styles.factLabel}>{label}</Text>
@@ -252,7 +256,7 @@ function Fact({ label, value }: { label: string; value: string }) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   container: { padding: 16, gap: 16 },
   body: { gap: 16, backgroundColor: 'transparent' },
   stale: { opacity: 0.45, pointerEvents: 'none' },
@@ -265,11 +269,11 @@ const styles = StyleSheet.create({
   factValue: { fontSize: 24, fontWeight: '600', fontVariant: ['tabular-nums'] },
   button: { borderRadius: 8, padding: 14, alignItems: 'center' },
   outline: { borderWidth: 1, backgroundColor: 'transparent' },
-  buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-  error: { color: '#c8372d' },
+  buttonText: { color: c.onTint, fontWeight: '600', fontSize: 16 },
+  error: { color: c.error },
   section: { gap: 8 },
   h2: { fontSize: 18, fontWeight: '700' },
-  corner: { paddingVertical: 8, borderBottomWidth: 1, borderColor: '#8882', gap: 2 },
+  corner: { paddingVertical: 8, borderBottomWidth: 1, borderColor: c.separator, gap: 2 },
   cornerTitle: { fontSize: 16, fontWeight: '600' },
   sub: { opacity: 0.7, fontVariant: ['tabular-nums'] },
   note: { fontSize: 12, opacity: 0.6 },
@@ -277,4 +281,4 @@ const styles = StyleSheet.create({
   lapNo: { fontVariant: ['tabular-nums'] },
   time: { fontVariant: ['tabular-nums'], fontSize: 16 },
   dim: { opacity: 0.4 },
-});
+}));

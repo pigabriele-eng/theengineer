@@ -4,11 +4,13 @@ import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { TraceChart, useSeriesColors } from '@/components/TraceChart';
 import { Analysis, api, DETECTED_CORNERS_NOTE, formatLap, Lap, LapCompare as Compare } from '@/lib/api';
+import { Radius, themed } from '@/constants/Theme';
 
 type Props = { sessionId: number; analysis: Analysis; laps: Lap[] };
 
 /** A lap against the reference lap: time delta, speed, throttle and brake on one distance axis. */
 export function LapCompare({ sessionId, analysis, laps: allLaps }: Props) {
+  const styles = useStyles();
   const ref = analysis.reference_lap;
   const laps = allLaps.filter((l) => l.file_id === analysis.file_id);
   const clean = laps.filter((l) => l.clean && l.number !== ref);
@@ -86,13 +88,13 @@ export function LapCompare({ sessionId, analysis, laps: allLaps }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   section: { gap: 10 },
   h2: { fontSize: 18, fontWeight: '700' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 16, paddingHorizontal: 10, paddingVertical: 4 },
+  chip: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: c.surface },
   legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 },
   at: { opacity: 0.7, fontVariant: ['tabular-nums'] },
-  error: { color: '#c8372d' },
+  error: { color: c.error },
   hint: { fontSize: 12, opacity: 0.6 },
-});
+}));

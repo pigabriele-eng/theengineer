@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, StyleSheet, TextInput } from 'react-nativ
 
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { parseDay, typedDay } from '@/lib/events';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 export type EventFormValue = { name: string; start: string | null; end: string | null };
 
@@ -15,6 +16,8 @@ export function EventForm({ initial, submitLabel, onSubmit, onCancel, datesHint,
   datesHint?: string;
   extra?: ReactNode; // more fields, under the name (a planned event's venue)
 }) {
+  const styles = useStyles();
+  const theme = useTheme();
   const [name, setName] = useState(initial?.name ?? '');
   const [start, setStart] = useState(typedDay(initial?.start ?? null));
   const [end, setEnd] = useState(typedDay(initial?.end ?? null));
@@ -45,18 +48,18 @@ export function EventForm({ initial, submitLabel, onSubmit, onCancel, datesHint,
   return (
     <View style={styles.form}>
       <Text style={styles.label}>Name</Text>
-      <TextInput value={name} onChangeText={setName} placeholder="e.g. GT4 Germany Hockenheim" placeholderTextColor="#888"
+      <TextInput value={name} onChangeText={setName} placeholder="e.g. GT4 Germany Hockenheim" placeholderTextColor={theme.textMuted}
         style={input} maxLength={160} accessibilityLabel="Event name" />
       {extra}
       <View style={styles.dates}>
         <View style={styles.date}>
           <Text style={styles.label}>First day</Text>
-          <TextInput value={start} onChangeText={setStart} placeholder="dd/mm/yyyy" placeholderTextColor="#888"
+          <TextInput value={start} onChangeText={setStart} placeholder="dd/mm/yyyy" placeholderTextColor={theme.textMuted}
             style={input} maxLength={10} inputMode="numeric" accessibilityLabel="First day" />
         </View>
         <View style={styles.date}>
           <Text style={styles.label}>Last day</Text>
-          <TextInput value={end} onChangeText={setEnd} placeholder="dd/mm/yyyy" placeholderTextColor="#888"
+          <TextInput value={end} onChangeText={setEnd} placeholder="dd/mm/yyyy" placeholderTextColor={theme.textMuted}
             style={input} maxLength={10} inputMode="numeric" accessibilityLabel="Last day" />
         </View>
       </View>
@@ -78,18 +81,18 @@ export function EventForm({ initial, submitLabel, onSubmit, onCancel, datesHint,
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   form: { gap: 6, backgroundColor: 'transparent' },
   label: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
-  input: { borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 9,
-    fontSize: 16 },
+  input: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, paddingHorizontal: 12, paddingVertical: 9,
+    fontSize: 16, backgroundColor: c.surface },
   dates: { flexDirection: 'row', gap: 10, backgroundColor: 'transparent' },
   date: { flex: 1, gap: 6, backgroundColor: 'transparent' },
   hint: { fontSize: 12, opacity: 0.6 },
-  error: { color: '#c8372d' },
+  error: { color: c.error },
   buttons: { flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 4, backgroundColor: 'transparent' },
-  button: { borderWidth: 1.5, borderRadius: 8, paddingHorizontal: 18, paddingVertical: 9, minWidth: 110,
+  button: { borderWidth: 1.5, borderRadius: Radius.control, paddingHorizontal: 18, paddingVertical: 9, minWidth: 110,
     alignItems: 'center' },
   buttonText: { fontWeight: '700' },
   cancel: { paddingVertical: 10 },
-});
+}));

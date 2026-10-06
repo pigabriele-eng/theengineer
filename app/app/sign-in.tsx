@@ -3,10 +3,13 @@ import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, StyleShee
 
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { authConfigError, lastSignOutReason, signIn } from '@/lib/auth';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 // Shown instead of the app until there's a session (only in builds with Supabase configured). Accounts are created in
 // Supabase, so there's no sign-up here.
 export default function SignInScreen() {
+  const styles = useStyles();
+  const theme = useTheme();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
@@ -14,7 +17,7 @@ export default function SignInScreen() {
   const passwordRef = useRef<TextInput>(null);
   const tint = useThemeColor({}, 'tint');
   const text = useThemeColor({}, 'text');
-  const background = useThemeColor({}, 'background');
+  const onTint = useThemeColor({}, 'onTint');
 
   // On success the root layout sees the new session and swaps this screen for the app.
   const submit = async () => {
@@ -26,10 +29,10 @@ export default function SignInScreen() {
     if (message) setError(message);
   };
 
-  const input = [styles.input, { color: text, borderColor: '#8884' }];
+  const input = [styles.input, { color: text, borderColor: theme.border }];
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: background }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={styles.container}>
         <View style={styles.form}>
           <Text style={styles.title}>The Engineer</Text>
@@ -40,7 +43,7 @@ export default function SignInScreen() {
             value={email}
             onChangeText={setEmail}
             placeholder="you@example.com"
-            placeholderTextColor="#888"
+            placeholderTextColor={theme.textMuted}
             autoCapitalize="none"
             autoCorrect={false}
             autoComplete="email"
@@ -57,7 +60,7 @@ export default function SignInScreen() {
             value={password}
             onChangeText={setPassword}
             placeholder="Password"
-            placeholderTextColor="#888"
+            placeholderTextColor={theme.textMuted}
             secureTextEntry
             autoCapitalize="none"
             autoComplete="current-password"
@@ -75,9 +78,9 @@ export default function SignInScreen() {
             disabled={busy}
             accessibilityRole="button">
             {busy ? (
-              <ActivityIndicator color={background} />
+              <ActivityIndicator color={onTint} />
             ) : (
-              <Text style={[styles.buttonText, { color: background }]}>Sign in</Text>
+              <Text style={[styles.buttonText, { color: onTint }]}>Sign in</Text>
             )}
           </Pressable>
         </View>
@@ -86,14 +89,14 @@ export default function SignInScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   container: { flex: 1, justifyContent: 'center', padding: 24 },
   form: { width: '100%', maxWidth: 400, alignSelf: 'center', gap: 8 },
   title: { fontSize: 28, fontWeight: '700' },
   sub: { opacity: 0.6, marginBottom: 16 },
   label: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8 },
-  input: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16 },
-  error: { color: '#c8372d', marginTop: 8 },
+  input: { borderWidth: 1, borderRadius: Radius.control, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16 },
+  error: { color: c.error, marginTop: 8 },
   button: { borderRadius: 8, paddingVertical: 12, alignItems: 'center', marginTop: 16 },
   buttonText: { fontWeight: '600', fontSize: 16 },
-});
+}));

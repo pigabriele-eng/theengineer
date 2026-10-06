@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 
 import { Text, View, useThemeColor } from '@/components/Themed';
-import { SERIES, TraceChart } from '@/components/TraceChart';
+import { TraceChart } from '@/components/TraceChart';
 import { useColorScheme } from '@/components/useColorScheme';
 import {
   BalanceCell,
@@ -23,15 +23,16 @@ import {
   Strength,
 } from '@/lib/balance';
 import { quickestLapsLine } from '@/lib/grip';
+import { byScheme, Radius, themed } from '@/constants/Theme';
 
 type Props = { session?: number; event?: number };
 
 // Validated chart palette: categorical slots 1-3 (driving, car, theoretical; and the three laps in the focus charts),
 // and the diverging pair for balance (blue: understeer, red: oversteer, grey: normal), light and dark steps.
-const PALETTE = {
-  light: { ...SERIES.light, third: '#1baf7a', under: '#2a78d6', over: '#e34948', neutral: '#f0efec' },
-  dark: { ...SERIES.dark, third: '#199e70', under: '#3987e5', over: '#e66767', neutral: '#383835' },
-};
+const PALETTE = byScheme((c) => ({
+  reference: c.chart.series[0], compare: c.chart.series[1], third: c.chart.series[2],
+  under: c.balance.under, over: c.balance.over, neutral: c.chart.mid,
+}));
 const WASH: Record<NonNullable<Strength>, string> = { slight: '2e', clear: '5c', strong: '8f' }; // alpha by strength
 
 function usePalette() {
@@ -53,6 +54,7 @@ function describe(v: number): Pick<BalanceCell, 'kind' | 'strength'> {
 }
 
 export function Balance({ session, event }: Props) {
+  const styles = useStyles();
   const [report, setReport] = useState<BalanceReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -90,6 +92,7 @@ export function Balance({ session, event }: Props) {
 }
 
 function ReportView({ r }: { r: BalanceReport }) {
+  const styles = useStyles();
   return (
     <>
       <Text style={styles.dim}>
@@ -138,6 +141,7 @@ function ReportView({ r }: { r: BalanceReport }) {
 }
 
 function RecommendationCard({ rec, index }: { rec: Recommendation; index: number }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   return (
     <View style={[styles.card, index === 0 && { borderColor: tint }]}>
@@ -154,6 +158,7 @@ function RecommendationCard({ rec, index }: { rec: Recommendation; index: number
 }
 
 function Labelled({ label, text }: { label: string; text: string }) {
+  const styles = useStyles();
   return (
     <View style={styles.labelled}>
       <Text style={styles.label}>{label}</Text>
@@ -163,6 +168,7 @@ function Labelled({ label, text }: { label: string; text: string }) {
 }
 
 function ModelLine({ model }: { model: BarModel }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   const [a, b] = model.llt_front_share;
   const [ra, rb] = model.roll_gradient;
@@ -190,6 +196,7 @@ type Part = { label: string; seconds: number; color: string };
 
 /** Seconds split into parts as one bar; the legend (with values) is left out where the parts are listed below it. */
 function SplitBar({ parts, legend = true }: { parts: Part[]; legend?: boolean }) {
+  const styles = useStyles();
   const shown = parts.filter((p) => p.seconds > 0);
   const total = shown.reduce((s, p) => s + p.seconds, 0);
   return (
@@ -214,6 +221,7 @@ function SplitBar({ parts, legend = true }: { parts: Part[]; legend?: boolean })
 }
 
 function CarLimits({ r }: { r: BalanceReport }) {
+  const styles = useStyles();
   const pal = usePalette();
   const { lap, sections, total_car } = r.car_limits;
   const rows = sections.filter((s) => s.car >= 0.03).sort((a, b) => b.car - a.car);
@@ -255,6 +263,7 @@ function CarLimits({ r }: { r: BalanceReport }) {
 }
 
 function CarRow({ row, max, color }: { row: CarLimitRow; max: number; color: string }) {
+  const styles = useStyles();
   return (
     <View style={styles.barRow}>
       <Text style={styles.barCode}>{row.code}</Text>
@@ -268,6 +277,7 @@ function CarRow({ row, max, color }: { row: CarLimitRow; max: number; color: str
 }
 
 function FocusView({ focus }: { focus: Focus }) {
+  const styles = useStyles();
   const pal = usePalette();
   const [cursor, setCursor] = useState<number | null>(null);
   const t = focus.trace;
@@ -349,6 +359,7 @@ function FocusView({ focus }: { focus: Focus }) {
 // ---------- the balance ----------
 
 function Chip({ cell, value }: { cell: Pick<BalanceCell, 'kind' | 'strength'> | null; value: number | null }) {
+  const styles = useStyles();
   const pal = usePalette();
   if (cell == null || value == null) {
     return (
@@ -370,6 +381,7 @@ function Chip({ cell, value }: { cell: Pick<BalanceCell, 'kind' | 'strength'> | 
 }
 
 function BalanceTable({ r }: { r: BalanceReport }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   const [quick, setQuick] = useState(false);
   const b = r.balance;
@@ -458,6 +470,7 @@ function BalanceTable({ r }: { r: BalanceReport }) {
 }
 
 function Method({ r }: { r: BalanceReport }) {
+  const styles = useStyles();
   const m = r.method;
   const sr = m.steering_ratio;
   const wb = m.wheelbase_mm;
@@ -510,6 +523,7 @@ function Method({ r }: { r: BalanceReport }) {
 function Fact({ label, value, reads, source, estimate }: {
   label: string; value: string; reads: string; source: string; estimate: string;
 }) {
+  const styles = useStyles();
   const flagged = estimate === 'estimate' || estimate === 'unknown';
   return (
     <View style={styles.check}>
@@ -527,7 +541,7 @@ function formatTime(s: number): string {
   return m ? `${m}:${rest.toFixed(3).padStart(6, '0')}` : rest.toFixed(3);
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   root: { gap: 12 },
   busy: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   h1: { fontSize: 20, fontWeight: '700' },
@@ -540,14 +554,14 @@ const styles = StyleSheet.create({
   small: { fontSize: 12, lineHeight: 17, opacity: 0.65 },
   dim: { opacity: 0.6 },
   flag: { fontSize: 12, lineHeight: 17, fontWeight: '700' },
-  error: { color: '#c8372d' },
-  card: { borderWidth: 1, borderColor: '#8884', borderRadius: 12, padding: 12, gap: 8 },
+  error: { color: c.error },
+  card: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 12, gap: 8, backgroundColor: c.surface },
   cardHead: { flexDirection: 'row', gap: 10, alignItems: 'baseline' },
   cardNumber: { fontSize: 16, fontWeight: '700', opacity: 0.5, fontVariant: ['tabular-nums'] },
   cardTitle: { fontSize: 16, fontWeight: '700', flexShrink: 1 },
   labelled: { gap: 2 },
   label: { fontSize: 11, fontWeight: '600', opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
-  model: { gap: 4, borderTopWidth: 1, borderColor: '#8883', paddingTop: 8 },
+  model: { gap: 4, borderTopWidth: 1, borderColor: c.separator, paddingTop: 8 },
   link: { fontWeight: '600', marginTop: 2 },
   split: { flexDirection: 'row', height: 14, gap: 2, borderRadius: 4, overflow: 'hidden' },
   legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, rowGap: 4, marginTop: 6 },
@@ -561,7 +575,7 @@ const styles = StyleSheet.create({
   explain: { gap: 2 },
   explainHead: { fontWeight: '600', fontVariant: ['tabular-nums'] },
   toggle: { flexDirection: 'row', gap: 8 },
-  toggleItem: { borderWidth: 1, borderColor: '#8884', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 5 },
+  toggleItem: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, paddingHorizontal: 12, paddingVertical: 5, backgroundColor: c.surface },
   tableHead: { flexDirection: 'row', gap: 4 },
   th: { flex: 1, fontSize: 12, fontWeight: '600', opacity: 0.6 },
   tableRow: { flexDirection: 'row', gap: 4, alignItems: 'stretch' },
@@ -572,10 +586,10 @@ const styles = StyleSheet.create({
   chipValue: { fontWeight: '600', fontVariant: ['tabular-nums'] },
   chipWords: { fontSize: 11, lineHeight: 14 },
   checks: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  check: { gap: 2, minWidth: 150, flexGrow: 1, flexBasis: 150, borderWidth: 1, borderColor: '#8883', borderRadius: 10,
-    padding: 10 },
+  check: { gap: 2, minWidth: 150, flexGrow: 1, flexBasis: 150, borderWidth: 1, borderColor: c.border, borderRadius: Radius.card,
+    padding: 10, backgroundColor: c.surface },
   checkLabel: { fontSize: 12, opacity: 0.65 },
   checkValue: { fontSize: 17, fontWeight: '600', fontVariant: ['tabular-nums'] },
-});
+}));
 
 export default Balance;

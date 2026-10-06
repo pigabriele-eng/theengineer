@@ -17,16 +17,17 @@ import { Text, useThemeColor } from '@/components/Themed';
 import { useSeriesColors } from '@/components/TraceChart';
 import { formatLap } from '@/lib/api';
 import { Advice, fetchTyrePrep, fixed, signed, Sim, SimPoint, TyrePrep as Report, WHEELS } from '@/lib/tyreprep';
+import { Fonts, Radius, themed, useTheme } from '@/constants/Theme';
 
-const MUTED = '#898781'; // de-emphasis gray of the chart palette (the same step in light and dark)
 const PEAK_LAPS = 6; // flying laps shown lap by lap in the comparison
 // SVG text takes the browser's default (serif) face on web: give it the system sans the rest of the app uses
-const SVG_FONT = Platform.OS === 'web' ? 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' : undefined;
+const SVG_FONT = Fonts.sans;
 
 /** The tyre and qualifying preparation section of the report, for one session or a whole event: the recommended
  * warm-up first, then the warm-ups side by side, when the tyres were ready to push, each tyre's window on the
  * fastest laps with the cold pressures that land in it, and the long runs. */
 export function TyrePrep({ session, event, heading = true }: { session?: number; event?: number; heading?: boolean }) {
+  const styles = useStyles();
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -111,6 +112,7 @@ function Body({ report }: { report: Report }) {
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
+  const styles = useStyles();
   return (
     <View style={styles.section}>
       <Text style={styles.h3}>{title}</Text>
@@ -120,6 +122,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 function Recommendation({ text }: { text: string }) {
+  const styles = useStyles();
   const tint = useSeriesColors().reference;
   return (
     <View style={StyleSheet.flatten([styles.callout, { borderLeftColor: tint }])}>
@@ -130,6 +133,7 @@ function Recommendation({ text }: { text: string }) {
 }
 
 function Para({ a }: { a: Advice }) {
+  const styles = useStyles();
   return (
     <Text style={styles.para}>
       <Text style={styles.paraTitle}>{a.title}. </Text>
@@ -140,6 +144,7 @@ function Para({ a }: { a: Advice }) {
 
 function NavLink({ href, label }: { href: '/tools/pressures' | { pathname: '/tools/stint'; params: { session: string } };
   label: string }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   // Link hands its style to a web anchor, which can't take a style array: one object
   return (
@@ -152,6 +157,7 @@ function NavLink({ href, label }: { href: '/tools/pressures' | { pathname: '/too
 // ---------------------------------------------------------------- headline numbers
 
 function Tiles({ report }: { report: Report }) {
+  const styles = useStyles();
   const { push, ready, brake_work: brakes, pressure } = report;
   const tiles: { label: string; value: string; sub: string }[] = [];
   if (push) tiles.push({ label: 'Push at', value: `${push.front_c} / ${push.rear_c} °C`, sub: 'fronts / rears, TPMS at the line' });
@@ -195,9 +201,9 @@ type Row = { label: string; lines?: 2; cell: (s: Sim) => ReactNode };
 function atLine(s: Sim, axle: 'front' | 'rear') {
   const pts = s.points.slice(0, Math.max(PEAK_LAPS, s.peak_flying));
   return (
-    <Text style={styles.cellText} numberOfLines={1}>
+    <Text style={cells.cellText} numberOfLines={1}>
       {pts.map((p, i) => (
-        <Text key={p.lap} style={p.peak ? styles.peakValue : undefined}>
+        <Text key={p.lap} style={p.peak ? cells.peakValue : undefined}>
           {i ? ' ' : ''}
           {fixed(p[axle])}
         </Text>
@@ -209,41 +215,42 @@ function atLine(s: Sim, axle: 'front' | 'rear') {
 const ROWS: Row[] = [
   { label: 'Start', lines: 2, cell: (s) => (
     <>
-      <Text style={styles.cellText}>{s.cold_start ? 'Cold tyres' : 'Pre-warmed'}</Text>
-      <Text style={styles.cellSub}>{s.kind === 'quali' ? 'quali sim' : 'then a long run'}</Text>
+      <Text style={cells.cellText}>{s.cold_start ? 'Cold tyres' : 'Pre-warmed'}</Text>
+      <Text style={cells.cellSub}>{s.kind === 'quali' ? 'quali sim' : 'then a long run'}</Text>
     </>
   ) },
   { label: 'Warm-up', cell: (s) => (
-    <Text style={styles.cellText}>{s.warm_laps != null ? plural(s.warm_laps, 'lap') : '–'}, {s.warm_min.toFixed(1)} min</Text>
+    <Text style={cells.cellText}>{s.warm_laps != null ? plural(s.warm_laps, 'lap') : '–'}, {s.warm_min.toFixed(1)} min</Text>
   ) },
-  { label: 'Brake dragging', cell: (s) => <Text style={styles.cellText}>{fixed(s.drag_s)} s</Text> },
-  { label: 'Hard stops on the straights', lines: 2, cell: (s) => <Text style={styles.cellText}>{fixed(s.straight_hard_stops)}</Text> },
-  { label: 'Weaving swings', cell: (s) => <Text style={styles.cellText}>{fixed(s.weaves)}</Text> },
+  { label: 'Brake dragging', cell: (s) => <Text style={cells.cellText}>{fixed(s.drag_s)} s</Text> },
+  { label: 'Hard stops on the straights', lines: 2, cell: (s) => <Text style={cells.cellText}>{fixed(s.straight_hard_stops)}</Text> },
+  { label: 'Weaving swings', cell: (s) => <Text style={cells.cellText}>{fixed(s.weaves)}</Text> },
   { label: 'Each warm-up lap, fronts', lines: 2, cell: (s) => (
     <>
-      <Text style={styles.cellText}>{signed(s.warm_gain_per_lap.front_c)} °C</Text>
-      <Text style={styles.cellSub}>{signed(s.warm_gain_per_lap.front_bar, 2)} bar</Text>
+      <Text style={cells.cellText}>{signed(s.warm_gain_per_lap.front_c)} °C</Text>
+      <Text style={cells.cellSub}>{signed(s.warm_gain_per_lap.front_bar, 2)} bar</Text>
     </>
   ) },
   { label: 'Fronts at the line, °C', lines: 2, cell: (s) => atLine(s, 'front') },
   { label: 'Rears at the line, °C', lines: 2, cell: (s) => atLine(s, 'rear') },
   { label: 'Up to push temperature', lines: 2, cell: (s) => (
-    <Text style={styles.cellText}>{s.cold_start ? `${fixed(s.ready_min, 1)} min` : 'warm start'}</Text>
+    <Text style={cells.cellText}>{s.cold_start ? `${fixed(s.ready_min, 1)} min` : 'warm start'}</Text>
   ) },
   { label: 'Best lap', lines: 2, cell: (s) => (
     <>
-      <Text style={styles.cellText} numberOfLines={1}>{formatLap(s.peak_time)} (+{s.gap_day.toFixed(2)} s)</Text>
-      <Text style={styles.cellSub} numberOfLines={1}>flying lap {s.peak_flying}, {s.peak_min.toFixed(1)} min</Text>
+      <Text style={cells.cellText} numberOfLines={1}>{formatLap(s.peak_time)} (+{s.gap_day.toFixed(2)} s)</Text>
+      <Text style={cells.cellSub} numberOfLines={1}>flying lap {s.peak_flying}, {s.peak_min.toFixed(1)} min</Text>
     </>
   ) },
   { label: 'Pace held', cell: (s) => (
-    <Text style={styles.cellText}>{s.hold.laps} of {plural(s.hold.after + 1, 'lap')}</Text>
+    <Text style={cells.cellText}>{s.hold.laps} of {plural(s.hold.after + 1, 'lap')}</Text>
   ) },
 ];
 
 const rowHeight = (r: Row) => (r.lines === 2 ? 40 : 28);
 
 function BuildTable({ sims, fastest, holdS }: { sims: Sim[]; fastest: string | null; holdS: number }) {
+  const styles = useStyles();
   const wash = useSeriesColors().reference + '1a'; // the accent at 10 %
   // Cold starts first, quickest to temperature first; then the runs on tyres still warm from earlier.
   const ordered = [...sims].sort((a, b) =>
@@ -264,7 +271,7 @@ function BuildTable({ sims, fastest, holdS }: { sims: Sim[]; fastest: string | n
             <View key={s.label} style={StyleSheet.flatten([styles.runCol, s.label === fastest && { backgroundColor: wash }])}>
               <View style={styles.headCell}>
                 <Text style={styles.runName} numberOfLines={2}>{s.label}</Text>
-                {s.label === fastest && <Text style={styles.cellSub}>quickest to temperature</Text>}
+                {s.label === fastest && <Text style={cells.cellSub}>quickest to temperature</Text>}
               </View>
               {ROWS.map((r) => (
                 <View key={r.label} style={StyleSheet.flatten([styles.cell, { height: rowHeight(r) }])}>
@@ -290,11 +297,13 @@ const C = { left: 40, right: 12, top: 18, bottom: 34, height: 230 };
 const GAP_MAX = 3; // s; slower laps sit on the top edge
 
 function ReadyChart({ sims, push }: { sims: Sim[]; push: NonNullable<Report['push']> }) {
+  const theme = useTheme();
+  const styles = useStyles();
   const [width, setWidth] = useState(0);
   const [picked, setPicked] = useState<SimPoint | null>(null);
   const [asTable, setAsTable] = useState(false);
   const ink = useThemeColor({}, 'text');
-  const surface = useThemeColor({}, 'background');
+  const surface = useThemeColor({}, 'surface');
   const accent = useSeriesColors().reference;
   const pts = sims.flatMap((s) => s.points).filter((p) => p.front != null);
   if (!pts.length) return null;
@@ -338,7 +347,7 @@ function ReadyChart({ sims, push }: { sims: Sim[]; push: NonNullable<Report['pus
           <Text style={styles.legendText}>fronts and rears at push temperature</Text>
         </View>
         <View style={styles.legendItem}>
-          <View style={StyleSheet.flatten([styles.swatch, { backgroundColor: MUTED }])} />
+          <View style={StyleSheet.flatten([styles.swatch, { backgroundColor: theme.chart.muted }])} />
           <Text style={styles.legendText}>colder</Text>
         </View>
       </View>
@@ -361,12 +370,12 @@ function ReadyChart({ sims, push }: { sims: Sim[]; push: NonNullable<Report['pus
               <Line key={g} x1={C.left} x2={C.left + w} y1={y(g)} y2={y(g)} stroke={ink} strokeOpacity={g ? 0.08 : 0.25} />
             ))}
             {[0, 1, 2, 3].map((g) => (
-              <SvgText fontFamily={SVG_FONT} key={g} x={C.left - 6} y={y(g) + 4} fontSize={10} fill={MUTED} textAnchor="end">
+              <SvgText fontFamily={SVG_FONT} key={g} x={C.left - 6} y={y(g) + 4} fontSize={10} fill={theme.chart.muted} textAnchor="end">
                 {g === GAP_MAX ? `${g}+` : g}
               </SvgText>
             ))}
             {xTicks.map((v) => (
-              <SvgText fontFamily={SVG_FONT} key={v} x={x(v)} y={C.top + h + 14} fontSize={10} fill={MUTED} textAnchor="middle">
+              <SvgText fontFamily={SVG_FONT} key={v} x={x(v)} y={C.top + h + 14} fontSize={10} fill={theme.chart.muted} textAnchor="middle">
                 {v}
               </SvgText>
             ))}
@@ -377,16 +386,16 @@ function ReadyChart({ sims, push }: { sims: Sim[]; push: NonNullable<Report['pus
             <SvgText fontFamily={SVG_FONT} x={C.left + 4} y={y(push.gap_s) - 4} fontSize={10} fill={ink} fillOpacity={0.7}>
               {`within ${push.gap_s} s of the day's best`}
             </SvgText>
-            <SvgText fontFamily={SVG_FONT} x={C.left + w / 2} y={C.height - 4} fontSize={10} fill={MUTED} textAnchor="middle">
+            <SvgText fontFamily={SVG_FONT} x={C.left + w / 2} y={C.height - 4} fontSize={10} fill={theme.chart.muted} textAnchor="middle">
               Fronts at the line, °C (TPMS)
             </SvgText>
-            <SvgText fontFamily={SVG_FONT} x={10} y={C.top + h / 2} fontSize={10} fill={MUTED} textAnchor="middle"
+            <SvgText fontFamily={SVG_FONT} x={10} y={C.top + h / 2} fontSize={10} fill={theme.chart.muted} textAnchor="middle"
               transform={`rotate(-90 10 ${C.top + h / 2})`}>
               s off the best
             </SvgText>
             {ordered.map((p) => (
               <Circle key={`${p.sim}-${p.lap}`} cx={x(p.front as number)} cy={y(p.gap)} r={picked === p ? 6 : 4}
-                fill={isReady(p) ? accent : MUTED} stroke={surface} strokeWidth={2} />
+                fill={isReady(p) ? accent : theme.chart.muted} stroke={surface} strokeWidth={2} />
             ))}
           </Svg>
         )}
@@ -400,6 +409,7 @@ function ReadyChart({ sims, push }: { sims: Sim[]; push: NonNullable<Report['pus
 }
 
 function PointsTable({ sims }: { sims: Sim[] }) {
+  const styles = useStyles();
   const cols: [string, number][] = [['Run, lap', 150], ['Fronts °C', 70], ['Rears °C', 70], ['Bar', 50], ['Off best', 64]];
   return (
     <ScrollView horizontal>
@@ -426,6 +436,7 @@ function PointsTable({ sims }: { sims: Sim[] }) {
 // ---------------------------------------------------------------- tyre windows, laid out like the car
 
 function WindowGrid({ report }: { report: Report }) {
+  const styles = useStyles();
   const w = report.windows!;
   const cold = Object.fromEntries((report.cold?.tyres ?? []).map((c) => [c.tyre, c]));
   return (
@@ -468,6 +479,7 @@ function WindowGrid({ report }: { report: Report }) {
 // ---------------------------------------------------------------- long runs
 
 function LongRuns({ report }: { report: Report }) {
+  const styles = useStyles();
   return (
     <View style={styles.longRuns}>
       {report.long_runs.map((lr) => {
@@ -481,7 +493,7 @@ function LongRuns({ report }: { report: Report }) {
               <Text style={styles.longRunName}>{lr.label}</Text>
               <NavLink href={{ pathname: '/tools/stint', params: { session: String(lr.session_id) } }} label="Stint" />
             </View>
-            <Text style={styles.cellSub}>
+            <Text style={cells.cellSub}>
               {plural(lr.flying, 'flying lap')}, best {formatLap(lr.best)} · {verdict} · fronts{' '}
               {fixed(lr.front_c[0])}→{fixed(lr.front_c[lr.front_c.length - 1])} °C
             </Text>
@@ -495,6 +507,7 @@ function LongRuns({ report }: { report: Report }) {
 // ---------------------------------------------------------------- how it is worked out
 
 function Method({ report }: { report: Report }) {
+  const styles = useStyles();
   const [open, setOpen] = useState(false);
   return (
     <View style={styles.section}>
@@ -521,12 +534,12 @@ const span = (a: number, b: number, digits = 0) =>
   a.toFixed(digits) === b.toFixed(digits) ? a.toFixed(digits) : `${a.toFixed(digits)}–${b.toFixed(digits)}`;
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   wrap: { gap: 12 },
   h2: { fontSize: 20, fontWeight: '700' },
   h3: { fontSize: 13, fontWeight: '600', opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 },
   loading: { flexDirection: 'row', gap: 8, alignItems: 'center' },
-  error: { color: '#c8372d' },
+  error: { color: c.error },
   dim: { opacity: 0.55 },
   section: { gap: 8, marginTop: 8 },
   callout: { borderLeftWidth: 3, paddingLeft: 12, paddingVertical: 4, gap: 4 },
@@ -536,20 +549,17 @@ const styles = StyleSheet.create({
   paraTitle: { fontWeight: '600' },
   link: { fontWeight: '600', paddingVertical: 4 },
   tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  tile: { flexGrow: 1, flexBasis: 150, borderWidth: 1, borderColor: '#8883', borderRadius: 10, padding: 10, gap: 2 },
+  tile: { flexGrow: 1, flexBasis: 150, borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 10, gap: 2, backgroundColor: c.surface },
   tileLabel: { fontSize: 12, opacity: 0.6 },
   tileValue: { fontSize: 20, fontWeight: '600' },
   tileSub: { fontSize: 12, opacity: 0.6 },
-  table: { flexDirection: 'row', borderTopWidth: 1, borderColor: '#8883' },
-  headCell: { height: 48, justifyContent: 'center', paddingRight: 8, borderBottomWidth: 1, borderColor: '#8883' },
-  rowLabelCell: { justifyContent: 'center', borderBottomWidth: 1, borderColor: '#8882', paddingRight: 6 },
+  table: { flexDirection: 'row', borderTopWidth: 1, borderColor: c.separator },
+  headCell: { height: 48, justifyContent: 'center', paddingRight: 8, borderBottomWidth: 1, borderColor: c.separator },
+  rowLabelCell: { justifyContent: 'center', borderBottomWidth: 1, borderColor: c.separator, paddingRight: 6 },
   rowLabel: { fontSize: 12, opacity: 0.65 },
   runCol: { width: RUN_W, paddingLeft: 8 },
   runName: { fontSize: 13, fontWeight: '600' },
-  cell: { justifyContent: 'center', borderBottomWidth: 1, borderColor: '#8882', paddingRight: 6 },
-  cellText: { fontSize: 13, fontVariant: ['tabular-nums'] },
-  cellSub: { fontSize: 12, opacity: 0.6, fontVariant: ['tabular-nums'] },
-  peakValue: { fontWeight: '700' },
+  cell: { justifyContent: 'center', borderBottomWidth: 1, borderColor: c.separator, paddingRight: 6 },
   legend: { fontSize: 12, opacity: 0.6, lineHeight: 17, marginTop: 4 },
   chart: { gap: 4, maxWidth: 760 },
   chartTitle: { fontSize: 13, fontWeight: '600' },
@@ -559,21 +569,28 @@ const styles = StyleSheet.create({
   legendText: { fontSize: 12, opacity: 0.7 },
   readout: { fontSize: 13, minHeight: 36, fontVariant: ['tabular-nums'] },
   toggle: { fontSize: 13, fontWeight: '600', opacity: 0.75, paddingVertical: 4 },
-  tRow: { flexDirection: 'row', borderBottomWidth: 1, borderColor: '#8882', paddingVertical: 3 },
+  tRow: { flexDirection: 'row', borderBottomWidth: 1, borderColor: c.separator, paddingVertical: 3 },
   tHead: { fontSize: 12, fontWeight: '600', opacity: 0.65, textAlign: 'right', paddingRight: 8 },
   tCell: { fontSize: 13, fontVariant: ['tabular-nums'], textAlign: 'right', paddingRight: 8 },
   tLeft: { textAlign: 'left' },
   car: { gap: 8, maxWidth: 520 },
   carLabel: { fontSize: 12, opacity: 0.6, textAlign: 'center' },
   carRow: { flexDirection: 'row', gap: 8 },
-  carCell: { flex: 1, borderWidth: 1, borderColor: '#8883', borderRadius: 10, padding: 10, gap: 2 },
+  carCell: { flex: 1, borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 10, gap: 2, backgroundColor: c.surface },
   wheel: { fontWeight: '700' },
   windowLine: { fontSize: 13, fontVariant: ['tabular-nums'] },
   windowMain: { fontWeight: '600' },
   coldSet: { fontSize: 13, marginTop: 4 },
   longRuns: { gap: 8 },
-  longRun: { gap: 2, borderBottomWidth: 1, borderColor: '#8882', paddingBottom: 6 },
+  longRun: { gap: 2, borderBottomWidth: 1, borderColor: c.separator, paddingBottom: 6 },
   longRunHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   longRunName: { fontWeight: '600' },
   method: { gap: 6 },
+}));
+
+// the table's cell text, also used by the rows' cell makers outside the components (no colours of their own)
+const cells = StyleSheet.create({
+  cellText: { fontSize: 13, fontVariant: ['tabular-nums'] },
+  cellSub: { fontSize: 12, opacity: 0.6, fontVariant: ['tabular-nums'] },
+  peakValue: { fontWeight: '700' },
 });

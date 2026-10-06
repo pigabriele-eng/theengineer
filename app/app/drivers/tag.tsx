@@ -9,12 +9,14 @@ import { todayIso } from '@/lib/calendar';
 import { Driver, driversApi } from '@/lib/drivers';
 import { dateRange, dayLabel, dayTitle, Folder } from '@/lib/events';
 import { firstOpen, loadBlocks, Outing, outingsOf, withoutDriver } from '@/lib/tagging';
+import { Radius, themed } from '@/constants/Theme';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 // Tag outings with their driver: tick outings (or a whole event or day), pick the driver, set it for all of them.
 // One block per event as the Sessions tab shows them, newest first; the event on now (else the newest) opens.
 export default function TagDriversScreen() {
+  const styles = useStyles();
   const [blocks, setBlocks] = useState<Folder[] | null>(null);
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [open, setOpen] = useState<Set<string> | null>(null);
@@ -25,7 +27,7 @@ export default function TagDriversScreen() {
   const [error, setError] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
+  const onTint = useThemeColor({}, 'onTint');
 
   const load = useCallback(async () => {
     try {
@@ -114,7 +116,7 @@ export default function TagDriversScreen() {
         accessibilityRole="checkbox"
         aria-checked={on}>
         <View style={StyleSheet.flatten([styles.box, on && { backgroundColor: tint, borderColor: tint }])}>
-          {on && <Text style={StyleSheet.flatten([styles.tick, { color: background }])}>✓</Text>}
+          {on && <Text style={StyleSheet.flatten([styles.tick, { color: onTint }])}>✓</Text>}
         </View>
         <View style={styles.rowText}>
           <Text style={styles.title}>{o.name}</Text>
@@ -169,7 +171,7 @@ export default function TagDriversScreen() {
   };
 
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.outer}>
+    <ScrollView contentContainerStyle={styles.outer}>
       <Stack.Screen options={{ title: 'Tag drivers' }} />
       <View style={styles.page}>
         <Text style={styles.intro}>
@@ -200,9 +202,9 @@ export default function TagDriversScreen() {
           disabled={!ready || busy}
           style={StyleSheet.flatten([styles.button, { backgroundColor: tint }, (!ready || busy) && styles.disabled])}>
           {busy ? (
-            <ActivityIndicator color={background} />
+            <ActivityIndicator color={onTint} />
           ) : (
-            <Text style={StyleSheet.flatten([styles.buttonText, { color: background }])}>
+            <Text style={StyleSheet.flatten([styles.buttonText, { color: onTint }])}>
               {picked.size === 0
                 ? 'Tick the outings below'
                 : !ready
@@ -222,18 +224,18 @@ export default function TagDriversScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   outer: { padding: 16, paddingBottom: 32 },
   page: { width: '100%', maxWidth: 820, alignSelf: 'center', gap: 12 },
   intro: { opacity: 0.7, lineHeight: 20 },
   h2: { fontSize: 18, fontWeight: '700' },
-  remove: { color: '#c8372d' },
+  remove: { color: c.error },
   button: { borderRadius: 8, padding: 14, alignItems: 'center' },
   disabled: { opacity: 0.5 },
   buttonText: { fontWeight: '600', fontSize: 16 },
   done: { fontWeight: '600' },
-  error: { color: '#c8372d' },
-  block: { borderWidth: 1, borderColor: '#8884', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
+  error: { color: c.error },
+  block: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, paddingHorizontal: 14, paddingVertical: 10, backgroundColor: c.surface },
   loose: { borderStyle: 'dashed' },
   head: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: 'transparent' },
   headText: { flex: 1, flexDirection: 'row', alignItems: 'flex-start', gap: 8, paddingVertical: 2 },
@@ -246,12 +248,12 @@ const styles = StyleSheet.create({
   dayHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12, paddingVertical: 6,
     backgroundColor: 'transparent' },
   dayTitle: { flex: 1, fontSize: 13, fontWeight: '600', opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderTopWidth: 1, borderColor: '#8882' },
-  box: { width: 22, height: 22, borderRadius: 4, borderWidth: 2, borderColor: '#8888', alignItems: 'center', justifyContent: 'center' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderTopWidth: 1, borderColor: c.separator },
+  box: { width: 22, height: 22, borderRadius: 4, borderWidth: 2, borderColor: c.borderStrong, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface },
   tick: { fontWeight: '700', fontSize: 14, lineHeight: 16 },
   rowText: { flex: 1, backgroundColor: 'transparent' },
   title: { fontSize: 16, fontWeight: '600' },
   sub: { opacity: 0.7, marginTop: 2 },
   dim: { opacity: 0.5 },
   time: { fontSize: 16, fontVariant: ['tabular-nums'] },
-});
+}));

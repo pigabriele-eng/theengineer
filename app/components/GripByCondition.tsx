@@ -8,7 +8,7 @@ import Svg, { Circle, G, Line, Rect, Text as SvgText } from 'react-native-svg';
 
 import { Readout, useChartColors } from '@/components/report/GripCharts';
 import { Text, View } from '@/components/Themed';
-import { CHART_FONT, tableStyles, useAxleColors, usePointer } from '@/components/TyreCurve';
+import { CHART_FONT, useAxleColors, usePointer, useTableStyles } from '@/components/TyreCurve';
 import { AXLES, Axle, Condition, ConditionGroup, ConditionKey, GripWindow, gripNum, gripPct } from '@/lib/tyreModel';
 
 const NAMES: Record<Axle, string> = { front: 'Front', rear: 'Rear' };
@@ -51,6 +51,7 @@ const inWindow = (g: ConditionGroup, w: GripWindow | null) =>
   !!w && (w.confidence === 'high' || w.confidence === 'medium') && g.from >= w.from - 1e-9 && g.to <= w.to + 1e-9;
 
 export function GripByCondition({ cond, condKey }: { cond: Condition; condKey: ConditionKey }) {
+  const tableStyles = useTableStyles();
   const [table, setTable] = useState(false);
   const [width, setWidth] = useState(0);
   const wide = width >= 760;
@@ -196,6 +197,7 @@ function Panel({ axle, groups, window, condKey, domain }: {
 }
 
 function GroupTable({ cond, condKey }: { cond: Condition; condKey: ConditionKey }) {
+  const tableStyles = useTableStyles();
   const head = condKey === 'tyre_laps' ? 'Laps on tyre' : `${cond.label} (${cond.unit})`;
   return (
     <View style={tableStyles.table}>

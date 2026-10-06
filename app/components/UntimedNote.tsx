@@ -5,10 +5,10 @@ import { StyleSheet } from 'react-native';
 import { Text, View } from '@/components/Themed';
 import type { SessionDetail } from '@/lib/api';
 import { untimedLogs } from '@/lib/emptyRuns';
-
-const WARNING = '#fab219';
+import { inkOn, themed } from '@/constants/Theme';
 
 export function UntimedNote({ session }: { session: SessionDetail }) {
+  const styles = useStyles();
   const logs = untimedLogs(session);
   if (!logs.length) return null;
   return (
@@ -30,20 +30,20 @@ export function UntimedNote({ session }: { session: SessionDetail }) {
   );
 }
 
-const styles = StyleSheet.create({
-  box: { gap: 12, borderLeftWidth: 4, borderColor: WARNING, paddingLeft: 12, paddingVertical: 4 },
+const useStyles = themed((c) => ({
+  box: { gap: 12, borderLeftWidth: 4, borderColor: c.status.warning, paddingLeft: 12, paddingVertical: 4 },
   item: { gap: 6, backgroundColor: 'transparent' },
   head: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'transparent' },
   badge: {
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: WARNING,
+    backgroundColor: c.status.warning,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  glyph: { color: '#1a1a19', fontWeight: '700', fontSize: 13, lineHeight: 16 },
+  glyph: { color: inkOn(c.status.warning), fontWeight: '700', fontSize: 13, lineHeight: 16 },
   title: { fontWeight: '700', fontSize: 16, flexShrink: 1 },
   body: { lineHeight: 20 },
   file: { fontSize: 12, opacity: 0.6 },
-});
+}));

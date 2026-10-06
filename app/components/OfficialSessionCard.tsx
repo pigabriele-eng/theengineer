@@ -16,13 +16,14 @@ import {
   STATUS_NAMES,
   weatherLabel,
 } from '@/lib/results';
+import { inkOn, Radius, themed, useTheme } from '@/constants/Theme';
 
-const RED = '#c8372d';
 
 /** One official session at a glance: where our car finished (overall and in class), the gaps, our best lap against
  * the fastest, the class and our make, the weather, what our logged best lap would have been worth, and our logged
  * sessions in it. The makes table opens on a tap. `current` hides the link to the session already open. */
 export function OfficialSessionCard({ s, current }: { s: OfficialSession; current?: number }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   const [makes, setMakes] = useState(false);
   const race = s.kind === 'race';
@@ -74,6 +75,8 @@ export function OfficialSessionCard({ s, current }: { s: OfficialSession; curren
 }
 
 function Ours({ us, race, s }: { us: OurResult; race: boolean; s: OfficialSession }) {
+  const theme = useTheme();
+  const styles = useStyles();
   const out = us.status !== 'classified';
   const place = us.position != null ? `P${us.position} overall` : null;
   const inClass = us.class_position != null
@@ -109,7 +112,7 @@ function Ours({ us, race, s }: { us: OurResult; race: boolean; s: OfficialSessio
           {[place, inClass].filter(Boolean).join(', ') || STATUS_NAMES[us.status]}
         </Text>
       </View>
-      {out && <Text style={StyleSheet.flatten([styles.small, { color: RED, opacity: 1 }])}>{STATUS_NAMES[us.status]}</Text>}
+      {out && <Text style={StyleSheet.flatten([styles.small, { color: theme.error, opacity: 1 }])}>{STATUS_NAMES[us.status]}</Text>}
       {!!gaps && <Text style={styles.line}>{gaps}</Text>}
       {best && <Text style={styles.line}>{best}</Text>}
       {(classBest || brandBest) && (
@@ -120,6 +123,7 @@ function Ours({ us, race, s }: { us: OurResult; race: boolean; s: OfficialSessio
 }
 
 function Makes({ s, ourBrand }: { s: OfficialSession; ourBrand?: string }) {
+  const styles = useStyles();
   return (
     <View style={styles.table}>
       <View style={styles.tr}>
@@ -148,21 +152,21 @@ const ordinal = (n: number) => {
   return `${n}${suffix}`;
 };
 
-const styles = StyleSheet.create({
-  card: { borderWidth: 1, borderColor: '#8884', borderRadius: 10, padding: 12, gap: 4 },
+const useStyles = themed((c) => ({
+  card: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 12, gap: 4, backgroundColor: c.surface },
   title: { fontSize: 15, fontWeight: '700' },
   us: { gap: 2, backgroundColor: 'transparent' },
   placeRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', backgroundColor: 'transparent' },
   place: { fontSize: 18, fontWeight: '700', fontVariant: ['tabular-nums'] },
-  badge: { backgroundColor: RED, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 1 },
-  badgeText: { color: '#fff', fontWeight: '800', fontSize: 12 },
+  badge: { backgroundColor: c.status.critical, borderRadius: Radius.tag, paddingHorizontal: 6, paddingVertical: 1 },
+  badgeText: { color: inkOn(c.status.critical), fontWeight: '800', fontSize: 12 },
   line: { fontSize: 14, fontVariant: ['tabular-nums'] },
   small: { fontSize: 12, opacity: 0.6, fontVariant: ['tabular-nums'] },
   links: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginTop: 4,
     backgroundColor: 'transparent' },
   link: { fontSize: 14, fontWeight: '600' },
   table: { marginTop: 4, backgroundColor: 'transparent' },
-  tr: { flexDirection: 'row', paddingVertical: 3, borderBottomWidth: 1, borderColor: '#8882',
+  tr: { flexDirection: 'row', paddingVertical: 3, borderBottomWidth: 1, borderColor: c.separator,
     backgroundColor: 'transparent' },
   th: { fontSize: 11, fontWeight: '700', opacity: 0.6, textTransform: 'uppercase' },
   td: { fontSize: 13, fontVariant: ['tabular-nums'] },
@@ -171,11 +175,12 @@ const styles = StyleSheet.create({
   bold: { fontWeight: '700' },
   session: { gap: 8, backgroundColor: 'transparent' },
   h2: { fontSize: 18, fontWeight: '700' },
-});
+}));
 
 /** On a session's page: the official session this run was part of, or nothing (the server's note, small, when
  * it has one). */
 export function SessionResults({ sessionId }: { sessionId: number }) {
+  const styles = useStyles();
   const [run, setRun] = useState<RunResult | null>(null);
   useEffect(() => {
     let alive = true;

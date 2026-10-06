@@ -5,10 +5,12 @@ import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { setupApi, Sheet } from '@/lib/setup';
+import { Radius, themed } from '@/constants/Theme';
 
 const SHOWN = 4;
 
 export function SetupCard({ sessionId }: { sessionId: number }) {
+  const styles = useStyles();
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -97,16 +99,16 @@ export function SetupCard({ sessionId }: { sessionId: number }) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   section: { gap: 6 },
   h2: { fontSize: 18, fontWeight: '700' },
   left: { alignSelf: 'flex-start' },
   sub: { opacity: 0.7 },
   change: { fontWeight: '600' },
-  error: { color: '#c8372d' },
+  error: { color: c.error },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 },
   button: {
-    borderRadius: 8,
+    borderRadius: Radius.control,
     borderWidth: 1,
     paddingVertical: 10,
     paddingHorizontal: 14,
@@ -115,4 +117,4 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   buttonText: { fontWeight: '600', fontSize: 15 },
-});
+}));

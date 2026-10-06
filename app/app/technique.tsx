@@ -21,6 +21,7 @@ import {
   SessionTechnique,
   working,
 } from '@/lib/technique';
+import { Radius, themed } from '@/constants/Theme';
 
 const POLL_MS = 2000;
 const WIDE = 900;
@@ -35,6 +36,7 @@ const HABITS_SHOWN = 6;
  * lap on the track map and against perfect driving's speed. Opened from a session (?session=) or an event's report
  * (?event=, at the event's quickest lap); ?lap= picks the lap. */
 export default function TechniqueScreen() {
+  const styles = useStyles();
   const params = useLocalSearchParams<{ session?: string; event?: string; lap?: string }>();
   const router = useRouter();
   const eventParam = params.event ? Number(params.event) : null;
@@ -46,7 +48,6 @@ export default function TechniqueScreen() {
   const [loading, setLoading] = useState(false);
   const [nonce, setNonce] = useState(0);
   const [selected, setSelected] = useState<number | null>(1);
-  const background = useThemeColor({}, 'background');
   const { width } = useWindowDimensions();
   const wide = width >= WIDE;
 
@@ -137,7 +138,7 @@ export default function TechniqueScreen() {
   const mistake = check?.mistakes[(selected ?? 0) - 1] ?? null;
 
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.outer}>
+    <ScrollView contentContainerStyle={styles.outer}>
       <Stack.Screen options={{ title: answer ? `Technique check · ${answer.session.name}` : 'Technique check' }} />
       <View style={styles.page}>
         <View style={styles.head}>
@@ -277,6 +278,7 @@ const METHOD = [
  * the driver's inputs under the whole lap's speed. One cursor runs through every chart. */
 function OnTheTrack({ answer, check, selected, onSelect, wide }: { answer: SessionTechnique; check: LapCheck;
   selected: number | null; onSelect: (n: number) => void; wide: boolean }) {
+  const styles = useStyles();
   const [cursor, setCursor] = useState<number | null>(null);
   const mistake = check.mistakes[(selected ?? 0) - 1] ?? null;
   const bands = useMemo(() => bandsOf(check), [check]);
@@ -343,6 +345,7 @@ const bandsOf = (check: LapCheck) =>
   check.mistakes.map((m, i) => ({ n: i + 1, start_m: m.start_m, end_m: m.end_m, label: `${m.title} (${m.code})` }));
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  const styles = useStyles();
   return (
     <View style={styles.section}>
       <Text style={styles.h2}>{title}</Text>
@@ -352,6 +355,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 function Chip({ label, detail, on, onPress }: { label: string; detail?: string; on: boolean; onPress: () => void }) {
+  const styles = useStyles();
   const c = useChartColors();
   return (
     <Pressable accessibilityRole="button" accessibilityState={{ selected: on }} onPress={onPress}
@@ -363,6 +367,7 @@ function Chip({ label, detail, on, onPress }: { label: string; detail?: string; 
 }
 
 function Progress({ head }: { head: SessionTechnique | EventTechnique }) {
+  const styles = useStyles();
   const c = useChartColors();
   const p = head.progress;
   const share = p && p.total ? Math.min(1, p.done / p.total) : 0;
@@ -380,6 +385,7 @@ function Progress({ head }: { head: SessionTechnique | EventTechnique }) {
 }
 
 function LapSummary({ check }: { check: LapCheck }) {
+  const styles = useStyles();
   const named = check.budget.mistakes;
   return (
     <View style={styles.block}>
@@ -403,6 +409,7 @@ function LapSummary({ check }: { check: LapCheck }) {
 }
 
 function Tile({ label, value, detail }: { label: string; value: string; detail: string }) {
+  const styles = useStyles();
   return (
     <View style={styles.tile}>
       <Text style={styles.label}>{label}</Text>
@@ -413,6 +420,7 @@ function Tile({ label, value, detail }: { label: string; value: string; detail: 
 }
 
 function MistakeCard({ n, m, on, onPress }: { n: number; m: Mistake; on: boolean; onPress: () => void }) {
+  const styles = useStyles();
   const c = useChartColors();
   return (
     <Pressable accessibilityRole="button" accessibilityState={{ selected: on }} onPress={onPress}
@@ -442,6 +450,7 @@ function MistakeCard({ n, m, on, onPress }: { n: number; m: Mistake; on: boolean
 }
 
 function BudgetView({ check }: { check: LapCheck }) {
+  const styles = useStyles();
   const b = check.budget;
   const rows = [
     { label: 'Mistakes', value: b.mistakes },
@@ -482,6 +491,7 @@ function BudgetView({ check }: { check: LapCheck }) {
 }
 
 function Habits({ habits }: { habits: NonNullable<SessionTechnique['habits']> }) {
+  const styles = useStyles();
   const [scope, setScope] = useState<'session' | 'event'>('session');
   const [all, setAll] = useState(false);
   const list = (scope === 'event' ? habits.event : habits.session) ?? [];
@@ -513,6 +523,7 @@ function Habits({ habits }: { habits: NonNullable<SessionTechnique['habits']> })
 }
 
 function HabitRow({ h, top }: { h: Habit; top: number }) {
+  const styles = useStyles();
   const c = useChartColors();
   const size = habitSize(h);
   return (
@@ -534,7 +545,7 @@ function HabitRow({ h, top }: { h: Habit; top: number }) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   outer: { paddingVertical: 16, alignItems: 'center' },
   page: { width: '100%', maxWidth: 1100, paddingHorizontal: 16, gap: 20 },
   pad: { padding: 16 },
@@ -545,21 +556,21 @@ const styles = StyleSheet.create({
   h4: { fontSize: 13, fontWeight: '600', opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 },
   sub: { opacity: 0.7 },
   note: { fontSize: 12, opacity: 0.65, lineHeight: 17 },
-  error: { color: '#c8372d' },
+  error: { color: c.error },
   row: { flexDirection: 'row', gap: 24, alignItems: 'flex-start' },
   column: { gap: 16 },
   half: { flex: 1, minWidth: 0, gap: 12 },
   block: { gap: 8 },
   section: { gap: 12 },
-  banner: { gap: 8, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#8884' },
+  banner: { gap: 8, padding: 12, borderRadius: Radius.card, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface },
   bannerText: { fontSize: 14 },
   meter: { height: 6, borderRadius: 3, overflow: 'hidden' },
   meterFill: { height: 6, borderRadius: 3 },
-  smallButton: { alignSelf: 'flex-start', borderWidth: 1, borderColor: '#8886', borderRadius: 6, paddingHorizontal: 12,
+  smallButton: { alignSelf: 'flex-start', borderWidth: 1, borderColor: c.borderStrong, borderRadius: Radius.control, paddingHorizontal: 12,
     paddingVertical: 6 },
   smallButtonText: { fontWeight: '600' },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  chip: { borderWidth: 1, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 5, flexDirection: 'row',
+  chip: { borderWidth: 1, borderRadius: Radius.control, paddingHorizontal: 10, paddingVertical: 5, flexDirection: 'row',
     alignItems: 'baseline', gap: 6 },
   chipLabel: { fontSize: 14, fontVariant: ['tabular-nums'] },
   chipDetail: { fontSize: 12, opacity: 0.65, fontVariant: ['tabular-nums'] },
@@ -568,7 +579,7 @@ const styles = StyleSheet.create({
   label: { fontSize: 12, opacity: 0.65, textTransform: 'uppercase', letterSpacing: 0.5 },
   tileValue: { fontSize: 22, fontWeight: '600', fontVariant: ['tabular-nums'] },
   summary: { fontSize: 15, lineHeight: 21 },
-  card: { borderWidth: 1, borderRadius: 10, padding: 14, gap: 6 },
+  card: { borderWidth: 1, borderRadius: Radius.card, padding: 14, gap: 6 },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'transparent' },
   badge: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   badgeText: { fontSize: 12, fontWeight: '700' },
@@ -582,4 +593,4 @@ const styles = StyleSheet.create({
   habitTitle: { fontSize: 15, fontWeight: '600', flex: 1 },
   method: { fontSize: 13, lineHeight: 19, opacity: 0.8 },
   link: { fontSize: 13, fontWeight: '600', textDecorationLine: 'underline', paddingVertical: 4 },
-});
+}));

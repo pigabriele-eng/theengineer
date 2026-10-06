@@ -20,6 +20,7 @@ import {
   sectionName,
   Session,
 } from '@/lib/api';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 const MODES: [DebriefMode, string][] = [
   ['individual', 'One driver'],
@@ -38,6 +39,7 @@ const clock = (ms: number) => {
 };
 
 export default function DebriefScreen() {
+  const styles = useStyles();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [mode, setMode] = useState<DebriefMode>('individual');
@@ -48,7 +50,6 @@ export default function DebriefScreen() {
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const rec = useAudioRecorderState(recorder, 250);
   const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
 
   useFocusEffect(
     useCallback(() => {
@@ -112,7 +113,7 @@ export default function DebriefScreen() {
   const chipText = (selected: boolean) => (selected ? { color: tint } : undefined);
 
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.h2}>Session</Text>
       <View style={styles.chips}>
         {sessions.slice(0, 6).map((s) => (
@@ -171,6 +172,8 @@ export default function DebriefScreen() {
 }
 
 function TypedPoints({ sessionId }: { sessionId: number }) {
+  const styles = useStyles();
+  const theme = useTheme();
   const [section, setSection] = useState(SECTIONS[0][0]);
   const [draft, setDraft] = useState('');
   const [points, setPoints] = useState<DebriefPointIn[]>([]);
@@ -209,7 +212,7 @@ function TypedPoints({ sessionId }: { sessionId: number }) {
         onChangeText={setDraft}
         onSubmitEditing={add}
         placeholder="e.g. Entry understeer in T1, worse on new tyres"
-        placeholderTextColor="#888"
+        placeholderTextColor={theme.textMuted}
         multiline
         style={[styles.input, { color: text }]}
       />
@@ -231,24 +234,24 @@ function TypedPoints({ sessionId }: { sessionId: number }) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   container: { padding: 16, gap: 12 },
   note: { opacity: 0.7, textAlign: 'center' },
-  error: { color: '#c8372d' },
+  error: { color: c.error },
   h2: { fontSize: 16, fontWeight: '700', marginTop: 4 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 4 },
+  chip: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 12, paddingVertical: 4, backgroundColor: c.surface },
   recordBox: { alignItems: 'center', gap: 10, paddingVertical: 16 },
   clock: { fontSize: 40, fontWeight: '600', fontVariant: ['tabular-nums'] },
   record: { width: 88, height: 88, borderRadius: 44, borderWidth: 4, alignItems: 'center', justifyContent: 'center' },
-  recIcon: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#d93a2f' },
-  stopIcon: { width: 32, height: 32, borderRadius: 4, backgroundColor: '#d93a2f' },
+  recIcon: { width: 60, height: 60, borderRadius: 30, backgroundColor: c.error },
+  stopIcon: { width: 32, height: 32, borderRadius: 4, backgroundColor: c.error },
   link: { fontWeight: '600', paddingVertical: 4 },
   typed: { gap: 12 },
-  input: { borderWidth: 1, borderColor: '#8884', borderRadius: 8, padding: 12, minHeight: 80, fontSize: 16 },
-  secondary: { borderWidth: 1, borderRadius: 8, padding: 10, alignItems: 'center' },
-  point: { borderLeftWidth: 3, borderColor: '#8886', paddingLeft: 10, gap: 2 },
+  input: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, padding: 12, minHeight: 80, fontSize: 16, backgroundColor: c.surface },
+  secondary: { borderWidth: 1, borderRadius: Radius.control, padding: 10, alignItems: 'center' },
+  point: { borderLeftWidth: 3, borderColor: c.borderStrong, paddingLeft: 10, gap: 2 },
   pointSection: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
   button: { borderRadius: 8, padding: 14, alignItems: 'center' },
-  buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-});
+  buttonText: { color: c.onTint, fontWeight: '600', fontSize: 16 },
+}));

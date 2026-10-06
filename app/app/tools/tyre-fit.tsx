@@ -7,6 +7,7 @@ import { AxleCard, CurveChart, useAxleColors } from '@/components/TyreCurve';
 import { TyreModelView } from '@/components/TyreModelView';
 import { api, Session } from '@/lib/api';
 import { DEFAULT_PRESET, Preset, TyreFit, Vehicle, vehicleApi } from '@/lib/vehicle';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 type Field = { key: keyof Vehicle; label: string; unit: string; percent?: boolean };
 
@@ -27,11 +28,11 @@ const MODES: { key: Mode; label: string }[] = [
 ];
 
 export default function TyreFitScreen() {
+  const styles = useStyles();
   const [mode, setMode] = useState<Mode>('all');
   const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container}>
       <Stack.Screen options={{ title: 'Tyre fit' }} />
       <View style={styles.modes} accessibilityRole="tablist">
         {MODES.map((m) => {
@@ -65,6 +66,8 @@ export default function TyreFitScreen() {
 }
 
 function SingleLogFit() {
+  const styles = useStyles();
+  const theme = useTheme();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [picked, setPicked] = useState<number[]>([]);
   const [preset, setPreset] = useState<Preset | null>(null);
@@ -157,7 +160,7 @@ function SingleLogFit() {
               </Text>
             </View>
             <TextInput
-              style={[styles.input, { color: text, borderColor: '#8884' }]}
+              style={[styles.input, { color: text, borderColor: theme.border }]}
               value={form[f.key] ?? ''}
               onChangeText={(t) => setForm((s) => ({ ...s, [f.key]: t }))}
               keyboardType="decimal-pad"
@@ -174,12 +177,12 @@ function SingleLogFit() {
             </Text>
           </View>
           <TextInput
-            style={[styles.input, { color: text, borderColor: '#8884' }]}
+            style={[styles.input, { color: text, borderColor: theme.border }]}
             value={ratio}
             onChangeText={setRatio}
             keyboardType="decimal-pad"
             placeholder="auto"
-            placeholderTextColor="#8888"
+            placeholderTextColor={theme.textMuted}
           />
         </View>
       </View>
@@ -188,7 +191,7 @@ function SingleLogFit() {
         style={[styles.button, { backgroundColor: tint, opacity: picked.length && preset ? 1 : 0.5 }]}
         onPress={run}
         disabled={!picked.length || !preset || busy}>
-        {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Fit tyre curves</Text>}
+        {busy ? <ActivityIndicator color={theme.onTint} /> : <Text style={styles.buttonText}>Fit tyre curves</Text>}
       </Pressable>
       {busy && <Text style={styles.sub}>Reading every log; several sessions can take a minute.</Text>}
       {error && <Text style={styles.error}>{error}</Text>}
@@ -199,6 +202,7 @@ function SingleLogFit() {
 }
 
 function FitResult({ fit }: { fit: TyreFit }) {
+  const styles = useStyles();
   const colors = useAxleColors();
   const steering = fit.sessions[0]?.steering;
   const scale = fit.sessions[0]?.yaw_rate_scale ?? 1;
@@ -234,10 +238,10 @@ function FitResult({ fit }: { fit: TyreFit }) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   container: { padding: 16, gap: 16, paddingBottom: 48 },
   modes: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  mode: { borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
+  mode: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: c.surface },
   modeOn: { borderWidth: 2, paddingHorizontal: 13, paddingVertical: 7 },
   modeText: { fontWeight: '600' },
   pane: { gap: 16 },
@@ -250,12 +254,12 @@ const styles = StyleSheet.create({
   note: { fontSize: 12, opacity: 0.7 },
   unit: { fontSize: 12, opacity: 0.6 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6 },
+  chip: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: c.surface },
   fieldRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
   fieldLabel: { flex: 1, gap: 1 },
   input: {
     borderWidth: 1,
-    borderRadius: 6,
+    borderRadius: Radius.control,
     paddingHorizontal: 8,
     paddingVertical: 6,
     width: 96,
@@ -263,6 +267,6 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   button: { borderRadius: 8, padding: 14, alignItems: 'center' },
-  buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-  error: { color: '#c8372d' },
-});
+  buttonText: { color: c.onTint, fontWeight: '600', fontSize: 16 },
+  error: { color: c.error },
+}));

@@ -14,22 +14,23 @@ import {
   saidOf,
   Verdict,
 } from '@/lib/debriefCheck';
+import { inkOn, Palette, Radius, themed, useTheme } from '@/constants/Theme';
 
 const POLL_MS = 3000;
 
 // Status colours (good, warning, critical) mark the verdict next to its icon and label, never on their own.
-const STATUS = { good: '#0ca30c', warning: '#fab219', critical: '#d03b3b', none: '#8a8a86' };
-const VERDICT: Record<Verdict, { label: string; color: string; glyph: string; ink: string }> = {
-  confirmed: { label: 'Matches', color: STATUS.good, glyph: '✓', ink: '#fff' },
-  partly: { label: 'Partly matches', color: STATUS.good, glyph: '≈', ink: '#fff' },
-  'not seen': { label: "Data doesn't show it", color: STATUS.warning, glyph: '!', ink: '#1a1a19' },
-  contradicted: { label: 'Data says the opposite', color: STATUS.critical, glyph: '✕', ink: '#fff' },
-  'cannot check': { label: "Can't tell", color: STATUS.none, glyph: '?', ink: '#fff' },
+const VERDICT: Record<Verdict, { label: string; status: keyof Palette['status']; glyph: string }> = {
+  confirmed: { label: 'Matches', status: 'good', glyph: '✓' },
+  partly: { label: 'Partly matches', status: 'good', glyph: '≈' },
+  'not seen': { label: "Data doesn't show it", status: 'warning', glyph: '!' },
+  contradicted: { label: 'Data says the opposite', status: 'critical', glyph: '✕' },
+  'cannot check': { label: "Can't tell", status: 'none', glyph: '?' },
 };
 
 const stamp = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
 export default function DebriefReport() {
+  const styles = useStyles();
   const { id } = useLocalSearchParams<{ id: string }>();
   const debriefId = Number(id);
   const [d, setD] = useState<Debrief | null>(null);
@@ -41,7 +42,6 @@ export default function DebriefReport() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const player = useAudioPlayer(audioUrl);
   const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
 
   const load = useCallback(() => api.debrief(debriefId).then(setD, (e) => setError(e.message)), [debriefId]);
 
@@ -112,7 +112,7 @@ export default function DebriefReport() {
   };
 
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container}>
       <Stack.Screen options={{ title: 'Debrief report' }} />
       {!d && !error && <ActivityIndicator />}
       {error && <Text style={styles.error}>{error}</Text>}
@@ -189,6 +189,7 @@ function named(transcript: string, speakers: Debrief['speakers']) {
 
 // What the logger recorded at the corner: the reference lap, and the best lap through it if different.
 function CornerLine({ c }: { c: DebriefCorner }) {
+  const styles = useStyles();
   const r = c.reference;
   if (!r) return null;
   const parts = [
@@ -210,19 +211,22 @@ function CornerLine({ c }: { c: DebriefCorner }) {
 
 // The verdict as an icon in its status colour plus its label, so colour never carries it alone.
 function Badge({ verdict }: { verdict: Verdict }) {
+  const styles = useStyles();
   const v = VERDICT[verdict];
   return (
     <View style={styles.badge}>
-      <Dot color={v.color} glyph={v.glyph} ink={v.ink} />
+      <Dot status={v.status} glyph={v.glyph} />
       <Text style={styles.badgeText}>{v.label}</Text>
     </View>
   );
 }
 
-function Dot({ color, glyph, ink }: { color: string; glyph: string; ink: string }) {
+function Dot({ status, glyph }: { status: keyof Palette['status']; glyph: string }) {
+  const styles = useStyles();
+  const color = useTheme().status[status];
   return (
     <View style={[styles.dot, { backgroundColor: color }]}>
-      <Text style={[styles.dotGlyph, { color: ink }]}>{glyph}</Text>
+      <Text style={[styles.dotGlyph, { color: inkOn(color) }]}>{glyph}</Text>
     </View>
   );
 }
@@ -230,6 +234,7 @@ function Dot({ color, glyph, ink }: { color: string; glyph: string; ink: string 
 // How many points the data backs, where it doesn't (and what that likely means), and what the data shows that
 // nobody mentioned.
 function CheckSummary({ check, error }: { check: DebriefCheck | null; error: string | null }) {
+  const styles = useStyles();
   if (error || check?.error) {
     return (
       <View style={styles.card}>
@@ -290,12 +295,13 @@ function CheckSummary({ check, error }: { check: DebriefCheck | null; error: str
 }
 
 function Kpi({ n, label, verdict }: { n: number; label: string; verdict: Verdict }) {
+  const styles = useStyles();
   const v = VERDICT[verdict];
   return (
     <View style={styles.kpi}>
       <Text style={styles.kpiValue}>{n}</Text>
       <View style={styles.badge}>
-        <Dot color={v.color} glyph={v.glyph} ink={v.ink} />
+        <Dot status={v.status} glyph={v.glyph} />
         <Text style={styles.meta}>{label}</Text>
       </View>
     </View>
@@ -303,10 +309,11 @@ function Kpi({ n, label, verdict }: { n: number; label: string; verdict: Verdict
 }
 
 function Mismatch({ p }: { p: CheckedPoint }) {
+  const styles = useStyles();
   return (
     <View style={styles.item}>
       <View style={styles.itemHead}>
-        <Dot color={VERDICT[p.verdict].color} glyph={VERDICT[p.verdict].glyph} ink={VERDICT[p.verdict].ink} />
+        <Dot status={VERDICT[p.verdict].status} glyph={VERDICT[p.verdict].glyph} />
         <Text style={styles.itemTitle}>
           {placeOf(p)} · {saidOf(p)}
         </Text>
@@ -320,6 +327,7 @@ function Mismatch({ p }: { p: CheckedPoint }) {
 }
 
 function Explained({ p }: { p: CheckedPoint }) {
+  const styles = useStyles();
   return (
     <>
       {p.meaning ? (
@@ -340,6 +348,7 @@ function Explained({ p }: { p: CheckedPoint }) {
 
 // Under each point: whether the data backs it, in one line, and on request what that likely means.
 function PointCheck({ c }: { c: CheckedPoint }) {
+  const styles = useStyles();
   const [open, setOpen] = useState(false);
   const tint = useThemeColor({}, 'tint');
   const more = !!(c.meaning || c.suggestion);
@@ -358,6 +367,7 @@ function PointCheck({ c }: { c: CheckedPoint }) {
 }
 
 function Tag({ text }: { text: string }) {
+  const styles = useStyles();
   return (
     <View style={styles.tag}>
       <Text style={styles.tagText}>{text}</Text>
@@ -365,25 +375,25 @@ function Tag({ text }: { text: string }) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   container: { padding: 16, gap: 16 },
-  error: { color: '#c8372d' },
-  banner: { gap: 10, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#8884' },
+  error: { color: c.error },
+  banner: { gap: 10, padding: 12, borderRadius: Radius.card, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface },
   bannerText: { opacity: 0.8 },
-  secondary: { borderWidth: 1, borderRadius: 8, padding: 10, alignItems: 'center' },
+  secondary: { borderWidth: 1, borderRadius: Radius.control, padding: 10, alignItems: 'center' },
   summary: { fontSize: 17, lineHeight: 24 },
   section: { gap: 8 },
   h2: { fontSize: 18, fontWeight: '700' },
-  point: { borderLeftWidth: 3, borderColor: '#8886', paddingLeft: 10, gap: 4 },
+  point: { borderLeftWidth: 3, borderColor: c.borderStrong, paddingLeft: 10, gap: 4 },
   pointText: { fontSize: 16, lineHeight: 22 },
   tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' },
-  tag: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 1, backgroundColor: '#8882' },
+  tag: { borderRadius: Radius.tag, paddingHorizontal: 6, paddingVertical: 1, backgroundColor: c.fill },
   tagText: { fontSize: 12, fontWeight: '600' },
   meta: { fontSize: 13, opacity: 0.7, fontVariant: ['tabular-nums'] },
   link: { fontWeight: '600' },
   transcript: { opacity: 0.8, lineHeight: 20 },
   data: { fontSize: 13, opacity: 0.75, fontVariant: ['tabular-nums'], lineHeight: 18 },
-  card: { borderWidth: 1, borderColor: '#8884', borderRadius: 8, padding: 12, gap: 10 },
+  card: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 12, gap: 10, backgroundColor: c.surface },
   pending: { flexDirection: 'row', alignItems: 'center' },
   cardTitle: { fontSize: 18, fontWeight: '700' },
   kpis: { flexDirection: 'row', flexWrap: 'wrap', gap: 24 },
@@ -391,7 +401,7 @@ const styles = StyleSheet.create({
   kpiValue: { fontSize: 28, fontWeight: '600', fontVariant: ['tabular-nums'] },
   list: { gap: 10 },
   h3: { fontSize: 15, fontWeight: '700' },
-  item: { gap: 4, borderTopWidth: 1, borderColor: '#8883', paddingTop: 8 },
+  item: { gap: 4, borderTopWidth: 1, borderColor: c.separator, paddingTop: 8 },
   itemHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   itemTitle: { fontSize: 15, fontWeight: '600', flexShrink: 1 },
   note: { fontSize: 14, lineHeight: 20 },
@@ -402,4 +412,4 @@ const styles = StyleSheet.create({
   dotGlyph: { fontSize: 11, fontWeight: '700', lineHeight: 14 },
   check: { gap: 4, marginTop: 2 },
   more: { fontSize: 13, fontWeight: '600' },
-});
+}));

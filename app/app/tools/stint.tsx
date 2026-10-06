@@ -34,6 +34,7 @@ import {
   TAGS,
   Words,
 } from '@/lib/stint';
+import { Radius, themed } from '@/constants/Theme';
 
 const ALL = 'all';
 const MAX_LOGS = 12; // the server reads at most this many logs in one view
@@ -46,6 +47,7 @@ const SIDE_MAP = 900; // from this wide the track map has a column of its own on
 // stays in view beside the report (on a phone, pinned on top, one tap to hide it); a corner the report names lights
 // up on it when hovered or tapped.
 export default function StintScreen() {
+  const styles = useStyles();
   const params = useLocalSearchParams<{ session?: string; event?: string }>();
   const [events, setEvents] = useState<LogEvent[] | null>(null);
   const [ticked, setTicked] = useState<number[]>([]);
@@ -58,7 +60,7 @@ export default function StintScreen() {
   const request = useRef(0);
   const scroll = useRef<ScrollView>(null);
   const lapsY = useRef(0);
-  const background = useThemeColor({}, 'background');
+  const surface = useThemeColor({}, 'surface');
   const tint = useThemeColor({}, 'tint');
   const { width, height } = useWindowDimensions();
   const side = width >= SIDE_MAP;
@@ -189,9 +191,9 @@ export default function StintScreen() {
   } : {};
 
   return (
-    <View style={StyleSheet.flatten([styles.screen, { backgroundColor: background }, side && styles.split])}>
+    <View style={StyleSheet.flatten([styles.screen, side && styles.split])}>
       {showMap && !side && (
-        <View style={StyleSheet.flatten([styles.pinned, { backgroundColor: background }])}>
+        <View style={StyleSheet.flatten([styles.pinned, { backgroundColor: surface }])}>
           <View style={styles.pinnedBar}>
             <Text style={styles.pinnedTitle}>Track map</Text>
             <Text style={StyleSheet.flatten([styles.small, styles.flex])} numberOfLines={1}>
@@ -316,6 +318,7 @@ function Picker({ events, ticked, open, setOpen, toggle, track }: {
   events: LogEvent[] | null; ticked: number[]; open: boolean; setOpen: (o: boolean) => void;
   toggle: (id: number) => void; track: string | null;
 }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   const files = useMemo(() => {
     const out = new Map<number, { label: string; track: string | null }>();
@@ -400,6 +403,7 @@ function Picker({ events, ticked, open, setOpen, toggle, track }: {
 }
 
 function ScopeChip({ on, onPress, title, sub }: { on: boolean; onPress: () => void; title: string; sub: string }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   return (
     <Pressable onPress={onPress} accessibilityRole="tab" accessibilityState={{ selected: on }}
@@ -419,6 +423,7 @@ function Summary({ words, fits, fuel, top, pending, onPending, at }: {
   words: Words; fits: Partial<Record<string, Fit>>; fuel: StintView['overall']['fuel']; top?: StintView['overall']['fade'][number];
   pending: number; onPending: () => void; at: PointAt;
 }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   const tyres = fits.corrected_time ?? fits.time;
   const tiles = [
@@ -476,6 +481,7 @@ function Summary({ words, fits, fuel, top, pending, onPending, at }: {
 }
 
 function Bullet({ text, at }: { text: string; at: PointAt }) {
+  const styles = useStyles();
   return (
     <View style={styles.bullet}>
       <Text style={styles.bulletDot}>•</Text>
@@ -485,6 +491,7 @@ function Bullet({ text, at }: { text: string; at: PointAt }) {
 }
 
 function Section({ title, intro, children }: { title: string; intro?: string; children: React.ReactNode }) {
+  const styles = useStyles();
   return (
     <View style={styles.section}>
       <Text style={styles.h2}>{title}</Text>
@@ -499,6 +506,7 @@ function Section({ title, intro, children }: { title: string; intro?: string; ch
 function PhaseTable({ fits, fade, stint, wide }: {
   fits: Partial<Record<string, Fit>>; fade: StintView['overall']['fade']; stint: Stint | null; wide: boolean;
 }) {
+  const styles = useStyles();
   const c = useChartColors();
   const pal = useBalanceColors();
   const tint = useThemeColor({}, 'tint');
@@ -571,6 +579,7 @@ function PhaseTable({ fits, fade, stint, wide }: {
 function PhasePanel({ stint, phase, fade, width }: {
   stint: Stint; phase: (typeof GRIP_PHASES)[number]; fade?: StintView['overall']['fade'][number]; width: `${number}%`;
 }) {
+  const styles = useStyles();
   const c = useChartColors();
   const laps = stint.laps.filter((l) => l.in_fit);
   if (laps.length < 2) return null;
@@ -606,6 +615,7 @@ function median(v: number[]) {
 }
 
 function CornerShift({ sections, stints, onCorner }: { sections: SectionRow[]; stints: Stint[]; onCorner?: OnCorner }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   const [phase, setPhase] = useState<BalancePhase>('entry');
   const grouped = stints.filter((s) => s.groups);
@@ -694,8 +704,9 @@ function LapTimes({ stint }: { stint: Stint }) {
 function LapList({ stint, onTag, tagging }: {
   stint: Stint; onTag: (s: Stint, l: StintLap, to: Tag | 'none' | 'count' | null) => void; tagging: string | null;
 }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
+  const onTint = useThemeColor({}, 'onTint');
   return (
     <View style={styles.block}>
       <Text style={styles.small}>
@@ -734,7 +745,7 @@ function LapList({ stint, onTag, tagging }: {
                           : `Tag lap ${l.lap} ${TAG_WORDS[t]}`}
                         style={StyleSheet.flatten([styles.tagChip, suggested && { borderColor: tint, borderStyle: 'dashed' },
                           on && { backgroundColor: tint, borderColor: tint }])}>
-                        <Text style={StyleSheet.flatten([styles.tagText, on && { color: background, fontWeight: '700' }])}>
+                        <Text style={StyleSheet.flatten([styles.tagText, on && { color: onTint, fontWeight: '700' }])}>
                           {TAG_LABEL[t]}
                         </Text>
                       </Pressable>
@@ -816,6 +827,7 @@ const COLUMNS: { title: string; width: number; value: (l: StintLap) => string }[
 ];
 
 function LapTable({ stint, unit }: { stint: Stint; unit: string }) {
+  const styles = useStyles();
   const [open, setOpen] = useState(false);
   const tint = useThemeColor({}, 'tint');
   return (
@@ -856,6 +868,7 @@ function LapTable({ stint, unit }: { stint: Stint; unit: string }) {
 }
 
 function StintCard({ stint, many, onPress }: { stint: Stint; many: boolean; onPress: () => void }) {
+  const styles = useStyles();
   const t = stint.fits.corrected_time ?? stint.fits.time;
   return (
     <Pressable onPress={onPress} style={styles.card} accessibilityRole="button">
@@ -869,29 +882,29 @@ function StintCard({ stint, many, onPress }: { stint: Stint; many: boolean; onPr
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   screen: { flex: 1 },
   split: { flexDirection: 'row' },
-  pinned: { borderBottomWidth: 1, borderColor: '#8883', paddingHorizontal: 16, paddingBottom: 6 },
+  pinned: { borderBottomWidth: 1, borderColor: c.separator, paddingHorizontal: 16, paddingBottom: 6 },
   pinnedBar: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 40, backgroundColor: 'transparent' },
   pinnedTitle: { fontSize: 13, fontWeight: '600', opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 },
   pinnedButton: { paddingVertical: 8, paddingLeft: 8 },
   gone: { display: 'none' },
-  side: { borderLeftWidth: 1, borderColor: '#8883', padding: 16, gap: 8 },
+  side: { borderLeftWidth: 1, borderColor: c.separator, padding: 16, gap: 8 },
   container: { padding: 16, alignItems: 'center' },
   page: { width: '100%', maxWidth: 1040, gap: 16 },
   flex: { flex: 1, backgroundColor: 'transparent' },
   narrow: { maxWidth: 720, backgroundColor: 'transparent' },
   block: { gap: 10, backgroundColor: 'transparent' },
   busy: { flexDirection: 'row', gap: 8, alignItems: 'center' },
-  card: { borderWidth: 1, borderColor: '#8883', borderRadius: 12, padding: 14, gap: 10 },
+  card: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 14, gap: 10, backgroundColor: c.surface },
   h2: { fontSize: 18, fontWeight: '700' },
   h3: { fontSize: 15, fontWeight: '700' },
   headline: { fontSize: 17, fontWeight: '600', lineHeight: 24 },
   body: { fontSize: 14, lineHeight: 20 },
   small: { fontSize: 12, opacity: 0.7, lineHeight: 17 },
   dim: { opacity: 0.45 },
-  error: { color: '#c8372d' },
+  error: { color: c.error },
   section: { gap: 10 },
   advice: { borderLeftWidth: 3, paddingLeft: 10, paddingVertical: 2 },
   tiles: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 20, rowGap: 10 },
@@ -903,48 +916,48 @@ const styles = StyleSheet.create({
   bullet: { flexDirection: 'row', gap: 8 },
   bulletDot: { fontSize: 14, lineHeight: 20, opacity: 0.6 },
   chips: { gap: 8 },
-  chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 7 },
+  chip: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 12, paddingVertical: 7, backgroundColor: c.surface },
   chipTitle: { fontSize: 14, fontWeight: '600' },
   chipSub: { fontSize: 12, opacity: 0.6 },
   pickerHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   button: { paddingHorizontal: 12, paddingVertical: 8 },
   tickedRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  tickedChip: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: '#8884',
-    borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6 },
+  tickedChip: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: c.border,
+    borderRadius: Radius.chip, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: c.surface },
   tickedText: { fontSize: 13 },
   event: { gap: 2, marginTop: 4 },
   eventName: { fontSize: 13, fontWeight: '700', marginBottom: 2 },
   logRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8, minHeight: 44 },
-  box: { width: 22, height: 22, borderRadius: 5, borderWidth: 2, borderColor: '#8888', alignItems: 'center',
-    justifyContent: 'center' },
-  tick: { color: '#fff', fontSize: 14, fontWeight: '800', lineHeight: 16 },
+  box: { width: 22, height: 22, borderRadius: 5, borderWidth: 2, borderColor: c.borderStrong, alignItems: 'center',
+    justifyContent: 'center', backgroundColor: c.surface },
+  tick: { color: c.onTint, fontSize: 14, fontWeight: '800', lineHeight: 16 },
   logName: { fontSize: 14 },
   toggle: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-  toggleItem: { borderWidth: 1, borderColor: '#8884', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6 },
+  toggleItem: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: c.surface },
   tableHead: { flexDirection: 'row', gap: 8, paddingHorizontal: 6 },
   th: { fontSize: 12, fontWeight: '600', opacity: 0.7 },
   phaseRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, paddingHorizontal: 6,
-    borderWidth: 1, borderColor: 'transparent', borderRadius: 8 },
+    borderWidth: 1, borderColor: 'transparent', borderRadius: Radius.control },
   phaseCol: { width: 92 },
   numCol: { width: 52 },
   num: { fontSize: 13, fontVariant: ['tabular-nums'] },
   cellBar: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'transparent' },
   cellNum: { width: 50, textAlign: 'right' },
   panels: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between' },
-  panel: { borderWidth: 1, borderColor: '#8883', borderRadius: 12, padding: 12, gap: 8 },
-  lapRow: { borderBottomWidth: 1, borderColor: '#8882', paddingVertical: 6, gap: 4 },
+  panel: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 12, gap: 8, backgroundColor: c.surface },
+  lapRow: { borderBottomWidth: 1, borderColor: c.separator, paddingVertical: 6, gap: 4 },
   lapTagged: { opacity: 0.85 },
   lapMain: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   lapNo: { width: 34, fontSize: 14, fontWeight: '600', fontVariant: ['tabular-nums'] },
   lapTime: { fontSize: 15, fontVariant: ['tabular-nums'] },
   tagRow: { flexDirection: 'row', gap: 6 },
-  tagChip: { borderWidth: 1, borderColor: '#8886', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 7,
-    minWidth: 44, alignItems: 'center' },
+  tagChip: { borderWidth: 1, borderColor: c.borderStrong, borderRadius: Radius.chip, paddingHorizontal: 10, paddingVertical: 7,
+    minWidth: 44, alignItems: 'center', backgroundColor: c.surface },
   tagText: { fontSize: 13 },
   suggest: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 12, rowGap: 2, marginLeft: 44 },
-  countButton: { borderWidth: 1, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 6 },
+  countButton: { borderWidth: 1, borderRadius: Radius.chip, paddingHorizontal: 12, paddingVertical: 6 },
   countText: { fontSize: 13, fontWeight: '600' },
   countedText: { fontSize: 13, fontWeight: '600' },
-  row: { flexDirection: 'row', borderBottomWidth: 1, borderColor: '#8882', paddingVertical: 4 },
+  row: { flexDirection: 'row', borderBottomWidth: 1, borderColor: c.separator, paddingVertical: 4 },
   cell: { fontVariant: ['tabular-nums'], fontSize: 13, paddingRight: 6, textAlign: 'right' },
-});
+}));

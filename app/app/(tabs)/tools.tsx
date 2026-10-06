@@ -1,8 +1,10 @@
 import { Href, Link } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet } from 'react-native';
 
+import { AppearancePicker } from '@/components/AppearancePicker';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { authEnabled, signOut, useAuthSession } from '@/lib/auth';
+import { themed, Type } from '@/constants/Theme';
 
 type Tool = { href: Href; title: string; blurb: string };
 
@@ -77,6 +79,7 @@ const GROUPS: { name: string; tools: Tool[] }[] = [
 ];
 
 export default function ToolsScreen() {
+  const styles = useStyles();
   return (
     <ScrollView contentContainerStyle={styles.container}>
       {GROUPS.map((g) => (
@@ -95,12 +98,14 @@ export default function ToolsScreen() {
           ))}
         </View>
       ))}
+      <AppearancePicker />
       {authEnabled && <Account />}
     </ScrollView>
   );
 }
 
 function Account() {
+  const styles = useStyles();
   const { session } = useAuthSession();
   const tint = useThemeColor({}, 'tint');
   return (
@@ -119,14 +124,14 @@ function Account() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   container: { padding: 16, gap: 20 },
   group: { gap: 4 },
-  groupName: { fontSize: 13, fontWeight: '600', opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
-  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: '#8882' },
+  groupName: Type.label,
+  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: c.separator },
   rowText: { flex: 1, backgroundColor: 'transparent', gap: 2 },
   title: { fontSize: 16, fontWeight: '600' },
   blurb: { opacity: 0.6, lineHeight: 19 },
   chevron: { fontSize: 24, opacity: 0.4, paddingLeft: 8 },
   signOut: { fontSize: 16, fontWeight: '600', paddingLeft: 8 },
-});
+}));

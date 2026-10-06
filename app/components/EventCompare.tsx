@@ -11,6 +11,7 @@ import { Text, View, useThemeColor } from '@/components/Themed';
 import { DETECTED_CORNERS_NOTE, formatLap } from '@/lib/api';
 import { encodePicks } from '@/lib/compare';
 import { ComparedSession, dayLabel, eventsApi, KIND_NAMES, SideBySide } from '@/lib/events';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 const POLL_MS = 3000;
 const LABEL_W = 112;
@@ -34,6 +35,7 @@ export function EventCompare({ folderKey, picks, onClear }: {
   picks: Pick[];
   onClear?: () => void;
 }) {
+  const styles = useStyles();
   const [data, setData] = useState<SideBySide | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -99,6 +101,7 @@ export function EventCompare({ folderKey, picks, onClear }: {
 
 /** One tap to Compare laps with each session's best lap, in the same colours. */
 function CompareLapsLink({ sessions }: { sessions: ComparedSession[] }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   const laps = sessions.filter((s) => s.best_lap != null).map((s) => ({ session_id: s.id, lap: s.best_lap! }));
   if (laps.length < 2) return null;
@@ -200,8 +203,10 @@ function rowsOf(data: SideBySide): { title: string; rows: Row[]; note?: string }
 }
 
 function Table({ data, colors }: { data: SideBySide; colors: string[] }) {
+  const theme = useTheme();
+  const styles = useStyles();
   const groups = rowsOf(data);
-  const wash = '#8882';
+  const wash = theme.fill;
   const [width, setWidth] = useState(0);
   const colW = Math.round(Math.min(COL_MAX, Math.max(COL_MIN, (width - LABEL_W) / data.sessions.length)));
   const col = { width: colW };
@@ -270,6 +275,7 @@ function Table({ data, colors }: { data: SideBySide; colors: string[] }) {
 
 /** The time a session loses in a section, as a bar from the left edge of its cell (4 px rounded end). */
 function GapBar({ share, color, width }: { share: number; color: string; width: number }) {
+  const styles = useStyles();
   const w = Math.max(3, Math.min(1, share) * width);
   const h = 4;
   const r = 2;
@@ -280,15 +286,15 @@ function GapBar({ share, color, width }: { share: number; color: string; width: 
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   box: { gap: 10, backgroundColor: 'transparent' },
   titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'transparent' },
   h2: { fontSize: 18, fontWeight: '700' },
   clear: { marginLeft: 'auto' },
-  error: { color: '#c8372d' },
+  error: { color: c.error },
   note: { fontSize: 12, opacity: 0.6 },
   tableBox: { gap: 6, backgroundColor: 'transparent' },
-  row: { flexDirection: 'row', borderBottomWidth: 1, borderColor: '#8882', backgroundColor: 'transparent' },
+  row: { flexDirection: 'row', borderBottomWidth: 1, borderColor: c.separator, backgroundColor: 'transparent' },
   headCell: { paddingBottom: 6 },
   label: { width: LABEL_W, paddingVertical: 6, paddingRight: 6, backgroundColor: 'transparent' },
   col: { paddingHorizontal: 8, backgroundColor: 'transparent' },
@@ -306,6 +312,6 @@ const styles = StyleSheet.create({
   best: { fontWeight: '700' },
   dim: { opacity: 0.4 },
   bar: { marginTop: 1 },
-  button: { borderWidth: 1, borderRadius: 8, padding: 12, alignItems: 'center' },
+  button: { borderWidth: 1, borderRadius: Radius.control, padding: 12, alignItems: 'center' },
   buttonText: { fontWeight: '600', fontSize: 15, textAlign: 'center' },
-});
+}));

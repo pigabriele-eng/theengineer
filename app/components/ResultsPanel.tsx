@@ -4,12 +4,14 @@ import { ActivityIndicator, Pressable, StyleSheet, TextInput } from 'react-nativ
 import { OfficialSessionCard } from '@/components/OfficialSessionCard';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { EventResults, resultsApi, roundTitle, SyncState } from '@/lib/results';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 const POLL_MS = 3000;
 
 /** "Official results" on an event's page: the series round it matches, which car is ours (found from the logged laps
  * or set here), a "Get results" button that fetches the official sheets, and one card per official session. */
 export function ResultsPanel({ eventId }: { eventId: number }) {
+  const styles = useStyles();
   const [results, setResults] = useState<EventResults | null>(null);
   const [sync, setSync] = useState<SyncState | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -150,6 +152,8 @@ function CarEditor({ eventId, initial, prompt, automatic, onCancel, onSaved }: {
   onCancel: () => void;
   onSaved: (r: EventResults) => void;
 }) {
+  const styles = useStyles();
+  const theme = useTheme();
   const [value, setValue] = useState(initial);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -172,7 +176,7 @@ function CarEditor({ eventId, initial, prompt, automatic, onCancel, onSaved }: {
       {prompt && <Text style={styles.sub}>Which car is yours? Enter its number.</Text>}
       <View style={styles.carRow}>
         <Text style={styles.sub}>Our car #</Text>
-        <TextInput value={value} onChangeText={setValue} placeholder="no." placeholderTextColor="#888"
+        <TextInput value={value} onChangeText={setValue} placeholder="no." placeholderTextColor={theme.textMuted}
           keyboardType="number-pad" maxLength={4} autoFocus={!prompt} editable={!busy}
           onSubmitEditing={() => number && save({ car_number: number })}
           style={StyleSheet.flatten([styles.input, { color: text }])} />
@@ -197,26 +201,26 @@ function CarEditor({ eventId, initial, prompt, automatic, onCancel, onSaved }: {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   panel: { gap: 6, backgroundColor: 'transparent' },
   headRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12,
     flexWrap: 'wrap', backgroundColor: 'transparent' },
   h2: { fontSize: 18, fontWeight: '700' },
   sub: { fontSize: 14, opacity: 0.8 },
   small: { fontSize: 12, opacity: 0.6 },
-  note: { fontSize: 13, opacity: 0.8, borderLeftWidth: 3, borderColor: '#8886', paddingLeft: 8 },
-  error: { color: '#c8372d', fontSize: 13 },
-  button: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: 8,
+  note: { fontSize: 13, opacity: 0.8, borderLeftWidth: 3, borderColor: c.borderStrong, paddingLeft: 8 },
+  error: { color: c.error, fontSize: 13 },
+  button: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: Radius.control,
     paddingHorizontal: 12, paddingVertical: 7 },
   buttonText: { fontWeight: '600', fontSize: 14 },
-  quiet: { borderWidth: 1, borderStyle: 'dashed', borderColor: '#8884', borderRadius: 8, paddingHorizontal: 12,
+  quiet: { borderWidth: 1, borderStyle: 'dashed', borderColor: c.border, borderRadius: Radius.control, paddingHorizontal: 12,
     paddingVertical: 7 },
   dim: { opacity: 0.5 },
   carRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', backgroundColor: 'transparent' },
   edit: { fontSize: 13, fontWeight: '600' },
   editor: { gap: 6, backgroundColor: 'transparent' },
-  input: { width: 70, borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 10,
-    paddingVertical: 6, fontSize: 15 },
+  input: { width: 70, borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, paddingHorizontal: 10,
+    paddingVertical: 6, fontSize: 15, backgroundColor: c.surface },
   cards: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, backgroundColor: 'transparent' },
   cardBox: { flexGrow: 1, flexBasis: 300, minWidth: 260, backgroundColor: 'transparent' },
-});
+}));

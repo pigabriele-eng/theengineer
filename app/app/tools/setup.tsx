@@ -19,6 +19,7 @@ import {
   Template,
   TemplateRow,
 } from '@/lib/setup';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 type Tab = 'sheet' | 'runs' | 'ideas';
 const TABS: [Tab, string][] = [
@@ -26,13 +27,11 @@ const TABS: [Tab, string][] = [
   ['runs', 'Runs'],
   ['ideas', 'Suggestions'],
 ];
-const FASTER = '#2e9d57';
-const SLOWER = '#c8372d';
-const WARN = '#b26b00';
 
 // Setup: a sheet per session on the car's template, what changed from run to run against lap time and balance,
 // and setup changes to try from the driver's feedback. Open with ?session=<id> (and &tab=runs or ideas).
 export default function SetupScreen() {
+  const styles = useStyles();
   const params = useLocalSearchParams<{ session?: string; tab?: string }>();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [withSheets, setWithSheets] = useState<Set<number>>(new Set());
@@ -40,7 +39,6 @@ export default function SetupScreen() {
   const [tab, setTab] = useState<Tab>(params.tab === 'runs' || params.tab === 'ideas' ? params.tab : 'sheet');
   const [error, setError] = useState<string | null>(null);
   const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
   const chipScroll = useRef<ScrollView>(null);
   const scrolled = useRef(false);
 
@@ -66,7 +64,7 @@ export default function SetupScreen() {
   const current = sessions.find((s) => s.id === picked);
 
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container}>
       <Stack.Screen options={{ title: current ? `Setup · ${current.name ?? `Session ${current.id}`}` : 'Setup' }} />
       <Text style={styles.intro}>
         One setup sheet per run. Copy the last run and change what you changed, then see it against lap time and
@@ -129,6 +127,8 @@ const toForm = (values: Record<string, number>) =>
   Object.fromEntries(Object.entries(values).map(([k, v]) => [k, String(v)]));
 
 function SheetEditor({ sessionId, onSaved }: { sessionId: number; onSaved: () => void }) {
+  const styles = useStyles();
+  const theme = useTheme();
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const [template, setTemplate] = useState<Template | null>(null);
   const [templates, setTemplates] = useState<{ key: string; name: string }[]>([]);
@@ -270,7 +270,7 @@ function SheetEditor({ sessionId, onSaved }: { sessionId: number; onSaved: () =>
           </Pressable>
         )}
         <Pressable style={[styles.button, { backgroundColor: tint }]} onPress={save} disabled={busy}>
-          {busy ? <ActivityIndicator color={onTint(tint)} /> : <Text style={[styles.buttonText, { color: onTint(tint) }]}>Save</Text>}
+          {busy ? <ActivityIndicator color={theme.onTint} /> : <Text style={[styles.buttonText, { color: theme.onTint }]}>Save</Text>}
         </Pressable>
       </View>
       {dirty && <Text style={styles.dim}>Unsaved changes</Text>}
@@ -288,7 +288,7 @@ function SheetEditor({ sessionId, onSaved }: { sessionId: number; onSaved: () =>
       {sheet.warnings.length > 0 && !dirty && (
         <View style={styles.card}>
           {sheet.warnings.map((w) => (
-            <Text key={w.key} style={{ color: WARN }}>
+            <Text key={w.key} style={{ color: theme.warning }}>
               {w.text}
             </Text>
           ))}
@@ -336,19 +336,16 @@ function SheetEditor({ sessionId, onSaved }: { sessionId: number; onSaved: () =>
             setDirty(true);
           }}
           placeholder="Anything else about this run's setup"
-          placeholderTextColor="#8888"
+          placeholderTextColor={theme.textMuted}
           multiline
         />
       </View>
       <Pressable style={[styles.button, { backgroundColor: tint }]} onPress={save} disabled={busy}>
-        <Text style={[styles.buttonText, { color: onTint(tint) }]}>Save</Text>
+        <Text style={[styles.buttonText, { color: theme.onTint }]}>Save</Text>
       </Pressable>
     </View>
   );
 }
-
-// White text on the light theme's blue, black text on the dark theme's white tint.
-const onTint = (tint: string) => (tint.toLowerCase() === '#fff' || tint.toLowerCase() === '#ffffff' ? '#000' : '#fff');
 
 function RowEditor({
   row,
@@ -367,6 +364,7 @@ function RowEditor({
   text: string;
   tint: string;
 }) {
+  const styles = useStyles();
   const cells = row.layout === 'corner' ? [row.fields.slice(0, 2), row.fields.slice(2)] : [row.fields];
   return (
     <View style={styles.row}>
@@ -414,6 +412,8 @@ function FieldInput({
   text: string;
   tint: string;
 }) {
+  const styles = useStyles();
+  const theme = useTheme();
   if (row.kind === 'choice') {
     return (
       <View style={styles.options}>
@@ -465,7 +465,7 @@ function FieldInput({
       keyboardType="numbers-and-punctuation"
       selectTextOnFocus
       placeholder="–"
-      placeholderTextColor="#8888"
+      placeholderTextColor={theme.textMuted}
     />
   );
 }
@@ -473,6 +473,7 @@ function FieldInput({
 // ---------- runs against results ----------
 
 function RunsView({ sessionId, onPick }: { sessionId: number; onPick: (id: number) => void }) {
+  const styles = useStyles();
   const [hist, setHist] = useState<History | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -537,11 +538,13 @@ function RunsView({ sessionId, onPick }: { sessionId: number; onPick: (id: numbe
 }
 
 function RunCard({ run, current, onPick }: { run: HistoryRun; current: boolean; onPick: (id: number) => void }) {
+  const theme = useTheme();
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   const d = run.deltas;
   const b = run.summary?.balance;
   const lapColor = (x: number | null | undefined) =>
-    x == null || Math.abs(x) < 0.005 ? undefined : x < 0 ? FASTER : SLOWER;
+    x == null || Math.abs(x) < 0.005 ? undefined : x < 0 ? theme.delta.gain : theme.delta.loss;
   return (
     <Pressable
       onPress={() => onPick(run.session_id)}
@@ -611,6 +614,7 @@ function RunCard({ run, current, onPick }: { run: HistoryRun; current: boolean; 
 const fmt = (x: number | null | undefined, sign = false) => (x == null ? '–' : sign ? signed(x) : x.toFixed(2));
 
 function Stat({ label, value, delta, color }: { label: string; value: string; delta?: string; color?: string }) {
+  const styles = useStyles();
   return (
     <View style={styles.stat}>
       <Text style={styles.statLabel}>{label}</Text>
@@ -623,6 +627,8 @@ function Stat({ label, value, delta, color }: { label: string; value: string; de
 // ---------- suggestions ----------
 
 function IdeasView({ sessionId }: { sessionId: number }) {
+  const theme = useTheme();
+  const styles = useStyles();
   const [data, setData] = useState<Suggestions | null>(null);
   const [error, setError] = useState<string | null>(null);
   const tint = useThemeColor({}, 'tint');
@@ -673,7 +679,7 @@ function IdeasView({ sessionId }: { sessionId: number }) {
           <View style={styles.headRow}>
             <Text style={[styles.rank, { color: tint }]}>{s.rank}</Text>
             <Text style={[styles.runName, styles.flex]}>{s.title}</Text>
-            <Text style={[styles.source, s.agreement === 'disagree' && { color: WARN, opacity: 1 }]}>
+            <Text style={[styles.source, s.agreement === 'disagree' && { color: theme.warning, opacity: 1 }]}>
               {AGREEMENT[s.agreement]}
             </Text>
           </View>
@@ -706,8 +712,8 @@ function IdeasView({ sessionId }: { sessionId: number }) {
             </Text>
           )}
           {s.disagree.map((t) => (
-            <Text key={t} style={{ color: WARN }}>
-              <Text style={[styles.bold, { color: WARN }]}>Disagree: </Text>
+            <Text key={t} style={{ color: theme.warning }}>
+              <Text style={[styles.bold, { color: theme.warning }]}>Disagree: </Text>
               {t}
             </Text>
           ))}
@@ -735,7 +741,7 @@ function IdeasView({ sessionId }: { sessionId: number }) {
               </Text>
               <Text style={styles.dim}>“{o.text}”</Text>
               {o.check ? (
-                <Text style={[styles.note, o.check.verdict === 'disagree' && { color: WARN, opacity: 1 }]}>
+                <Text style={[styles.note, o.check.verdict === 'disagree' && { color: theme.warning, opacity: 1 }]}>
                   Data: {VERDICT[o.check.verdict]}. {o.check.text}
                 </Text>
               ) : null}
@@ -782,28 +788,28 @@ const VERDICT: Record<NonNullable<Observation['check']>['verdict'], string> = {
   unmeasured: 'not measured',
 };
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   container: { padding: 16, gap: 12, paddingBottom: 48, width: '100%', maxWidth: 860, alignSelf: 'center' },
   intro: { opacity: 0.75 },
   chips: { gap: 8 },
-  chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6 },
+  chip: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: c.surface },
   chipSub: { fontSize: 12, opacity: 0.6, fontVariant: ['tabular-nums'] },
   chipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  smallChip: { borderWidth: 1, borderColor: '#8884', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 4 },
+  smallChip: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: c.surface },
   tabs: { flexDirection: 'row', gap: 8 },
-  tab: { flex: 1, borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingVertical: 8, alignItems: 'center' },
+  tab: { flex: 1, borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, paddingVertical: 8, alignItems: 'center', backgroundColor: c.surface },
   tabText: { fontWeight: '600' },
   section: { gap: 10 },
   headRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, backgroundColor: 'transparent' },
   flex: { flex: 1, backgroundColor: 'transparent' },
   h2: { fontSize: 18, fontWeight: '700' },
   dim: { opacity: 0.65 },
-  error: { color: '#c8372d' },
+  error: { color: c.error },
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   button: { borderRadius: 8, paddingVertical: 12, paddingHorizontal: 18, alignItems: 'center', flexGrow: 1 },
   outline: { borderWidth: 1, backgroundColor: 'transparent' },
   buttonText: { fontWeight: '600', fontSize: 16 },
-  card: { gap: 6, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#8883' },
+  card: { gap: 6, padding: 12, borderRadius: Radius.card, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface },
   subhead: { fontWeight: '600' },
   linkRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 },
   group: { gap: 2 },
@@ -815,7 +821,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     marginTop: 8,
   },
-  row: { paddingVertical: 8, borderBottomWidth: 1, borderColor: '#8882', gap: 6 },
+  row: { paddingVertical: 8, borderBottomWidth: 1, borderColor: c.separator, gap: 6 },
   rowHead: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
   rowLabel: { fontSize: 16, fontWeight: '500' },
   unit: { fontSize: 12, opacity: 0.6 },
@@ -827,17 +833,17 @@ const styles = StyleSheet.create({
   note: { fontSize: 12, opacity: 0.7, lineHeight: 17 },
   input: {
     borderWidth: 1,
-    borderColor: '#8884',
-    borderRadius: 6,
+    borderColor: c.border,
+    borderRadius: Radius.control,
     paddingHorizontal: 8,
     paddingVertical: 6,
     width: 76,
     textAlign: 'right',
-    fontVariant: ['tabular-nums'],
+    fontVariant: ['tabular-nums'], backgroundColor: c.surface,
   },
   notes: { width: '100%', minHeight: 64, textAlign: 'left', textAlignVertical: 'top' },
   options: { flexDirection: 'row', gap: 6 },
-  option: { borderWidth: 1, borderColor: '#8884', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 4 },
+  option: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 10, paddingVertical: 4 },
   stepper: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   step: { fontSize: 24, fontWeight: '600', paddingHorizontal: 6 },
   stepValue: { fontVariant: ['tabular-nums'], minWidth: 36, textAlign: 'center', fontSize: 16 },
@@ -855,4 +861,4 @@ const styles = StyleSheet.create({
   bold: { fontWeight: '600' },
   obs: { paddingVertical: 4, gap: 1 },
   measured: { paddingVertical: 2, fontVariant: ['tabular-nums'] },
-});
+}));

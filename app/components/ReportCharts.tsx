@@ -6,17 +6,16 @@ import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
 
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
+import { byScheme, Fonts, Radius, themed } from '@/constants/Theme';
 
-const PALETTE = {
-  light: { s1: '#2a78d6', s2: '#eb6834', s3: '#1baf7a', grid: '#e4e3df', axis: '#898781', muted: '#c3c2b7',
-    text: '#0b0b0b', secondary: '#52514e', surface: '#ffffff' },
-  dark: { s1: '#3987e5', s2: '#d95926', s3: '#199e70', grid: '#2a2a28', axis: '#898781', muted: '#52514e',
-    text: '#ffffff', secondary: '#c3c2b7', surface: '#000000' },
-};
+const PALETTE = byScheme((c) => ({
+  s1: c.chart.series[0], s2: c.chart.series[1], s3: c.chart.series[2], grid: c.chart.grid, axis: c.chart.muted,
+  muted: c.chart.axis, text: c.chart.ink, secondary: c.chart.ink2, surface: c.chart.surface,
+}));
 export const useChartColors = () => PALETTE[useColorScheme() === 'dark' ? 'dark' : 'light'];
 
 // SVG text on the web falls back to a serif face; use the system sans like the rest of the app
-const SANS = Platform.select({ web: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' });
+const SANS = Fonts.sans;
 
 /** Horizontal bars, one per row, value at the tip: where a typical pass loses time, by phase. */
 export function Bars({ rows, unit = 's', digits = 2, max }: {
@@ -91,6 +90,7 @@ const PAD = { left: 44, right: 12, top: 10, bottom: 34 };
 /** Lines against a shared x, with a crosshair: hover (web) or drag (touch) to read every series at that x. */
 export function LineChart({ x, series, legend, height = 180, formatX, formatY, unit, markers = [], readout,
   title }: LineChartProps) {
+  const styles = useStyles();
   const c = useChartColors();
   const [width, setWidth] = useState(0);
   const [cursor, setCursor] = useState<number | null>(null);
@@ -247,18 +247,18 @@ export function niceTicks(lo: number, hi: number, count: number) {
   return out;
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   chart: { gap: 6 },
   chartTitle: { fontSize: 13, fontWeight: '600' },
   legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, backgroundColor: 'transparent' },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },
   legendKey: { width: 14, height: 2, borderRadius: 1 },
   legendText: { fontSize: 12, opacity: 0.75 },
-  tip: { position: 'absolute', borderWidth: 1, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 6, gap: 2,
+  tip: { position: 'absolute', borderWidth: 1, borderRadius: Radius.control, paddingHorizontal: 8, paddingVertical: 6, gap: 2,
     minWidth: 120 },
   tipHead: { fontSize: 11, opacity: 0.7, fontVariant: ['tabular-nums'] },
   tipRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },
   tipKey: { width: 10, height: 2, borderRadius: 1 },
   tipValue: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
   tipLabel: { fontSize: 12, opacity: 0.7 },
-});
+}));

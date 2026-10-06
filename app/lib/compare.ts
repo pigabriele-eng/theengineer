@@ -1,5 +1,6 @@
 // Client for the Compare screen: laps from any sessions at one track (GET /compare/sessions, POST /compare/laps).
 import { apiFetch, CornerNumbering, formatLap } from '@/lib/api';
+import { byScheme } from '@/constants/Theme';
 
 export const MIN_LAPS = 2;
 export const MAX_LAPS = 6;
@@ -105,12 +106,9 @@ export const compareLaps = (laps: { session_id: number; lap: number }[]) =>
 
 // Categorical slots 1-6 of the validated chart palette (light and dark steps). A lap keeps its slot while it is
 // picked, so removing one lap never repaints the others.
-export const LAP_COLORS = {
-  light: ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300'],
-  dark: ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300'],
-};
+export const LAP_COLORS = byScheme((c) => c.chart.series.slice(0, 6));
 // The ideal lap is made of several laps, so it wears neutral ink rather than a lap's colour.
-export const IDEAL_COLOR = { light: '#52514e', dark: '#c3c2b7' };
+export const IDEAL_COLOR = byScheme((c) => c.chart.ideal);
 
 export const lapLabel = (l: { session: string; lap: number; driver: string | null }) =>
   `${l.session} · L${l.lap}${l.driver ? ` · ${l.driver}` : ''}`;

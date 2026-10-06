@@ -24,12 +24,14 @@ import {
   RunSummary,
   tyres,
 } from '@/lib/tyres';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 const empty = (): Record<Corner, string> => ({ FL: '', FR: '', RL: '', RR: '' });
 const fmt = (x: number | null | undefined, digits = 2) => (x == null ? '–' : x.toFixed(digits));
 
 // Four tyres laid out like the car seen from above, front at the top.
 function CarGrid({ cell }: { cell: (c: Corner) => ReactNode }) {
+  const styles = useStyles();
   return (
     <View style={styles.car}>
       <Text style={styles.carLabel}>Front</Text>
@@ -49,6 +51,7 @@ function CarGrid({ cell }: { cell: (c: Corner) => ReactNode }) {
 
 // A figure from an older public booklet, with a link to it.
 function Ref({ r }: { r: Reference }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   return (
     <Text style={styles.dim}>
@@ -61,13 +64,15 @@ function Ref({ r }: { r: Reference }) {
 }
 
 function Field(props: TextInputProps & { label?: string }) {
+  const styles = useStyles();
+  const theme = useTheme();
   const color = useThemeColor({}, 'text');
   const { label, style, ...rest } = props;
   return (
     <View style={styles.field}>
       {label && <Text style={styles.fieldLabel}>{label}</Text>}
       <TextInput
-        placeholderTextColor="#8889"
+        placeholderTextColor={theme.textMuted}
         keyboardType="numbers-and-punctuation"
         {...rest}
         style={[styles.input, { color }, style]}
@@ -77,6 +82,8 @@ function Field(props: TextInputProps & { label?: string }) {
 }
 
 export default function PressuresScreen() {
+  const styles = useStyles();
+  const theme = useTheme();
   const [ambient, setAmbient] = useState('');
   const [track, setTrack] = useState('');
   const [setTemp, setSetTemp] = useState('');
@@ -90,7 +97,6 @@ export default function PressuresScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
 
   const loadRuns = useCallback(() => {
     tyres.runs().then((r) => {
@@ -141,7 +147,7 @@ export default function PressuresScreen() {
   };
 
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container}>
       <Stack.Screen options={{ title: 'Tyre pressures' }} />
       <Text style={styles.intro}>
         The cold pressures to set now so the tyres reach your target hot pressure: by the gas law, and by what this
@@ -198,7 +204,7 @@ export default function PressuresScreen() {
         keyboardType="default" placeholder="e.g. GT4 Germany" />
 
       <Pressable style={[styles.button, { backgroundColor: tint }]} onPress={calculate} disabled={busy}>
-        {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Calculate cold pressures</Text>}
+        {busy ? <ActivityIndicator color={theme.onTint} /> : <Text style={styles.buttonText}>Calculate cold pressures</Text>}
       </Pressable>
       {error && <Text style={styles.error}>{error}</Text>}
 
@@ -212,6 +218,7 @@ export default function PressuresScreen() {
 }
 
 function Results({ plan }: { plan: PressurePlan }) {
+  const styles = useStyles();
   const by = Object.fromEntries(plan.corners.map((c) => [c.corner, c]));
   return (
     <View style={styles.section}>
@@ -264,6 +271,7 @@ function Results({ plan }: { plan: PressurePlan }) {
 }
 
 function MinimumsEditor({ series }: { series: string }) {
+  const styles = useStyles();
   const [mins, setMins] = useState<Minimums | null>(null);
   const [vals, setVals] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -340,6 +348,7 @@ function MinimumsEditor({ series }: { series: string }) {
 }
 
 function LoggedRuns({ runs, onChanged }: { runs: LoggedRun[]; onChanged: () => void }) {
+  const styles = useStyles();
   const [tracks, setTracks] = useState<Record<number, string>>({});
   const saveTrack = async (sessionId: number) => {
     const v = tracks[sessionId];
@@ -391,7 +400,7 @@ function LoggedRuns({ runs, onChanged }: { runs: LoggedRun[]; onChanged: () => v
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   container: { padding: 16, gap: 12, maxWidth: 720, width: '100%', alignSelf: 'center' },
   intro: { opacity: 0.8 },
   h2: { fontSize: 18, fontWeight: '700', marginTop: 8 },
@@ -401,15 +410,15 @@ const styles = StyleSheet.create({
   fieldLabel: { fontSize: 12, opacity: 0.6 },
   input: {
     borderWidth: 1,
-    borderColor: '#8886',
-    borderRadius: 8,
+    borderColor: c.borderStrong,
+    borderRadius: Radius.control,
     paddingHorizontal: 10,
     paddingVertical: 8,
     fontSize: 16,
-    fontVariant: ['tabular-nums'],
+    fontVariant: ['tabular-nums'], backgroundColor: c.surface,
   },
   smallInput: { paddingVertical: 4, fontSize: 14 },
-  car: { gap: 8, padding: 8, borderRadius: 12, borderWidth: 1, borderColor: '#8883' },
+  car: { gap: 8, padding: 8, borderRadius: Radius.card, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface },
   carLabel: { textAlign: 'center', fontSize: 12, opacity: 0.5, textTransform: 'uppercase', letterSpacing: 1 },
   carRow: { flexDirection: 'row', gap: 12 },
   carCell: { flex: 1, gap: 4 },
@@ -418,15 +427,15 @@ const styles = StyleSheet.create({
   big: { fontSize: 26, fontWeight: '600', fontVariant: ['tabular-nums'] },
   small: { fontSize: 13, fontVariant: ['tabular-nums'] },
   button: { borderRadius: 8, padding: 14, alignItems: 'center' },
-  buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-  outline: { borderRadius: 8, padding: 12, alignItems: 'center', borderWidth: 1 },
-  error: { color: '#c8372d' },
-  warn: { color: '#b26a00' },
+  buttonText: { color: c.onTint, fontWeight: '600', fontSize: 16 },
+  outline: { borderRadius: Radius.control, padding: 12, alignItems: 'center', borderWidth: 1 },
+  error: { color: c.error },
+  warn: { color: c.warning },
   note: { opacity: 0.7, fontSize: 13 },
   dim: { opacity: 0.55, fontSize: 13 },
   section: { gap: 10 },
-  card: { paddingVertical: 10, borderBottomWidth: 1, borderColor: '#8882', gap: 4 },
+  card: { paddingVertical: 10, borderBottomWidth: 1, borderColor: c.separator, gap: 4 },
   cardTitle: { fontSize: 16, fontWeight: '600' },
   label: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4 },
   axle: { width: 48, fontWeight: '600', paddingBottom: 10 },
-});
+}));

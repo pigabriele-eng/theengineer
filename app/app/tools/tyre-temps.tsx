@@ -24,6 +24,7 @@ import {
   TempAnalysis,
   tyres,
 } from '@/lib/tyres';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 type Mode = 'pyrometer' | 'paste' | 'log';
 const MODES: [Mode, string][] = [
@@ -43,6 +44,7 @@ const ACROSS: Record<Corner, Pos[]> = {
 
 // Four tyres laid out like the car seen from above, front at the top.
 function CarGrid({ cell }: { cell: (c: Corner) => ReactNode }) {
+  const styles = useStyles();
   return (
     <View style={styles.car}>
       <Text style={styles.carLabel}>Front</Text>
@@ -62,6 +64,7 @@ function CarGrid({ cell }: { cell: (c: Corner) => ReactNode }) {
 
 // A figure from an older public booklet, with a link to it.
 function Ref({ r }: { r: Reference }) {
+  const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
   return (
     <Text style={styles.dim}>
@@ -74,13 +77,15 @@ function Ref({ r }: { r: Reference }) {
 }
 
 function Field(props: TextInputProps & { label?: string }) {
+  const styles = useStyles();
+  const theme = useTheme();
   const color = useThemeColor({}, 'text');
   const { label, style, ...rest } = props;
   return (
     <View style={styles.field}>
       {label && <Text style={styles.fieldLabel}>{label}</Text>}
       <TextInput
-        placeholderTextColor="#8889"
+        placeholderTextColor={theme.textMuted}
         keyboardType="numbers-and-punctuation"
         {...rest}
         style={[styles.input, { color }, style]}
@@ -90,6 +95,8 @@ function Field(props: TextInputProps & { label?: string }) {
 }
 
 export default function TyreTempsScreen() {
+  const styles = useStyles();
+  const theme = useTheme();
   const [mode, setMode] = useState<Mode>('pyrometer');
   const [vals, setVals] = useState<Record<string, string>>({});
   const [paste, setPaste] = useState('');
@@ -104,7 +111,6 @@ export default function TyreTempsScreen() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
 
   useEffect(() => {
     tyres.tempSettings().then((s) => {
@@ -181,7 +187,7 @@ export default function TyreTempsScreen() {
   const chipText = (selected: boolean) => (selected ? { color: tint } : undefined);
 
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container}>
       <Stack.Screen options={{ title: 'Tyre temperatures' }} />
       <Text style={styles.intro}>
         Temperatures across each tyre straight after a run: inside (nearest the car's centre), middle and outside, in
@@ -271,7 +277,7 @@ export default function TyreTempsScreen() {
       )}
 
       <Pressable style={[styles.button, { backgroundColor: tint }]} onPress={analyse} disabled={busy}>
-        {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Analyse</Text>}
+        {busy ? <ActivityIndicator color={theme.onTint} /> : <Text style={styles.buttonText}>Analyse</Text>}
       </Pressable>
       {error && <Text style={styles.error}>{error}</Text>}
 
@@ -289,6 +295,7 @@ const VERDICT: Record<string, string> = {
 };
 
 function Results({ result }: { result: TempAnalysis }) {
+  const styles = useStyles();
   const by = Object.fromEntries(result.tyres.map((t) => [t.corner, t]));
   return (
     <View style={styles.section}>
@@ -340,27 +347,27 @@ function Results({ result }: { result: TempAnalysis }) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   container: { padding: 16, gap: 12, maxWidth: 720, width: '100%', alignSelf: 'center' },
   intro: { opacity: 0.8 },
   h2: { fontSize: 18, fontWeight: '700', marginTop: 8 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { borderWidth: 1, borderColor: '#8886', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6 },
+  chip: { borderWidth: 1, borderColor: c.borderStrong, borderRadius: Radius.chip, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: c.surface },
   row: { flexDirection: 'row', gap: 12, alignItems: 'flex-end' },
   field: { flex: 1, gap: 2 },
   fieldLabel: { fontSize: 11, opacity: 0.6 },
   input: {
     borderWidth: 1,
-    borderColor: '#8886',
-    borderRadius: 8,
+    borderColor: c.borderStrong,
+    borderRadius: Radius.control,
     paddingHorizontal: 10,
     paddingVertical: 8,
     fontSize: 16,
-    fontVariant: ['tabular-nums'],
+    fontVariant: ['tabular-nums'], backgroundColor: c.surface,
   },
   tempInput: { paddingHorizontal: 6, textAlign: 'center' },
   paste: { minHeight: 110, textAlignVertical: 'top', fontFamily: 'SpaceMono' },
-  car: { gap: 8, padding: 8, borderRadius: 12, borderWidth: 1, borderColor: '#8883' },
+  car: { gap: 8, padding: 8, borderRadius: Radius.card, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface },
   carLabel: { textAlign: 'center', fontSize: 12, opacity: 0.5, textTransform: 'uppercase', letterSpacing: 1 },
   carRow: { flexDirection: 'row', gap: 12 },
   carCell: { flex: 1, gap: 4 },
@@ -370,13 +377,13 @@ const styles = StyleSheet.create({
   big: { fontSize: 22, fontWeight: '600', fontVariant: ['tabular-nums'] },
   small: { fontSize: 13, fontVariant: ['tabular-nums'] },
   button: { borderRadius: 8, padding: 14, alignItems: 'center' },
-  buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-  outline: { borderRadius: 8, padding: 12, alignItems: 'center', borderWidth: 1 },
-  error: { color: '#c8372d' },
+  buttonText: { color: c.onTint, fontWeight: '600', fontSize: 16 },
+  outline: { borderRadius: Radius.control, padding: 12, alignItems: 'center', borderWidth: 1 },
+  error: { color: c.error },
   note: { opacity: 0.7, fontSize: 13 },
   dim: { opacity: 0.55, fontSize: 13 },
   section: { gap: 10 },
-  card: { paddingVertical: 10, borderBottomWidth: 1, borderColor: '#8882', gap: 4 },
+  card: { paddingVertical: 10, borderBottomWidth: 1, borderColor: c.separator, gap: 4 },
   cardTitle: { fontSize: 16, fontWeight: '600', fontVariant: ['tabular-nums'] },
   label: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4 },
-});
+}));

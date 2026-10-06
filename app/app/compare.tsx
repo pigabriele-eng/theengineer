@@ -17,6 +17,7 @@ import {
   signedSeconds,
   TrackGroup,
 } from '@/lib/compare';
+import { Radius, themed } from '@/constants/Theme';
 
 // A picked lap keeps its colour slot for as long as it is picked.
 type Pick = { session_id: number; lap: number; slot: number };
@@ -29,6 +30,7 @@ const freeSlot = (picks: Pick[]) => [0, 1, 2, 3, 4, 5].find((s) => !picks.some((
 // then see where the time is, the section times and the traces on one distance axis.
 // Open with ?session=<id> to start from that session's best lap, or ?laps=<session>.<lap>,... for given laps.
 export default function CompareScreen() {
+  const styles = useStyles();
   const params = useLocalSearchParams<{ session?: string; laps?: string; ideal?: string }>();
   const router = useRouter();
   const [groups, setGroups] = useState<TrackGroup[] | null>(null);
@@ -51,7 +53,6 @@ export default function CompareScreen() {
   const resultsY = useRef(0);
   const tracesY = useRef(0);
   const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
 
   const sessions = useMemo(() => new Map((groups ?? []).flatMap((g) => g.sessions.map((s) => [s.id, s]))), [groups]);
   const groupOf = (id: number) => groups?.find((g) => g.sessions.some((s) => s.id === id)) ?? null;
@@ -139,7 +140,7 @@ export default function CompareScreen() {
   const stale = busy || (shown != null && encodePicks(shown.picks) !== encodePicks(picks));
 
   return (
-    <ScrollView ref={scroll} style={{ backgroundColor: background }} contentContainerStyle={styles.container}>
+    <ScrollView ref={scroll} contentContainerStyle={styles.container}>
       <Stack.Screen options={{ title: 'Compare laps' }} />
       <Text style={styles.intro}>
         Pick {MIN_LAPS} to {MAX_LAPS} laps from any sessions at one track: your own runs, a teammate's or a client's.
@@ -277,12 +278,12 @@ export default function CompareScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   container: { padding: 16, gap: 20, maxWidth: 1100, width: '100%', alignSelf: 'center' },
   intro: { opacity: 0.7, lineHeight: 20 },
   section: { gap: 8 },
   h2: { fontSize: 18, fontWeight: '700' },
-  pick: { borderBottomWidth: 1, borderColor: '#8882', paddingBottom: 8, gap: 8 },
+  pick: { borderBottomWidth: 1, borderColor: c.separator, paddingBottom: 8, gap: 8 },
   pickRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   grow: { flex: 1, backgroundColor: 'transparent' },
   pickTitle: { fontSize: 16, fontWeight: '600' },
@@ -292,9 +293,9 @@ const styles = StyleSheet.create({
   remove: { paddingHorizontal: 6, paddingVertical: 4 },
   removeText: { fontSize: 16, opacity: 0.6 },
   lapChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingLeft: 24 },
-  chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 16, paddingHorizontal: 10, paddingVertical: 4 },
+  chip: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: c.surface },
   dim: { opacity: 0.45 },
-  button: { borderRadius: 8, padding: 12, alignItems: 'center', borderWidth: 1 },
+  button: { borderRadius: Radius.control, padding: 12, alignItems: 'center', borderWidth: 1 },
   buttonText: { fontWeight: '600', fontSize: 15 },
   list: { gap: 12 },
   group: { gap: 2 },
@@ -305,13 +306,13 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderColor: '#8882',
+    borderColor: c.separator,
   },
   plus: { fontSize: 20, fontWeight: '600' },
   idealRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingTop: 4 },
-  error: { color: '#c8372d' },
+  error: { color: c.error },
   busy: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   results: { gap: 28 },
   stale: { opacity: 0.5 },
   transparent: { backgroundColor: 'transparent' },
-});
+}));

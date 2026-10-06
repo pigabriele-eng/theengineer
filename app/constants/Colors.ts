@@ -63,6 +63,9 @@ export type ChartTokens = {
   seq2: [string, string]; // a second one-hue ramp (orange) when two magnitudes show at once
   speed: string[]; // the track map's speed ramp, slow (near the surface) to fast
   ideal: string; // the theoretical lap in lap comparisons
+  wash: string; // a see-through wash of slot 1 (an area such as the car's grip limit)
+  track: string; // the track drawn under a coloured line (a grey road)
+  mid: string; // the neutral middle of a diverging scale (a cell with nothing to say)
 };
 
 // Time against a reference: gains green, losses red, with a grey midpoint; `steps` grow with the size of the delta.
@@ -114,6 +117,9 @@ const light: Palette = {
     seq2: ['#fbe1d4', '#b4441a'],
     speed: ['#b7d3f6', '#86b6ef', '#5598e7', '#2a78d6', '#1c5cab', '#104281', '#0d366b'],
     ideal: '#52514e',
+    wash: 'rgba(42,120,214,0.08)',
+    track: '#e4e3dc',
+    mid: '#f0efec',
   },
   delta: {
     gain: '#006300',
@@ -166,6 +172,9 @@ const dark: Palette = {
     seq2: ['#4a2617', '#f08a5d'],
     speed: ['#184f95', '#256abf', '#3987e5', '#5598e7', '#86b6ef', '#9ec5f4', '#cde2fb'],
     ideal: '#c3c2b7',
+    wash: 'rgba(57,135,229,0.12)',
+    track: '#2b2b29',
+    mid: '#383835',
   },
   delta: {
     gain: '#3fbf5a',
@@ -182,6 +191,9 @@ const dark: Palette = {
   event: { past: '#898781', current: '#0ca30c', upcoming: '#3987e5' },
   status: { good: '#0ca30c', warning: '#fab219', serious: '#ec835a', critical: '#d03b3b', none: '#8a8a86' },
 };
+
+// Text on a filled colour: whichever of these two reads (constants/Theme.ts inkOn)
+export const INK = { onLight: '#0b0b0b', onDark: '#ffffff' };
 
 const Colors: Record<Scheme, Palette> = { light, dark };
 export default Colors;
