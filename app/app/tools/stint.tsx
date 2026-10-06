@@ -560,7 +560,7 @@ function PhaseTable({ fits, fade, stint, wide }: {
         })}
         <Text style={styles.small}>
           Change from the first to the last lap{stint ? ' of the stint' : ' of a stint, over every stint in view'}. Grip
-          falling in orange, rising in blue; balance moving towards understeer in blue, oversteer in red. Faded: within
+          falling in red, rising in green; balance moving towards understeer in blue, oversteer in red. Faded: within
           the lap-to-lap scatter.{!wide && stint ? ' Tap a phase to see it lap by lap.' : ''}
         </Text>
       </View>
