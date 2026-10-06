@@ -5,7 +5,7 @@ import json
 import numpy as np
 import pytest
 
-from app.analysis.grip import GripStudy, _runs_of, partial, tc_words
+from app.analysis.grip import ROLES, GripStudy, _runs_of, partial, tc_words
 from app.analysis.laps import load_session
 from app.importers.motec import read_ld
 from tests.synthetic import simulate, write_ld
@@ -54,6 +54,27 @@ def report(run):
     study.add("Run 1", data, ld)
     assert "tyre_p_fl" not in data.channels and "phase" in data.channels  # what the report doesn't need is gone
     return study.report()
+
+
+def test_reading_only_the_roles_it_uses_changes_nothing(run):
+    """The router reads only ROLES from a log and lets the log go before the laps are placed: the same report as
+    from every channel of the log."""
+    v = run["vCar"][2]
+    slow = len(v) // 10
+    log = write_ld({**run, "nEngine": (100, "rpm", 2000 + 30 * v), "NGearPos": (10, "", np.full(slow, 4.0)),
+                    "NAbs": (100, "", (v < 120).astype(float)), "pBrakeR": (50, "bar", np.zeros(len(v) // 2)),
+                    "pTyreFL": (10, "bar", np.full(slow, 1.9)), "TTyreFL": (10, "C", np.full(slow, 70.0))})
+    ld = read_ld(log)
+    every = GripStudy()
+    every.add("Run 1", load_session(ld), ld)
+    data = load_session(ld, roles=ROLES)
+    unread = set(load_session(ld).channels) - set(data.channels)
+    assert {"gear", "abs", "brake_rear", "tyre_p_fl", "tyre_t_fl"} <= unread
+    few = GripStudy()
+    few.read_log(data, ld)
+    del ld
+    few.add_laps("Run 1", data)
+    assert few.report() == every.report()
 
 
 def test_report_is_plain_json(report):
@@ -189,14 +210,14 @@ def test_unreadable_log_is_left_out(client, run, monkeypatch):
     for name in ("Good", "Broken"):
         s = client.post("/sessions", json={"name": name, "event_id": ev["id"]}).json()
         assert client.post(f"/sessions/{s['id']}/files", files={"file": ("run.ld", write_ld(run))}).status_code == 201
-    real = rg._run
+    real = rg._read
 
-    def flaky(db, s, name=None):
+    def flaky(db, s):
         if s.name == "Broken":
             raise ValueError("bad log")
-        return real(db, s, name)
+        return real(db, s)
 
-    monkeypatch.setattr(rg, "_run", flaky)
+    monkeypatch.setattr(rg, "_read", flaky)
     r = client.get(f"/report/grip?event={ev['id']}")
     assert r.status_code == 200, r.text
     body = r.json()

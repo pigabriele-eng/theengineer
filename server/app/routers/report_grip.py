@@ -1,6 +1,4 @@
 """The grip use and traction control part of the report, for one session or a whole event."""
-import ctypes
-import gc
 import threading
 from collections import OrderedDict
 
@@ -9,24 +7,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import heavy, models
+from app.analysis import grip
 from app.analysis.grip import GripStudy
+from app.analysis.laps import SessionData, load_session
 from app.db import get_db
-from app.routers.insights import _run
-from app.routers.sessions import _get, official_corners
+from app.importers.motec import LdFile
+from app.routers.sessions import _channel_map, _get, _line, _track_for, official_corners, read_file
 
 router = APIRouter(prefix="/report")
 
 CACHE_SIZE = 8
 _cache: OrderedDict[tuple, tuple[tuple, dict]] = OrderedDict()
 _cache_lock = threading.Lock()
-
-
-def _free() -> None:
-    gc.collect()
-    try:
-        ctypes.CDLL("libc.so.6").malloc_trim(0)
-    except (OSError, AttributeError):  # not glibc
-        pass
 
 
 def _fingerprint(sessions: list[models.RunSession], track: models.Track | None) -> tuple:
@@ -99,16 +91,18 @@ def _build(db: Session, sessions: list[models.RunSession], track: models.Track |
             name = f"{name} #{s.id}"
         names.add(name)
         try:
-            run, run_track = _run(db, s, name)
+            ld, data, run_track = _read(db, s)
         except Exception:  # one unreadable log leaves that session out, not the whole event
             unread.append(name)
-            _free()
+            heavy.release_memory()
             continue
         if study.corners is None and run_track is not None:
             study.corners = official_corners(run_track)
-        study.add(run.name, run.data, run.ld, run.driver)
-        del run
-        _free()
+        study.read_log(data, ld)
+        del ld  # the log's pages are let go before the math channels are made
+        study.add_laps(name, data, s.driver.name if s.driver else None)
+        del data
+        heavy.release_memory()
     result = study.report()
     notes = result.setdefault("notes", [])
     if skipped:
@@ -116,5 +110,15 @@ def _build(db: Session, sessions: list[models.RunSession], track: models.Track |
         notes.append(f"{n} session{'s' if n > 1 else ''} without a clean lap left out: {', '.join(skipped)}.")
     if unread:
         notes.append(f"Could not read the log of {', '.join(unread)}; left out.")
-    _free()
+    heavy.release_memory()
     return result
+
+
+def _read(db: Session, s: models.RunSession) -> tuple[LdFile, SessionData, models.Track | None]:
+    """The session's main log (the longest), its laps and only the channels the grip study reads, and the track it was
+    driven on."""
+    f = max(s.files, key=lambda f: f.meta.get("duration_s", 0))
+    ld = read_file(f)
+    track = _track_for(db, s, ld)
+    data = load_session(ld, _channel_map(s), beacons=f.meta.get("beacons"), line=_line(track), roles=grip.ROLES)
+    return ld, data, track

@@ -352,7 +352,7 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
     if not sessions:
         raise TechniqueError("No clean laps to check")
     sessions, left_out = reports._quickest(sessions)
-    prepared = compact.prepare_compact(sessions, corners)
+    prepared = compact.prepare_compact(sessions, corners, consume=True)
     del sessions
     if prepared is None:
         raise TechniqueError("No clean laps to check")

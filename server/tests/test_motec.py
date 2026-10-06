@@ -23,6 +23,17 @@ def test_reads_header_and_channels(session):
     np.testing.assert_allclose(speed.values(), channels["vCar"][2], rtol=1e-6)
 
 
+def test_a_mapped_log_reads_the_same_after_its_pages_are_let_go(tmp_path):
+    """A log on disk is mapped, and each channel's pages are let go once read: reading it again reads the file."""
+    path = tmp_path / "run.ld"
+    path.write_bytes(write_ld(simulate()[0]))
+    mapped, plain = read_ld(path), read_ld(path.read_bytes())
+    for name in ("vCar", "gLat", "S/F Marker"):
+        first = mapped.channels[name].values()
+        assert np.array_equal(first, plain.channels[name].values())
+        assert np.array_equal(mapped.channels[name].values(), first)
+
+
 def test_channel_lookup_falls_back_and_ignores_case(session):
     ld, _, _ = session
     assert ld.channel("Ground Speed", "VCAR").name == "vCar"

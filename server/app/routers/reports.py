@@ -410,7 +410,7 @@ def compute(db: Session, plan: Plan) -> dict:
     if not sessions:
         raise ReportError("No clean laps to analyse")
     sessions, left_out = _quickest(sessions)
-    prepared = compact.prepare_compact(sessions, corners)
+    prepared = compact.prepare_compact(sessions, corners, consume=True)
     del sessions
     if prepared is None:
         raise ReportError("No clean laps to analyse")

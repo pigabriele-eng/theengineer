@@ -38,6 +38,10 @@ CORNER_EDGE_G = 0.1  # ...from where the turn starts to where it ends, so the si
 CORNER_MIN_M = 20
 MIN_CORNERS = 3
 MIN_LAPS = 3  # laps to compare with each other at each place
+# What track_shape reads of a lap, and the log's roles those come from (the math channels among them, ax, ay, turn_g
+# and az, are made from these alone; lat and lon put the laps on one line): a log read for its shape needs no others
+TRACE_ROLES = ("speed", "ax", "ay", "turn_g", "az", "altitude")
+LOG_ROLES = ("speed", "g_long", "g_lat", "yaw", "g_vert", "altitude", "lat", "lon")
 SCALE_RANGE = (0.7, 1.4)  # gyro turning over lateral g outside this: the gyro can't tell the bank
 LOAD_WINDOW_M = 5  # vertical load averaged over this either side of a place
 BANKED_DEG = 7.0  # a banked corner: at least this much toward the inside, for at least BANKED_MIN_M

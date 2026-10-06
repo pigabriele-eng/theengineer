@@ -30,6 +30,7 @@ from app.analysis.channels import BRAKE, EXIT, MID, POWER, TRAIL, math_channels
 from app.analysis.insights import LapRecord, _within, corr, grip_limits, road_shape
 from app.analysis.laps import CornerSpec, Lap, SessionData, Section, lap_length, make_sections
 from app.analysis.limits import CarLimits
+from app.heavy import trim
 from app.importers.motec import LdFile
 
 QUICK_WITHIN = 0.01  # quick laps: within 1 % of the best
@@ -63,6 +64,8 @@ STATE = ("tyre_t_rl", "tyre_t_rr", "tc_switch")  # kept per lap as the lap's med
 # The standard roles the math channels need; everything else is dropped before they are worked out
 MATH_IN = ("speed", "g_long", "g_lat", "yaw", "steer", "throttle", "brake", "lat", "lon", "tc",
            "wheel_fl", "wheel_fr", "wheel_rl", "wheel_rr")
+# The roles worth reading from a log (load_session's roles): add drops every other one unused
+ROLES = frozenset({*MATH_IN, *KEEP, *STATE})
 
 
 def _wmean(v: np.ndarray, w: np.ndarray) -> float | None:
@@ -164,9 +167,14 @@ class GripStudy:
         This uses up the run's channels: the ones the report has no use for are dropped from data.channels as it
         goes, so a long log never holds every channel and the math channels at once.
         """
-        clean = [l for l in data.laps if l.clean]
-        self.runs.append({"name": name, "clean_laps": len(clean), "best": min((l.time for l in clean), default=None)})
-        if not clean:
+        self.read_log(data, ld)
+        self.add_laps(name, data, driver)
+
+    def read_log(self, data: SessionData, ld: LdFile | None) -> None:
+        """add's first half, the part that reads the log: the channels beyond the standard roles, and the logger
+        channel and unit behind each role. A caller can let the log go after it, before add_laps works out the math
+        channels. Nothing for a run without a clean lap."""
+        if not any(l.clean for l in data.laps):
             return
         keep = {"phase", "lat", "lon", *KEEP, *STATE}
         channels = data.channels
@@ -184,15 +192,25 @@ class GripStudy:
                     channels[role] = np.interp(data.t, ct, cv)
                 self.sources.setdefault(role, ch.name)
                 self.units.setdefault(role, ch.unit)
-        if "phase" not in channels:
-            math_channels(data)
-        for role in [r for r in channels if r not in keep]:
-            del channels[role]
         for role, src in data.sources.items():
             self.sources.setdefault(role, src)
             if ld is not None and role not in self.units:
                 ch = ld.channel(src)
                 self.units[role] = ch.unit if ch is not None else ""
+
+    def add_laps(self, name: str, data: SessionData, driver: str | None = None) -> None:
+        """add's second half: the math channels, then the run's clean laps on the track line."""
+        clean = [l for l in data.laps if l.clean]
+        self.runs.append({"name": name, "clean_laps": len(clean), "best": min((l.time for l in clean), default=None)})
+        if not clean:
+            return
+        channels = data.channels
+        if "phase" not in channels:
+            math_channels(data)
+        keep = {"phase", "lat", "lon", *KEEP, *STATE}
+        for role in [r for r in channels if r not in keep]:
+            del channels[role]
+        trim()  # what the math channels were made with goes back to the system before the laps are traced
         if self.length is None:
             ref = min(clean, key=lambda l: l.time)
             self.line = track_line(data, ref)

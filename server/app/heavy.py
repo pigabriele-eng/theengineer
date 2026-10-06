@@ -7,6 +7,10 @@ the others wait their turn. It is re-entrant, so a job that already holds it can
 Queueing alone isn't enough: each request runs on its own worker thread, and glibc keeps the memory a thread frees
 in that thread's arena, so the leftovers of a few requests add up past 512 MB. When the outermost holder lets go,
 the lock hands that memory back to the system before the next job starts.
+
+Within a job the same happens on a smaller scale: glibc keeps the big arrays a log was worked through with (made and
+dropped by the hundred) for the next ones, and the pieces it keeps add up to tens of MB more than the job holds at
+any moment. A job calls trim() where it has just dropped a log's channels, so its peak is what it holds.
 """
 import ctypes
 import functools
@@ -14,13 +18,18 @@ import gc
 import threading
 
 
-def release_memory() -> None:
-    """Free what the last job left behind and give it back to the system."""
-    gc.collect()
+def trim() -> None:
+    """Give the memory already freed back to the system: a few milliseconds, so it can follow every log."""
     try:
         ctypes.CDLL("libc.so.6").malloc_trim(0)
     except (OSError, AttributeError):  # not glibc
         pass
+
+
+def release_memory() -> None:
+    """Free what the last job left behind and give it back to the system."""
+    gc.collect()
+    trim()
 
 
 class _HeavyLock:

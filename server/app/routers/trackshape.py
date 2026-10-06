@@ -20,7 +20,7 @@ from app.analysis.align import aligned_trace, track_line
 from app.analysis.channels import math_channels
 from app.analysis.insights import LIMIT_LAPS_WITHIN, MIN_LIMIT_LAPS
 from app.analysis.laps import corner_sections, lap_length, lap_trace, load_session, make_sections
-from app.analysis.track_shape import track_shape
+from app.analysis.track_shape import LOG_ROLES, TRACE_ROLES, track_shape
 from app.db import get_db
 from app.routers.sessions import _channel_map, _get, _line, _track_for, official_corners, read_file
 from app.routers.trackmap import _known_track, _main_file
@@ -127,9 +127,9 @@ def banked_note(features: list[dict]) -> str | None:
 
 
 def _work_out(db: Session, uses: list[_Use]) -> dict | str:
-    """Read each log in turn, keep only its quick laps on the reference line (its full-rate channels are freed
-    before the next log is read), then work out the shape. A string when the logs can't tell it. The caller holds
-    the log lock."""
+    """Read each log in turn, only the channels the shape is made from, keep only its quick laps on the reference
+    line (its full-rate channels are freed before the next log is read), then work out the shape. A string when the
+    logs can't tell it. The caller holds the log lock."""
     traces: list[dict] = []
     line = length = sections = labelled = numbering = None
     ref_lap = None
@@ -138,9 +138,13 @@ def _work_out(db: Session, uses: list[_Use]) -> dict | str:
         first = u is uses[0]
         ld = read_file(u.file)
         track = _track_for(db, u.session, ld) if first else _known_track(db, u.session, u.file)
-        data = load_session(ld, _channel_map(u.session), beacons=u.file.meta.get("beacons"), line=_line(track))
+        data = load_session(ld, _channel_map(u.session), beacons=u.file.meta.get("beacons"), line=_line(track),
+                            roles=LOG_ROLES)
         del ld
         math_channels(data)
+        for role in [r for r in data.channels if r not in (*TRACE_ROLES, "lat", "lon")]:
+            del data.channels[role]
+        heavy.trim()  # what the math channels were made with goes back to the system before the laps are traced
         if first:
             clean = [l for l in data.laps if l.clean]
             if not clean:

@@ -17,7 +17,7 @@ from dataclasses import dataclass, field, replace
 import numpy as np
 
 from app.heavy import release_memory
-from app.analysis.align import MAX_OFFSET_M, TrackLine, lap_position, track_line
+from app.analysis.align import CHUNK, MAX_OFFSET_M, TrackLine, lap_position, track_line
 from app.analysis.channels import math_channels
 from app.analysis.insights import LapRecord, Prepared, targets
 from app.analysis.laps import MASTER_HZ, CornerSpec, SessionData, lap_length, load_session, make_sections
@@ -196,16 +196,16 @@ def _project(line: TrackLine, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray,
     n = len(lx)
     pos = np.empty(len(x))
     off = np.empty(len(x))
-    for a in range(0, len(x), 500):
-        px, py = x[a:a + 500].astype(np.float32), y[a:a + 500].astype(np.float32)
+    for a in range(0, len(x), CHUNK):
+        px, py = x[a:a + CHUNK].astype(np.float32), y[a:a + CHUNK].astype(np.float32)
         d2 = (px[:, None] - lx) ** 2 + (py[:, None] - ly) ** 2
         j = d2.argmin(1)
-        off[a:a + 500] = np.sqrt(d2[np.arange(len(j)), j])
+        off[a:a + CHUNK] = np.sqrt(d2[np.arange(len(j)), j])
         # along the line between the neighbouring points, for the fraction of a metre
         jm, jp = (j - 1) % n, (j + 1) % n
         ux, uy = lx[jp] - lx[jm], ly[jp] - ly[jm]
         frac = ((px - lx[j]) * ux + (py - ly[j]) * uy) / np.maximum(ux * ux + uy * uy, 1e-6) * 2
-        pos[a:a + 500] = j + np.clip(frac, -1, 1)
+        pos[a:a + CHUNK] = j + np.clip(frac, -1, 1)
     return pos, off
 
 
@@ -265,10 +265,11 @@ class Extras:
     units: dict[str, str] = field(default_factory=dict)
 
 
-def prepare_compact(sessions: list[tuple[int | None, CompactSession]], corners: list[CornerSpec] | None = None
-                    ) -> tuple[Prepared, Extras] | None:
+def prepare_compact(sessions: list[tuple[int | None, CompactSession]], corners: list[CornerSpec] | None = None,
+                    consume: bool = False) -> tuple[Prepared, Extras] | None:
     """The engine's preparation (insights.prepare) from compact sessions: every clean lap on the fastest lap's line,
-    the car's limits and the theoretical lap. Session names must be unique."""
+    the car's limits and the theoretical lap. Session names must be unique. consume: each session's traces are let go
+    once its laps are on the line (for a caller that loaded them for this alone), so they are never held twice."""
     with_laps = [(sid, s) for sid, s in sessions if s.n_laps]
     if not with_laps:
         return None
@@ -285,6 +286,8 @@ def prepare_compact(sessions: list[tuple[int | None, CompactSession]], corners: 
             extras.tyres[x.key] = {k: float(v[i]) for k, v in s.tyres.items() if np.isfinite(v[i])}
             if s is ref_s and i == ref_i:
                 reference = x
+        if consume:
+            s.traces = {}
         mapped = set(s.sources.values())  # the engine's own roles are measured lap by lap already
         extras.scan.append((s.name, [float(t) for t in s.times],
                             {k: v for k, v in s.channels.items() if k not in mapped}))

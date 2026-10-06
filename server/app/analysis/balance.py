@@ -43,6 +43,7 @@ from app.analysis.lapsim import SimLap
 from app.analysis.laps import MASTER_HZ, CornerSpec, SessionData, lap_length, make_sections
 from app.analysis.limits import CarLimits
 from app.analysis.local_limits import PlaceLimits, smoothed_curvature
+from app.heavy import trim
 from app.vehicle.tyre_fit import NotEnoughData, _logged_ratio, level_road, yaw_rate_scale
 
 # Fallbacks from the Hockenheim test (BMW M4 GT4): the ratio between the logger's two steering channels, and the
@@ -203,6 +204,7 @@ def collect(name: str, data: SessionData, geo: Geometry, out: Collected, *, driv
         entry["note"] = f"No balance: {e}"
     for role in ("yaw", "steer", "steer_wheel"):
         c.pop(role, None)
+    trim()  # what the math channels were made with goes back to the system before the laps are traced
     if out.length is None:
         ref = min(clean, key=lambda l: l.time)
         out.line = track_line(data, ref)
