@@ -1,5 +1,6 @@
 """Find the logger files in an upload of several files at once: loose logs and zips, with logs in folders at any
-depth and zips inside a zip (one level deep).
+depth and zips inside a zip (one level deep). Files sent with a folder path ("Test/01_D1S1/run.ld", from a folder
+dropped onto the app) are walked as a zip of that folder would be: one group per top folder, named after it.
 
 Nothing is unpacked up front. The walk reads each zip's directory, and a log is copied out (to a temporary name,
 never the name in the zip) only when it is imported, so one log at a time is on the disk. Entry names with an
@@ -31,6 +32,7 @@ MAX_DIRECTORY_BYTES = 16 * 1024**2  # a zip's own list of entries, read into mem
 CHUNK_BYTES = 1024**2
 
 _counter = itertools.count()
+Source = Path | Callable[[], IO[bytes]]  # a file on the disk, or how to open an entry of a zip
 
 
 def suffix(name: str) -> str:
@@ -127,9 +129,15 @@ class Upload:
 
     def walk(self) -> Contents:
         c = self.contents
+        folders: dict[str, list[tuple[list[str], str, int, Source]]] = {}  # dropped folders' files, by folder
         for name, path in self.files:
             if c.stopped:
                 break
+            parts = _parts(name) or [PurePosixPath(name.replace("\\", "/")).name]
+            if len(parts) > 1:  # in a dropped folder: walked with the rest of it, after the loose files
+                folders.setdefault(parts[0], []).append((parts[1:], "/".join(parts), path.stat().st_size, path))
+                continue
+            name = parts[0]
             ext = suffix(name)
             if ext == ZIP:
                 c.archives.append(PurePosixPath(name).stem)
@@ -140,6 +148,17 @@ class Upload:
                     self._add(Item(name, name, size, where="", path=path))
             else:
                 self._skip(name, "not a logger file")
+        for top, files in folders.items():
+            if c.stopped:
+                break
+            c.archives.append(top)
+            kept = []
+            for f in sorted(files, key=lambda f: f[0]):
+                if _junk(f[0]):
+                    self._skip(f[1], "hidden or system file")
+                else:
+                    kept.append(f)
+            self._place(top, top, kept, len(c.archives) - 1, nested=False)
         return c
 
     def _skip(self, label: str, reason: str) -> None:
@@ -189,34 +208,42 @@ class Upload:
             elif _junk(parts):
                 self._skip(shown, "hidden or system file")
             else:
-                files.append((info, parts, shown))
+                files.append((parts, shown, info.file_size, partial(zf.open, info)))
+        self._place(label, PurePosixPath(label).stem, files, archive, nested)
+
+    def _place(self, label: str, top: str, files: list[tuple[list[str], str, int, Source]], archive: int,
+               nested: bool) -> None:
+        """Adds what one zip or dropped folder (label) holds: its files as (path inside it, label, size, the file
+        on the disk or how to open it in the zip)."""
+        c = self.contents
         # The top of the zip is the folder holding everything, if there is one (zipping a folder makes one). A log
         # alone there is named after it (or the zip); several logs there are named from their headers instead.
-        top = PurePosixPath(label).stem
-        if len({p[0] for _, p, _ in files}) == 1 and all(len(p) > 1 for _, p, _ in files):
-            top = files[0][1][0]
-            files = [(i, p[1:], s) for i, p, s in files]
-        logs_at_top = sum(len(p) == 1 and suffix(p[0]) in LOGS for _, p, _ in files)
+        if len({p[0] for p, *_ in files}) == 1 and all(len(p) > 1 for p, *_ in files):
+            top = files[0][0][0]
+            files = [(p[1:], *rest) for p, *rest in files]
+        logs_at_top = sum(len(p) == 1 and suffix(p[0]) in LOGS for p, *_ in files)
 
-        for info, parts, shown in files:
+        for parts, shown, size, source in files:
             ext = suffix(parts[-1])
+            on_disk = source if isinstance(source, Path) else None
             if ext in (*LOGS, LDX):
-                if not self._fits(info.file_size, shown):
+                if not self._fits(size, shown):
                     return
                 folder = parts[-2] if len(parts) > 1 else (top if logs_at_top == 1 else None)
-                self._add(Item(shown, parts[-1], info.file_size, where=f"{label}/{'/'.join(parts[:-1])}",
-                               folder=folder, archive=archive, _open=partial(zf.open, info)))
+                self._add(Item(shown, parts[-1], size, where=f"{label}/{'/'.join(parts[:-1])}", folder=folder,
+                               archive=archive, path=on_disk, _open=None if on_disk else source))
             elif ext == ZIP and nested:
                 self._skip(shown, "a zip inside a zip inside a zip isn't opened")
             elif ext == ZIP:
-                if not self._fits(info.file_size, shown):
+                if not self._fits(size, shown):
                     return
-                inner = Item(shown, parts[-1], info.file_size, where="", _open=partial(zf.open, info))
-                try:
-                    inner_path = inner.extract(self.tmp)
-                except Exception as e:
-                    c.errors.append({"file": shown, "error": unpack_error(e)})
-                    continue
+                inner_path = on_disk
+                if inner_path is None:
+                    try:
+                        inner_path = Item(shown, parts[-1], size, where="", _open=source).extract(self.tmp)
+                    except Exception as e:
+                        c.errors.append({"file": shown, "error": unpack_error(e)})
+                        continue
                 self._zip(shown, inner_path, archive, nested=True)
                 if c.stopped:
                     return

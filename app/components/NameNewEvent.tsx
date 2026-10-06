@@ -1,5 +1,5 @@
-// After an upload made an event (a zip becomes an event named after the zip): name it from what its logs say, or put
-// its sessions into the event that already holds the same race weekend. Either can be skipped.
+// After an upload made an event (a zip or a dropped folder becomes an event named after it): name it from what its
+// logs say, or put its sessions into the event that already holds the same race weekend. Either can be skipped.
 import { Link } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
@@ -39,7 +39,7 @@ export function NameNewEvent({ ev, onSettled }: { ev: NewEvent; onSettled: (s: S
 
   return (
     <View style={styles.card}>
-      <Text style={styles.label}>New event{ev.zip ? ` from ${ev.zip}.zip` : ''}</Text>
+      <Text style={styles.label}>New event{ev.zip ? ` from ${ev.zip}` : ''}</Text>
       {ev.matches.length > 0 && (
         <View style={styles.block}>
           <Text style={styles.title}>Same race weekend as an event you have?</Text>

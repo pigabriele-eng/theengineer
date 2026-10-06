@@ -2,11 +2,13 @@
 // import: the server makes a session per log in the background. Before picking the files, choose the event they go
 // into: an existing one, a new one (name and dates), or by default a new event per zip named after it. When the
 // upload has made events, each gets a prompt: name it from its logs, or put it into the same race weekend's event.
+// On the web the files can also be dropped, whole folders too, onto a box that opens the picker when clicked.
 import * as DocumentPicker from 'expo-document-picker';
 import { Link } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet } from 'react-native';
 
+import { DropZone } from '@/components/DropZone';
 import { EventForm } from '@/components/EventForm';
 import { NameNewEvent, Settled, SettledLine } from '@/components/NameNewEvent';
 import { Text, View, useThemeColor } from '@/components/Themed';
@@ -18,6 +20,7 @@ import { namingApi, NewEvent } from '@/lib/eventNaming';
 // The browser's file dialog filters by extension. iOS and Android filter by MIME type only, and a .ld log has
 // none, so there every file can be picked and the server skips what isn't a log.
 const ACCEPT = Platform.OS === 'web' ? ['.zip', '.ld', '.ldx', '.csv', '.txt'] : ['*/*'];
+const WEB = Platform.OS === 'web'; // a folder can be dropped there, and becomes an event as a zip does
 const POLL_MS = 1500;
 const MAX_POLL_FAILURES = 20; // about half a minute without an answer
 const LISTED = 5; // names shown per group before "and N more"
@@ -97,21 +100,21 @@ export function ImportLogs({ onProgress, events, into }: {
       base64: false,
     });
     if (picked.canceled || !picked.assets?.length) return;
+    send(picked.assets.map((a) => ({ uri: a.uri, name: a.name, file: a.file, mimeType: a.mimeType })));
+  };
+
+  // picked or dropped, the same upload; a dropped folder's files are named with their path in it
+  const send = async (files: Parameters<typeof eventsApi.importInto>[0]) => {
     setError(null);
     setJob(null);
     setLanded(null);
     setMade(null);
     setSettled({});
-    setUploading(picked.assets.length);
+    setUploading(files.length);
     try {
       failures.current = 0;
       sentTo.current = target;
-      setJob(
-        await eventsApi.importInto(
-          picked.assets.map((a) => ({ uri: a.uri, name: a.name, file: a.file, mimeType: a.mimeType })),
-          target?.id ?? null,
-        ),
-      );
+      setJob(await eventsApi.importInto(files, target?.id ?? null));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -130,7 +133,9 @@ export function ImportLogs({ onProgress, events, into }: {
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
             <Pressable onPress={() => setTarget(null)} style={chip(target == null)} accessibilityRole="radio"
               accessibilityState={{ selected: target == null }} disabled={busy}>
-              <Text style={target == null ? { color: tint } : undefined}>A new event per zip</Text>
+              <Text style={target == null ? { color: tint } : undefined}>
+                {WEB ? 'A new event per zip or folder' : 'A new event per zip'}
+              </Text>
             </Pressable>
             {target != null && !choices.some((e) => e.id === target.id) && (
               <Pressable style={chip(true)} accessibilityRole="radio" accessibilityState={{ selected: true }}>
@@ -153,8 +158,9 @@ export function ImportLogs({ onProgress, events, into }: {
           </ScrollView>
           <Text style={styles.sub}>
             {target == null
-              ? 'Logs from a planned event’s track and days go into it. Otherwise a zip becomes an event named after the ' +
-                'zip, and loose logs go to Not in an event.'
+              ? 'Logs from a planned event’s track and days go into it. Otherwise ' +
+                (WEB ? 'a zip or a dropped folder becomes an event named after it' : 'a zip becomes an event named after the zip') +
+                ', and loose logs go to Not in an event.'
               : `Every log in the upload becomes a session of ${target.name}.`}
           </Text>
           {making && (
@@ -170,15 +176,21 @@ export function ImportLogs({ onProgress, events, into }: {
           )}
         </View>
       )}
-      <Pressable style={[styles.button, { borderColor: tint }]} onPress={pick} disabled={busy}>
-        {busy ? (
-          <ActivityIndicator color={tint} />
-        ) : (
-          <Text style={[styles.buttonText, { color: tint }]}>
-            {into ? 'Upload logs into this event' : target ? `Upload logs or a zip into ${target.name}` : 'Upload logs or a zip'}
-          </Text>
-        )}
-      </Pressable>
+      {WEB ? (
+        <DropZone accept={ACCEPT} busy={busy} onPick={pick} title="Drop logs, zips or folders here, or click to pick"
+          hint={into ? 'Into this event' : target ? `Into ${target.name}` : 'A new event per zip or folder'}
+          onFiles={(files) => send(files.map((f) => ({ uri: '', name: f.path, file: f.file, mimeType: f.file.type })))} />
+      ) : (
+        <Pressable style={[styles.button, { borderColor: tint }]} onPress={pick} disabled={busy}>
+          {busy ? (
+            <ActivityIndicator color={tint} />
+          ) : (
+            <Text style={[styles.buttonText, { color: tint }]}>
+              {into ? 'Upload logs into this event' : target ? `Upload logs or a zip into ${target.name}` : 'Upload logs or a zip'}
+            </Text>
+          )}
+        </Pressable>
+      )}
       {uploading != null && <Text style={styles.sub}>Uploading {plural(uploading, 'file')}…</Text>}
       {job && running && <Progress job={job} />}
       {job && !running && <Summary job={job} onHide={() => setJob(null)} tint={tint} />}
