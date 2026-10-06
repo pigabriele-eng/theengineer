@@ -183,8 +183,8 @@ def test_a_season_s_rounds_become_planned_events(client):
     folders = _folders(client)
     made = got["Barcelona"]["event_id"]
     assert got["Barcelona"]["made_event"] and got["Barcelona"]["plan_id"] is not None
-    assert (folders[made]["name"], folders[made]["start"], folders[made]["end"]) == ("Barcelona", "2026-10-09",
-                                                                                      "2026-10-09")
+    assert (folders[made]["start"], folders[made]["end"]) == ("2026-10-09", "2026-10-09")
+    assert folders[made]["name"] == "Barcelona · GT4 European Series 2026"
     assert folders[made]["series"] == "GT4 European Series 2026"
     venues = {p["event_id"]: p["venue"] for p in client.get("/calendar").json()["plans"]}
     assert venues[made] == "Circuit de Barcelona-Catalunya" and venues[there] == "zandvoort"
@@ -218,3 +218,97 @@ def test_a_season_s_rounds_become_planned_events(client):
     folders = _folders(client)
     assert there in folders and made not in folders
     assert client.get(f"/seasons/{season['id']}").status_code == 404
+
+
+def _seed_calendar(year: int) -> None:
+    """A stand-in for the series' site: two rounds of its calendar, the first with its entry list published."""
+    from datetime import date
+
+    from app.db import SessionLocal
+    from app.results import models as rm
+
+    with SessionLocal() as db:
+        first = rm.ResultCalendarRound(series="gt4-europe", year=year, round_id="75", name="Zandvoort",
+                                       venue="zandvoort", order=5, start=date(year, 9, 18), end=date(year, 9, 20))
+        first.entries = [
+            rm.ResultEntry(car_number="12", drivers=["Gabriele ROSSI", "Max VERDI"], team="Hofor Racing",
+                           car_model="BMW M4 GT4 EVO", brand="BMW", car_class="Silver"),
+            rm.ResultEntry(car_number="8", drivers=["A ALPHA"], team="Team One", car_model="Audi R8 LMS GT4",
+                           brand="Audi", car_class="Silver"),
+        ]
+        db.add_all([first, rm.ResultCalendarRound(series="gt4-europe", year=year, round_id="76", name="Portimao",
+                                                  venue="portimao", order=6, start=date(year, 10, 15),
+                                                  end=date(year, 10, 18))])
+        db.commit()
+
+
+def test_a_season_fills_itself_from_the_series_calendar_and_entry_list(client):
+    """The path the Seasons screen takes: the series list, the season, its calendar's rounds as planned events, and
+    our entry's blanks from our car's row on an entry list (a round without a list yet is fine)."""
+    _seed_calendar(2026)
+    series = client.get("/results/series").json()
+    assert series[0]["key"] == "gt4-europe" and 2026 in series[0]["years"]
+    vehicle = client.post("/catalog/vehicles", json={"name": M4}).json()
+    team = client.post("/garage/teams", json={"name": "hofor racing"}).json()  # there already, other capitals
+    gabriele = client.post("/garage/drivers", json={"name": "Gabriele"}).json()
+    car = _garage_car(client, "12", team=None)
+    season = client.post("/seasons", json={"name": "GT4 European Series 2026", "series": "gt4-europe",
+                                           "year": 2026, "car_number": "12"}).json()
+
+    cal = client.get("/results/calendar", params={"series": "gt4-europe", "year": 2026}).json()
+    assert cal["status"] == "loaded"
+    rounds = [{"name": r["name"], "venue": r["name"], "start": r["start"], "end": r["end"],
+               "round_id": r["round_id"], "order": r["order"]} for r in cal["rounds"]]
+    season = client.put(f"/seasons/{season['id']}", json={"rounds": rounds}).json()
+    assert [(r["round_id"], r["order"], r["made_event"]) for r in season["rounds"]] == [("75", 5, True),
+                                                                                        ("76", 6, True)]
+    with_list = [r for r in cal["rounds"] if r["entries"]]
+    assert [r["round_id"] for r in with_list] == ["75"]
+    cars = client.get("/results/entries", params={"series": "gt4-europe", "year": 2026, "round_id": "75"}).json()
+    ours = next(c for c in cars if c["car_number"] == season["car_number"])
+    r = client.post(f"/seasons/{season['id']}/fill-entry", json=ours)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["filled"] == ["drivers", "team", "car", "vehicle"]
+    names = {d["id"]: d["name"] for d in client.get("/garage").json()["drivers"]}
+    assert [names[i] for i in body["entry"]["drivers"]] == ["Gabriele", "Max VERDI"]  # Gabriele was there already
+    assert body["entry"]["drivers"][0] == gabriele["id"]
+    assert (body["entry"]["team_id"], body["entry"]["car_id"], body["entry"]["vehicle_model_id"]) == (
+        team["id"], car["id"], vehicle["id"])
+
+    # what is set stays: a second fill changes nothing
+    again = client.post(f"/seasons/{season['id']}/fill-entry",
+                        json={"car_number": "12", "drivers": ["Someone Else"], "team": "Other"}).json()
+    assert again["filled"] == [] and again["entry"] == body["entry"]
+
+    # the planned round inherits it all
+    info = client.get(f"/events/{season['rounds'][0]['event_id']}/info").json()
+    assert info["missing"] == ["tyre brand", "compound"]
+    assert info["resolved"]["car"]["number"] == "12" and info["season"]["round"]["name"] == "Zandvoort"
+
+
+def test_after_an_upload_the_form_is_filled_from_the_previous_event_of_the_same_car(client):
+    tyre = client.post("/catalog/tyres", json={"brand": "Pirelli", "compound": "P Zero DHG"}).json()
+    car = _garage_car(client, "21")
+    other = _garage_car(client, "7", team=None)
+    driver = client.post("/garage/drivers", json={"name": "Gabriele"}).json()
+    before = _event(client, "Hockenheim test", "2026-05-06", "2026-05-07")
+    client.put(f"/events/{before}/info", json={"tyre_kind_id": tyre["id"], "car_id": car["id"],
+                                                "drivers": [driver["id"]]})
+    elsewhere = _event(client, "Other car's test", "2026-06-01", "2026-06-01")
+    client.put(f"/events/{elsewhere}/info", json={"car_id": other["id"]})
+
+    now = _event(client, "Zandvoort", "2026-09-18", "2026-09-20")
+    runs = [client.post("/sessions", json={"name": n, "event_id": now}).json()["id"] for n in ("Q", "R1")]
+    client.patch(f"/garage/runs/{runs[0]}", json={"car_id": car["id"]})
+    loose = client.post("/sessions", json={"name": "loose"}).json()["id"]
+    r = client.get("/event-info/for-runs", params={"ids": ",".join(map(str, [*runs, loose, 999]))})
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert [i["event_id"] for i in got] == [now]  # each event once; runs in no event left out
+    info = got[0]
+    assert info["event_name"] == "Zandvoort" and "tyre brand" in info["missing"]
+    prev = info["previous"]
+    assert (prev["event_id"], prev["tyre_kind_id"], prev["drivers"]) == (before, tyre["id"], [driver["id"]])
+    assert client.get("/event-info/for-runs", params={"ids": "x"}).status_code == 422
+    assert client.get(f"/events/{before}/info").json()["previous"] is None  # nothing before it

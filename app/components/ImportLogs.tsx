@@ -10,6 +10,7 @@ import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet } from '
 
 import { DropZone } from '@/components/DropZone';
 import { EventForm } from '@/components/EventForm';
+import { AskEventInfo } from '@/components/EventInfoForm';
 import { NameNewEvent, Settled, SettledLine } from '@/components/NameNewEvent';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { api, ImportJob } from '@/lib/api';
@@ -199,6 +200,9 @@ export function ImportLogs({ onProgress, events, into }: {
         const ev = made.events.find((e) => e.id === id);
         return ev ? <NameNewEvent key={id} ev={ev} onSettled={(s) => settle(id, s)} /> : null;
       })}
+      {job && !running && job.session_ids.length > 0 && (
+        <AskEventInfo runIds={job.session_ids} refresh={settled} onSaved={onProgress} />
+      )}
       {job && !running && landed && !into && (
         // Link asChild hands its child's style to a web anchor, which can't take a style array: one object
         <Link href={{ pathname: '/event/[id]', params: { id: landed.id } }} asChild>
