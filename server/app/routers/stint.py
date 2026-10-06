@@ -68,8 +68,8 @@ def _car(db: Session, s: models.RunSession) -> tuple[str | None, tuple[float, st
         if fuel is None:
             fuel = (base - link.base_mass_kg - link.default_ballast_kg - link.driver_kg) / link.fuel_density
         mass = link.base_mass_kg + ballast + link.driver_kg + fuel * link.fuel_density
-        return preset, (mass, f"the setup sheet ({fuel:g} L fuel, {ballast:g} kg ballast) with an {link.driver_kg:g} "
-                              "kg driver"), density
+        return preset, (mass, f"the setup sheet ({fuel:g} L fuel, {ballast:g} kg ballast), driver "
+                              f"{link.driver_kg:g} kg"), density
     if preset is not None:
         detail = preset_detail(preset)
         return preset, (float(detail["values"]["mass_kg"]["value"]),
