@@ -43,6 +43,11 @@ const GROUPS: { name: string; tools: Tool[] }[] = [
     name: 'Car',
     tools: [
       {
+        href: '/garage',
+        title: 'Cars, drivers and teams',
+        blurb: 'Car numbers, models and teams, who drives which car, and the logger in each car: runs from a linked logger get their car by themselves.',
+      },
+      {
         href: '/tools/vehicle',
         title: 'Vehicle model',
         blurb: 'Weight transfer, roll stiffness split and ride frequencies from springs, bars and motion ratios. Try a change and see the balance shift.',

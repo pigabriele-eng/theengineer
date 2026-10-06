@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app import models, schemas, storage
+from app import garage, models, schemas, storage
 from app.analysis.emptyrun import NoLaps, judge
 from app.analysis.laps import CornerSpec, LapTiming, SessionData, analyze, compare_laps, load_session, time_laps
 from app.db import get_db
@@ -129,6 +129,7 @@ def add_log(db: Session, s: models.RunSession, path: Path, name: str,
     ext = Path(name).suffix.lower()
     try:
         ld = read_ld(path) if ext == ".ld" else read_csv_log(path)
+        garage.fill_from_log(db, s, ld.device_serial, ld.driver)  # the car its logger is in, a known driver
         beacons = ld.beacons if isinstance(ld, CsvLog) and len(ld.beacons) >= 2 else None
         if ldx_beacons and len(ldx_beacons) >= 2:
             beacons = ldx_beacons

@@ -11,12 +11,14 @@ Runs already on the server are checked in the background at startup (start()): t
 have no laps and nothing entered by hand. Each log is read under heavy.lock, one at a time and only its speed and
 GPS. An empty run is removed with everything kept for it: laps, file record, stored file, and its rows in the
 report, technique, lap-trace, tyre-data and setup caches. A run with untimed laps is marked, so it isn't read again.
-Each removal is logged.
+Each removal is logged. A run that loses its laps later, when timing.py times its log again (newer lap timing found
+its only "lap" was a double pulse of the dash's marker), is checked the same way right after.
 """
 from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Collection
 from pathlib import Path
 
 from sqlalchemy import or_, select
@@ -183,10 +185,10 @@ def _mentions(x, sid: int) -> bool:
     return False
 
 
-def cleanup() -> dict[str, list[int]]:
-    """Check every session an import made that has no laps, one at a time."""
+def cleanup(only: Collection[int] | None = None) -> dict[str, list[int]]:
+    """Check every session an import made that has no laps (or those of only), one at a time."""
     with app_db.SessionLocal() as db:
-        ids = candidates(db)
+        ids = [i for i in candidates(db) if only is None or i in only]
     out: dict[str, list[int]] = {"removed": [], "kept": []}
     for sid in ids:
         try:

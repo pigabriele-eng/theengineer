@@ -214,3 +214,67 @@ def test_a_single_upload_puts_the_session_at_its_track(client):
     assert r["event_id"] == own["id"] and r["event_name"] == "My test day" and r["track_name"] == "Test Track"
     listed = {s["name"]: s["track_name"] for s in client.get("/sessions").json()}
     assert listed == {"FP1": "Test Track", "FP2": "Test Track", "FP3": "Test Track"}
+
+
+def test_logs_timed_by_older_lap_timing_are_timed_again_once(client, monkeypatch):
+    """The live Zandvoort data: older lap timing took two pulses of the dash's marker 3 s apart for a lap. In a pit
+    log that was the log's only "lap", clean and the best of the event; in a run it cut a lap in two. On startup
+    each log timed by older lap timing is timed again, once: the pit log's run is then an empty run and goes,
+    unless the user entered something on it, and what was worked out from the laps follows."""
+    import app.db
+    import app.models
+    from app import timing
+    from app.analysis import laps
+    from app.vehicle import tyre_store
+    from tests.test_empty_runs import pit_channels
+    from tests.test_lap_crossings import pulses
+
+    channels, lap_times, crossings = run()
+    marker = pulses(len(channels["S/F Marker"][2]), *crossings, crossings[2] + 3.0)
+    split_run = write_ld({**channels, "S/F Marker": (10, "", marker)})
+    pit = pit_channels(60.0, 12.0)
+    pit_log = write_ld({**pit, "S/F Marker": (10, "", pulses(len(pit["S/F Marker"][2]), 30.0, 33.0))})
+    with monkeypatch.context() as m:  # timed as older code timed them, keeping every crossing
+        m.setattr(laps, "one_per_pass", lambda starts, ld: np.asarray(starts, float))
+        job = upload(client, ("R2.zip", make_zip({"R2/01_run/run.ld": split_run, "R2/02_pit/pit.ld": pit_log,
+                                                  "R2/03_debriefed/pit.ld": pit_log})))
+        timing.wait_idle()
+    ids = {name: s["id"] for name, s in sessions_by_name(client, job).items()}
+    assert [len(client.get(f"/sessions/{ids[n]}").json()["laps"]) for n in sorted(ids)] == [5, 1, 1]
+    (folder,) = client.get("/events/folders").json()
+    assert abs(folder["best_lap_s"] - 3.0) < 0.11  # "best 3.00" for the whole event
+    assert client.post(f"/sessions/{ids['03_debriefed']}/debriefs", json={"transcript": "Pit stop practice"}
+                       ).status_code == 201
+    tyre_store.stop()  # its summaries are checked below, not made
+    with app.db.SessionLocal() as db:  # what older code left: no timing version, tyre data up to date
+        for f in db.query(app.models.LoggerFile):
+            f.meta = {k: v for k, v in f.meta.items() if k != "timing_version"}
+            db.add(app.models.TyreData(file_id=f.id, session_id=f.session_id, version=tyre_store.version(),
+                                       status="none", car_key="k", car_label="k", preset=tyre_store.PRESET,
+                                       tyre="Pirelli P Zero DHG", lap_source=tyre_store.timing_key(f.meta)))
+        db.commit()
+        assert tyre_store.pending(db) == []
+
+    timing.check_all_tracks()  # what the server does when it starts
+    timing.wait_idle()
+    s = client.get(f"/sessions/{ids['01_run']}").json()
+    assert len(s["laps"]) == 4 and abs(s["best_lap_s"] - min(lap_times[1:5])) < 0.11
+    assert client.get(f"/sessions/{ids['02_pit']}").status_code == 404  # an empty run: removed
+    assert client.get(f"/sessions/{ids['03_debriefed']}").json()["laps"] == []  # kept: it has a debrief
+    (folder,) = client.get("/events/folders").json()
+    assert folder["sessions"] == 2 and abs(folder["best_lap_s"] - min(lap_times[1:5])) < 0.11
+    with app.db.SessionLocal() as db:
+        files = db.query(app.models.LoggerFile).all()
+        assert {f.meta["timing_version"] for f in files} == {laps.TIMING_VERSION}
+        assert sorted(tyre_store.pending(db)) == sorted(f.id for f in files)  # their laps changed: made again
+
+    reads = []
+
+    def read(f):
+        reads.append(f.id)
+        raise OSError("not read")
+
+    monkeypatch.setattr(timing, "read_file", read)
+    timing.check_all_tracks()  # a second start finds nothing to do and reads no log
+    timing.wait_idle()
+    assert reads == []

@@ -98,7 +98,8 @@ def session_row(s: models.RunSession) -> dict:
     times = [l.time_s for l in clean]
     day, at, logged = _when(s)
     return {"id": s.id, "name": s.name or f"Session {s.id}", "kind": s.kind.value, "event_id": s.event_id,
-            "driver": s.driver.name if s.driver else None, "date": day.isoformat() if day else None, "time": at,
+            "driver": s.driver.name if s.driver else None, "driver_id": s.driver_id, "car_id": s.car_id,
+            "date": day.isoformat() if day else None, "time": at,
             "log_session": logged, "laps": len(laps), "clean_laps": len(clean),
             "best_lap_s": best.time_s if best else None, "best_lap": best.number if best else None,
             "typical_s": round(float(np.median(times)), 3) if times else None,
