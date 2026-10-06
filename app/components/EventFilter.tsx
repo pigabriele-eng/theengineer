@@ -1,5 +1,5 @@
-// The event list's Past / Current / Upcoming filter with the racing calendar's state under it, planned events (made
-// by hand or from the calendar, no data yet) and the form that plans one.
+// The event list's Past / Current / Upcoming filter with the racing calendar's state under it, removing a planned
+// event (made by hand or from the calendar, no data yet) and the form that plans one.
 import { Link } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, StyleSheet, TextInput } from 'react-native';
@@ -7,7 +7,7 @@ import { Pressable, StyleSheet, TextInput } from 'react-native';
 import { EventForm } from '@/components/EventForm';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { CalendarState, calendarApi, clockLabel, Filter, FILTERS, Plan } from '@/lib/calendar';
-import { dateRange, Folder, FolderSummary } from '@/lib/events';
+import { Folder, FolderSummary } from '@/lib/events';
 
 export function FilterBar({ filter, counts, onPick, calendar, onSynced }: {
   filter: Filter;
@@ -87,12 +87,12 @@ function CalendarLine({ calendar, onSynced, tint }: {
   );
 }
 
-/** A planned event: its days, venue and where it came from; open it, or remove it. */
-export function PlannedCard({ f, plan, onRemoved }: { f: FolderSummary; plan?: Plan; onRemoved: () => void }) {
+/** Remove a planned event (no data yet): the button and, once tapped, the question. In a wrapping row: the question
+ * takes a line of its own. */
+export function RemovePlanned({ f, plan, onRemoved }: { f: FolderSummary; plan?: Plan; onRemoved: () => void }) {
   const [asking, setAsking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tint = useThemeColor({}, 'tint');
-  const venue = plan?.venue ?? f.track;
   const remove = async () => {
     try {
       await calendarApi.removePlanned(f.id!);
@@ -103,33 +103,17 @@ export function PlannedCard({ f, plan, onRemoved }: { f: FolderSummary; plan?: P
     }
   };
   return (
-    <View style={styles.card}>
-      <View style={styles.cardRow}>
-        {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
-        <Link href={{ pathname: '/event/[id]', params: { id: f.key } }} asChild>
-          <Pressable style={styles.open} accessibilityRole="link">
-            <View style={styles.cardText}>
-              <Text style={styles.title} numberOfLines={2}>{f.name}</Text>
-              <Text style={styles.date} numberOfLines={1}>{dateRange(f.start, f.end) ?? 'Days not set yet'}</Text>
-              <Text style={styles.sub} numberOfLines={2}>
-                {[venue, plan?.from_calendar ? 'Planned in your calendar' : 'Planned', 'no data yet']
-                  .filter(Boolean).join(' · ')}
-              </Text>
-            </View>
-            <Text style={styles.chevron}>›</Text>
-          </Pressable>
-        </Link>
-        <Pressable onPress={() => setAsking(!asking)} hitSlop={8} accessibilityRole="button"
-          accessibilityLabel={`Remove ${f.name}`} style={styles.removeButton}>
-          <Text style={{ color: tint }}>Remove</Text>
-        </Pressable>
-      </View>
+    <>
+      <Pressable onPress={() => setAsking(!asking)} hitSlop={8} accessibilityRole="button"
+        accessibilityLabel={`Remove ${f.name}`} style={styles.removeButton}>
+        <Text style={StyleSheet.flatten([styles.removeText, { color: tint }])}>✕ Remove</Text>
+      </Pressable>
       {asking && (
         <View style={styles.confirm}>
           <Text style={styles.confirmText}>
             Remove the planned event “{f.name}”?
             {plan?.from_calendar
-              ? ' It stays out of later calendar syncs; switch it back on in the calendar settings.'
+              ? ' Later calendar syncs leave it out; switch it back on in the calendar settings.'
               : ''}
           </Text>
           <View style={styles.actions}>
@@ -143,9 +127,14 @@ export function PlannedCard({ f, plan, onRemoved }: { f: FolderSummary; plan?: P
           {error && <Text style={styles.error}>{error}</Text>}
         </View>
       )}
-    </View>
+    </>
   );
 }
+
+/** The line under a planned event's name: its venue and where it was planned. */
+export const plannedLine = (f: FolderSummary, plan?: Plan) =>
+  [plan?.venue ?? f.track, plan?.from_calendar ? 'Planned in your calendar' : 'Planned', 'no data yet']
+    .filter(Boolean).join(' · ');
 
 /** A new event with its venue: a planned event that uploads from that venue on its days go into. */
 export function PlanForm({ onCancel, onMade }: { onCancel: () => void; onMade: (f: Folder) => void }) {
@@ -177,17 +166,9 @@ const styles = StyleSheet.create({
   calText: { fontSize: 13, opacity: 0.75, flexShrink: 1 },
   calLink: { fontSize: 13, fontWeight: '600' },
   warn: { color: '#b26b00', opacity: 1 },
-  card: { borderWidth: 1, borderColor: '#8884', borderStyle: 'dashed', borderRadius: 10, paddingHorizontal: 14,
-    paddingVertical: 12, gap: 8 },
-  cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: 'transparent' },
-  open: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  cardText: { flex: 1, gap: 2, backgroundColor: 'transparent' },
-  title: { fontSize: 17, fontWeight: '700' },
-  date: { fontSize: 14, opacity: 0.85 },
-  sub: { opacity: 0.6, fontSize: 13 },
-  chevron: { fontSize: 22, opacity: 0.4 },
-  removeButton: { paddingVertical: 6 },
-  confirm: { gap: 8, backgroundColor: 'transparent' },
+  removeButton: { paddingVertical: 2 },
+  removeText: { fontWeight: '600', fontSize: 14 },
+  confirm: { width: '100%', gap: 8, backgroundColor: 'transparent' },
   confirmText: { fontSize: 15, lineHeight: 21 },
   actions: { flexDirection: 'row', gap: 8, backgroundColor: 'transparent' },
   action: { borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },

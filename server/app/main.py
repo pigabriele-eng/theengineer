@@ -11,7 +11,7 @@ from app.db import create_tables
 from app.routers import catalog, debriefs, imports, insights, sessions, trackmap, tyres, vehicle
 from app.routers import balance as report_balance
 from app.routers import comparisons, drivers, lapcompare, report_grip, reports, setups, tyre_model, tyreprep
-from app.routers import events, planned, technique
+from app.routers import event_naming, events, planned, technique
 from app.routers import stint as stint_tool
 from app.vehicle import tyre_store
 
@@ -52,6 +52,7 @@ app.include_router(tyre_model.router, dependencies=signed_in)
 app.include_router(technique.router, dependencies=signed_in)
 app.include_router(events.router, dependencies=signed_in)
 app.include_router(planned.router, dependencies=signed_in)
+app.include_router(event_naming.router, dependencies=signed_in)
 app.include_router(stint_tool.router, dependencies=signed_in)
 app.include_router(debriefs.media_router, dependencies=[Depends(require_user_or_query_token)])
 

@@ -251,3 +251,20 @@ def test_an_upload_lands_in_the_planned_event_at_its_venue_and_days(client, feed
     job = upload(client, ("Later.zip", make_zip({"Later/a.ld": log((0.97, 0.98),
                                                                     (today + timedelta(9)).strftime("%d/%m/%Y"))})))
     assert set(_folders(client)) == {"Test Track weekend", "Later"}
+
+
+def test_an_upload_just_after_a_planned_event_is_offered_it_with_one_tap(client):
+    from tests.test_event_naming import log as headed_log
+
+    planned = client.post("/planned-events", json={"name": "GT4 ES", "venue": "Circuit Zandvoort, Netherlands",
+                                                    "start": "2026-09-17", "end": "2026-09-18"}).json()
+    client.post("/planned-events", json={"name": "Assen", "venue": "TT Circuit Assen", "start": "2026-09-18",
+                                         "end": "2026-09-19"})
+    # recorded the day after the planned days: not put there by itself, but offered with one tap
+    job = upload(client, ("05_R2.zip", make_zip({"05_R2/a.ld": headed_log(day="19/09/2026")})))
+    (new,) = client.get(f"/imports/{job['id']}/events").json()["events"]
+    (match,) = new["matches"]
+    assert (match["id"], match["why"], match["sessions"]) == (planned["id"], "planned", 0)
+    r = client.post(f"/events/{new['id']}/merge", json={"into": planned["id"]})
+    assert r.status_code == 200 and r.json()["into"]["sessions"] == 1
+    assert (r.json()["into"]["start"], r.json()["into"]["end"]) == ("2026-09-17", "2026-09-19")  # widened

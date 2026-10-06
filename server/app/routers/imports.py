@@ -6,7 +6,8 @@ Jobs that were queued or running when the server stopped are marked failed when 
 
 By default the logs of each uploaded zip go into a new event named after the zip, and loose logs into no event; with
 event_id every log goes into that event (picked or made in the app before the upload). Without one, a log recorded at
-a planned event's venue on one of its days goes into that event (plans.planned_for).
+a planned event's venue on one of its days goes into that event (plans.planned_for). The events an import made are
+remembered (ImportEvent), so the app can offer to name them or join them to the race weekend they belong to.
 """
 import ctypes
 import gc
@@ -238,8 +239,12 @@ class _Run:
 
     def _event(self, index: int) -> models.Event:
         if index not in self.events:
-            self.events[index] = models.Event(name=self.archives[index][:160] or "Imported runs")
-            self.db.add(self.events[index])
+            ev = models.Event(name=self.archives[index][:160] or "Imported runs")
+            self.db.add(ev)
+            self.db.flush()
+            # remembered, so the app can offer to name it when the upload ends (routers/event_naming.py)
+            self.db.add(models.ImportEvent(job_id=self.job.id, event_id=ev.id, archive=self.archives[index][:255]))
+            self.events[index] = ev
         return self.events[index]
 
     def finish_events(self) -> None:
