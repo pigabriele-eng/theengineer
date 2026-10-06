@@ -1,4 +1,4 @@
-import { Link, Stack } from 'expo-router';
+import { Link, Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 
@@ -29,8 +29,10 @@ type Mode = 'drivers' | 'sessions';
 const POLL_MS = 1000;
 const MAX_POLL_FAILURES = 20;
 
-// Two drivers (or two groups of sessions) at one track and car, over all their clean laps.
+// Two drivers (or two groups of sessions) at one track and car, over all their clean laps. ?event=<id> opens on the
+// track and car of that event's sessions.
 export default function CompareDriversScreen() {
+  const { event } = useLocalSearchParams<{ event?: string }>();
   const [groups, setGroups] = useState<OptionGroup[] | null>(null);
   const [groupIdx, setGroupIdx] = useState(0);
   const [mode, setMode] = useState<Mode>('drivers');
@@ -51,7 +53,9 @@ export default function CompareDriversScreen() {
     compareApi.options().then(
       (g) => {
         setGroups(g);
-        const d = g[0]?.drivers ?? [];
+        const at = Math.max(0, g.findIndex((x) => x.sessions.some((s) => event && s.event_id === Number(event))));
+        setGroupIdx(at);
+        const d = g[at]?.drivers ?? [];
         if (d.length >= 2) setDriverOf({ a: d[0].id, b: d[1].id });
         else setMode('sessions');
       },

@@ -3,6 +3,9 @@
 POST /imports takes the files and answers at once with an import job; one worker thread imports the logs one at a
 time (a log can take a while to analyse, and one at a time keeps memory low), and GET /imports/{id} follows it.
 Jobs that were queued or running when the server stopped are marked failed when it starts again.
+
+By default the logs of each uploaded zip go into a new event named after the zip, and loose logs into no event; with
+event_id every log goes into that event (picked or made in the app before the upload).
 """
 import ctypes
 import gc
@@ -16,11 +19,12 @@ import zlib
 from datetime import UTC, date, datetime
 from pathlib import Path, PurePosixPath
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from sqlalchemy import inspect, select, update
 from sqlalchemy.orm import Session
 
-from app import heavy, models, schemas, storage
+from app import empty_runs, heavy, models, schemas, storage
+from app.analysis.emptyrun import NoLaps
 from app.db import SessionLocal, get_db
 from app.importers import archive
 from app.importers.motec import read_ldx_beacons
@@ -44,9 +48,12 @@ def _now() -> datetime:
 
 
 @router.post("", response_model=schemas.ImportJobOut, status_code=202)
-def start_import(files: list[UploadFile], db: Session = Depends(get_db)):
+def start_import(files: list[UploadFile], event_id: int | None = Form(None), db: Session = Depends(get_db)):
     """Upload several files in one go, in any mix: MoTeC .ld logs and their .ldx, CSV exports (.csv, .txt) and
-    .zip files (logs in folders at any depth, a zip inside a zip). Each log becomes a session of its own."""
+    .zip files (logs in folders at any depth, a zip inside a zip). Each log becomes a session of its own, in the event
+    event_id when it is given (otherwise a zip's logs make an event named after the zip)."""
+    if event_id is not None and db.get(models.Event, event_id) is None:
+        raise HTTPException(404, "Event not found")
     names = [PurePosixPath((f.filename or "").replace("\\", "/")).name or f"file{i}" for i, f in enumerate(files)]
     if not any(archive.suffix(n) in archive.ACCEPTED for n in names):
         raise HTTPException(415, "Nothing to import: upload MoTeC .ld logs (with their .ldx), CSV exports "
@@ -71,7 +78,7 @@ def start_import(files: list[UploadFile], db: Session = Depends(get_db)):
     except BaseException:
         shutil.rmtree(folder, ignore_errors=True)
         raise
-    _jobs.put((job.id, folder, uploads))
+    _jobs.put((job.id, folder, uploads, event_id))
     _start_worker()
     return job
 
@@ -81,7 +88,8 @@ def get_import(job_id: int, db: Session = Depends(get_db)):
     job = db.get(models.ImportJob, job_id)
     if job is None:
         raise HTTPException(404, "Import not found")
-    return job
+    # with the runs kept whose laps couldn't be timed (a missing lap beacon), and why
+    return {**schemas.ImportJobOut.model_validate(job).model_dump(), "untimed": empty_runs.untimed(db, job.session_ids)}
 
 
 def fail_interrupted() -> None:
@@ -103,9 +111,9 @@ def _start_worker() -> None:
 
 def _work() -> None:
     while True:
-        job_id, folder, uploads = _jobs.get()
+        job_id, folder, uploads, event_id = _jobs.get()
         try:
-            run_import(job_id, folder, uploads)
+            run_import(job_id, folder, uploads, event_id)
         except Exception:
             log.exception("Import %s failed", job_id)
         finally:
@@ -114,7 +122,7 @@ def _work() -> None:
             tyre_store.kick()  # summarise the new logs for the tyre model
 
 
-def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]]) -> None:
+def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]], event_id: int | None = None) -> None:
     with SessionLocal() as db:
         job = db.get(models.ImportJob, job_id)
         if job is None:
@@ -131,7 +139,7 @@ def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]]) -> No
                                                  for x in unmatched)]
                 job.message = found.stopped
                 db.commit()
-                run = _Run(db, job, found.archives, folder)
+                run = _Run(db, job, found.archives, folder, event_id)
                 for i, item in enumerate(found.logs):
                     with heavy.lock:  # one log in memory at a time, across imports and requests
                         run.add(item, ldx_for.get(i))
@@ -154,12 +162,18 @@ def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]]) -> No
 
 
 class _Run:
-    """Turns each log into a session; logs from one uploaded zip share an event named after the zip."""
+    """Turns each log into a session; logs from one uploaded zip share an event named after the zip, unless the
+    upload names the event every log goes into."""
 
-    def __init__(self, db: Session, job: models.ImportJob, archives: list[str], folder: Path):
+    def __init__(self, db: Session, job: models.ImportJob, archives: list[str], folder: Path,
+                 event_id: int | None = None):
         self.db, self.job, self.archives, self.folder = db, job, archives, folder
+        self.target = event_id
         self.events: dict[int, models.Event] = {}
         self.names: set[str] = set()
+        if event_id is not None:  # names stay unique within the event the logs go into
+            self.names = set(db.scalars(select(models.RunSession.name)
+                                        .where(models.RunSession.event_id == event_id)).all()) - {None}
 
     def add(self, item: archive.Item, ldx: archive.Item | None) -> None:
         db, job = self.db, self.job
@@ -182,7 +196,13 @@ class _Run:
             db.flush()
             rec = add_log(db, s, path, item.name, beacons)
             s.name = self._unique(item.folder or rec.meta.get("event_session") or item.stem)
-            if item.archive is not None:
+            target = db.get(models.Event, self.target) if self.target is not None else None
+            if target is not None:  # gone if it was deleted during the import: then as without one
+                s.event = target
+                db.flush()
+                by_hand = db.scalar(select(models.EventDates.id).where(models.EventDates.event_id == target.id))
+                self._settle(target, keep_track=True, keep_date=by_hand is not None)
+            elif item.archive is not None:
                 s.event = self._event(item.archive)
                 db.flush()
                 self._settle(s.event)  # now, not only at the end: the server may restart before the import ends
@@ -192,7 +212,10 @@ class _Run:
         except Exception as e:
             db.rollback()
             self.events = {k: ev for k, ev in self.events.items() if inspect(ev).persistent}
-            errors.append({"file": item.label, "error": _plain(e)})
+            if isinstance(e, NoLaps):  # an empty run isn't kept: listed with the reason
+                job.skipped = [*job.skipped, {"file": item.label, "reason": e.reason}]
+            else:
+                errors.append({"file": item.label, "error": _plain(e)})
         finally:
             for p in copies:
                 p.unlink(missing_ok=True)
@@ -219,14 +242,17 @@ class _Run:
             self._settle(ev)
         self.db.commit()
 
-    def _settle(self, ev: models.Event) -> None:
-        """The event's date is its first log's, and its track the one all its logs were driven at."""
+    def _settle(self, ev: models.Event, keep_track: bool = False, keep_date: bool = False) -> None:
+        """The event's date is its first log's, and its track the one all its logs were driven at. An event picked
+        for the upload keeps the track it has, and the date when its dates were set by hand."""
         files = self.db.scalars(select(models.LoggerFile).join(models.RunSession)
                                 .where(models.RunSession.event_id == ev.id)).all()
         venues = {f.meta.get("venue", "")[:120] for f in files}
         venue = venues.pop() if len(venues) == 1 else ""
-        ev.track = self.db.scalar(select(models.Track).where(models.Track.name == venue)) if venue else None
-        ev.date = min(filter(None, (_date(f.meta.get("date", "")) for f in files)), default=None)
+        if not (keep_track and ev.track is not None):
+            ev.track = self.db.scalar(select(models.Track).where(models.Track.name == venue)) if venue else None
+        if not (keep_date and ev.date is not None):
+            ev.date = min(filter(None, (_date(f.meta.get("date", "")) for f in files)), default=None)
 
 
 def _release_memory() -> None:

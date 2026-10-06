@@ -4,6 +4,7 @@ import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, useWind
 
 import { Bars, useChartColors } from '@/components/ReportCharts';
 import { TechniqueTrace } from '@/components/TechniqueTrace';
+import { SessionSwitcher, useEventFolder } from '@/components/SessionSwitcher';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
 import { formatLap } from '@/lib/api';
@@ -76,8 +77,9 @@ export default function TechniqueScreen() {
     };
   }, [sessionId, lap, nonce]);
 
-  // the event: where to open (its quickest lap) and its other sessions to switch to
+  // the event: where to open (its quickest lap) and its other sessions to switch to, by day
   const eventId = eventParam ?? answer?.event?.id ?? null;
+  const folder = useEventFolder(eventId ?? (answer ? null : undefined));
   const sessionSettled = sessionId == null || (answer != null && !working(answer.status));
   useEffect(() => {
     if (eventId == null || !sessionSettled) return;
@@ -177,7 +179,10 @@ export default function TechniqueScreen() {
           </Text>
         )}
 
-        {sessions.length > 1 && (
+        {folder && folder.id != null && (
+          <SessionSwitcher folder={folder} current={sessionId} onlyTimed onPick={(s) => pickSession(s.id)} />
+        )}
+        {!folder && sessions.length > 1 && (
           <View style={styles.block}>
             <Text style={styles.h4}>Session</Text>
             <View style={styles.chips}>

@@ -47,6 +47,9 @@ class Storage(Protocol):
     def local_path(self, key: str) -> Path:
         """A local file with the contents stored under the key. FileNotFoundError when there is none."""
 
+    def delete(self, key: str) -> None:
+        """Remove the file stored under the key; nothing happens when there is none."""
+
 
 def _new_key(suffix: str) -> str:
     return f"{uuid.uuid4().hex}{suffix.lower()}"
@@ -83,6 +86,14 @@ class LocalStorage:
             if p.is_file():
                 return p
         raise FileNotFoundError(f"Stored file {key} not found")
+
+    def delete(self, key: str) -> None:
+        """Only inside the storage folder, also for an older row's full path."""
+        root = self.root.resolve()
+        for p in (self.root / key, Path(key)):
+            if p.is_file() and p.resolve().is_relative_to(root):
+                p.unlink(missing_ok=True)
+                return
 
 
 class SupabaseStorage:
@@ -164,6 +175,13 @@ class SupabaseStorage:
                 return self._write_cache(key, (d.decompress(chunk) for chunk in r.iter_bytes()), d)
             return self._write_cache(key, r.iter_bytes())
 
+    def delete(self, key: str) -> None:
+        r = self.client.delete(self._url(key))
+        # older Storage versions answer 400 with a "not found" body for a missing object
+        if r.status_code >= 400 and r.status_code != 404 and "not found" not in r.text.lower():
+            raise self._fail("delete the file", r)
+        (self.cache_dir / key).unlink(missing_ok=True)
+
     def _write_cache(self, key: str, chunks, decompressor=None) -> Path:
         """Write to a temporary name and rename, so a reader never sees half a file."""
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -226,3 +244,7 @@ def save_file(path: Path, suffix: str) -> str:
 
 def local_path(key: str) -> Path:
     return backend().local_path(key)
+
+
+def delete(key: str) -> None:
+    backend().delete(key)

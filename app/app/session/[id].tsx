@@ -1,13 +1,15 @@
 import * as DocumentPicker from 'expo-document-picker';
-import { Link, Stack, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { Link, Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
 
 import { SessionDriver } from '@/components/DriverPicker';
 import { LapCompare } from '@/components/LapCompare';
+import { SessionSwitcher, useEventFolder } from '@/components/SessionSwitcher';
 import { SetupCard } from '@/components/SetupCard';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
+import { UntimedNote } from '@/components/UntimedNote';
 import { Analysis, api, Debrief, DETECTED_CORNERS_NOTE, formatLap, SessionDetail } from '@/lib/api';
 import { Tagged } from '@/lib/drivers';
 
@@ -21,15 +23,28 @@ export default function SessionScreen() {
   const [error, setError] = useState<string | null>(null);
   const tint = useThemeColor({}, 'tint');
   const background = useThemeColor({}, 'background');
+  const router = useRouter();
+  // the other sessions of its event, to switch to without going back: the page stays where it is, the last
+  // session's numbers dimmed until the new one's arrive
+  const folder = useEventFolder((session as { event_id?: number | null } | null)?.event_id);
+  const [analysisFor, setAnalysisFor] = useState<number | null>(null);
+  const current = useRef(sessionId);
+  current.current = sessionId;
 
   const load = useCallback(async () => {
     try {
       const s = await api.session(sessionId);
+      if (current.current !== sessionId) return; // switched again meanwhile
       setSession(s);
-      setDebriefs(await api.debriefs(sessionId));
-      setAnalysis(s.files.length ? await api.analysis(sessionId) : null);
+      const d = await api.debriefs(sessionId);
+      if (current.current !== sessionId) return;
+      setDebriefs(d);
+      const a = s.files.length ? await api.analysis(sessionId) : null;
+      if (current.current !== sessionId) return;
+      setAnalysis(a);
+      setAnalysisFor(sessionId);
     } catch (e) {
-      setError((e as Error).message);
+      if (current.current === sessionId) setError((e as Error).message);
     }
   }, [sessionId]);
   useEffect(() => {
@@ -54,6 +69,7 @@ export default function SessionScreen() {
 
   const best = session?.best_lap_s;
   const title = session?.name ?? 'Session';
+  const stale = (session != null && session.id !== sessionId) || (analysisFor != null && analysisFor !== sessionId);
 
   return (
     <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.container}>
@@ -63,126 +79,137 @@ export default function SessionScreen() {
           headerTitle: () => <HeaderTitle title={title} venue={session?.track_name} />,
         }}
       />
-      {session && (
-        <SessionDriver sessionId={sessionId} driverId={(session as Tagged).driver_id}
-          onChanged={() => api.session(sessionId).then(setSession, (e) => setError(e.message))} />
+      {folder && (
+        <SessionSwitcher folder={folder} current={sessionId}
+          onPick={(s) => router.setParams({ id: String(s.id) })} />
       )}
-      <View style={styles.facts}>
-        <Fact label="Best lap" value={formatLap(best)} />
-        <Fact label="Theoretical best" value={formatLap(analysis?.theoretical_best)} />
-        <Fact label="Laps" value={String(session?.laps.length ?? 0)} />
-      </View>
-      {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
-      {session?.laps.some((l) => l.clean) && (
-        <Link href={{ pathname: '/report', params: { session: sessionId } }} asChild>
-          <Pressable style={StyleSheet.flatten([styles.button, { backgroundColor: tint }])}>
-            <Text style={styles.buttonText}>Report: how to go faster</Text>
-          </Pressable>
-        </Link>
-      )}
-      {session?.laps.some((l) => l.clean) && (
-        <Link href={{ pathname: '/technique', params: { session: sessionId } }} asChild>
-          <Pressable style={StyleSheet.flatten([styles.button, styles.outline, { borderColor: tint }])}>
-            <Text style={[styles.buttonText, { color: tint }]}>Technique check</Text>
-          </Pressable>
-        </Link>
-      )}
-      {/* drawn from a clean lap; keyed so an upload that changes the laps redraws it */}
-      {session?.laps.some((l) => l.clean) && <TrackMap key={`${session.files.length}-${best}`} session={sessionId} />}
-
-      <Pressable style={[styles.button, { backgroundColor: tint }]} onPress={upload} disabled={busy}>
-        {busy ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.buttonText}>Upload a logger file (MoTeC .ld/.ldx, or a CSV export)</Text>
+      {stale && <ActivityIndicator />}
+      <View style={StyleSheet.flatten([styles.body, stale && styles.stale])}>
+        {session && (
+          <SessionDriver sessionId={sessionId} driverId={(session as Tagged).driver_id}
+            onChanged={() => api.session(sessionId).then(setSession, (e) => setError(e.message))} />
         )}
-      </Pressable>
-      {error && <Text style={styles.error}>{error}</Text>}
-      {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
-      {(session?.laps.length ?? 0) > 0 && (
-        <Link href={{ pathname: '/tools/stint', params: { session: sessionId } }} asChild>
-          <Pressable style={StyleSheet.flatten([styles.button, styles.outline, { borderColor: tint }])}>
-            <Text style={[styles.buttonText, { color: tint }]}>Stint analysis</Text>
-          </Pressable>
-        </Link>
-      )}
-      {session?.best_lap_s != null && (
-        <Link href={{ pathname: '/compare', params: { session: sessionId } }} asChild>
-          <Pressable style={StyleSheet.flatten([styles.button, styles.outline, { borderColor: tint }])}>
-            <Text style={[styles.buttonText, { color: tint }]}>Compare with other sessions and drivers</Text>
-          </Pressable>
-        </Link>
-      )}
-
-      <SetupCard sessionId={sessionId} />
-
-      {debriefs.length > 0 && (
-        <View style={styles.section}>
-          <Text style={styles.h2}>Debriefs</Text>
-          {debriefs.map((d) => (
-            <Link key={d.id} href={{ pathname: '/debrief/[id]', params: { id: d.id } }} asChild>
-              <Pressable style={styles.corner}>
-                <Text style={styles.cornerTitle}>
-                  {new Date(d.created_at).toLocaleString()} · {d.mode === 'group' ? 'group' : 'driver'}
-                </Text>
-                <Text style={styles.sub} numberOfLines={2}>
-                  {d.status === 'ready'
-                    ? d.summary || `${d.points.length} points`
-                    : d.status === 'failed'
-                      ? 'Not processed yet'
-                      : 'Processing…'}
-                </Text>
-              </Pressable>
-            </Link>
-          ))}
+        <View style={styles.facts}>
+          <Fact label="Best lap" value={formatLap(best)} />
+          <Fact label="Theoretical best" value={formatLap(analysis?.theoretical_best)} />
+          <Fact label="Laps" value={String(session?.laps.length ?? 0)} />
         </View>
-      )}
+        {session && <UntimedNote session={session} />}
+        {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
+        {session?.laps.some((l) => l.clean) && (
+          <Link href={{ pathname: '/report', params: { session: sessionId } }} asChild>
+            <Pressable style={StyleSheet.flatten([styles.button, { backgroundColor: tint }])}>
+              <Text style={styles.buttonText}>Report: how to go faster</Text>
+            </Pressable>
+          </Link>
+        )}
+        {session?.laps.some((l) => l.clean) && (
+          <Link href={{ pathname: '/technique', params: { session: sessionId } }} asChild>
+            <Pressable style={StyleSheet.flatten([styles.button, styles.outline, { borderColor: tint }])}>
+              <Text style={[styles.buttonText, { color: tint }]}>Technique check</Text>
+            </Pressable>
+          </Link>
+        )}
+        {/* drawn from a clean lap; keyed so an upload that changes the laps redraws it */}
+        {session?.laps.some((l) => l.clean) && (
+          <TrackMap key={`${session.id}-${session.files.length}-${best}`} session={session.id} />
+        )}
 
-      {analysis && session && analysis.corners.length > 0 && (
-        <LapCompare sessionId={sessionId} analysis={analysis} laps={session.laps} />
-      )}
-
-      {analysis && (
-        <View style={styles.section}>
-          <Text style={styles.h2}>Corners vs best lap {analysis.reference_lap}</Text>
-          {analysis.numbering === 'detected' && analysis.corners.length > 0 && (
-            <Text style={styles.note}>{DETECTED_CORNERS_NOTE}</Text>
+        <Pressable style={[styles.button, { backgroundColor: tint }]} onPress={upload} disabled={busy}>
+          {busy ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.buttonText}>Upload a logger file (MoTeC .ld/.ldx, or a CSV export)</Text>
           )}
-          {analysis.corners.map((c) => {
-            const ref = c.laps[String(analysis.reference_lap)];
-            const top = c.laps[String(c.best_lap)];
-            return (
-              <View key={c.code} style={styles.corner}>
-                <Text style={styles.cornerTitle}>
-                  {c.code} · {Math.round(c.apex_m)} m
-                </Text>
-                <Text style={styles.sub}>
-                  {ref.time.toFixed(2)} s on lap {analysis.reference_lap} · best {top.time.toFixed(2)} s on lap{' '}
-                  {c.best_lap}
-                </Text>
-                <Text style={styles.sub}>
-                  Brake {ref.brake_point ?? '–'} m · min {ref.min_speed.toFixed(1)} km/h · full throttle{' '}
-                  {ref.full_throttle ?? '–'} m
+        </Pressable>
+        {error && <Text style={styles.error}>{error}</Text>}
+        {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
+        {(session?.laps.length ?? 0) > 0 && (
+          <Link href={{ pathname: '/tools/stint', params: { session: sessionId } }} asChild>
+            <Pressable style={StyleSheet.flatten([styles.button, styles.outline, { borderColor: tint }])}>
+              <Text style={[styles.buttonText, { color: tint }]}>Stint analysis</Text>
+            </Pressable>
+          </Link>
+        )}
+        {session?.best_lap_s != null && (
+          <Link href={{ pathname: '/compare', params: { session: sessionId } }} asChild>
+            <Pressable style={StyleSheet.flatten([styles.button, styles.outline, { borderColor: tint }])}>
+              <Text style={[styles.buttonText, { color: tint }]}>Compare with other sessions and drivers</Text>
+            </Pressable>
+          </Link>
+        )}
+
+        <SetupCard sessionId={sessionId} />
+
+        {debriefs.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.h2}>Debriefs</Text>
+            {debriefs.map((d) => (
+              <Link key={d.id} href={{ pathname: '/debrief/[id]', params: { id: d.id } }} asChild>
+                <Pressable style={styles.corner}>
+                  <Text style={styles.cornerTitle}>
+                    {new Date(d.created_at).toLocaleString()} · {d.mode === 'group' ? 'group' : 'driver'}
+                  </Text>
+                  <Text style={styles.sub} numberOfLines={2}>
+                    {d.status === 'ready'
+                      ? d.summary || `${d.points.length} points`
+                      : d.status === 'failed'
+                        ? 'Not processed yet'
+                        : 'Processing…'}
+                  </Text>
+                </Pressable>
+              </Link>
+            ))}
+          </View>
+        )}
+
+        {analysis && session && analysisFor === session.id && analysis.corners.length > 0 && (
+          <LapCompare key={`${session.id}-${analysis.file_id}`} sessionId={session.id} analysis={analysis}
+            laps={session.laps} />
+        )}
+
+        {analysis && (
+          <View style={styles.section}>
+            <Text style={styles.h2}>Corners vs best lap {analysis.reference_lap}</Text>
+            {analysis.numbering === 'detected' && analysis.corners.length > 0 && (
+              <Text style={styles.note}>{DETECTED_CORNERS_NOTE}</Text>
+            )}
+            {analysis.corners.map((c) => {
+              const ref = c.laps[String(analysis.reference_lap)];
+              const top = c.laps[String(c.best_lap)];
+              return (
+                <View key={c.code} style={styles.corner}>
+                  <Text style={styles.cornerTitle}>
+                    {c.code} · {Math.round(c.apex_m)} m
+                  </Text>
+                  <Text style={styles.sub}>
+                    {ref.time.toFixed(2)} s on lap {analysis.reference_lap} · best {top.time.toFixed(2)} s on lap{' '}
+                    {c.best_lap}
+                  </Text>
+                  <Text style={styles.sub}>
+                    Brake {ref.brake_point ?? '–'} m · min {ref.min_speed.toFixed(1)} km/h · full throttle{' '}
+                    {ref.full_throttle ?? '–'} m
+                  </Text>
+                </View>
+              );
+            })}
+          </View>
+        )}
+
+        {session && session.laps.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.h2}>Laps</Text>
+            {session.laps.map((l) => (
+              <View key={`${l.file_id}-${l.number}`} style={styles.lap}>
+                <Text style={[styles.lapNo, !l.clean && styles.dim]}>L{l.number}</Text>
+                <Text style={[styles.time, !l.clean && styles.dim, l.time_s === best && { color: tint }]}>
+                  {formatLap(l.time_s)}
                 </Text>
               </View>
-            );
-          })}
-        </View>
-      )}
-
-      {session && session.laps.length > 0 && (
-        <View style={styles.section}>
-          <Text style={styles.h2}>Laps</Text>
-          {session.laps.map((l) => (
-            <View key={`${l.file_id}-${l.number}`} style={styles.lap}>
-              <Text style={[styles.lapNo, !l.clean && styles.dim]}>L{l.number}</Text>
-              <Text style={[styles.time, !l.clean && styles.dim, l.time_s === best && { color: tint }]}>
-                {formatLap(l.time_s)}
-              </Text>
-            </View>
-          ))}
-        </View>
-      )}
+            ))}
+          </View>
+        )}
+      </View>
     </ScrollView>
   );
 }
@@ -214,6 +241,8 @@ function Fact({ label, value }: { label: string; value: string }) {
 
 const styles = StyleSheet.create({
   container: { padding: 16, gap: 16 },
+  body: { gap: 16, backgroundColor: 'transparent' },
+  stale: { opacity: 0.45, pointerEvents: 'none' },
   headerTitle: { backgroundColor: 'transparent', flexShrink: 1 },
   headerName: { fontSize: 17, fontWeight: '600' },
   headerVenue: { fontSize: 12, opacity: 0.6 },
