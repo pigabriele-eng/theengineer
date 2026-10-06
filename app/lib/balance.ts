@@ -2,6 +2,7 @@
 // Balance values are degrees of steering against the car's own normal at the same cornering g: + more understeer
 // (the front pushes), − more oversteer (the rear slides). Corners are official numbers only (T1, T2-T5, T8/T9...).
 import { apiFetch } from '@/lib/api';
+import type { QuickestLaps } from '@/lib/grip';
 
 export type BalanceKind = 'understeer' | 'oversteer' | 'normal';
 export type Strength = 'slight' | 'clear' | 'strong' | null;
@@ -144,6 +145,7 @@ export type BalanceReport = {
     notes: string[];
   };
   sessions: BalanceSession[];
+  quickest_laps?: QuickestLaps; // a long event is worked out from its quickest laps only
 };
 
 export async function fetchBalance({ session, event }: { session?: number; event?: number }): Promise<BalanceReport> {

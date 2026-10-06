@@ -6,7 +6,17 @@ import Svg, { Rect } from 'react-native-svg';
 
 import { Text, View } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
-import { fetchGrip, GripResult, GripSection, Headline, PHASES, signedR, TcZone, Verdict } from '@/lib/grip';
+import {
+  fetchGrip,
+  GripResult,
+  GripSection,
+  Headline,
+  PHASES,
+  quickestLapsLine,
+  signedR,
+  TcZone,
+  Verdict,
+} from '@/lib/grip';
 
 import { ChartColors, Dumbbell, GgDiagram, GripMap, inkOn, LegendItem, ramp, Scatter, useChartColors } from './GripCharts';
 
@@ -73,6 +83,7 @@ function Report({ data }: { data: GripResult }) {
           {data.quick_laps} within 1 % of the best ({formatLap(fastest.time)}, {fastest.run} lap {fastest.lap}). Grip use
           is the share of the car's grip limit in use while braking and cornering.
         </Text>
+        {data.quickest_laps && <Text style={styles.dim}>{quickestLapsLine(data.quickest_laps)}</Text>}
       </View>
 
       <View style={styles.tiles}>
