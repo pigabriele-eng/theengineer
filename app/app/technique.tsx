@@ -21,7 +21,7 @@ import {
   SessionTechnique,
   working,
 } from '@/lib/technique';
-import { Radius, themed } from '@/constants/Theme';
+import { deltaColor, phaseColor, Radius, themed, useTheme } from '@/constants/Theme';
 
 const POLL_MS = 2000;
 const WIDE = 900;
@@ -36,6 +36,7 @@ const HABITS_SHOWN = 6;
  * lap on the track map and against perfect driving's speed. Opened from a session (?session=) or an event's report
  * (?event=, at the event's quickest lap); ?lap= picks the lap. */
 export default function TechniqueScreen() {
+  const theme = useTheme();
   const styles = useStyles();
   const params = useLocalSearchParams<{ session?: string; event?: string; lap?: string }>();
   const router = useRouter();
@@ -203,7 +204,8 @@ export default function TechniqueScreen() {
               {answer.laps.map((l) => (
                 <Chip key={l.number} on={l.number === check?.number} onPress={() => pickLap(l.number)}
                   label={`${l.number}`} detail={`${formatLap(l.time)}${l.number === answer.best_lap ? ' best' : ''}` +
-                    `${l.in_lap ? ' in' : ''}`} />
+                    `${l.in_lap ? ' in' : ''}`}
+                  tone={l.number === answer.best_lap ? theme.lap.fastest : l.in_lap ? theme.lap.outIn : undefined} />
               ))}
             </View>
             <Text style={styles.note}>Clean laps only: out-laps and in-laps say little about technique.</Text>
@@ -342,7 +344,8 @@ function OnTheTrack({ answer, check, selected, onSelect, wide }: { answer: Sessi
 }
 
 const bandsOf = (check: LapCheck) =>
-  check.mistakes.map((m, i) => ({ n: i + 1, start_m: m.start_m, end_m: m.end_m, label: `${m.title} (${m.code})` }));
+  check.mistakes.map((m, i) => ({ n: i + 1, start_m: m.start_m, end_m: m.end_m, label: `${m.title} (${m.code})`,
+    phase: m.phase }));
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   const styles = useStyles();
@@ -354,14 +357,18 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Chip({ label, detail, on, onPress }: { label: string; detail?: string; on: boolean; onPress: () => void }) {
+function Chip({ label, detail, tone, on, onPress }: {
+  label: string; detail?: string; tone?: string; on: boolean; onPress: () => void; // tone: the detail's lap-status colour
+}) {
+  const theme = useTheme();
   const styles = useStyles();
   const c = useChartColors();
   return (
     <Pressable accessibilityRole="button" accessibilityState={{ selected: on }} onPress={onPress}
-      style={StyleSheet.flatten([styles.chip, { borderColor: on ? c.text : c.grid }])}>
+      style={StyleSheet.flatten([styles.chip, { borderColor: on ? theme.tint : c.grid }])}>
       <Text style={StyleSheet.flatten([styles.chipLabel, on && styles.bold])}>{label}</Text>
-      {detail ? <Text style={styles.chipDetail}>{detail}</Text> : null}
+      {detail ? <Text style={StyleSheet.flatten([styles.chipDetail, tone ? { color: tone, opacity: 1 } : null])}>{detail}</Text>
+        : null}
     </Pressable>
   );
 }
@@ -420,17 +427,19 @@ function Tile({ label, value, detail }: { label: string; value: string; detail: 
 }
 
 function MistakeCard({ n, m, on, onPress }: { n: number; m: Mistake; on: boolean; onPress: () => void }) {
+  const theme = useTheme();
   const styles = useStyles();
   const c = useChartColors();
   return (
     <Pressable accessibilityRole="button" accessibilityState={{ selected: on }} onPress={onPress}
-      style={StyleSheet.flatten([styles.card, { borderColor: on ? c.text : c.grid }])}>
+      style={StyleSheet.flatten([styles.card, { borderColor: on ? theme.tint : c.grid,
+        borderLeftColor: phaseColor(theme, m.phase) }])}>
       <View style={styles.cardHead}>
         <View style={[styles.badge, { backgroundColor: on ? c.text : c.axis }]}>
           <Text style={[styles.badgeText, { color: c.surface }]}>{n}</Text>
         </View>
         <Text style={styles.cardTitle}>{m.title}</Text>
-        <Text style={styles.cost}>{s2(m.cost_s)}</Text>
+        <Text style={StyleSheet.flatten([styles.cost, { color: deltaColor(theme, m.cost_s) }])}>{s2(m.cost_s)}</Text>
       </View>
       <Text style={styles.meta}>
         {m.code} · {m.phase} · {Math.round(m.start_m)}–{m0(m.end_m)}
@@ -579,7 +588,7 @@ const useStyles = themed((c) => ({
   label: { fontSize: 12, opacity: 0.65, textTransform: 'uppercase', letterSpacing: 0.5 },
   tileValue: { fontSize: 22, fontWeight: '600', fontVariant: ['tabular-nums'] },
   summary: { fontSize: 15, lineHeight: 21 },
-  card: { borderWidth: 1, borderRadius: Radius.card, padding: 14, gap: 6 },
+  card: { borderWidth: 1, borderLeftWidth: 4, borderRadius: Radius.card, padding: 14, gap: 6, backgroundColor: c.surface },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'transparent' },
   badge: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
   badgeText: { fontSize: 12, fontWeight: '700' },

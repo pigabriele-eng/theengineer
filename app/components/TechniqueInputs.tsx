@@ -8,10 +8,10 @@ import { GestureResponderEvent, LayoutChangeEvent, Platform, StyleSheet } from '
 import Svg, { Circle, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
 
 import { niceTicks, useChartColors } from '@/components/ReportCharts';
-import { Band, pointRange, TRACE_PAD_X } from '@/components/TechniqueTrace';
+import { Band, bandFill, pointRange, TRACE_PAD_X } from '@/components/TechniqueTrace';
 import { Text, View } from '@/components/Themed';
 import { InputRole, Inputs, MODEL_PHASES } from '@/lib/technique';
-import { Fonts } from '@/constants/Theme';
+import { Fonts, phaseColor, useTheme } from '@/constants/Theme';
 
 type Props = {
   stepM: number;
@@ -54,6 +54,7 @@ type Geometry = {
 
 export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, phases, channels, bands, selected,
   onSelect, corners, from, to, cursor, onCursor, tall }: Props) {
+  const theme = useTheme();
   const c = useChartColors();
   const [width, setWidth] = useState(0);
   const [i0, i1] = pointRange(stepM, points - 1, from, to);
@@ -91,7 +92,7 @@ export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, 
   const have = CHANNELS.filter((ch) => inputs[ch.role]);
   const missing = CHANNELS.filter((ch) => !inputs[ch.role]);
   const fastestMissing = fastest ? have.filter((ch) => !fastest[ch.role]) : [];
-  const phaseColors = [c.secondary, c.axis, c.muted]; // braking stands out most, full throttle least
+  const phaseColors = MODEL_PHASES.map((p) => phaseColor(theme, p)); // the driving phases' colours, as everywhere
   const unitOf = (ch: (typeof CHANNELS)[number]) => channels?.[ch.role]?.unit ?? ch.unit;
   const height = (role: InputRole) => (role === 'gear' ? (tall ? 84 : 64) : tall ? 112 : 84);
   const sources = have.map((ch) => channels?.[ch.role]?.channel).filter((s): s is string => !!s);
@@ -196,6 +197,7 @@ type ChannelProps = {
 
 function Channel({ geo, title, unit, digits, role, values, under, bands, selected, cursor, height, corners }:
   ChannelProps) {
+  const theme = useTheme();
   const c = useChartColors();
   const { i0, i1, stepM, px, width } = geo;
   const axisRow = corners.length ? AXIS_ROW : 0;
@@ -271,7 +273,7 @@ function Channel({ geo, title, unit, digits, role, values, under, bands, selecte
             const xa = px(Math.max(b.start_m, i0 * stepM)), xb = px(Math.min(b.end_m, i1 * stepM));
             return (
               <Rect key={`b${b.n}`} x={xa} y={top} width={Math.max(xb - xa, 2)} height={h}
-                fill={b.n === selected ? c.muted : c.grid} fillOpacity={b.n === selected ? 0.75 : 0.7} />
+                {...bandFill(theme, b, b.n === selected, c.grid, c.muted)} />
             );
           })}
           {ticks.map((t) => (

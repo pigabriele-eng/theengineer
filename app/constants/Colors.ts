@@ -73,7 +73,9 @@ export type DeltaTokens = {
   gain: string; // text and marks
   loss: string;
   even: string; // no real difference
-  gainSteps: string[]; // washes, weakest first
+  gainRamp: [string, string]; // marks (bars, track sections), smallest to biggest difference
+  lossRamp: [string, string];
+  gainSteps: string[]; // washes behind text, weakest first
   lossSteps: string[];
 };
 
@@ -125,6 +127,8 @@ const light: Palette = {
     gain: '#006300',
     loss: '#c8372d',
     even: '#898781',
+    gainRamp: ['#7fc98f', '#0f6b2c'],
+    lossRamp: ['#ee9a92', '#a3241b'],
     gainSteps: ['#e3f3e3', '#b9e2b9', '#86cc86'],
     lossSteps: ['#fbe4e2', '#f4bdb8', '#ea8f88'],
   },
@@ -180,6 +184,8 @@ const dark: Palette = {
     gain: '#3fbf5a',
     loss: '#ff6b5e',
     even: '#898781',
+    gainRamp: ['#2f7d43', '#8be39c'],
+    lossRamp: ['#a33a31', '#ff9d92'],
     gainSteps: ['#173a1f', '#1f5a2c', '#2a7f3d'],
     lossSteps: ['#45201d', '#6e2c27', '#9c3a33'],
   },

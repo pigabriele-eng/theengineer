@@ -34,7 +34,7 @@ import {
   TAGS,
   Words,
 } from '@/lib/stint';
-import { Radius, themed } from '@/constants/Theme';
+import { inkOn, Palette, phaseColor, Radius, themed, useTheme } from '@/constants/Theme';
 
 const ALL = 'all';
 const MAX_LOGS = 12; // the server reads at most this many logs in one view
@@ -506,6 +506,7 @@ function Section({ title, intro, children }: { title: string; intro?: string; ch
 function PhaseTable({ fits, fade, stint, wide }: {
   fits: Partial<Record<string, Fit>>; fade: StintView['overall']['fade']; stint: Stint | null; wide: boolean;
 }) {
+  const theme = useTheme();
   const styles = useStyles();
   const c = useChartColors();
   const pal = useBalanceColors();
@@ -532,13 +533,14 @@ function PhaseTable({ fits, fade, stint, wide }: {
           return (
             <Pressable key={p.key} onPress={() => setPhase(p.key)} disabled={wide || stint == null}
               accessibilityLabel={`${p.label}: grip ${fixed(g?.level, 2)} g, ${signed(gp, 1)} %, balance ${signed(b?.change)}°`}
-              style={StyleSheet.flatten([styles.phaseRow, on && { borderColor: tint }])}>
+              style={StyleSheet.flatten([styles.phaseRow, on && { borderColor: tint },
+                { borderLeftColor: phaseColor(theme, p.key) }])}>
               <Text style={StyleSheet.flatten([styles.phaseCol, styles.body, on && { color: tint, fontWeight: '600' }])}>
                 {p.label}
               </Text>
               <Text style={StyleSheet.flatten([styles.numCol, styles.num])}>{fixed(g?.level, 2)} g</Text>
               <View style={styles.cellBar}>
-                <ChangeBar value={gp} max={gripMax} color={(gp ?? 0) < 0 ? c.s2 : c.s1} faded={!g?.clear} />
+                <ChangeBar value={gp} max={gripMax} color={(gp ?? 0) < 0 ? theme.delta.loss : theme.delta.gain} faded={!g?.clear} />
                 <Text style={StyleSheet.flatten([styles.num, styles.cellNum, !g?.clear && styles.dim])}>
                   {gp == null ? '–' : `${signed(gp, 1)} %`}
                 </Text>
@@ -579,6 +581,7 @@ function PhaseTable({ fits, fade, stint, wide }: {
 function PhasePanel({ stint, phase, fade, width }: {
   stint: Stint; phase: (typeof GRIP_PHASES)[number]; fade?: StintView['overall']['fade'][number]; width: `${number}%`;
 }) {
+  const theme = useTheme();
   const styles = useStyles();
   const c = useChartColors();
   const laps = stint.laps.filter((l) => l.in_fit);
@@ -593,9 +596,10 @@ function PhasePanel({ stint, phase, fade, width }: {
         {phase.measure}
         {fade ? ` · fade ${signed(fade.per_lap, 3)} s/lap${fade.clear ? '' : ' (within scatter)'}` : ''}
       </Text>
-      <LineChart x={x} series={[{ key: 'g', label: 'Grip', values: grip, color: c.s1 }]} legend={[]} height={130}
+      <LineChart x={x} series={[{ key: 'g', label: 'Grip', values: grip, color: phaseColor(theme, phase.key) }]} legend={[]}
+        height={130}
         title="Grip, g" unit="lap" formatX={(v) => `L${v}`} formatY={(v) => v.toFixed(2)}
-        readout={(i) => [{ label: 'grip', value: `${fixed(grip[i], 3)} g`, color: c.s1 }]} />
+        readout={(i) => [{ label: 'grip', value: `${fixed(grip[i], 3)} g`, color: phaseColor(theme, phase.key) }]} />
       {!bal && <Text style={styles.small}>No balance here: the car runs straight.</Text>}
       {bal && (
         <LineChart x={x} series={[{ key: 'b', label: 'Balance', values: bal, color: c.s3 }]} legend={[]} height={130}
@@ -701,12 +705,25 @@ function LapTimes({ stint }: { stint: Stint }) {
   );
 }
 
+/** A lap's time in its status colour: the stint's fastest, a clean lap, an out/in-lap, a pit lap, or a lap tagged SC,
+ * FCY or traffic. */
+function lapTone(theme: Palette, l: StintLap, fastest: number | null) {
+  if (l.tag) return theme.lap.flag;
+  if (l.kind === 'pit') return theme.lap.pit;
+  if (l.kind === 'out' || l.kind === 'in') return theme.lap.outIn;
+  if (l.lap === fastest) return theme.lap.fastest;
+  return l.in_fit ? theme.lap.clean : theme.lap.outIn;
+}
+
 function LapList({ stint, onTag, tagging }: {
   stint: Stint; onTag: (s: Stint, l: StintLap, to: Tag | 'none' | 'count' | null) => void; tagging: string | null;
 }) {
+  const theme = useTheme();
   const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
-  const onTint = useThemeColor({}, 'onTint');
+  // the stint's quickest lap in the trend
+  const fastest = stint.laps.filter((l) => l.in_fit && !l.tag)
+    .reduce<StintLap | null>((b, l) => (b == null || l.time < b.time ? l : b), null)?.lap ?? null;
   return (
     <View style={styles.block}>
       <Text style={styles.small}>
@@ -729,7 +746,8 @@ function LapList({ stint, onTag, tagging }: {
             <View style={styles.lapMain}>
               <Text style={styles.lapNo}>L{l.lap}</Text>
               <View style={styles.flex}>
-                <Text style={StyleSheet.flatten([styles.lapTime, !l.in_fit && styles.dim])}>{formatLap(l.time)}</Text>
+                <Text style={StyleSheet.flatten([styles.lapTime, { color: lapTone(theme, l, fastest) },
+                  l.lap === fastest && styles.bold])}>{formatLap(l.time)}</Text>
                 <Text style={styles.small}>{status}</Text>
               </View>
               {busy && <ActivityIndicator size="small" />}
@@ -744,8 +762,8 @@ function LapList({ stint, onTag, tagging }: {
                         accessibilityLabel={on ? `Clear the ${TAG_WORDS[t]} tag on lap ${l.lap}`
                           : `Tag lap ${l.lap} ${TAG_WORDS[t]}`}
                         style={StyleSheet.flatten([styles.tagChip, suggested && { borderColor: tint, borderStyle: 'dashed' },
-                          on && { backgroundColor: tint, borderColor: tint }])}>
-                        <Text style={StyleSheet.flatten([styles.tagText, on && { color: onTint, fontWeight: '700' }])}>
+                          on && { backgroundColor: theme.lap.flag, borderColor: theme.lap.flag }])}>
+                        <Text style={StyleSheet.flatten([styles.tagText, on && { color: inkOn(theme.lap.flag), fontWeight: '700' }])}>
                           {TAG_LABEL[t]}
                         </Text>
                       </Pressable>
@@ -937,7 +955,7 @@ const useStyles = themed((c) => ({
   tableHead: { flexDirection: 'row', gap: 8, paddingHorizontal: 6 },
   th: { fontSize: 12, fontWeight: '600', opacity: 0.7 },
   phaseRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, paddingHorizontal: 6,
-    borderWidth: 1, borderColor: 'transparent', borderRadius: Radius.control },
+    borderWidth: 1, borderLeftWidth: 4, borderColor: 'transparent', borderRadius: Radius.control },
   phaseCol: { width: 92 },
   numCol: { width: 52 },
   num: { fontSize: 13, fontVariant: ['tabular-nums'] },
@@ -950,6 +968,7 @@ const useStyles = themed((c) => ({
   lapMain: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   lapNo: { width: 34, fontSize: 14, fontWeight: '600', fontVariant: ['tabular-nums'] },
   lapTime: { fontSize: 15, fontVariant: ['tabular-nums'] },
+  bold: { fontWeight: '700' },
   tagRow: { flexDirection: 'row', gap: 6 },
   tagChip: { borderWidth: 1, borderColor: c.borderStrong, borderRadius: Radius.chip, paddingHorizontal: 10, paddingVertical: 7,
     minWidth: 44, alignItems: 'center', backgroundColor: c.surface },

@@ -1,15 +1,22 @@
 // The technique check's speed trace: the lap's speed against perfect driving's and the realistic target's, with the
 // lap's mistakes marked as numbered bands. Series colours are slots 1 and 3 of the validated chart palette (as in
-// the report), the realistic target a dashed neutral line; bands are neutral so colour keeps meaning one thing.
+// the report), the realistic target a dashed neutral line; each band wears the colour of its driving phase, as
+// the phase strip and the report do, with the phase named in the legend.
 import { useMemo, useState } from 'react';
 import { GestureResponderEvent, LayoutChangeEvent, Platform, StyleSheet } from 'react-native';
 import Svg, { Circle, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
 
 import { niceTicks, useChartColors } from '@/components/ReportCharts';
 import { Text, View } from '@/components/Themed';
-import { Fonts, Radius, themed } from '@/constants/Theme';
+import { Fonts, Palette, phaseColor, Radius, themed, useTheme } from '@/constants/Theme';
 
-export type Band = { n: number; start_m: number; end_m: number; label: string };
+export type Band = { n: number; start_m: number; end_m: number; label: string; phase?: string };
+
+/** A mistake band's fill and how much of it shows: its phase's colour, stronger when picked. */
+export function bandFill(theme: Palette, b: Band, picked: boolean, grid: string, muted: string) {
+  if (!b.phase) return { fill: picked ? muted : grid, fillOpacity: picked ? 0.75 : 0.7 };
+  return { fill: phaseColor(theme, b.phase), fillOpacity: picked ? 0.45 : 0.2 };
+}
 
 type Props = {
   stepM: number;
@@ -35,6 +42,7 @@ const SANS = Fonts.sans;
 
 export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selected, onSelect, corners, from, to,
   height = 220, title, cursor: sharedCursor, onCursor }: Props) {
+  const theme = useTheme();
   const styles = useStyles();
   const c = useChartColors();
   const [width, setWidth] = useState(0);
@@ -113,8 +121,14 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
         ))}
         <View style={styles.legendItem}>
           <View style={[styles.bandKey, { backgroundColor: c.grid, borderColor: c.axis }]} />
-          <Text style={styles.legendText}>Mistake, numbered by cost</Text>
+          <Text style={styles.legendText}>Mistake, numbered by cost, in its phase&apos;s colour:</Text>
         </View>
+        {[...new Set(shown.map((b) => b.phase).filter((p): p is string => !!p))].map((p) => (
+          <View key={p} style={styles.legendItem}>
+            <View style={[styles.bandKey, { backgroundColor: phaseColor(theme, p), borderColor: phaseColor(theme, p) }]} />
+            <Text style={styles.legendText}>{p}</Text>
+          </View>
+        ))}
       </View>
       <View
         onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}
@@ -129,7 +143,7 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
             {shown.map((b) => (
               <Rect key={`b${b.n}`} x={px(Math.max(b.start_m, x0))} y={PAD.top}
                 width={Math.max(px(Math.min(b.end_m, x1)) - px(Math.max(b.start_m, x0)), 2)} height={h}
-                fill={b.n === selected ? c.muted : c.grid} fillOpacity={b.n === selected ? 0.75 : 0.7} />
+                {...bandFill(theme, b, b.n === selected, c.grid, c.muted)} />
             ))}
             {ticks.map((t) => (
               <Line key={`g${t}`} x1={PAD.left} x2={width - PAD.right} y1={py(t)} y2={py(t)} stroke={c.grid}

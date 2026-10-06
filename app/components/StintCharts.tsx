@@ -1,6 +1,6 @@
-// Charts for the stint tool. Colours: categorical slots of the validated chart palette (useChartColors) for the
-// loss/gain split of the fade (orange: slower, blue: quicker), and the balance report's diverging pair for the balance
-// (blue: understeer, red: oversteer, grey: within the normal). Values and labels always use text colours.
+// Charts for the stint tool. Colours: the app's time colours for the fade (red: slower, green: quicker), each phase's
+// own colour on its row, and the balance pair (understeer, oversteer, grey: within the normal). Values and labels
+// always use text colours, and every bar keeps its signed value beside it.
 import { useRef, useState } from 'react';
 import { LayoutChangeEvent, Platform, Pressable, StyleSheet, TextStyle } from 'react-native';
 import Svg, { Circle, Line, Path } from 'react-native-svg';
@@ -9,7 +9,7 @@ import { useChartColors } from '@/components/ReportCharts';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
 import { FadeRow, signed } from '@/lib/stint';
-import { byScheme } from '@/constants/Theme';
+import { byScheme, deltaColor, phaseColor, useTheme } from '@/constants/Theme';
 
 const BALANCE = byScheme((c) => c.balance);
 export const useBalanceColors = () => BALANCE[useColorScheme() === 'dark' ? 'dark' : 'light'];
@@ -94,6 +94,7 @@ function CentreBar({ width, value, max, color, height = 12, faded = false }: {
 
 /** The tyre fade split by phase, biggest loss first: s a lap, slower to the right, quicker to the left. */
 export function FadeBars({ rows, focus, onCorner }: { rows: FadeRow[]; focus?: string | null; onCorner?: OnCorner }) {
+  const theme = useTheme();
   const c = useChartColors();
   const [width, onLayout] = useWidth();
   const max = Math.max(...rows.map((r) => Math.abs(r.per_lap)), 0.01);
@@ -101,22 +102,22 @@ export function FadeBars({ rows, focus, onCorner }: { rows: FadeRow[]; focus?: s
   return (
     <View style={styles.block}>
       <View style={styles.legend}>
-        <Key color={c.s2} label="Slower as the stint goes on" />
-        <Key color={c.s1} label="Quicker" />
+        <Key color={theme.delta.loss} label="Slower as the stint goes on" />
+        <Key color={theme.delta.gain} label="Quicker" />
         <Key color={c.axis} label="Faded: within the lap-to-lap scatter" faded />
       </View>
       <View onLayout={onLayout} style={styles.block}>
         {rows.map((r) => (
-          <View key={r.key} style={styles.fadeRow}
+          <View key={r.key} style={StyleSheet.flatten([styles.fadeRow, { borderLeftColor: phaseColor(theme, r.key) }])}
             accessibilityLabel={`${r.label}: ${signed(r.per_lap, 3)} s a lap${r.clear ? '' : ', within the scatter'}`}>
             <View style={styles.rowHead}>
               <Text style={StyleSheet.flatten([styles.rowLabel, r.key === top && styles.strong])}>{r.label}</Text>
-              <Text style={StyleSheet.flatten([styles.rowValue, !r.clear && styles.dim])}>
+              <Text style={StyleSheet.flatten([styles.rowValue, { color: deltaColor(theme, r.per_lap) }, !r.clear && styles.dim])}>
                 {signed(r.per_lap, 3)} s/lap
               </Text>
             </View>
             {width > 0 && (
-              <CentreBar width={width} value={r.per_lap} max={max} color={r.per_lap >= 0 ? c.s2 : c.s1}
+              <CentreBar width={width} value={r.per_lap} max={max} color={r.per_lap >= 0 ? theme.delta.loss : theme.delta.gain}
                 faded={!r.clear} />
             )}
             {r.per_lap > 0 && r.corners.length > 0 && (
@@ -240,7 +241,7 @@ const styles = StyleSheet.create({
   swatch: { width: 12, height: 12, borderRadius: 3 },
   ring: { width: 10, height: 10, borderRadius: 5, borderWidth: 2 },
   legendText: { fontSize: 12, opacity: 0.75 },
-  fadeRow: { gap: 4, backgroundColor: 'transparent' },
+  fadeRow: { gap: 4, backgroundColor: 'transparent', borderLeftWidth: 4, paddingLeft: 8 }, // the phase's colour on the edge
   rowHead: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, backgroundColor: 'transparent' },
   rowLabel: { fontSize: 14, flexShrink: 1 },
   rowValue: { fontSize: 14, fontVariant: ['tabular-nums'], fontWeight: '600' },

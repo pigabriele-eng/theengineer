@@ -82,12 +82,24 @@ export function phaseColor(c: Palette, phase: string): string {
   return k ? c.phase[k] : c.chart.other;
 }
 
-/** The colour of a time difference in seconds (negative: quicker), stronger with its size against `scale` (the size
- * that counts as big on this screen). `wash`: the soft step for a background, else the colour for text and marks. */
-export function deltaColor(c: Palette, seconds: number, scale: number, wash = false): string {
-  const even = Math.abs(seconds) < 0.005;
-  if (!wash) return even ? c.delta.even : seconds < 0 ? c.delta.gain : c.delta.loss;
-  if (even) return 'transparent';
+const EVEN_S = 0.005; // a time difference smaller than this is no difference
+
+/** Text colour of a time difference in seconds: green when quicker (negative), red when slower, grey when even. */
+export function deltaColor(c: Palette, seconds: number | null | undefined): string | undefined {
+  if (seconds == null || !Number.isFinite(seconds)) return undefined;
+  return Math.abs(seconds) < EVEN_S ? c.delta.even : seconds < 0 ? c.delta.gain : c.delta.loss;
+}
+
+/** A mark's colour for a time difference, deeper the bigger it is against `scale` (what counts as big on the
+ * screen): bars, track sections, the edge of a card. */
+export function deltaMark(c: Palette, seconds: number, scale: number): string {
+  if (Math.abs(seconds) < EVEN_S) return c.delta.even;
+  return ramp(seconds < 0 ? c.delta.gainRamp : c.delta.lossRamp, Math.abs(seconds) / Math.max(scale, 1e-6));
+}
+
+/** A soft background for a time difference (a table cell), stronger the bigger it is against `scale`. */
+export function deltaWash(c: Palette, seconds: number, scale: number): string {
+  if (Math.abs(seconds) < EVEN_S) return 'transparent';
   const steps = seconds < 0 ? c.delta.gainSteps : c.delta.lossSteps;
   const k = Math.min(steps.length - 1, Math.floor((Math.abs(seconds) / Math.max(scale, 1e-6)) * steps.length));
   return steps[k];

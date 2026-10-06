@@ -23,7 +23,7 @@ import {
   ReportScope,
   SectionReport,
 } from '@/lib/report';
-import { Radius, themed, useTheme } from '@/constants/Theme';
+import { deltaColor, deltaMark, Palette, phaseColor, Radius, themed, useTheme } from '@/constants/Theme';
 
 const POLL_MS = 2000;
 const WIDE = 900;
@@ -45,6 +45,7 @@ const lapTick = (v: number) => {
 /** How to go faster, for a whole event (every session of a test) or one session: the advice first, then corner by
  * corner what to change and the evidence, then trends, consistency and what goes with lap time. */
 export default function ReportScreen() {
+  const theme = useTheme();
   const styles = useStyles();
   const params = useLocalSearchParams<{ event?: string; session?: string }>();
   const scope: ReportScope | null = params.event ? { event: Number(params.event) }
@@ -123,8 +124,12 @@ export default function ReportScreen() {
   // the sessions have clean laps (the report is ready or being worked out), so the other sections have data too
   const hasLaps = report != null || working || answer?.sessions.some((s) => s.included) === true;
   const highlight = focus ?? report?.gains[0]?.code ?? undefined;
-  const map = 'event' in scope ? <TrackMap event={scope.event} highlight={highlight} withShape onShape={setShape} />
-    : <TrackMap session={scope.session} highlight={highlight} withShape onShape={setShape} />;
+  const tones = report ? sectionTones(theme, report) : undefined;
+  const toneKey = tones ? 'Sections in red by the time a typical lap can gain there: the deeper, the more.' : undefined;
+  const map = 'event' in scope
+    ? <TrackMap event={scope.event} highlight={highlight} withShape onShape={setShape} sectionColors={tones} sectionKey={toneKey} />
+    : <TrackMap session={scope.session} highlight={highlight} withShape onShape={setShape} sectionColors={tones}
+      sectionKey={toneKey} />;
 
   return (
     <ScrollView ref={scroll} contentContainerStyle={styles.outer}>
@@ -210,7 +215,7 @@ export default function ReportScreen() {
                 What a typical lap ({formatLap(report.headline.typical)}) loses to the quick passes of every section,
                 added up by what the quickest pass was doing at each metre.
               </Text>
-              <Bars rows={PHASES.map((p) => ({ label: cap(p), value: report.where_total[p] ?? 0 }))} />
+              <Bars rows={PHASES.map((p) => ({ label: cap(p), value: report.where_total[p] ?? 0, color: phaseColor(theme, p) }))} />
             </Section>
 
             <Section title="Corner by corner">
@@ -285,6 +290,13 @@ export default function ReportScreen() {
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
+/** Each section's colour on the map and on its cards: red, deeper the more time a typical lap can gain there. */
+function sectionTones(theme: Palette, report: Report): Record<string, string> {
+  const top = Math.max(...report.sections.map((s) => s.gain_s), 0.01);
+  return Object.fromEntries(report.sections.map((s) => [s.code, s.gain_s >= 0.01 ? deltaMark(theme, s.gain_s, top)
+    : theme.chart.axis]));
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   const styles = useStyles();
   return (
@@ -324,6 +336,7 @@ function Glance({ report, onPick, focus }: { report: Report; onPick: (code: stri
   const h = report.headline;
   const sc = h.score;
   const border = useChartColors().grid;
+  const tones = sectionTones(theme, report);
   return (
     <View style={styles.glance}>
       <View style={styles.scoreRow}>
@@ -362,11 +375,12 @@ function Glance({ report, onPick, focus }: { report: Report; onPick: (code: stri
       )}
       {report.gains.map((g, i) => (
         <Pressable key={g.code} accessibilityRole="button" onPress={() => onPick(g.code)}
-          style={StyleSheet.flatten([styles.gain, { borderColor: g.code === focus ? theme.tint : border }])}>
+          style={StyleSheet.flatten([styles.gain, { borderColor: g.code === focus ? theme.tint : border,
+            borderLeftColor: tones[g.code] ?? border }])}>
           <View style={styles.gainHead}>
             <Text style={styles.gainRank}>{i + 1}</Text>
             <Text style={styles.gainCode}>{g.code}</Text>
-            <Text style={styles.gainSeconds}>{s2(g.seconds)}</Text>
+            <Text style={StyleSheet.flatten([styles.gainSeconds, { color: deltaColor(theme, g.seconds) }])}>{s2(g.seconds)}</Text>
           </View>
           {g.action && <Text style={styles.gainAction}>{g.action}</Text>}
           {g.advice.filter((a) => a !== g.action).map((a) => (
@@ -413,13 +427,17 @@ function DrivingCard({ section: s, report, wide, onMap }: {
   const hidden = s.habits.length - telling.length;
   const also = s.advice.filter((a) => a !== s.headline);
   const top = Math.max(...PHASES.map((p) => s.where[p] ?? 0), 0.001);
+  const theme = useTheme();
+  const tone = sectionTones(theme, report)[s.code];
   return (
-    <View style={[styles.card, { borderColor: c.grid }]}>
+    <View style={[styles.card, { borderColor: c.grid, borderLeftColor: tone ?? c.grid }]}>
       <View style={styles.cardHead}>
         <Pressable accessibilityRole="button" accessibilityLabel={`Show ${s.code} on the map`} onPress={onMap}>
           <Text style={styles.cardCode}>{s.code}</Text>
         </Pressable>
-        <Text style={styles.cardGain}>{s.gain_s >= 0.01 ? `${s2(s.gain_s)} to gain` : 'Nothing to gain'}</Text>
+        <Text style={StyleSheet.flatten([styles.cardGain, s.gain_s >= 0.01 && { color: deltaColor(theme, s.gain_s) }])}>
+          {s.gain_s >= 0.01 ? `${s2(s.gain_s)} to gain` : 'Nothing to gain'}
+        </Text>
       </View>
       <Text style={styles.note}>
         {Math.round(s.start_m)}–{Math.round(s.end_m)} m{s.flat ? ' · flat out' : ''} · {s.quick_passes} quick passes
@@ -438,7 +456,8 @@ function DrivingCard({ section: s, report, wide, onMap }: {
           )}
           <View style={styles.block}>
             <Text style={styles.h4}>Where the time goes</Text>
-            <Bars rows={PHASES.map((p) => ({ label: cap(p), value: s.where[p] ?? 0 }))} max={top} />
+            <Bars rows={PHASES.map((p) => ({ label: cap(p), value: s.where[p] ?? 0, color: phaseColor(theme, p) }))}
+              max={top} />
             <Text style={styles.note}>{s.loss_line}</Text>
           </View>
           <View style={styles.block}>
@@ -695,7 +714,7 @@ const useStyles = themed((c) => ({
   tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   tile: { flexBasis: '46%', flexGrow: 1, gap: 2 },
   tileValue: { fontSize: 22, fontWeight: '600' },
-  gain: { borderWidth: 1, borderRadius: Radius.control, padding: 12, gap: 4 },
+  gain: { borderWidth: 1, borderLeftWidth: 4, borderRadius: Radius.card, padding: 12, gap: 4, backgroundColor: c.surface },
   gainHead: { flexDirection: 'row', alignItems: 'baseline', gap: 10, backgroundColor: 'transparent' },
   gainRank: { fontSize: 14, opacity: 0.6, fontWeight: '700' },
   gainCode: { fontSize: 18, fontWeight: '700', flex: 1 },
@@ -703,7 +722,7 @@ const useStyles = themed((c) => ({
   gainAction: { fontSize: 15, fontWeight: '600' },
   bullet: { fontSize: 14, lineHeight: 20 },
   summary: { fontSize: 14, lineHeight: 20, opacity: 0.85 },
-  card: { borderWidth: 1, borderRadius: Radius.card, padding: 14, gap: 10 },
+  card: { borderWidth: 1, borderLeftWidth: 4, borderRadius: Radius.card, padding: 14, gap: 10, backgroundColor: c.surface },
   cardHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 },
   cardCode: { fontSize: 22, fontWeight: '700', textDecorationLine: 'underline' },
   cardGain: { fontSize: 15, fontWeight: '600' },

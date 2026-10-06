@@ -217,7 +217,9 @@ export default function SessionScreen() {
             {session.laps.map((l) => (
               <View key={`${l.file_id}-${l.number}`} style={styles.lap}>
                 <Text style={[styles.lapNo, !l.clean && styles.dim]}>L{l.number}</Text>
-                <Text style={[styles.time, !l.clean && styles.dim, l.time_s === best && { color: tint }]}>
+                {/* lap status: the fastest in its colour (and bold), clean laps in ink, the rest (out, in, pit) grey */}
+                <Text style={[styles.time, { color: l.time_s === best ? theme.lap.fastest : l.clean ? theme.lap.clean
+                  : theme.lap.outIn }, l.time_s === best && styles.bold]}>
                   {formatLap(l.time_s)}
                 </Text>
               </View>
@@ -281,4 +283,5 @@ const useStyles = themed((c) => ({
   lapNo: { fontVariant: ['tabular-nums'] },
   time: { fontVariant: ['tabular-nums'], fontSize: 16 },
   dim: { opacity: 0.4 },
+  bold: { fontWeight: '700' },
 }));

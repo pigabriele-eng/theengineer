@@ -62,8 +62,9 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
     const base = colorScheme === 'dark' ? DarkTheme : DefaultTheme;
     return {
       ...base,
-      colors: { ...base.colors, primary: c.tint, background: c.background, card: c.tabBar, text: c.text,
-        border: c.border, notification: c.error },
+      // on the web the pages are see-through: the root view below paints the page colour and the picture
+      colors: { ...base.colors, primary: c.tint, background: Platform.OS === 'web' ? 'transparent' : c.background,
+        card: c.tabBar, text: c.text, border: c.border, notification: c.error },
     };
   }, [colorScheme, c]);
   // the browser's own pieces (scrollbars, date fields, the page behind the app) in the same scheme

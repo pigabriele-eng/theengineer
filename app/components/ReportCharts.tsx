@@ -19,7 +19,7 @@ const SANS = Fonts.sans;
 
 /** Horizontal bars, one per row, value at the tip: where a typical pass loses time, by phase. */
 export function Bars({ rows, unit = 's', digits = 2, max }: {
-  rows: { label: string; value: number }[];
+  rows: { label: string; value: number; color?: string }[]; // color: the row's own (a driving phase)
   unit?: string;
   digits?: number;
   max?: number; // shared scale across several bar charts
@@ -39,7 +39,7 @@ export function Bars({ rows, unit = 's', digits = 2, max }: {
             const w = Math.max(0, (r.value / top) * plot);
             const y = i * ROW + (ROW - BAR) / 2;
             return (
-              <Bar key={r.label} x={LABEL} y={y} w={w} h={BAR} fill={c.s1} />
+              <Bar key={r.label} x={LABEL} y={y} w={w} h={BAR} fill={r.color ?? c.s1} />
             );
           })}
           {rows.map((r, i) => (
