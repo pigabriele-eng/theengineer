@@ -42,6 +42,7 @@ STOP_S = 5.0  # standing still this long is a stop in the pits, and ends the sti
 SUSTAINED_S = 1.0  # sustained lateral g is the best average over this long
 OUTLIER_SIGMAS = 3.0
 OUTLIER_MIN_S = 0.5  # a flying lap this far off its stint's trend is a clear outlier (traffic, a mistake)
+TRAFFIC_S = 0.5  # a lap this much slower than its trend, lost in one or two corners, may have met traffic
 MIN_FIT_LAPS = 4
 MIN_PHASE_M = 10  # metres of a phase in one lap before its balance counts
 MIN_SECTION_M = 5  # metres of a phase in one corner before its balance or grip counts there
@@ -633,11 +634,14 @@ def _suggest(lap: LapSummary, row: dict, typical: dict, sec_typ: np.ndarray, cod
                        "of a normal lap's grip in use" + (", at one held speed" if held else "")}
     loss = st - sec_typ
     total = float(np.nansum(np.clip(loss, 0, None)))
-    if lap.time - pace < 0.4 or total <= 0:
+    # slow against the stint's trend where there is one (early laps of a stint that is still coming in are slower
+    # than its typical lap all round, and that is no reason to leave them out)
+    slow_by = row["off_trend_s"] if row.get("off_trend_s") is not None else lap.time - pace
+    if slow_by < TRAFFIC_S or total <= 0:
         return None
     order = np.argsort(-np.nan_to_num(loss, nan=-1e9))[:2]
     top = float(np.nansum(np.clip(loss[order], 0, None)))
-    if top < 0.6 * total or top < 0.3:
+    if top < 0.6 * total or top < TRAFFIC_S:
         return None
     sec = lap.sections
     lifted = [j for j in order if loss[j] > 0.1 and (

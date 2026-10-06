@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 
 import { LineChart, useChartColors } from '@/components/ReportCharts';
+import { SessionSwitcher, useEventFolder } from '@/components/SessionSwitcher';
 import { BalanceDumbbell, ChangeBar, FadeBars, MIN_SHIFT, ShiftRow, shiftColor, useBalanceColors }
   from '@/components/StintCharts';
 import { Text, View, useThemeColor } from '@/components/Themed';
@@ -34,6 +35,7 @@ import {
 } from '@/lib/stint';
 
 const ALL = 'all';
+const MAX_LOGS = 12; // the server reads at most this many logs in one view
 
 // Stint analysis: tick one or more logs, then each stint lap by lap: how the car fades (fuel burn and tyres apart,
 // by phase and corner), grip and balance per phase, and how the driver adapts. Tag laps lost to a safety car, FCY or
@@ -96,6 +98,33 @@ export default function StintScreen() {
 
   const toggle = (id: number) => setTicked((t) => (t.includes(id) ? t.filter((x) => x !== id) : [...t, id]));
 
+  // the runs of the ticked logs' event, one tap away: a tap shows that run alone, "Whole event" ticks every run
+  const where = useMemo(() => {
+    const event = new Map<number, number | null>(); // file -> its event
+    const session = new Map<number, number>(); // file -> its session
+    const mains = new Map<number | null, Map<number, number>>(); // event -> session -> its main log with laps
+    for (const e of events ?? []) {
+      for (const s of e.sessions) {
+        for (const f of s.files) {
+          event.set(f.id, e.id);
+          session.set(f.id, s.id);
+          if (f.main && f.laps > 0) {
+            if (!mains.has(e.id)) mains.set(e.id, new Map());
+            mains.get(e.id)!.set(s.id, f.id);
+          }
+        }
+      }
+    }
+    return { event, session, mains };
+  }, [events]);
+  const eventId = events == null || ticked.length === 0 ? undefined : where.event.get(ticked[0]) ?? null;
+  const folder = useEventFolder(eventId);
+  const eventMains = [...(where.mains.get(folder?.id ?? null)?.values() ?? [])];
+  const tickedSessions = [...new Set(ticked.map((f) => where.session.get(f)))];
+  const wholeEvent = eventMains.length > 0 && eventMains.length === ticked.length
+    && eventMains.every((f) => ticked.includes(f));
+  const current = tickedSessions.length === 1 ? tickedSessions[0] ?? -1 : wholeEvent ? null : -1;
+
   const tag = async (stint: Stint, lap: StintLap, to: Tag | 'none' | null) => {
     if (stint.file_id == null) return;
     setTagging(`${stint.key}:${lap.lap}`);
@@ -119,6 +148,14 @@ export default function StintScreen() {
     <ScrollView ref={scroll} style={{ backgroundColor: background }} contentContainerStyle={styles.container}>
       <Stack.Screen options={{ title: 'Stint analysis' }} />
       <View style={styles.page}>
+        {folder && folder.id != null && (
+          <SessionSwitcher folder={folder} current={current} onlyTimed
+            onWhole={eventMains.length > 1 ? () => setTicked(eventMains.slice(0, MAX_LOGS)) : undefined}
+            onPick={(s) => {
+              const main = where.mains.get(folder.id)?.get(s.id);
+              if (main != null) setTicked([main]);
+            }} />
+        )}
         <Picker events={events} ticked={ticked} open={pickerOpen} setOpen={setPickerOpen} toggle={toggle}
           track={view?.track ?? null} />
 
@@ -137,7 +174,7 @@ export default function StintScreen() {
           <>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
               {view.stints.length > 1 && (
-                <ScopeChip on={scope === ALL} onPress={() => setScope(ALL)} title={`All ${view.stints.length} stints`}
+                <ScopeChip on={scope === ALL} onPress={() => setScope(ALL)} title="All stints"
                   sub={`${view.overall.fitted_laps} flying laps`} />
               )}
               {view.stints.map((s) => (
@@ -242,13 +279,18 @@ function Picker({ events, ticked, open, setOpen, toggle, track }: {
       </View>
       {!open && ticked.length > 0 && (
         <View style={styles.tickedRow}>
-          {ticked.map((id) => (
+          {ticked.slice(0, ticked.length > 5 ? 4 : 5).map((id) => (
             <Pressable key={id} onPress={() => toggle(id)} style={styles.tickedChip}
               accessibilityLabel={`Untick ${files.get(id)?.label ?? id}`}>
               <Text style={styles.tickedText}>{files.get(id)?.label ?? `Log ${id}`}</Text>
               <Text style={styles.dim}>✕</Text>
             </Pressable>
           ))}
+          {ticked.length > 5 && (
+            <Pressable onPress={() => setOpen(true)} style={styles.tickedChip} accessibilityRole="button">
+              <Text style={StyleSheet.flatten([styles.tickedText, { color: tint }])}>+{ticked.length - 4} more</Text>
+            </Pressable>
+          )}
         </View>
       )}
       {open && events.map((e) => {

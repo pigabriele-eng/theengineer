@@ -245,6 +245,8 @@ def test_suggestions():
     mistake = _suggest(lap([10.0, 21.5, 30.0]), {}, typical, typ, codes)
     assert mistake["tag"] == "traffic" and not mistake["likely"] and "mistake" in mistake["why"]
     assert _suggest(lap([10.1, 20.1, 30.1]), {}, typical, typ, codes) is None  # just a slower lap
+    # on its stint's trend (an early lap while the tyres come in): nothing to tag
+    assert _suggest(lap([10.0, 21.5, 30.0], lifts=(1, 3, 1)), {"off_trend_s": 0.1}, typical, typ, codes) is None
     assert _suggest(lap([13.0, 26.0, 38.0], g=0.8, kind="out"), {}, typical, typ, codes) is None
 
 
