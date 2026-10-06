@@ -254,7 +254,7 @@ function EntryRow({ e, past, busy, onSwitch }: {
   busy: boolean;
   onSwitch: (on: boolean) => void;
 }) {
-  const state = !e.included ? 'Left out' : e.has_data ? 'In the app, with data' : 'In the app, planned';
+  const state = !e.included ? 'Not in the app' : e.has_data ? 'In the app, with data' : 'In the app, planned';
   return (
     <View style={StyleSheet.flatten([styles.entry, past && styles.past])}>
       <View style={styles.switchText}>

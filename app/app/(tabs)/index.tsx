@@ -94,7 +94,7 @@ export default function SessionsScreen() {
             event of its own. Or make an event first and upload into it.
           </Text>
         )}
-        {folders && (folders.length > 0 || calendar?.feed) && (
+        {folders && (
           <FilterBar filter={active} counts={counts} onPick={setFilter} calendar={calendar}
             onSynced={(c) => {
               setCalendar(c);
@@ -193,7 +193,6 @@ const styles = StyleSheet.create({
   panelTitle: { fontSize: 16, fontWeight: '700' },
   error: { color: '#c8372d' },
   empty: { opacity: 0.6, marginTop: 24, textAlign: 'center', lineHeight: 20 },
-  h2: { fontSize: 13, fontWeight: '700', opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8 },
   card: { borderWidth: 1, borderColor: '#8884', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, gap: 6 },
   cardLink: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   loose: { borderStyle: 'dashed' },
