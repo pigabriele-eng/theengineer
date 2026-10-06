@@ -114,6 +114,11 @@ def client(tmp_path, monkeypatch):
     import app.routers.stint
     for m in (app.laptags, app.routers.stint):
         importlib.reload(m)
+    import app.prep.models
+    import app.prep.weather
+    import app.routers.prep
+    for m in (app.prep.models, app.prep.weather, app.prep.plan, app.prep.gather, app.routers.prep):
+        importlib.reload(m)
     importlib.reload(app.main)
     if TEST_DATABASE_URL:
         app.db.Base.metadata.drop_all(app.db.engine)
@@ -128,7 +133,8 @@ def client(tmp_path, monkeypatch):
         deadline = time.monotonic() + 120
         while app.routers.imports._jobs.unfinished_tasks and time.monotonic() < deadline:
             time.sleep(0.05)
-        app.routers.technique.wait_idle()  # first: it asks for reports
+        app.routers.prep.wait_idle()  # first: it asks for reports and technique checks
+        app.routers.technique.wait_idle()  # then: it asks for reports
         app.routers.reports.wait_idle()
     app.db.engine.dispose()
     gc.unfreeze()

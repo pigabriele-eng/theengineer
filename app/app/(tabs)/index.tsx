@@ -5,11 +5,13 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-nati
 import { DriverLinks } from '@/components/DriverPicker';
 import { FilterBar, PlanForm, plannedLine, RemovePlanned } from '@/components/EventFilter';
 import { ImportLogs } from '@/components/ImportLogs';
+import { PrepButton, usePrepAvailability } from '@/components/PrepButton';
 import { RenameEvent } from '@/components/RenameEvent';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
 import { CalendarState, calendarApi, countByWhen, defaultFilter, Filter, filtered, Plan, todayIso, whenOf } from '@/lib/calendar';
 import { dateRange, eventsApi, FolderSummary } from '@/lib/events';
+import { PrepAvailability } from '@/lib/prep';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -26,6 +28,7 @@ export default function SessionsScreen() {
   const router = useRouter();
   const tint = useThemeColor({}, 'tint');
   const background = useThemeColor({}, 'background');
+  const prep = usePrepAvailability(); // events whose track has past data: the Prep report button
 
   const load = useCallback(() => {
     eventsApi.folders().then(
@@ -106,6 +109,7 @@ export default function SessionsScreen() {
         )}
         {shown?.map((f) => (
           <FolderCard key={f.key} f={f} plan={f.id != null ? plans.get(f.id) : undefined} onChanged={load}
+            prep={f.id != null ? prep[String(f.id)] : undefined}
             onRenamed={(name) => {
               setFolders((all) => all?.map((x) => (x.key === f.key ? { ...x, name } : x)) ?? all);
               load();
@@ -123,9 +127,10 @@ const EMPTY: Record<Filter, string> = {
   all: 'No events yet.',
 };
 
-function FolderCard({ f, plan, onRenamed, onChanged }: {
+function FolderCard({ f, plan, prep, onRenamed, onChanged }: {
   f: FolderSummary;
   plan?: Plan;
+  prep: PrepAvailability[string] | undefined; // past data at its track: the Prep report button
   onRenamed: (name: string) => void;
   onChanged: () => void;
 }) {
@@ -179,6 +184,7 @@ function FolderCard({ f, plan, onRenamed, onChanged }: {
           {planned && <RemovePlanned f={f} plan={plan} onRemoved={onChanged} />}
         </View>
       )}
+      {f.id != null && <PrepButton eventId={f.id} info={prep} compact />}
     </View>
   );
 }
