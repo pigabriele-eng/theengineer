@@ -46,7 +46,7 @@ POLL_S = 60.0
 QUIET_S = 3.0  # no request for this long before the job opens a log
 DATE_FORMATS = ("%d/%m/%Y", "%Y-%m-%d", "%d.%m.%Y", "%d/%m/%y")  # MoTeC writes 05/05/2025
 # the channels a summary needs; no other role is read
-ROLES = {"speed", "g_lat", "g_long", "yaw", "steer", "steer_wheel",
+ROLES = {"speed", "g_lat", "g_long", "g_vert", "yaw", "steer", "steer_wheel",
          *(f"tyre_{k}_{w}" for k in "pt" for w in ("fl", "fr", "rl", "rr"))}
 NOT_A_CHANNEL = ("\0",)
 

@@ -22,14 +22,14 @@ from sqlalchemy.orm import Session
 
 from app import heavy, models
 from app.analysis.balance import PHASE_NAMES, SPEED_BANDS, Collected, analyse, car_geometry, collect, prepared
-from app.analysis.insights import Prepared, _dt, cornering
+from app.analysis.insights import Prepared, _dt, cornering, lateral
 from app.analysis.setup_advice import CAR_SHARE_MIN, report, where_car_loses
 from app.routers.balance import preset_for
 from app.routers.sessions import load_main_file, official_corners
 from app.setup.models import SetupRunSummary
 from app.vehicle.presets import preset_detail
 
-VERSION = "4"  # change it when the summary changes, and every cached one is computed again
+VERSION = "5"  # change it when the summary changes, and every cached one is computed again
 MIN_SAMPLES = 200  # metres of a phase while cornering, across the clean laps, before its balance counts
 
 
@@ -53,10 +53,10 @@ def from_laps(prep: Prepared, per_g: float | None) -> dict:
     out: dict = {"entry": None, "mid": None, "exit": None, "abs_s_per_lap": None}
     laps = [x for x in prep.laps if "understeer" in x.trace]
     if per_g is not None and laps:
-        tr = {k: np.concatenate([x.trace[k] for x in laps]).astype(float)
-              for k in ("understeer", "ay", "phase", "speed")}
+        tr = {k: np.concatenate([x.trace[k] for x in laps]).astype(float) for k in ("understeer", "phase", "speed")}
+        tr["ay"] = np.concatenate([lateral(x.trace, prep.limits) for x in laps])  # per unit of the road's load
         corner = cornering(tr) & (tr["speed"] > 40)
-        rel = tr["understeer"] - per_g * np.abs(tr["ay"])
+        rel = tr["understeer"] - per_g * tr["ay"]
         phase = np.rint(tr["phase"]).astype(int)
         for p, name in PHASE_NAMES:
             sel = corner & (phase == p)

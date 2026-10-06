@@ -14,7 +14,7 @@ import numpy as np
 
 from app.analysis import balance
 from app.analysis.channels import math_channels
-from app.analysis.insights import Prepared, RunInput
+from app.analysis.insights import Prepared, RunInput, lateral
 from app.vehicle.tyre_fit import NotEnoughData
 
 PHASES = tuple((name, p) for p, name in balance.PHASE_NAMES)  # entry (trail braking), mid, exit (throttle)
@@ -80,7 +80,7 @@ def section_balance(prep: Prepared) -> SectionBalance | None:
         if "understeer" not in tr:
             continue
         ph = np.rint(tr["phase"]).astype(int)
-        ay = np.abs(tr["ay"])
+        ay = lateral(tr, prep.limits)  # per unit of the road's load, as the report's
         turning = ay > balance.CORNERING_G
         r = tr["understeer"] - k * ay
         for s in prep.sections:

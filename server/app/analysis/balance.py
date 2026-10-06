@@ -6,7 +6,9 @@ signed by the direction of the turn (positive: the front pushes; negative: the r
 first scaled to agree with the accelerometer in steady corners, as the tyre fit does (on the Hockenheim logs it
 reads about 9 % low). Every car has some understeer that grows with cornering load: the car's own gradient
 (degrees per g, fitted on all its cornering) is taken off, so what is left says where the balance moves away
-from the car's normal. On the Hockenheim test that gradient was about 1 degree per g.
+from the car's normal. On the Hockenheim test that gradient was about 1 degree per g. Cornering load is lateral g
+per unit of the road's vertical load (track_shape.py), so a banked corner or a dip, where the car pulls more g on the
+same tyres, is measured against the same normal as a level corner.
 
 Where the car limits the lap: in each section, the reference lap against the quickest pass of the same section
 is driving (the car has shown it can do better); the quickest pass against the realistic target (the grip a quick
@@ -31,14 +33,16 @@ from app.analysis.insights import (
     Prepared,
     _balance_notes,
     cornering,
+    lateral,
     setup_diagnostics,
     targets,
     understeer_fit,
 )
 from app.analysis.lapsim import SimLap
 from app.analysis.laps import MASTER_HZ, CornerSpec, SessionData, lap_length, make_sections
+from app.analysis.limits import CarLimits
 from app.analysis.local_limits import PlaceLimits, smoothed_curvature
-from app.vehicle.tyre_fit import NotEnoughData, _logged_ratio, yaw_rate_scale
+from app.vehicle.tyre_fit import NotEnoughData, _logged_ratio, level_road, yaw_rate_scale
 
 # Fallbacks from the Hockenheim test (BMW M4 GT4): the ratio between the logger's two steering channels, and the
 # published wheelbase. Used when the car data has no value.
@@ -57,7 +61,7 @@ AIDS = ("tc_s", "abs_s", "peak_brake", "rear_slip_exit", "min_speed")
 # Channels kept per lap on the distance grid; everything else is dropped as soon as the lap is traced
 KEEP = ("t", "speed", "ax", "ay", "phase", "braking", "brake", "throttle", "coasting", "overlap", "tc_on", "abs_on",
         "rear_slip", "curvature", "understeer", "tyre_p_fl", "tyre_p_fr", "tyre_p_rl", "tyre_p_rr",
-        "tyre_t_fl", "tyre_t_fr", "tyre_t_rl", "tyre_t_rr")
+        "tyre_t_fl", "tyre_t_fr", "tyre_t_rl", "tyre_t_rr", "turn_g", "az", "altitude")
 
 
 @dataclass
@@ -149,7 +153,7 @@ def balance_channel(data: SessionData, geo: Geometry) -> dict:
     r = np.radians(smooth(c["yaw"]))
     if np.corrcoef(r, ay_g)[0, 1] < 0:
         r = -r
-    scale = yaw_rate_scale(v_kmh, ay_g, ax_g, r, smooth(np.gradient(r) * MASTER_HZ))
+    scale = yaw_rate_scale(v_kmh, ay_g, ax_g, r, smooth(np.gradient(r) * MASTER_HZ), level_road(c))
     kappa = r * scale / v
     delta, steering = road_wheel_angle(c, kappa, ay_g, v_kmh, geo)
     ua = np.sign(ay_g) * (delta - np.degrees(geo.wheelbase_mm / 1000 * kappa))
@@ -230,12 +234,14 @@ def gradient(prep: Prepared) -> dict | None:
 
     Understeer grows faster than linearly as the tyres near their limit, so a straight line with an offset
     (understeer_fit) reads steeper with a negative offset; the gradient through zero is the "normal amount" the
-    balance is measured against. understeer_fit's slope is kept to show how much the understeer steepens.
+    balance is measured against. understeer_fit's slope is kept to show how much the understeer steepens. The g is
+    lateral g per unit of the road's load (insights.lateral).
     """
     laps = [x for x in prep.laps if "understeer" in x.trace]
     if len(laps) < max(1, len(prep.laps) // 2):
         return None
-    tr = {k: _f(np.concatenate([x.trace[k] for x in laps])) for k in ("understeer", "ay", "phase", "speed")}
+    tr = {k: _f(np.concatenate([x.trace[k] for x in laps])) for k in ("understeer", "phase", "speed")}
+    tr["ay"] = np.concatenate([lateral(x.trace, prep.limits) for x in laps])
     corner = cornering(tr) & (tr["speed"] > 40)
     if np.count_nonzero(corner) < 10 * MASTER_HZ:
         return None
@@ -304,7 +310,7 @@ def _section_rows(prep: Prepared, held_sim: SimLap, k: float | None) -> list[dic
         held_share = []
         for i, x in enumerate(prep.laps):
             tr = x.trace
-            ay = np.abs(_f(tr["ay"][sl]))
+            ay = lateral(tr, prep.limits, sl)
             phase = np.rint(_f(tr["phase"][sl]))
             dt = np.diff(ts[i][a:b + 1])
             found: dict[str, float] = {}
@@ -345,7 +351,8 @@ def _section_rows(prep: Prepared, held_sim: SimLap, k: float | None) -> list[dic
                             "quick": round(float(np.median(qv)), 2) if len(qv) >= 3 else None, "laps": len(v)}
                         for p, (v, qv) in bal.items() if len(v) >= need},
             **{key: _typ(v, qv, 2 if key.endswith("_s") else 1) for key, (v, qv) in aids.items()},
-            # the most lateral g held over HELD_WINDOW_M, as a share of the car's peak; only for real corners
+            # the most lateral g held over HELD_WINDOW_M, as a share of the car's peak (both per unit of the road's
+            # load); only for real corners
             "held_grip": {"p98": round(float(np.percentile(hs, 98)), 2), "max": round(float(hs.max()), 2)}
             if len(hs) and np.percentile(hs, 99) > 0.6 else None,
         })
@@ -359,7 +366,7 @@ def _sim_ay(sim_speed: np.ndarray, curvature: np.ndarray, limits: PlaceLimits) -
     return np.minimum((sim_speed / 3.6) ** 2 * k / G, cap)
 
 
-def _lap_through(x: LapRecord, a: int, b: int, k: float | None) -> dict:
+def _lap_through(x: LapRecord, a: int, b: int, k: float | None, limits: CarLimits) -> dict:
     tr = x.trace
     sl = slice(a, b + 1)
     out = {"lap": x.key, "time": round(float(tr["t"][b] - tr["t"][a]), 3),
@@ -370,7 +377,7 @@ def _lap_through(x: LapRecord, a: int, b: int, k: float | None) -> dict:
         out["tc_s"] = round(float((np.diff(_f(tr["t"][sl])) * (tr["tc_on"][a:b] > 0.5)).sum()), 2)
     if "rear_slip" in tr:
         out["rear_slip_p98"] = round(float(np.percentile(_f(tr["rear_slip"][sl]), 98)), 1)
-    ay = np.abs(_f(tr["ay"][sl]))
+    ay = lateral(tr, limits, sl)
     turning = ay > CORNERING_G
     if k is not None and "understeer" in tr and np.count_nonzero(turning) >= MIN_SAMPLES:
         # the furthest the balance goes towards oversteer: the rear stepping out
@@ -400,7 +407,8 @@ def focus_section(prep: Prepared, rows: list[dict], held_sim: SimLap, corners: l
         "code": row["code"], "start_m": a, "end_m": b,
         "total": round(row["reference"] - row["theoretical"], 3),
         "driving": row["driving"], "car": row["car"], "optimism": row["optimism"],
-        "reference": _lap_through(prep.reference, a, b, k), "best": _lap_through(best, a, b, k),
+        "reference": _lap_through(prep.reference, a, b, k, prep.limits),
+        "best": _lap_through(best, a, b, k, prep.limits),
         "theoretical_peak_g": round(float(theo_ay[a:b + 1].max()), 2),
         "held_time": row["held"], "held_grip": row["held_grip"],
         "trace": {

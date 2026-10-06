@@ -8,8 +8,11 @@ Method (steady-state bicycle model, Milliken & Milliken, Race Car Vehicle Dynami
 1. Samples: quasi-steady cornering only. Speed at least MIN_SPEED_KMH, lateral g at least MIN_LAT_G,
    longitudinal g within +-MAX_LONG_G (no heavy braking, no full traction), small yaw acceleration and a
    steady lateral g, and inside a corner that starts and ends on a straight (needed for body slip, step 3).
+   Where the log has a vertical accelerometer, on level road only: a banked corner, a crest or a dip (the
+   accelerometer further than LEVEL_G from 1 g) loads the tyres in a way the axle loads of step 6 don't know, and
+   a bank turns gravity into lateral g.
 2. Sensor check: the yaw-rate gyro is scaled so that speed x yaw rate equals lateral acceleration on
-   quasi-steady samples, which is exact while body slip is not changing. Gyros on CAN often carry a scale
+   quasi-steady samples on level road, which is exact while body slip is not changing. Gyros on CAN often carry a scale
    error (the Hockenheim logs read about 9 % low against both the accelerometer and the GPS course).
 3. Body slip beta is not measured, so it is estimated: d(beta)/dt = a_y / V - r is integrated from the straight
    before each corner to the straight after it, where beta is about zero, with a linear correction so it closes
@@ -52,6 +55,7 @@ STRAIGHT_G = 0.1  # a straight: lateral g below this ...
 STRAIGHT_S = 0.5  # ... for at least this long
 MAX_CORNER_S = 20.0  # longer spans between straights drift too far to trust beta
 MAX_CLOSE_DEG = 2.0  # a corner whose integrated beta misses zero on the next straight by more is dropped
+LEVEL_G = 0.1  # samples where the vertical accelerometer reads further than this from 1 g are not level road
 BIN_MU = 0.05  # width of the load bins the curve is fitted through
 MIN_BIN = 30
 MIN_SAMPLES = 500
@@ -146,16 +150,27 @@ def _road_wheel_angle(c: dict[str, np.ndarray], kappa: np.ndarray, ay_g: np.ndar
     return delta, info
 
 
+def level_road(c: dict[str, np.ndarray]) -> np.ndarray | None:
+    """Where the road is level, by the vertical accelerometer (the math channel az, over a second): within LEVEL_G
+    of 1 g. None when the log has no vertical accelerometer."""
+    if "az" not in c:
+        return None
+    return np.abs(smooth(c["az"], 1.0) - 1) <= LEVEL_G
+
+
 def yaw_rate_scale(v_kmh: np.ndarray, ay_g: np.ndarray, ax_g: np.ndarray, r: np.ndarray,
-                   r_dot: np.ndarray) -> float:
+                   r_dot: np.ndarray, level: np.ndarray | None = None) -> float:
     """The factor that corrects the yaw gyro (step 2 above): speed x yaw rate against lateral g in steady corners.
 
-    r is the yaw rate in rad/s, smoothed and signed like lateral g; r_dot its rate of change. Raises NotEnoughData
+    r is the yaw rate in rad/s, smoothed and signed like lateral g; r_dot its rate of change; level: where the road
+    is level (level_road), when known: a banked corner's lateral g is less than its turn. Raises NotEnoughData
     without steady cornering, or when the two disagree by more than a scale error (a unit problem instead).
     """
     v = np.maximum(v_kmh / 3.6, 1.0)
     steady = ((v_kmh >= MIN_SPEED_KMH) & (np.abs(ay_g) >= 0.5) & (np.abs(ax_g) <= MAX_LONG_G)
               & (np.abs(r_dot) <= MAX_YAW_ACCEL) & (np.abs(r) > 0.05))
+    if level is not None and np.count_nonzero(steady & level) >= MASTER_HZ:
+        steady &= level
     if np.count_nonzero(steady) < MASTER_HZ:
         raise NotEnoughData("No steady cornering in this log")
     scale = float(np.median(ay_g[steady] * G / (v[steady] * r[steady])))
@@ -185,7 +200,8 @@ def session_samples(data: SessionData, car: Vehicle, steering_ratio: float | Non
     if np.corrcoef(r, ay)[0, 1] < 0:
         r = -r
     r_dot_raw = smooth(np.gradient(r) * hz)
-    scale = yaw_rate_scale(v_kmh, ay_g, ax_g, r, r_dot_raw)
+    level = level_road(c)
+    scale = yaw_rate_scale(v_kmh, ay_g, ax_g, r, r_dot_raw, level)
     r = r * scale
     r_dot = r_dot_raw * scale
     kappa = r / v
@@ -197,6 +213,8 @@ def session_samples(data: SessionData, car: Vehicle, steering_ratio: float | Non
     m, h = car.mass_kg, car.cog_height_mm / 1000
     quasi = ((v_kmh >= MIN_SPEED_KMH) & (np.abs(ay_g) >= MIN_LAT_G) & (np.abs(ax_g) <= MAX_LONG_G)
              & (np.abs(r_dot) <= MAX_YAW_ACCEL) & (np.abs(jerk) <= MAX_LAT_JERK))
+    if level is not None:  # a banked corner, a crest or a dip: loads the axle loads below don't know
+        quasi &= level
     delta, steering = _road_wheel_angle(c, kappa, ay_g, v_kmh, quasi, L, steering_ratio, ratio_source)
 
     # body slip, corner by corner between sustained straights

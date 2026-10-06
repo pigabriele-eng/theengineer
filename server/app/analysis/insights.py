@@ -7,6 +7,10 @@ and at the limits a quick lap usually shows there, the realistic target. Both ar
 perfect driving at that lap's own limits, so the model's own error cancels. Every lap is then measured against the
 theoretical lap, corner by corner and phase by phase, and the laps are compared with each other to find what the
 quick ones do. The car's grip envelope (limits.py) describes how much of its grip each lap used.
+
+The road's shape (track_shape.py), read from the quickest laps, keeps one place's grip from being lent to another:
+grip is compared across corners per unit of the road's vertical load, and banked corners, crests and compressions
+never set the grip used anywhere else.
 """
 from __future__ import annotations
 
@@ -22,6 +26,7 @@ from app.analysis.lapsim import LIMITED_BY, Calibration, SimLap, theoretical_lap
 from app.analysis.limits import CarLimits, car_limits
 from app.analysis.local_limits import PlaceLimits, place_limits
 from app.analysis.scan import channel_scan
+from app.analysis.track_shape import TrackShape, on_line, track_shape
 from app.importers.motec import LdFile
 
 STRAIGHT_MIN_M = 250  # full throttle for at least this long makes a straight with a speed trap
@@ -29,6 +34,7 @@ MEDALS = (("gold", 98.0), ("silver", 97.0), ("bronze", 95.0))  # % of the theore
 MIN_LAPS_FOR_TRENDS = 8
 LIMIT_LAPS_WITHIN = 0.02  # the car's limits come from laps this close to the quickest
 MIN_LIMIT_LAPS = 3
+SHAPE_LAPS = 40  # the road's shape is read from the quickest laps, at most this many
 SIGNIFICANT_P = 0.01
 
 
@@ -71,6 +77,7 @@ class Prepared:
     realistic: SimLap | None = None  # the realistic target: the reference line at the held limits
     calibration: Calibration | None = None  # sim's: the model's own error along the reference lap, taken out
     held_calibration: Calibration | None = None  # the realistic target's
+    shape: TrackShape | None = None  # the road's: banking, crests and compressions, elevation
 
 
 # ---------- preparation ----------
@@ -119,11 +126,12 @@ class Targets:
     realistic: SimLap
     calibration: Calibration  # sim's
     held_calibration: Calibration  # realistic's
+    shape: TrackShape | None = None  # the road's, when the logs tell it
 
     def prepared(self, line: TrackLine | None, reference: LapRecord, laps: list[LapRecord], sections: list[Section],
                  numbering: str) -> Prepared:
         return Prepared(line, len(reference.trace["t"]), reference, laps, self.limits, self.sim, sections, numbering,
-                        self.perfect, self.held, self.realistic, self.calibration, self.held_calibration)
+                        self.perfect, self.held, self.realistic, self.calibration, self.held_calibration, self.shape)
 
 
 def _times(x) -> np.ndarray:
@@ -142,9 +150,14 @@ def targets(laps: list, reference: dict[str, np.ndarray], lap_time: float,
     time at every metre, less what perfect driving at the target's limits gains there over perfect driving at that
     lap's own limits (lapsim.Calibration): the model's own error cancels, and neither target is slower than the
     fastest lap anywhere, nor through any of the sections. The theoretical lap is also never slower than the best
-    pass through a section: that is what a lap has really shown there."""
+    pass through a section: that is what a lap has really shown there.
+
+    The road's shape comes from the quickest laps (SHAPE_LAPS): grip is compared per unit of its load where it is
+    known, and its banked corners, crests and compressions lend their grip to no other place."""
     traces = [x.trace for x in _limit_laps(laps)]
-    perfect, held, own = place_limits(traces, reference, own=True)
+    shape = road_shape(laps)
+    load, shaped = on_line(shape, len(traces[0]["speed"]))
+    perfect, held, own = place_limits(traces, reference, own=True, load=load, shaped=shaped)
     curvature = reference["curvature"]
     cal = Calibration.of(reference, lap_time, _closed_sim(curvature, own))
     raw, raw_held = _closed_sim(curvature, perfect), _closed_sim(curvature, held)
@@ -154,7 +167,8 @@ def targets(laps: list, reference: dict[str, np.ndarray], lap_time: float,
             return [(s.start, s.end, min(float(t[s.end] - t[s.start]) for t in ts)) for s in sections]
         cal_p = cal.to_best(raw, best([_times(x) for x in laps]))
         cal_h = cal.to_best(raw_held, best([np.asarray(reference["t"], float)]))  # the fastest lap's own, as timed
-    return Targets(car_limits(traces), perfect, held, cal_p.target(raw), cal_h.target(raw_held), cal_p, cal_h)
+    return Targets(car_limits(traces, load, shaped), perfect, held, cal_p.target(raw), cal_h.target(raw_held), cal_p,
+                   cal_h, shape)
 
 
 def _limit_laps(laps: list[LapRecord]) -> list[LapRecord]:
@@ -165,6 +179,18 @@ def _limit_laps(laps: list[LapRecord]) -> list[LapRecord]:
     quick = sorted(laps, key=lambda x: x.time)
     cut = quick[0].time * (1 + LIMIT_LAPS_WITHIN)
     return [x for i, x in enumerate(quick) if x.time <= cut or i < MIN_LIMIT_LAPS]
+
+
+def road_shape(laps: list) -> TrackShape | None:
+    """The road's shape (track_shape.py) from the quickest laps (anything with .time and .trace on one line), at
+    most SHAPE_LAPS of them: the steadiest lines, in little memory."""
+    return track_shape([x.trace for x in sorted(laps, key=lambda x: x.time)[:SHAPE_LAPS]])
+
+
+def grip_limits(laps: list) -> CarLimits:
+    """The car's grip envelope from its quick laps, per unit of the road's load where its shape is known."""
+    traces = [x.trace for x in _limit_laps(laps)]
+    return car_limits(traces, *on_line(road_shape(laps), len(traces[0]["speed"])))
 
 
 def _closed_sim(curvature: np.ndarray, limits: PlaceLimits) -> SimLap:
@@ -197,7 +223,7 @@ def section_metrics(x: LapRecord, s: Section, lim: CarLimits, sim: SimLap) -> di
     v = tr["speed"][sl]
     dt = _dt(tr)[sl]
     phase = np.rint(tr["phase"][sl]).astype(int)
-    use = lim.use(v, tr["ax"][sl], tr["ay"][sl])
+    use = lim.use(v, tr["ax"][sl], tr["ay"][sl], at=sl)
     apex = (s.apex if s.apex is not None else a + int(np.argmin(v))) - a
     m: dict = {
         "time": float(tr["t"][b] - tr["t"][a]),
@@ -440,6 +466,15 @@ def top_speeds(prep: Prepared, groups: dict[str, list[LapRecord]] | None = None)
 
 # ---------- setup ----------
 
+def lateral(tr: dict[str, np.ndarray], lim: CarLimits | None, at: slice = slice(None)) -> np.ndarray:
+    """|Lateral g| of a lap on the line (at these metres), per unit of the road's vertical load there (limits.py): the
+    balance on a banked corner, a crest or a dip is then read against the same tyre load as on the level."""
+    ay = np.abs(np.asarray(tr["ay"], float))
+    if lim is None or lim.load is None or len(lim.load) != len(ay):
+        return ay[at]
+    return ay[at] / lim.load[at]
+
+
 def cornering(tr: dict[str, np.ndarray]) -> np.ndarray:
     """Samples where the car is cornering: over 0.5 g lateral, not braking in a straight line, not at full power."""
     phase = np.rint(tr["phase"]).astype(int)
@@ -463,9 +498,10 @@ def understeer_fit(tr: dict[str, np.ndarray]) -> tuple[float, float]:
 
 def setup_diagnostics(prep: Prepared) -> dict:
     tr = {k: np.concatenate([x.trace[k] for x in prep.laps]) for k in prep.reference.trace if k != "distance"}
+    tr["ay"] = np.concatenate([lateral(x.trace, prep.limits) for x in prep.laps])  # per unit of the road's load
     dt = np.concatenate([_dt(x.trace) for x in prep.laps])
     phase = np.rint(tr["phase"]).astype(int)
-    v, ay = tr["speed"], np.abs(tr["ay"])
+    v, ay = tr["speed"], tr["ay"]
     out: dict = {"lateral_grip_by_speed": [
         {"speed_kmh": round(float(s), 0), "g": round(float(g), 2)}
         for s, g in zip(prep.limits.speeds, prep.limits.max_lateral(prep.limits.speeds), strict=True)]}
