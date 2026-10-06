@@ -3,9 +3,9 @@ import { Link, Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
 
-import { SessionDriver } from '@/components/DriverPicker';
 import { LapCompare } from '@/components/LapCompare';
 import { SessionResults } from '@/components/OfficialSessionCard';
+import { RunHeader } from '@/components/RunChips';
 import { SessionSwitcher, useEventFolder } from '@/components/SessionSwitcher';
 import { SetupCard } from '@/components/SetupCard';
 import { Text, View, useThemeColor } from '@/components/Themed';
@@ -86,8 +86,12 @@ export default function SessionScreen() {
       )}
       {stale && <ActivityIndicator />}
       <View style={StyleSheet.flatten([styles.body, stale && styles.stale])}>
-        {session && (
-          <SessionDriver sessionId={sessionId} driverId={(session as Tagged).driver_id}
+        {session && session.id === sessionId && (
+          <RunHeader key={session.id}
+            run={{ id: session.id, name: session.name ?? `Session ${session.id}`, driver_id: (session as Tagged).driver_id,
+              car_id: (session as Tagged).car_id }}
+            kind={session.kind}
+            logSession={session.files.map((f) => (f.meta as { event_session?: string }).event_session).find(Boolean)}
             onChanged={() => api.session(sessionId).then(setSession, (e) => setError(e.message))} />
         )}
         <View style={styles.facts}>

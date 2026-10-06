@@ -76,6 +76,8 @@ def client(tmp_path, monkeypatch):
     import app.timing
     importlib.reload(app.db)
     importlib.reload(app.models)
+    import app.garage
+    importlib.reload(app.garage)
     importlib.reload(app.timing)
     importlib.reload(app.routers.catalog)
     importlib.reload(app.routers.sessions)
@@ -96,6 +98,8 @@ def client(tmp_path, monkeypatch):
     importlib.reload(app.routers.events)
     import app.routers.event_naming
     importlib.reload(app.routers.event_naming)
+    import app.routers.garage
+    importlib.reload(app.routers.garage)
     import app.setup.data
     import app.setup.models
     import app.setup.results

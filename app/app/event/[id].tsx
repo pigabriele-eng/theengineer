@@ -9,8 +9,9 @@ import { ImportLogs } from '@/components/ImportLogs';
 import { MoveSessions } from '@/components/MoveSessions';
 import { RenameEvent } from '@/components/RenameEvent';
 import { ResultsPanel } from '@/components/ResultsPanel';
+import { filledNote, localPick, PickerKind, RunChips, RunNameEditor, RunPicker, useGarage } from '@/components/RunChips';
 import { Text, View, useThemeColor } from '@/components/Themed';
-import { formatLap, SessionKind } from '@/lib/api';
+import { formatLap } from '@/lib/api';
 import { MAX_LAPS } from '@/lib/compare';
 import {
   dateRange,
@@ -20,11 +21,13 @@ import {
   FolderSession,
   KIND_NAMES,
   NO_EVENT,
-  QUICK_LABELS,
 } from '@/lib/events';
+import { Garage, garageApi, RunFields } from '@/lib/garage';
+
+// A run row as the server sends it, with its driver and car ids
+type Run = FolderSession & { driver_id?: number | null; car_id?: number | null };
 
 const WIDE = 900;
-const KINDS: SessionKind[] = ['practice', 'qualifying', 'race', 'test'];
 const freeSlot = (picks: Pick[]) => [0, 1, 2, 3, 4, 5].find((s) => !picks.some((p) => p.slot === s)) ?? 0;
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -45,6 +48,10 @@ export default function EventScreen() {
   const [editing, setEditing] = useState<number | null>(null);
   const [renaming, setRenaming] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // the run whose driver or car list is open, and what a pick did to other runs (said under the run picked)
+  const [open, setOpen] = useState<{ id: number; what: PickerKind } | null>(null);
+  const [runNote, setRunNote] = useState<{ id: number; text: string } | null>(null);
+  const { garage, reload: reloadGarage } = useGarage();
   const scroll = useRef<ScrollView>(null);
   const compareY = useRef(0);
   const tint = useThemeColor({}, 'tint');
@@ -96,6 +103,28 @@ export default function EventScreen() {
   };
   const showCompare = () => {
     if (!wide) scroll.current?.scrollTo({ y: Math.max(compareY.current - 12, 0), animated: true });
+  };
+
+  // a run's driver or car: the chip changes at once, the server's answer follows (with the logger's other runs
+  // when the car went on them too)
+  const patchRuns = (patch: (r: Run) => Run) =>
+    setFolder((f) => f && { ...f, days: f.days.map((d) => ({ ...d, sessions: d.sessions.map((r) => patch(r as Run)) })) });
+  const pickFor = async (s: Run, fields: RunFields) => {
+    setOpen(null);
+    const local = localPick(garage, fields);
+    patchRuns((r) => (r.id === s.id ? { ...r, ...local } : r));
+    try {
+      const r = await garageApi.setRun(s.id, fields);
+      const filled = new Set(r.filled);
+      patchRuns((x) => (x.id === s.id ? { ...x, driver_id: r.driver_id, driver: r.driver, car_id: r.car_id }
+        : filled.has(x.id) ? { ...x, car_id: r.car_id } : x));
+      const note = filledNote(r);
+      setRunNote(note ? { id: s.id, text: note } : null);
+      reloadGarage();
+    } catch (e) {
+      setRunNote({ id: s.id, text: (e as Error).message });
+      load();
+    }
   };
 
   const moveTo = async (toKey: string, toName: string) => {
@@ -240,7 +269,8 @@ export default function EventScreen() {
       )}
       {sessions.length > 0 && (
         <Text style={styles.note}>
-          Tick two to six sessions to see them side by side. Tap a session to open it.
+          Tick two to six sessions to see them side by side. Tap a session&apos;s name to rename it, its driver or car
+          to set them, its time to open it.
         </Text>
       )}
       {folder?.days.map((d, i) => (
@@ -253,7 +283,10 @@ export default function EventScreen() {
               onSaved={() => {
                 setEditing(null);
                 load();
-              }} />
+              }}
+              garage={garage} open={open?.id === s.id ? open.what : null}
+              onOpen={(what) => setOpen(what ? { id: s.id, what } : null)} onPick={(fields) => pickFor(s, fields)}
+              note={runNote?.id === s.id ? runNote.text : null} onNoteClose={() => setRunNote(null)} />
           ))}
         </View>
       ))}
@@ -339,8 +372,11 @@ export default function EventScreen() {
   );
 }
 
-function SessionRow({ s, color, picked, full, onToggle, editing, onEdit, onSaved }: {
-  s: FolderSession;
+/** One run: tick it for side by side, tap its name to rename it in place, tap its driver or car chip to set them,
+ * tap its laps or time to open it. */
+function SessionRow({ s, color, picked, full, onToggle, editing, onEdit, onSaved, garage, open, onOpen, onPick, note,
+  onNoteClose }: {
+  s: Run;
   color: string | null;
   picked: boolean;
   full: boolean;
@@ -348,6 +384,12 @@ function SessionRow({ s, color, picked, full, onToggle, editing, onEdit, onSaved
   editing: boolean;
   onEdit: () => void;
   onSaved: () => void;
+  garage: Garage | null;
+  open: PickerKind | null;
+  onOpen: (what: PickerKind | null) => void;
+  onPick: (fields: RunFields) => void;
+  note: string | null;
+  onNoteClose: () => void;
 }) {
   const tint = useThemeColor({}, 'tint');
   const background = useThemeColor({}, 'background');
@@ -355,92 +397,64 @@ function SessionRow({ s, color, picked, full, onToggle, editing, onEdit, onSaved
     s.log_session && !s.name.includes(s.log_session) ? s.log_session : null,
     s.time,
     s.laps ? `${plural(s.laps, 'lap')}${s.clean_laps !== s.laps ? ` (${s.clean_laps} clean)` : ''}` : s.has_log ? 'no laps' : 'no log',
-    s.driver,
   ].filter(Boolean).join(' · ');
+  const href = { pathname: '/session/[id]', params: { id: s.id } } as const;
   return (
     <View style={styles.sessionBox}>
-      <View style={styles.row}>
+      <View style={StyleSheet.flatten([styles.row, editing && styles.rowEditing])}>
         <Pressable onPress={onToggle} disabled={full && !picked} hitSlop={10} accessibilityRole="checkbox"
           accessibilityState={{ checked: picked }} accessibilityLabel={`Side by side: ${s.name}`}
           style={StyleSheet.flatten([styles.check, picked && { borderColor: tint, backgroundColor: tint },
             full && !picked && styles.dim])}>
           {picked && <Text style={StyleSheet.flatten([styles.tick, { color: background }])}>✓</Text>}
         </Pressable>
-        {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
-        <Link href={{ pathname: '/session/[id]', params: { id: s.id } }} asChild>
-          <Pressable style={styles.rowMain}>
-            <View style={styles.rowText}>
-              <View style={styles.nameLine}>
-                {color && <LineKey color={color} />}
+        <View style={styles.rowText}>
+          {editing ? (
+            <RunNameEditor id={s.id} name={s.name} kind={s.kind} logSession={s.log_session} onSaved={onSaved}
+              onCancel={onEdit} save={(id, body) => eventsApi.updateSession(id, body)} />
+          ) : (
+            <View style={styles.nameLine}>
+              {color && <LineKey color={color} />}
+              <Pressable onPress={onEdit} hitSlop={6} accessibilityRole="button" accessibilityLabel={`Rename ${s.name}`}
+                style={styles.namePress}>
                 <Text style={styles.name} numberOfLines={1}>{s.name}</Text>
-                <View style={styles.kind}>
-                  <Text style={styles.kindText}>{KIND_NAMES[s.kind]}</Text>
-                </View>
+                <Text style={StyleSheet.flatten([styles.pencil, { color: tint }])}>✎</Text>
+              </Pressable>
+              <View style={styles.kind}>
+                <Text style={styles.kindText}>{KIND_NAMES[s.kind]}</Text>
               </View>
-              <Text style={styles.sub} numberOfLines={1}>{detail}</Text>
             </View>
-            <Text style={StyleSheet.flatten([styles.time, s.best_lap_s == null && styles.dim])}>
-              {formatLap(s.best_lap_s)}
-            </Text>
-          </Pressable>
-        </Link>
-        <Pressable onPress={onEdit} hitSlop={8} accessibilityRole="button" accessibilityLabel={`Rename ${s.name}`}
-          style={styles.edit}>
-          <Text style={{ color: tint }}>{editing ? 'Close' : 'Label'}</Text>
+          )}
+          {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
+          <Link href={href} asChild>
+            <Pressable style={styles.detailPress}>
+              <Text style={styles.sub} numberOfLines={1}>{detail}</Text>
+            </Pressable>
+          </Link>
+          <RunChips run={s} garage={garage} open={open} onOpen={onOpen} />
+        </View>
+        {/* while the name is edited, the editor takes the row's width */}
+        {!editing && (
+          <Link href={href} asChild>
+            <Pressable style={styles.open} accessibilityLabel={`Open ${s.name}`}>
+              <Text style={StyleSheet.flatten([styles.time, s.best_lap_s == null && styles.dim])}>
+                {formatLap(s.best_lap_s)}
+              </Text>
+              <Text style={styles.chevron}>›</Text>
+            </Pressable>
+          </Link>
+        )}
+      </View>
+      {open && garage && (
+        <View style={styles.picker}>
+          <RunPicker what={open} run={s} garage={garage} onPick={onPick} onClose={() => onOpen(null)} />
+        </View>
+      )}
+      {note && (
+        <Pressable onPress={onNoteClose} style={styles.picker}>
+          <Text style={styles.notice}>{note}</Text>
         </Pressable>
-      </View>
-      {editing && <LabelEditor s={s} onSaved={onSaved} />}
-    </View>
-  );
-}
-
-/** A session's short label (FP1, Q1, Race…) and its kind; a quick label sets both at once. */
-function LabelEditor({ s, onSaved }: { s: FolderSession; onSaved: () => void }) {
-  const [name, setName] = useState(s.name);
-  const [kind, setKind] = useState<SessionKind>(s.kind);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const tint = useThemeColor({}, 'tint');
-  const text = useThemeColor({}, 'text');
-  const chip = (on: boolean) => StyleSheet.flatten([styles.chip, on && { borderColor: tint }]);
-  const save = async (n = name, k = kind) => {
-    if (!n.trim()) return setError('Give the session a label.');
-    setBusy(true);
-    try {
-      await eventsApi.updateSession(s.id, { name: n.trim(), kind: k });
-      onSaved();
-    } catch (e) {
-      setError((e as Error).message);
-      setBusy(false);
-    }
-  };
-  return (
-    <View style={styles.editor}>
-      <View style={styles.chips}>
-        {QUICK_LABELS.map((q) => (
-          <Pressable key={q.label} onPress={() => save(q.label, q.kind)} disabled={busy} style={chip(name === q.label)}>
-            <Text style={name === q.label ? { color: tint } : undefined}>{q.label}</Text>
-          </Pressable>
-        ))}
-      </View>
-      <View style={styles.editRow}>
-        <TextInput value={name} onChangeText={setName} maxLength={120} accessibilityLabel="Session label"
-          style={StyleSheet.flatten([styles.input, { color: text }])} onSubmitEditing={() => save()} />
-        <Pressable onPress={() => save()} disabled={busy} accessibilityRole="button"
-          style={StyleSheet.flatten([styles.barButton, { borderColor: tint }])}>
-          {busy ? <ActivityIndicator color={tint} />
-            : <Text style={StyleSheet.flatten([styles.barButtonText, { color: tint }])}>Save</Text>}
-        </Pressable>
-      </View>
-      <View style={styles.chips}>
-        {KINDS.map((k) => (
-          <Pressable key={k} onPress={() => setKind(k)} style={chip(k === kind)}>
-            <Text style={k === kind ? { color: tint } : undefined}>{KIND_NAMES[k]}</Text>
-          </Pressable>
-        ))}
-      </View>
-      {s.log_session && <Text style={styles.note}>The logger calls it {s.log_session}.</Text>}
-      {error && <Text style={styles.error}>{error}</Text>}
+      )}
     </View>
   );
 }
@@ -519,21 +533,23 @@ const styles = StyleSheet.create({
   check: { width: 22, height: 22, borderRadius: 5, borderWidth: 1.5, borderColor: '#8888', alignItems: 'center',
     justifyContent: 'center' },
   tick: { fontSize: 14, fontWeight: '800', lineHeight: 16 },
-  rowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  rowText: { flex: 1, gap: 2, backgroundColor: 'transparent' },
+  rowEditing: { alignItems: 'flex-start' },
+  rowText: { flex: 1, gap: 4, backgroundColor: 'transparent' },
   nameLine: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },
+  namePress: { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 1 },
   name: { fontSize: 16, fontWeight: '600', flexShrink: 1 },
+  pencil: { fontSize: 13 },
+  detailPress: { alignSelf: 'stretch' },
   kind: { borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1, backgroundColor: '#8882' },
   kindText: { fontSize: 11, fontWeight: '600', opacity: 0.8 },
+  open: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'stretch', paddingLeft: 6 },
   time: { fontSize: 16, fontVariant: ['tabular-nums'] },
-  edit: { paddingHorizontal: 4, paddingVertical: 4 },
+  chevron: { fontSize: 22, opacity: 0.4 },
   dim: { opacity: 0.4 },
-  editor: { gap: 8, paddingBottom: 12, paddingLeft: 32 },
+  picker: { paddingLeft: 32 },
   editRow: { flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'wrap' },
   input: { flex: 1, minWidth: 140, borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 10,
     paddingVertical: 8, fontSize: 15 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 3 },
   addLink: { paddingVertical: 8 },
   bar: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingVertical: 10,
     borderTopWidth: 1, borderColor: '#8884', flexWrap: 'wrap' },
