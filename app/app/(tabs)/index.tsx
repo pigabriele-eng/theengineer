@@ -1,4 +1,4 @@
-import { Link, useFocusEffect, useRouter } from 'expo-router';
+import { Link, useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
 
@@ -11,6 +11,7 @@ import { Text, View, useThemeColor } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
 import { CalendarState, calendarApi, countByWhen, defaultFilter, Filter, filtered, Plan, todayIso, whenOf } from '@/lib/calendar';
 import { dateRange, eventsApi, FolderSummary } from '@/lib/events';
+import { launchEvent } from '@/lib/openCurrent';
 import { PrepAvailability } from '@/lib/prep';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -18,7 +19,8 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 /** Events as folders, newest first: each a test or a race weekend with its dates, track, sessions and best lap. Open
  * one for its sessions by day. Sessions in no event have a folder of their own, first, so they get filed. A filter
  * shows past, current (from the day before to the last day) or upcoming events, opening on what's on now; planned
- * events (made here or from the racing calendar) wait under Upcoming until their data comes in. */
+ * events (made here or from the racing calendar) wait under Upcoming until their data comes in. Opened while an event
+ * is on, the app goes straight on to that event's page (lib/openCurrent.ts). */
 export default function SessionsScreen() {
   const [folders, setFolders] = useState<FolderSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -26,6 +28,7 @@ export default function SessionsScreen() {
   const [calendar, setCalendar] = useState<CalendarState | null>(null);
   const [filter, setFilter] = useState<Filter | null>(null); // null: what the list opens on
   const router = useRouter();
+  const navigation = useNavigation();
   const tint = useThemeColor({}, 'tint');
   const background = useThemeColor({}, 'background');
   const prep = usePrepAvailability(); // events whose track has past data: the Prep report button
@@ -47,6 +50,14 @@ export default function SessionsScreen() {
     const t = setTimeout(load, 3000);
     return () => clearTimeout(t);
   }, [calendar, load]);
+
+  // Opened on this list while an event is on: on to its page, once per launch (Back comes back here). Not when they've
+  // gone elsewhere or started making an event while the list was loading.
+  useEffect(() => {
+    if (!folders) return;
+    const ev = launchEvent(folders, todayIso());
+    if (ev && navigation.isFocused() && !making) router.push({ pathname: '/event/[id]', params: { id: ev.key } });
+  }, [folders, making, navigation, router]);
 
   const today = todayIso();
   const counts = countByWhen(folders ?? [], today);
