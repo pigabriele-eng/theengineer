@@ -47,8 +47,9 @@ def test_structure_request(monkeypatch):
                                    content=[SimpleNamespace(type="text", text=json.dumps(STRUCTURED))])
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
-    monkeypatch.setattr(structure_mod.anthropic, "Anthropic",
-                        lambda: SimpleNamespace(beta=SimpleNamespace(messages=FakeMessages())))
+    import anthropic
+
+    monkeypatch.setattr(anthropic, "Anthropic", lambda: SimpleNamespace(beta=SimpleNamespace(messages=FakeMessages())))
     ctx = structure_mod.Context(track="Norisring", corners=[("T1", "Grundig")], car="BMW M2 Cup")
     assert structure_mod.structure(TRANSCRIPT, ctx) == STRUCTURED
     assert calls["model"] == "claude-opus-5-5"

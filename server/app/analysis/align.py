@@ -16,6 +16,7 @@ MAX_OFFSET_M = 30  # further from the line than this is the pit lane or a GPS er
 MAX_JUMP_M = 150  # disagreement with wheel-speed distance beyond this is a GPS error
 DRIFT_SMOOTH_S = 4.0  # GPS against wheel-speed distance is averaged over this long
 PAD_S = 1.5  # seconds either side of the lap marker searched for the real line crossing
+CHUNK = 200  # positions measured against the whole line at once: about 4 MB a step on a 5 km line
 
 
 @dataclass
@@ -62,10 +63,10 @@ def project(line: TrackLine, lat: np.ndarray, lon: np.ndarray) -> tuple[np.ndarr
     dist = np.empty(len(x), int)
     off = np.empty(len(x))
     lx, ly = line.x.astype(np.float32), line.y.astype(np.float32)
-    for i in range(0, len(x), 1000):
-        d2 = (x[i:i + 1000, None].astype(np.float32) - lx) ** 2 + (y[i:i + 1000, None].astype(np.float32) - ly) ** 2
-        dist[i:i + 1000] = d2.argmin(1)
-        off[i:i + 1000] = np.sqrt(d2.min(1))
+    for i in range(0, len(x), CHUNK):
+        d2 = (x[i:i + CHUNK, None].astype(np.float32) - lx) ** 2 + (y[i:i + CHUNK, None].astype(np.float32) - ly) ** 2
+        dist[i:i + CHUNK] = d2.argmin(1)
+        off[i:i + CHUNK] = np.sqrt(d2.min(1))
     return dist, off
 
 

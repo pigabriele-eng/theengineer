@@ -9,8 +9,6 @@ import json
 import os
 from dataclasses import dataclass, field
 
-import anthropic
-
 from app.debrief.transcribe import NotConfigured, Transcript
 
 MODEL = "claude-opus-5-5"
@@ -133,6 +131,8 @@ def structure(transcript: Transcript, ctx: Context) -> dict:
         raise NotConfigured("Debrief structuring isn't set up yet: ANTHROPIC_API_KEY is missing on the server")
     if not transcript.segments:
         return {"summary": "", "speakers": [], "points": []}
+    import anthropic  # here, not at the top: the SDK takes about 30 MB of the server's memory from when it's imported
+
     client = anthropic.Anthropic()
     # Refusals are unlikely for debriefs, but "default" fallbacks re-run a declined request on another
     # model instead of failing the debrief.

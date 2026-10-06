@@ -5,9 +5,10 @@ import json
 import numpy as np
 import pytest
 
+from app.analysis.channels import math_channels
 from app.analysis.insights import RunInput, prepare
 from app.analysis.laps import load_session
-from app.analysis.track_shape import SHAPE_STEP_M, track_shape
+from app.analysis.track_shape import LOG_ROLES, SHAPE_STEP_M, TRACE_ROLES, track_shape
 from app.importers.motec import read_ld
 from tests.synthetic import TRACK_M, simulate, write_ld
 
@@ -169,7 +170,7 @@ def test_nothing_to_tell_it_by(laps):
 
 # ---------- from a log, whatever its units ----------
 
-def _log(factor: float, unit: str):
+def _channels(factor: float, unit: str) -> dict:
     """The synthetic test log with a vertical accelerometer (a dip at 700 m) and GPS altitude, its accelerometers
     multiplied by factor and labelled unit."""
     channels, _ = simulate()
@@ -181,7 +182,11 @@ def _log(factor: float, unit: str):
         f, _, x = channels[name]
         channels[name] = (f, unit, x * factor)
     channels["GPS Altitude"] = (20, "m", 30 + 2 * np.sin(2 * np.pi * dist[:: hz // 20] / TRACK_M))
-    data = load_session(read_ld(write_ld(channels)))
+    return channels
+
+
+def _log(factor: float, unit: str):
+    data = load_session(read_ld(write_ld(_channels(factor, unit))))
     prep = prepare([RunInput("run", data)])
     return track_shape([x.trace for x in prep.laps])
 
@@ -197,3 +202,15 @@ def test_a_log_in_m_s2_reads_as_one_in_g():
         assert got is not None
         assert np.allclose(got.load_g, want.load_g, atol=0.03)
         assert np.allclose(got.elevation_m, want.elevation_m, atol=0.01)
+
+
+def test_a_log_read_for_its_shape_needs_only_its_roles():
+    """What the shape reads of a lap comes out the same from LOG_ROLES as from every channel of the log, so a log
+    read for its shape reads no other (the throttle, brake and steering here)."""
+    ld = read_ld(write_ld(_channels(1.0, "G")))
+    every, few = load_session(ld), load_session(ld, roles=LOG_ROLES)
+    math_channels(every)
+    math_channels(few)
+    assert {"throttle", "brake", "steer"} <= set(every.sources) - set(few.sources)
+    for role in TRACE_ROLES:
+        assert np.array_equal(few.channels[role], every.channels[role]), role

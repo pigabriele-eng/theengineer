@@ -55,7 +55,10 @@ class Channel:
         if not self.readable:
             return np.empty(0)
         raw = np.frombuffer(self._buf, dtype=self._dtype, count=self.count, offset=self._offset)
-        return (raw.astype(np.float64) / (self._scale or 1) * 10.0 ** (-self._dec) + self._shift) * self._mul
+        out = (raw.astype(np.float64) / (self._scale or 1) * 10.0 ** (-self._dec) + self._shift) * self._mul
+        del raw
+        _let_go(self._buf, self._offset, self.count * np.dtype(self._dtype).itemsize)
+        return out
 
     def times(self) -> np.ndarray:
         return np.arange(self.count) / self.freq
@@ -102,6 +105,19 @@ def _map(path: Path) -> bytes | mmap.mmap:
             return mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
         except ValueError:  # an empty file can't be mapped
             return b""
+
+
+def _let_go(buf: bytes | mmap.mmap, start: int, length: int) -> None:
+    """The mapped pages of a channel just read no longer count as the server's memory: they stay in the system's file
+    cache for the next read, but a log read channel by channel (the lap medians read every one) would otherwise add
+    up to its whole size, 50-100 MB, on top of what the analysis holds."""
+    if not isinstance(buf, mmap.mmap) or length <= 0:
+        return
+    first = start - start % mmap.PAGESIZE
+    try:
+        buf.madvise(mmap.MADV_DONTNEED, first, start + length - first)
+    except (AttributeError, OSError, ValueError):  # no madvise here: the pages go when the log is closed
+        pass
 
 
 def read_ld(source: bytes | str | Path) -> LdFile:

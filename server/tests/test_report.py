@@ -1,6 +1,7 @@
 """The report: compact session traces, the advice worked out from them, and the cached report behind the API."""
 import re
 import time
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -11,6 +12,7 @@ from app.analysis.insights import RunInput, analyze_runs
 from app.analysis.laps import load_session
 from app.analysis.scan import scan_medians
 from app.importers.motec import read_ld
+from app.routers.reports import _plain
 from tests.synthetic import simulate, write_ld
 
 # Laid out like Hockenheim: a flat T1, the T2-T5 sector around the first slow point and two official corners close
@@ -99,6 +101,15 @@ def test_report_from_compact_traces_matches_the_engine(runs, reduced):
     tr = rep["trace"]
     assert len(tr["typical"]) == len(tr["quick"]) == len(tr["theoretical"]) == rep["length_m"] // tr["step_m"] + 1
     assert rep["laps_analysed"] == 10 and rep["runs_analysed"] == 2
+
+
+def test_the_traces_can_be_let_go_as_their_laps_are_placed(reduced):
+    """consume: each session's compact traces go once its laps are on the line, and the report is the same."""
+    want = build_report(*compact.prepare_compact([(1, reduced[0]), (2, reduced[1])], SECTORED), SECTORED)
+    copies = [replace(cs, traces=dict(cs.traces)) for cs in reduced]
+    got = build_report(*compact.prepare_compact([(1, copies[0]), (2, copies[1])], SECTORED, consume=True), SECTORED)
+    assert [cs.traces for cs in copies] == [{}, {}] and all(cs.traces for cs in reduced)
+    assert _plain(got) == _plain(want)
 
 
 def test_report_names_corners_by_number_only(reduced):

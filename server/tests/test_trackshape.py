@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from app.analysis.laps import Section
+from app.analysis.track_shape import TRACE_ROLES
 from tests.synthetic import simulate, write_ld
 from tests.test_trackmap import SECTORED
 
@@ -92,11 +93,11 @@ def test_shape_endpoints_label_features_with_the_map_corners(client, monkeypatch
     assert [(f["kind"], f["corner"]) for f in s["features"]] == [("banked", "T2-T5"), ("crest", "T6/T7")]
     assert s["banked_note"] == "T2-T5 is banked (about 12 degrees): its grip isn't compared with flat corners."
     # the session's clean laps (pace 1.0 and 0.97; 0.95 is more than 5 % off), every one on the same line and
-    # grid, with the math channels
+    # grid, with the math channels the shape reads and no other channel
     (traces,) = seen
     assert s["laps"] == len(traces) == 2 and s["sessions"] == 1
     assert {len(tr["speed"]) for tr in traces} == {m["length_m"] + 1}
-    assert {"ax", "ay", "curvature", "distance", "t"} <= set(traces[0])
+    assert {"ax", "ay", "turn_g", "distance", "t"} <= set(traces[0]) <= {"distance", "t", "lat", "lon", *TRACE_ROLES}
 
     # served again without reading the log or working it out again
     with monkeypatch.context() as mp:
