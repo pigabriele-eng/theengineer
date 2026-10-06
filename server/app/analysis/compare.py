@@ -503,9 +503,10 @@ def compare_groups(sources: list[RunSource], labels: dict[str, str] | None = Non
         missing = [labels[g] for g in SIDES if not by[g]]
         return {"error": f"No clean laps for {' and '.join(missing) or 'either side'}", "sections": []}
     sections = ref.sections
-    # the reference lap as the theoretical lap needs it: its line, and its own speed and g (no lap is slower)
+    # the reference lap as the theoretical lap needs it: its line, and its own speed, g and time (no lap is slower)
     ref_lap = next((x for x in laps if x.run == ref.run and x.number == ref.number), min(laps, key=lambda x: x.time))
-    t = targets(laps, {**ref_lap.trace, "curvature": ref.trace["curvature"]})
+    ref_t = np.concatenate([[0.0], np.cumsum(np.asarray(ref_lap.dt, float)[:-1])])
+    t = targets(laps, {**ref_lap.trace, "curvature": ref.trace["curvature"], "t": ref_t}, ref_lap.time, sections)
     limits = t.limits
     for x in laps:
         _grip(x, sections, limits)
