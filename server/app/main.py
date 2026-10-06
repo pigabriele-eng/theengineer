@@ -14,6 +14,11 @@ from app.routers import comparisons, drivers, lapcompare, report_grip, reports, 
 from app.routers import event_naming, events, planned, technique
 from app.routers import stint as stint_tool
 from app.vehicle import tyre_store
+from app import results
+
+results.bind_models()  # before the results modules below use its tables
+from app.results import sync as results_sync  # noqa: E402
+from app.routers import results as series_results  # noqa: E402
 
 
 @asynccontextmanager
@@ -26,6 +31,7 @@ async def lifespan(_: FastAPI):
     empty_runs.start()  # in the background: imported runs with no laps (pit-lane logs) are removed
     tyre_store.start()  # summarises logs for the tyre model in the background, older ones first
     calendar_sync.start()  # reads the racing calendar now and then, for planned events
+    results_sync.start_background()  # official series results: missing seasons, and current events kept fresh
     yield
     tyre_store.stop()
     calendar_sync.stop()
@@ -54,6 +60,7 @@ app.include_router(events.router, dependencies=signed_in)
 app.include_router(planned.router, dependencies=signed_in)
 app.include_router(event_naming.router, dependencies=signed_in)
 app.include_router(stint_tool.router, dependencies=signed_in)
+app.include_router(series_results.router, dependencies=signed_in)
 app.include_router(debriefs.media_router, dependencies=[Depends(require_user_or_query_token)])
 
 
