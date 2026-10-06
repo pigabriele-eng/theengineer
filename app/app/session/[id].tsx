@@ -90,7 +90,7 @@ export default function SessionScreen() {
           <RunHeader key={session.id}
             run={{ id: session.id, name: session.name ?? `Session ${session.id}`, driver_id: (session as Tagged).driver_id,
               car_id: (session as Tagged).car_id }}
-            kind={session.kind}
+            kind={session.kind} eventId={(session as Tagged).event_id}
             logSession={session.files.map((f) => (f.meta as { event_session?: string }).event_session).find(Boolean)}
             onChanged={() => api.session(sessionId).then(setSession, (e) => setError(e.message))} />
         )}
