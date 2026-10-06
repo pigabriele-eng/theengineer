@@ -115,9 +115,12 @@ def client(tmp_path, monkeypatch):
     for m in (app.laptags, app.routers.stint):
         importlib.reload(m)
     import app.prep.models
+    import app.prep.track_grip
     import app.prep.weather
     import app.routers.prep
-    for m in (app.prep.models, app.prep.weather, app.prep.plan, app.prep.gather, app.routers.prep):
+    import app.routers.track_grip
+    for m in (app.prep.models, app.prep.weather, app.prep.plan, app.prep.gather, app.routers.track_grip,
+              app.prep.track_grip, app.routers.prep):
         importlib.reload(m)
     importlib.reload(app.main)
     if TEST_DATABASE_URL:

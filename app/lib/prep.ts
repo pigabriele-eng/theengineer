@@ -2,6 +2,7 @@
 // by the server in the background into a briefing for the coming weekend; GET /prep/events lists the events that have
 // past data (for the button), GET /prep/events/{id}/weather the weather then and the forecast now.
 import { apiFetch } from '@/lib/api';
+import { PrepTrackGrip } from '@/lib/trackGrip';
 
 export type PrepStatus = 'ready' | 'queued' | 'running' | 'failed' | 'none';
 
@@ -119,6 +120,7 @@ export type PrepReport = {
     remarks: number;
     notes: string[];
   } | null;
+  track_grip?: PrepTrackGrip | null; // reports kept before it existed lack it
   notes: string[];
   method: string[];
 };
