@@ -8,6 +8,7 @@ import { EventForm } from '@/components/EventForm';
 import { ImportLogs } from '@/components/ImportLogs';
 import { MoveSessions } from '@/components/MoveSessions';
 import { RenameEvent } from '@/components/RenameEvent';
+import { ResultsPanel } from '@/components/ResultsPanel';
 import { filledNote, localPick, PickerKind, RunChips, RunNameEditor, RunPicker, useGarage } from '@/components/RunChips';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
@@ -330,6 +331,7 @@ export default function EventScreen() {
               <Text style={styles.notice}>{notice}</Text>
             </Pressable>
           )}
+          {eventId != null && <ResultsPanel eventId={eventId} />}
           {panel === 'move' && picks.length > 0 && (
             <MoveSessions fromKey={key} count={picks.length} onMove={moveTo} onCancel={() => setPanel(null)} />
           )}

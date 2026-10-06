@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
 
 import { LapCompare } from '@/components/LapCompare';
+import { SessionResults } from '@/components/OfficialSessionCard';
 import { RunHeader } from '@/components/RunChips';
 import { SessionSwitcher, useEventFolder } from '@/components/SessionSwitcher';
 import { SetupCard } from '@/components/SetupCard';
@@ -99,6 +100,7 @@ export default function SessionScreen() {
           <Fact label="Laps" value={String(session?.laps.length ?? 0)} />
         </View>
         {session && <UntimedNote session={session} />}
+        <SessionResults sessionId={sessionId} />
         {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
         {session?.laps.some((l) => l.clean) && (
           <Link href={{ pathname: '/report', params: { session: sessionId } }} asChild>
