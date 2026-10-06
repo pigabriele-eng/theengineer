@@ -23,7 +23,8 @@ from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from sqlalchemy import inspect, select, update
 from sqlalchemy.orm import Session
 
-from app import heavy, models, schemas, storage
+from app import empty_runs, heavy, models, schemas, storage
+from app.analysis.emptyrun import NoLaps
 from app.db import SessionLocal, get_db
 from app.importers import archive
 from app.importers.motec import read_ldx_beacons
@@ -87,7 +88,8 @@ def get_import(job_id: int, db: Session = Depends(get_db)):
     job = db.get(models.ImportJob, job_id)
     if job is None:
         raise HTTPException(404, "Import not found")
-    return job
+    # with the runs kept whose laps couldn't be timed (a missing lap beacon), and why
+    return {**schemas.ImportJobOut.model_validate(job).model_dump(), "untimed": empty_runs.untimed(db, job.session_ids)}
 
 
 def fail_interrupted() -> None:
@@ -210,7 +212,10 @@ class _Run:
         except Exception as e:
             db.rollback()
             self.events = {k: ev for k, ev in self.events.items() if inspect(ev).persistent}
-            errors.append({"file": item.label, "error": _plain(e)})
+            if isinstance(e, NoLaps):  # an empty run isn't kept: listed with the reason
+                job.skipped = [*job.skipped, {"file": item.label, "reason": e.reason}]
+            else:
+                errors.append({"file": item.label, "error": _plain(e)})
         finally:
             for p in copies:
                 p.unlink(missing_ok=True)

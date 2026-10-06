@@ -9,6 +9,7 @@ import { SessionSwitcher, useEventFolder } from '@/components/SessionSwitcher';
 import { SetupCard } from '@/components/SetupCard';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
+import { UntimedNote } from '@/components/UntimedNote';
 import { Analysis, api, Debrief, DETECTED_CORNERS_NOTE, formatLap, SessionDetail } from '@/lib/api';
 import { Tagged } from '@/lib/drivers';
 
@@ -93,6 +94,7 @@ export default function SessionScreen() {
           <Fact label="Theoretical best" value={formatLap(analysis?.theoretical_best)} />
           <Fact label="Laps" value={String(session?.laps.length ?? 0)} />
         </View>
+        {session && <UntimedNote session={session} />}
         {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
         {session?.laps.some((l) => l.clean) && (
           <Link href={{ pathname: '/report', params: { session: sessionId } }} asChild>

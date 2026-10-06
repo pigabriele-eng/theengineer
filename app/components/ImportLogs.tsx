@@ -10,6 +10,7 @@ import { EventForm } from '@/components/EventForm';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { api, ImportJob } from '@/lib/api';
 import { dateRange, eventsApi, FolderSummary } from '@/lib/events';
+import { untimedRuns } from '@/lib/emptyRuns';
 
 // The browser's file dialog filters by extension. iOS and Android filter by MIME type only, and a .ld log has
 // none, so there every file can be picked and the server skips what isn't a log.
@@ -218,6 +219,12 @@ function Summary({ job, onHide, tint }: { job: ImportJob; onHide: () => void; ti
           Skipped {plural(names.length, 'file')} ({reason}): {list(names)}
         </Text>
       ))}
+      {untimedRuns(job).length > 0 && (
+        <Text style={styles.warn}>
+          Laps not timed, the lap beacon is missing: {list(untimedRuns(job).map((u) => u.name ?? u.file))}. Open the
+          run to see how to time them.
+        </Text>
+      )}
       <Pressable onPress={onHide} hitSlop={8}>
         <Text style={{ color: tint }}>Hide</Text>
       </Pressable>
@@ -240,4 +247,5 @@ const styles = StyleSheet.create({
   headline: { fontWeight: '600' },
   sub: { opacity: 0.7 },
   error: { color: '#c8372d' },
+  warn: { color: '#b26b00' },
 });

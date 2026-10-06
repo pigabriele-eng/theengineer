@@ -203,7 +203,9 @@ def test_ir_sensor_channels_from_a_log(client):
     n = 100 * 120
     v = np.full(n, 150.0)
     v[:1000] = 0  # parked: these samples don't count
-    extra = {"vCar": (100, "km/h", v)}
+    marker = np.zeros(n // 10)
+    marker[[150, 1150]] = 1.0  # one lap (a log with no laps isn't kept)
+    extra = {"vCar": (100, "km/h", v), "S/F Marker": (10, "", marker)}
     for pos, temp in (("Inner", 95.0), ("Centre", 90.0), ("Outer", 84.0)):
         extra[f"Tyre Temp FL {pos}"] = (10, "C", np.full(n // 10, temp))
     for i in range(1, 7):  # numbered across the tread, channel 1 on the inside

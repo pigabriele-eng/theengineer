@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app import models, schemas, storage
+from app.analysis.emptyrun import NoLaps, judge
 from app.analysis.laps import CornerSpec, LapTiming, SessionData, analyze, compare_laps, load_session, time_laps
 from app.db import get_db
 from app.heavy import one_at_a_time
@@ -88,7 +89,10 @@ def upload_file(session_id: int, file: UploadFile, db: Session = Depends(get_db)
         path = Path(tmp) / f"log{ext}"
         with path.open("wb") as out:
             shutil.copyfileobj(file.file, out, storage.CHUNK_BYTES)
-        rec = add_log(db, s, path, name)
+        try:
+            rec = add_log(db, s, path, name)
+        except NoLaps as e:  # the session stays as it was; nothing is stored
+            raise HTTPException(422, f"{name} wasn't added ({e.reason}).") from e
         _attach_track(db, s, rec)
     db.commit()
     db.refresh(s)
@@ -120,7 +124,8 @@ def add_log(db: Session, s: models.RunSession, path: Path, name: str,
     """Read a logger file on the local disk (a MoTeC .ld log or a CSV export), store it and time its laps for the
     session. The single-file upload and the import of many files both come through here. ldx_beacons are the
     line crossings from the log's .ldx, when there is one. Flushed, not committed; HTTPException 422 when the file
-    can't be read."""
+    can't be read, NoLaps (before anything is stored) when it gives no laps and the car did none: a log of a car that
+    did laps it can't time (a missing lap beacon) is kept, marked "untimed" in its meta (analysis/emptyrun.py)."""
     ext = Path(name).suffix.lower()
     try:
         ld = read_ld(path) if ext == ".ld" else read_csv_log(path)
@@ -129,6 +134,12 @@ def add_log(db: Session, s: models.RunSession, path: Path, name: str,
             beacons = ldx_beacons
         track = _track_for(db, s, ld)
         data = load_session(ld, _channel_map(s), beacons=beacons, line=track_line(track))
+        verdict = None
+        if not data.laps:
+            verdict = judge(ld, data, ldx_beacons or getattr(ld, "beacons", None), track_line(track),
+                            track.length_m if track else None)
+            if not verdict.keep:
+                raise NoLaps(verdict.reason)
     except (LdFormatError, ValueError) as e:
         raise HTTPException(422, str(e)) from e
 
@@ -142,6 +153,8 @@ def add_log(db: Session, s: models.RunSession, path: Path, name: str,
         meta.update({"format": "csv", "layout": ld.layout, "driver": ld.driver, "vehicle": ld.vehicle})
     if beacons:
         meta["beacons"] = beacons
+    if verdict is not None:
+        meta["untimed"] = verdict.note()
     rec = models.LoggerFile(session=s, logger=logger, filename=(name or key)[:255], path=key, meta=meta)
     db.add(rec)
     db.flush()
