@@ -161,15 +161,16 @@ def _old_import(client, monkeypatch, entries: dict[str, bytes]) -> dict[str, int
     """Sessions as an import made them before empty runs were left out: kept, with no laps and no mark."""
     import app.db
     import app.models
-    import app.routers.imports
     import app.routers.reports
     import app.routers.sessions
     import app.timing
 
+    import app.routers.imports
+
     with monkeypatch.context() as m:
         m.setattr(app.routers.sessions, "judge", lambda *a: emptyrun.Verdict(True, "kept"))
         job = upload(client, ("T01.zip", make_zip(entries)))
-        app.routers.imports._jobs.join()  # the import marks its job done before it asks for its reports
+    app.routers.imports._jobs.join()  # the import asks for its reports just after it shows done
     app.timing.wait_idle()
     app.routers.reports.wait_idle()
     with app.db.SessionLocal() as db:

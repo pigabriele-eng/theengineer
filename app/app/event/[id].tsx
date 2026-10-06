@@ -8,6 +8,7 @@ import { EventForm } from '@/components/EventForm';
 import { ImportLogs } from '@/components/ImportLogs';
 import { MoveSessions } from '@/components/MoveSessions';
 import { RenameEvent } from '@/components/RenameEvent';
+import { ResultsPanel } from '@/components/ResultsPanel';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { formatLap, SessionKind } from '@/lib/api';
 import { MAX_LAPS } from '@/lib/compare';
@@ -297,6 +298,7 @@ export default function EventScreen() {
               <Text style={styles.notice}>{notice}</Text>
             </Pressable>
           )}
+          {eventId != null && <ResultsPanel eventId={eventId} />}
           {panel === 'move' && picks.length > 0 && (
             <MoveSessions fromKey={key} count={picks.length} onMove={moveTo} onCancel={() => setPanel(null)} />
           )}

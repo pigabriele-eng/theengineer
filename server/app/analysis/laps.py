@@ -35,6 +35,9 @@ DEFAULT_CHANNEL_MAP: dict[str, tuple[str, ...]] = {
                "LongAcc", "LonAcc", "Longitudinal Acceleration", "Longitudinal G", "log_acc_x", "GPS LonAcc"),
     "yaw": ("nYaw", "Yaw Rate", "Gyro Yaw Velocity", "Yaw Velocity", "YawRate", "sclu_yaw_rate", "log_yaw_rate",
             "GPS Gyro"),
+    "g_vert": ("G Force Vert", "gVert", "aVert [m/s/s]", "Vertical Accel", "VerticalAcc", "Vertical Acc",
+               "Vertical Acceleration", "Vertical G", "VertAcc", "log_acc_z"),
+    "altitude": ("GPS Altitude", "GPS Alt", "Altitude", "GPS Height", "log_gps_alt"),
     "steer_wheel": ("aSteerWheel", "Steering Wheel Angle"),
     "brake_rear": ("pBrakeR", "Brake Pressure Rear", "Brake Press Rear", "Brake Pres Rear", "Rear Brake Pres",
                    "Rear Brake Press", "BrakePress Rear", "Brake Press R", "log_pbrake_r"),
@@ -130,7 +133,7 @@ def load_session(ld: LdFile, channel_map: dict[str, tuple[str, ...]] | None = No
             v = v / 100
         if role in ("brake", "brake_rear"):
             v = np.abs(v)  # some cars log brake torque as a negative number
-        if role in ("g_lat", "g_long") and "m/s" in (ch.unit + ch.name):
+        if role in ("g_lat", "g_long", "g_vert") and "m/s" in (ch.unit + ch.name):
             v = v / 9.81
         channels[role], sources[role] = v, ch.name
     distance = np.concatenate([[0.0], np.cumsum(channels["speed"][1:] / 3.6 / MASTER_HZ)])
