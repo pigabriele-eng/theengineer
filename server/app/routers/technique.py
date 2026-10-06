@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 
 from app import heavy, models, storage
 from app.analysis import compact
-from app.analysis.technique import check_lap, habits
+from app.analysis.technique import INPUT_ROLES, check_lap, habits
 from app.db import SessionLocal, get_db
 from app.routers import reports
 from app.routers.sessions import official_corners
@@ -37,8 +37,9 @@ from app.routers.sessions import official_corners
 router = APIRouter(prefix="/technique")
 log = logging.getLogger(__name__)
 
-TECHNIQUE_VERSION = 5  # raise when the check changes, so every kept one is worked out again
+TECHNIQUE_VERSION = 6  # raise when the check changes, so every kept one is worked out again
 # 5: perfect driving on a lap's own line at limits never below that lap's own (local_limits.on_own_line)
+# 6: the driver's inputs and perfect driving's phases with each lap's speed trace
 TRACES_WAIT_S = 3600  # longest the check waits for the logs to be read into lap traces
 HABITS_SHOWN = 12
 DETAILS_KEPT = 16  # laps' full checks kept in memory
@@ -150,12 +151,25 @@ def _lap_row(x: dict) -> dict:
             "top_code": x["mistakes"][0]["code"] if x["mistakes"] else None, "in_lap": x.get("pit_from_m") is not None}
 
 
-def _lap_out(row: models.TechniqueCache, x: dict, session_habits: list[dict]) -> dict:
+def _fastest(row: models.TechniqueCache, res: dict, x: dict) -> dict | None:
+    """The scope's fastest lap (the reference the report uses), with its inputs to lay over lap x's; none when x is
+    that lap."""
+    ref = res.get("reference")
+    lap = next((y for y in res["laps"] if y["key"] == ref["key"]), None) if ref else None
+    if lap is None:
+        return None
+    this = lap["key"] == x["key"]
+    trace = None if this else ((_detail(row, lap["detail"]) or {}).get("trace") or {})
+    return {"session_id": lap["session_id"], "run": lap["run"], "number": lap["number"], "time": lap["time"],
+            "this_lap": this, "inputs": trace.get("inputs") if trace else None}
+
+
+def _lap_out(row: models.TechniqueCache, res: dict, x: dict, session_habits: list[dict]) -> dict:
     detail = _detail(row, x["detail"]) or {}
     repeats = {h["key"]: {"laps": h["laps"], "of": h["of"]} for h in session_habits}
     mistakes = [{**m, "repeats": repeats.get(m["key"])} for m in detail.get("mistakes", x["mistakes"])]
     out = {k: v for k, v in x.items() if k not in ("detail", "mistakes")}
-    return {**out, "mistakes": mistakes, "trace": detail.get("trace")}
+    return {**out, "mistakes": mistakes, "trace": detail.get("trace"), "fastest": _fastest(row, res, x)}
 
 
 @router.get("/sessions/{session_id}")
@@ -187,11 +201,11 @@ def session_technique(session_id: int, lap: int | None = None, db: Session = Dep
     if chosen is None and lap is None and laps:
         chosen = min(laps, key=lambda x: x["time"])
     if chosen is not None:
-        out["lap"] = _lap_out(row, chosen, session_habits)
+        out["lap"] = _lap_out(row, res, chosen, session_habits)
     out["habits"] = {"session": session_habits[:HABITS_SHOWN], "session_laps": len(laps),
                      "event": res["habits"]["event"][:HABITS_SHOWN] if kind == "event" else None,
                      "event_laps": len(res["laps"]) if kind == "event" else None}
-    out.update({k: res[k] for k in ("sections", "corners", "length_m", "numbering")})
+    out.update({k: res[k] for k in ("sections", "corners", "length_m", "numbering", "inputs")})
     return out
 
 
@@ -345,10 +359,14 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
     compressed file with one member per lap, so one lap is read without the rest)."""
     corners = official_corners(plan.track)
     sessions = []
+    channels: dict[str, str] = {}  # role -> the logger channel the inputs come from
     for item in reports._used(plan):
         cs = reports._load(db, item, plan.track)
         if cs is not None and cs.n_laps:
             sessions.append((item.session.id, cs))
+            for r in INPUT_ROLES:
+                if r in cs.traces and r in cs.sources:
+                    channels.setdefault(r, cs.sources[r])
     if not sessions:
         raise TechniqueError("No clean laps to check")
     sessions, left_out = reports._quickest(sessions)
@@ -384,6 +402,8 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
         "reference": {"key": prep.reference.key, "session_id": extras.session_of[prep.reference.key],
                       "number": prep.reference.number, "time": prep.reference.time},
         "theoretical": prep.sim.time,
+        # the driver's inputs sent with every lap's trace: the logger channel each comes from and its unit
+        "inputs": {r: {"channel": channels.get(r), "unit": extras.units.get(r)} for r in INPUT_ROLES},
         "laps": laps,
         "habits": {"event": habits([x["mistakes"] for x in laps]),
                    "sessions": {str(sid): habits(m) for sid, m in by_session.items()}},

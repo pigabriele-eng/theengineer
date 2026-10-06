@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from app.analysis.channels import EXIT, POWER
-from app.analysis.lapsim import Calibration, LapModel, SimLap
+from app.analysis.lapsim import TOP_SPEED_MARGIN, Calibration, LapModel, SimLap
 from app.analysis.laps import Section
 from app.analysis.local_limits import PlaceLimits, on_own_line
 
@@ -47,6 +47,9 @@ TC_AFTER_FULL_M = 60  # traction control working this soon after full throttle s
 PICKUP = 20.0  # % pedal: the throttle is back on
 PIT_SPEED_SHARE = 0.6  # over the line slower than this share of perfect driving's speed: the lap ends in the pits
 TRACE_STEP_M = 5
+INPUT_ROLES = {"throttle": 0, "brake": 1, "steer": 1, "gear": 0}  # the driver's inputs sent with the trace: decimals
+# perfect driving's own phases (model_phases): braking, at the grip limit (part throttle), full throttle; no coasting
+MODEL_PHASES = ("braking", "grip limit", "full throttle")
 
 PHASE_WORDS = ("braking", "entry", "mid-corner", "exit", "full throttle")
 
@@ -629,6 +632,31 @@ def pit_entry(tr: dict[str, np.ndarray], env_r: Envelope) -> int | None:
     return int(on[-1]) + 1 if len(on) else 0
 
 
+def lap_inputs(tr: dict[str, np.ndarray], step: int) -> dict[str, list[float] | None]:
+    """The driver's inputs (throttle %, brake pressure, steering, gear, as the log's channels for those roles have
+    them) at the speed trace's points, every step metres; None for a channel the log doesn't have."""
+    return {r: np.round(np.asarray(tr[r][::step], float), d).tolist() if r in tr else None
+            for r, d in INPUT_ROLES.items()}
+
+
+def model_phases(env: Envelope, sim: SimLap, step: int) -> list[int]:
+    """Perfect driving's own phase every step metres, as its model drives (an index into MODEL_PHASES): braking for
+    the corner ahead; at the grip limit (cornering as hard as the car has shown there, or driving out as hard as the
+    tyres allow: part throttle); or full throttle (the engine, not the grip, limits the drive, or at top speed). The
+    model has no pedal positions and never coasts."""
+    v_top = env.lim.top_speed * TOP_SPEED_MARGIN / 3.6
+    out = []
+    for i in range(0, env.n + 1, step):
+        by = int(sim.limited_by[i])  # lapsim.LIMITED_BY: corner, accel, brake
+        if by == 2:
+            out.append(0)
+        elif by == 1:
+            out.append(2 if env.power_limited(float(env.P[i]), i) else 1)
+        else:
+            out.append(2 if env.vc[i] >= v_top - 1e-6 else 1)
+    return out
+
+
 def check_lap(tr: dict[str, np.ndarray], perfect: PlaceLimits, held: PlaceLimits, sections: list[Section], *,
               lap_time: float, units: dict[str, str] | None = None, detail: bool = True,
               calibrations: tuple[Calibration | None, Calibration | None] = (None, None)) -> dict:
@@ -705,7 +733,8 @@ def check_lap(tr: dict[str, np.ndarray], perfect: PlaceLimits, held: PlaceLimits
         out["trace"] = {"step_m": step,
                         "driven": np.round(tr["speed"][::step], 1).tolist(),
                         "perfect": np.round(sim.speed[::step], 1).tolist(),
-                        "realistic": np.round(realistic.speed[::step], 1).tolist()}
+                        "realistic": np.round(realistic.speed[::step], 1).tolist(),
+                        "inputs": lap_inputs(tr, step), "model_phases": model_phases(env, sim, step)}
         out["pieces"] = [{"start_m": p.start, "end_m": p.end, "role": p.role,
                           "code": p.corner.code if p.corner else section_of((p.start + p.end) // 2),
                           "cost_s": round(p.cost, 3), "cost_perfect_s": round(p.cost_perfect, 3)} for p in pieces]
