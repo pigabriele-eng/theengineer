@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput } from 
 
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { api, formatLap, Session } from '@/lib/api';
+import { toolLists, VehicleItem } from '@/lib/toolLists';
 import {
   History,
   HistoryRun,
@@ -58,6 +59,28 @@ export default function SetupScreen() {
     );
     refreshSheets();
   }, [refreshSheets]);
+
+  // the garage's vehicles, and the run's own (its event's, else its car's): picked by default
+  const [vehicles, setVehicles] = useState<VehicleItem[]>([]);
+  const [runVehicle, setRunVehicle] = useState<number | null>(null);
+  const [vehicleId, setVehicleId] = useState<number | null>(null);
+  useEffect(() => {
+    if (picked == null) return;
+    let live = true;
+    toolLists.vehicles(picked).then(
+      (r) => {
+        if (!live) return;
+        setVehicles(r.vehicles);
+        setRunVehicle(r.session_vehicle_id);
+        setVehicleId(r.session_vehicle_id);
+      },
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [picked]);
+  const vehicle = vehicles.find((v) => v.id === vehicleId) ?? null;
 
   const pick = (id: number, next: Tab = tab) => {
     setPicked(id);
@@ -114,11 +137,22 @@ export default function SetupScreen() {
         ))}
       </View>
 
-      {picked != null && tab === 'sheet' && <SheetEditor key={picked} sessionId={picked} onSaved={refreshSheets} />}
+      {picked != null && tab !== 'runs' && (
+        <VehiclePicker
+          vehicles={vehicles}
+          vehicleId={vehicleId}
+          runVehicle={runVehicle}
+          eventId={(current as (Session & { event_id?: number | null }) | undefined)?.event_id ?? null}
+          onPick={setVehicleId}
+        />
+      )}
+      {picked != null && tab === 'sheet' && (
+        <SheetEditor key={picked} sessionId={picked} vehicle={vehicle} onSaved={refreshSheets} />
+      )}
       {picked != null && tab === 'runs' && (
         <RunsView key={picked} sessionId={picked} onPick={(id) => pick(id, 'sheet')} />
       )}
-      {picked != null && tab === 'ideas' && <IdeasView key={picked} sessionId={picked} />}
+      {picked != null && tab === 'ideas' && <IdeasView key={picked} sessionId={picked} vehicleId={vehicleId} />}
     </ScrollView>
   );
 }
@@ -128,7 +162,87 @@ export default function SetupScreen() {
 const toForm = (values: Record<string, number>) =>
   Object.fromEntries(Object.entries(values).map(([k, v]) => [k, String(v)]));
 
-function SheetEditor({ sessionId, onSaved }: { sessionId: number; onSaved: () => void }) {
+// The vehicle the setup goes with: the run's own by default (set on its event or car), or another picked here. Its
+// stored specs are what the vehicle model and the suggestions start from, and a new sheet takes its template.
+function VehiclePicker({
+  vehicles,
+  vehicleId,
+  runVehicle,
+  eventId,
+  onPick,
+}: {
+  vehicles: VehicleItem[];
+  vehicleId: number | null;
+  runVehicle: number | null;
+  eventId: number | null;
+  onPick: (id: number | null) => void;
+}) {
+  const tint = useThemeColor({}, 'tint');
+  const router = useRouter();
+  const own = vehicles.find((v) => v.id === runVehicle);
+  return (
+    <View style={styles.vehicleBox}>
+      <View style={styles.headRow}>
+        <Text style={styles.subhead}>Vehicle</Text>
+        <Pressable onPress={() => router.push('/garage')} hitSlop={6}>
+          <Text style={{ color: tint }}>Add a vehicle in the garage</Text>
+        </Pressable>
+      </View>
+      {vehicles.length === 0 ? (
+        <Text style={styles.dim}>No vehicles in the garage yet: the sheet's built-in car values are used.</Text>
+      ) : (
+        <View style={styles.chipsWrap}>
+          {vehicles.map((v) => {
+            const on = v.id === vehicleId;
+            return (
+              <Pressable
+                key={v.id}
+                onPress={() => onPick(on ? runVehicle : v.id)}
+                style={on ? StyleSheet.flatten([styles.smallChip, { borderColor: tint }]) : styles.smallChip}
+                accessibilityRole="button"
+                accessibilityState={{ selected: on }}>
+                <Text style={on ? { color: tint, fontWeight: '600' } : undefined}>{v.name}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
+      {vehicles.length > 0 &&
+        (own == null ? (
+          <Text style={styles.dim}>
+            This run has no vehicle set
+            {eventId != null ? (
+              <>
+                {': '}
+                <Text
+                  style={{ color: tint }}
+                  onPress={() => router.push({ pathname: '/event/[id]', params: { id: eventId } })}>
+                  set it on the event
+                </Text>
+                {' (or link the car to its vehicle in the garage).'}
+              </>
+            ) : (
+              ': link its car to its vehicle in the garage.'
+            )}
+          </Text>
+        ) : vehicleId !== own.id ? (
+          <Text style={styles.dim}>Picked here only: this run's vehicle is {own.name}.</Text>
+        ) : (
+          <Text style={styles.dim}>This run's vehicle: its specs feed the vehicle model and the suggestions.</Text>
+        ))}
+    </View>
+  );
+}
+
+function SheetEditor({
+  sessionId,
+  vehicle,
+  onSaved,
+}: {
+  sessionId: number;
+  vehicle: VehicleItem | null;
+  onSaved: () => void;
+}) {
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const [template, setTemplate] = useState<Template | null>(null);
   const [templates, setTemplates] = useState<{ key: string; name: string }[]>([]);
@@ -166,6 +280,14 @@ function SheetEditor({ sessionId, onSaved }: { sessionId: number; onSaved: () =>
       live = false;
     };
   }, [sessionId]);
+
+  // a new sheet takes the template the picked vehicle's name points to (a vehicle that points to none leaves the
+  // run's own)
+  const exists = sheet?.exists;
+  useEffect(() => {
+    if (vehicle && vehicle.template !== 'generic' && exists === false)
+      setSheet((s) => (s && !s.exists ? { ...s, template: vehicle.template } : s));
+  }, [vehicle?.template, exists]);
 
   useEffect(() => {
     if (!sheet) return;
@@ -299,9 +421,14 @@ function SheetEditor({ sessionId, onSaved }: { sessionId: number; onSaved: () =>
         <Pressable onPress={() => setShowSources((s) => !s)} hitSlop={6}>
           <Text style={{ color: tint }}>{showSources ? 'Hide' : 'Show'} where each item comes from</Text>
         </Pressable>
-        {sheet.exists && template.vehicle_preset && (
+        {sheet.exists && (template.vehicle_preset || vehicle) && (
           <Pressable
-            onPress={() => router.push({ pathname: '/tools/vehicle', params: { session: sessionId } })}
+            onPress={() =>
+              router.push({
+                pathname: '/tools/vehicle',
+                params: vehicle ? { session: sessionId, vehicle: vehicle.id } : { session: sessionId },
+              })
+            }
             hitSlop={6}>
             <Text style={{ color: tint }}>Open in the vehicle model</Text>
           </Pressable>
@@ -622,21 +749,23 @@ function Stat({ label, value, delta, color }: { label: string; value: string; de
 
 // ---------- suggestions ----------
 
-function IdeasView({ sessionId }: { sessionId: number }) {
+function IdeasView({ sessionId, vehicleId }: { sessionId: number; vehicleId: number | null }) {
   const [data, setData] = useState<Suggestions | null>(null);
   const [error, setError] = useState<string | null>(null);
   const tint = useThemeColor({}, 'tint');
 
   useEffect(() => {
     let live = true;
-    setupApi.suggestions(sessionId).then(
+    setData(null);
+    setError(null);
+    setupApi.suggestions(sessionId, vehicleId).then(
       (s) => live && setData(s),
       (e) => live && setError(e.message),
     );
     return () => {
       live = false;
     };
-  }, [sessionId]);
+  }, [sessionId, vehicleId]);
 
   if (error) return <Text style={styles.error}>{error}</Text>;
   if (!data) return <ActivityIndicator />;
@@ -793,6 +922,7 @@ const styles = StyleSheet.create({
   tabs: { flexDirection: 'row', gap: 8 },
   tab: { flex: 1, borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingVertical: 8, alignItems: 'center' },
   tabText: { fontWeight: '600' },
+  vehicleBox: { gap: 6 },
   section: { gap: 10 },
   headRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, backgroundColor: 'transparent' },
   flex: { flex: 1, backgroundColor: 'transparent' },

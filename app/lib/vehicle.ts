@@ -38,7 +38,7 @@ export type Vehicle = {
 
 export type Provenance = {
   value: unknown;
-  confidence: 'published' | 'estimate' | 'unknown';
+  confidence: 'published' | 'estimate' | 'unknown' | 'stored'; // stored: from the garage vehicle's specs
   source: string | null;
   note: string;
 };

@@ -22,7 +22,7 @@ const FIELDS: Field[] = [
 
 type Mode = 'all' | 'one';
 const MODES: { key: Mode; label: string }[] = [
-  { key: 'all', label: 'All data for this car' },
+  { key: 'all', label: 'All data for this car and tyre' },
   { key: 'one', label: 'One log' },
 ];
 
@@ -51,9 +51,10 @@ export default function TyreFitScreen() {
       {/* both stay mounted, so a single-log fit survives a look at the other mode */}
       <View style={[styles.pane, mode !== 'all' && styles.hidden]}>
         <Text style={styles.intro}>
-          One tyre model from every session of the car on this tyre: each log is summarised once, in the background,
-          and the model grows with every run. It shows where the grip peaks and how grip changes with TPMS
-          temperature, hot pressure and laps on the tyre.
+          One tyre model from every session of the car on this tyre: different tyres are different models, and a
+          session's tyre is the one set on its event. Each log is summarised once, in the background, and the model
+          grows with every run. It shows where the grip peaks and how grip changes with TPMS temperature, hot
+          pressure and laps on the tyre.
         </Text>
         <TyreModelView />
       </View>

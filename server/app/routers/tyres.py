@@ -8,11 +8,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import models
+from app import catalog, models
 from app.db import get_db
 from app.heavy import one_at_a_time
 from app.importers.motec import LdFormatError
 from app.routers.sessions import LOG_FILES, _get, read_file
+from app.tyres import kinds as tyre_kinds
 from app.tyres import temps as tyre_temps
 from app.tyres.pressure import pressure_plan
 from app.tyres.presets import (
@@ -85,12 +86,42 @@ def _summary(runs: list[dict]) -> dict[str, dict]:
     return out
 
 
+def _kind(db: Session, tyre_kind_id: int) -> catalog.TyreKind:
+    t = db.get(catalog.TyreKind, tyre_kind_id)
+    if t is None:
+        raise HTTPException(404, "Tyre not found")
+    return t
+
+
+def runs_on(db: Session, tyre_kind_id: int | None, car_id: int | None = None,
+            session_ids: list[int] | None = None) -> list[dict]:
+    """The logged runs to learn from: with a tyre, only those of the sessions on it (of the ones named, or of the
+    car)."""
+    if tyre_kind_id is None:
+        return logged_runs(db, car_id, session_ids)
+    on = tyre_kinds.sessions_on(db, tyre_kind_id, None if session_ids else car_id)
+    if session_ids:
+        keep = set(on)
+        on = [sid for sid in dict.fromkeys(session_ids) if sid in keep]
+    return logged_runs(db, session_ids=on) if on else []
+
+
 @router.get("/tyres/runs")
 def tyre_runs(car_id: int | None = None, session_ids: Annotated[list[int] | None, Query()] = None,
-              db: Session = Depends(get_db)):
-    """Cold set pressure and settled hot pressure of every logged run, per corner, and why a run is left out."""
-    runs = logged_runs(db, car_id, session_ids)
+              tyre_kind_id: int | None = None, db: Session = Depends(get_db)):
+    """Cold set pressure and settled hot pressure of every logged run, per corner, and why a run is left out. With a
+    tyre, only the runs of the sessions on it."""
+    if tyre_kind_id is not None:
+        _kind(db, tyre_kind_id)
+    runs = runs_on(db, tyre_kind_id, car_id, session_ids)
     return {"runs": runs, "summary": _summary(runs)}
+
+
+@router.get("/tyres/kinds")
+def tyre_kind_list(db: Session = Depends(get_db)):
+    """The garage's tyres for the pressure calculator, each with its P-Book pressures (its own, or the per-series
+    minimums entered for it) and how many sessions ran on it; and the events whose sessions have no tyre set."""
+    return {**tyre_kinds.listing(db), "reference": PRESSURE_REFERENCE}
 
 
 class ConditionsIn(BaseModel):
@@ -188,25 +219,40 @@ class PressureIn(BaseModel):
     ambient_c: Celsius | None = None
     track_c: Celsius | None = None
     atmospheric_bar: float = Field(ATMOSPHERIC_BAR, gt=0.5, lt=1.2)
-    series: str | None = None  # for the P-Book minimums
+    series: str | None = None  # for the P-Book minimums, without a tyre kind
     tyre: str | None = None
+    tyre_kind_id: int | None = None  # the tyre: its P-Book minimums, and only the sessions on it to learn from
     car_id: int | None = None  # learn from this car's sessions ...
     session_ids: list[int] | None = None  # ... or from these
 
 
 @router.post("/tyres/pressures")
 def pressures(body: PressureIn, db: Session = Depends(get_db)):
-    """Cold pressure per corner for a target hot pressure: by the gas law and by this car's logged runs."""
+    """Cold pressure per corner for a target hot pressure: by the gas law and by the logged runs (with a tyre kind,
+    only the runs on that tyre), checked against the P-Book minimums (the tyre's, else the series')."""
     if not body.targets:
         raise HTTPException(422, "Enter a target hot pressure for at least one tyre")
-    runs = logged_runs(db, body.car_id, body.session_ids)
-    rows, origin = minimum_rows(db, body.series, body.tyre)
+    kind = _kind(db, body.tyre_kind_id) if body.tyre_kind_id is not None else None
+    runs = runs_on(db, body.tyre_kind_id, body.car_id, body.session_ids)
+    if kind is not None:
+        book = tyre_kinds.pbook(db, kind)
+        rows, origin = tyre_kinds.minimum_rows(kind, book), book["origin"]
+    else:
+        rows, origin = minimum_rows(db, body.series, body.tyre)
     plan = pressure_plan(body.targets, runs, rows, set_c=body.set_c, ambient_c=body.ambient_c,
                          track_c=body.track_c, hot_c=body.hot_c, atmospheric_bar=body.atmospheric_bar)
     plan["minimums"] = {"series": body.series, "rows": rows, "origin": origin, "reference": PRESSURE_REFERENCE}
+    whose = tyre_kinds.label(kind) if kind is not None else body.series or "this series"
     if not rows:
-        plan["minimums"]["message"] = (f"No P-Book minimums entered for {body.series or 'this series'}, so nothing "
-                                       f"was checked against them. {PBOOK_NOTE}")
+        plan["minimums"]["message"] = (f"No P-Book minimums entered for {whose}, so nothing was checked against "
+                                       f"them. {PBOOK_NOTE}")
+    if kind is not None:
+        plan["tyre"] = {"id": kind.id, "label": tyre_kinds.label(kind)}
+        for c in plan["corners"]:
+            if not c["data"]["runs"]:
+                c["data"]["text"] = (f"No logged run on {tyre_kinds.label(kind)} settled to a hot pressure yet: "
+                                     "only runs on this tyre are used. Set the tyre on your events so their runs "
+                                     "count here, and upload logs with TPMS channels (pTyre/TTyre).")
     plan["runs_used"] = len({(r["file_id"], r["set"]) for r in runs if any(c["used"] for c in r["corners"].values())})
     return plan
 

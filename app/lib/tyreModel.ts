@@ -15,14 +15,27 @@ export type SummaryStatus = {
   running: boolean;
 };
 
+/** A tyre of the car's sessions (the one their event names): id null is "Tyre not set". */
+export type ModelTyre = { id: number | null; name: string; sessions: number };
+
+/** The car's sessions whose event names no tyre, and those events: where to set it. */
+export type TyreNotSet = {
+  sessions: number;
+  events: { event_id: number | null; name: string | null; sessions: number }[];
+};
+
 export type ModelCar = {
   key: string;
   label: string;
   sessions: number;
-  tyres: { name: string; sessions: number }[];
+  tyres: ModelTyre[];
+  not_set: TyreNotSet;
   tracks: { name: string; sessions: number }[];
   dates: string[];
 };
+
+/** The tyre_kind parameter for the sessions with no tyre set. */
+export const NOT_SET = 'none';
 
 /** Laps grouped by a condition: their grip at the same slip angle against the average lap (0.03 = 3 % more). */
 export type ConditionGroup = {
@@ -60,6 +73,7 @@ export type Condition = {
 
 export type ModelSession = {
   session_id: number;
+  event_id: number | null;
   name: string;
   track: string | null;
   date: string | null;
@@ -75,8 +89,10 @@ export type ModelSession = {
 export type TyreModel = {
   car: { key: string; label: string };
   tyre: string;
+  tyre_kind: { id: number; label: string } | null; // null: the sessions with no tyre set
   filters: { track: string | null; ambient_min: number | null; ambient_max: number | null };
-  choices: { tyres: { name: string; sessions: number }[]; tracks: string[] };
+  choices: { tyres: ModelTyre[]; tracks: string[] };
+  not_set: TyreNotSet;
   status: SummaryStatus;
   basis: {
     sessions: number;
@@ -101,7 +117,7 @@ export type TyreModel = {
 
 export type ModelQuery = {
   car: string;
-  tyre?: string | null;
+  tyreKind?: number | typeof NOT_SET | null; // null: the car's tyre with most sessions
   track?: string | null;
   ambient_min?: number | null;
   ambient_max?: number | null;
@@ -125,7 +141,7 @@ export const tyreModelApi = {
   status: () => request<SummaryStatus>('/tyre-model/status'),
   model: async (q: ModelQuery) => {
     const params = new URLSearchParams({ car: q.car });
-    if (q.tyre) params.set('tyre', q.tyre);
+    if (q.tyreKind != null) params.set('tyre_kind', String(q.tyreKind));
     if (q.track) params.set('track', q.track);
     if (q.ambient_min != null) params.set('ambient_min', String(q.ambient_min));
     if (q.ambient_max != null) params.set('ambient_max', String(q.ambient_max));
@@ -134,13 +150,6 @@ export const tyreModelApi = {
     if ('empty' in r && r.empty) throw new Error(r.empty);
     return r as TyreModel;
   },
-  /** Name the tyre a session ran (empty: the car's usual), so the model keeps tyres apart. */
-  setTyre: (sessionId: number, tyre: string) =>
-    request<{ session_id: number; tyre: string; logs: number }>(`/tyre-model/sessions/${sessionId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tyre }),
-    }),
 };
 
 /** Grip against the average as a signed number of percent: +5.1, −2.9, 0 (no sign once rounded to zero). */

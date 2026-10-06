@@ -1,5 +1,5 @@
 // For the vehicle model: pick a run with a setup sheet and load its setup (bars, spring rates, fuel and ballast,
-// ride heights) on top of the car's preset.
+// ride heights) on top of the vehicle picked (its specs), else the car's preset.
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
 
@@ -10,10 +10,12 @@ import { Vehicle } from '@/lib/vehicle';
 export function SetupLoader({
   initial,
   ready,
+  vehicleId,
   onLoad,
 }: {
   initial?: number; // a session to load straight away (from ?session=)
   ready: boolean; // the preset is in the form, so a loaded setup isn't overwritten by it
+  vehicleId?: number | null; // the garage vehicle the setup goes on top of (else the session's)
   onLoad: (v: Vehicle) => void;
 }) {
   const [runs, setRuns] = useState<SetupListItem[]>([]);
@@ -30,7 +32,7 @@ export function SetupLoader({
     setBusy(id);
     setError(null);
     try {
-      const v = await setupApi.vehicle(id);
+      const v = await setupApi.vehicle(id, vehicleId);
       setLoaded(v);
       onLoad(v.vehicle);
     } catch (e) {
