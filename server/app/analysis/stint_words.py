@@ -107,7 +107,7 @@ def _fuel(fits: dict, fuel: dict | None) -> str | None:
         return None
     src = "from the log" if fuel["source"] == "log" else "estimated, no fuel channel"
     out = (f"Fuel: {fuel['kg_per_lap']:.2f} kg a lap ({src}). Each 10 kg costs {fuel['s_per_10kg']:.2f} s a lap here "
-           f"(worked out from this lap's full-throttle running), so burning it off makes the car "
+           f"(worked out from the laps' own full-throttle running), so burning it off makes the car "
            f"{_s(-fuel['fuel_s_per_lap'])} a lap quicker.")
     raw, cor = fits.get("time"), fits.get("corrected_time")
     if raw and cor:
