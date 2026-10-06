@@ -81,7 +81,10 @@ def store_laps(db: Session, s: models.RunSession, rec: models.LoggerFile, timing
     for lap in timing.laps:
         db.add(models.Lap(session=s, file_id=rec.id, number=lap.number, time_s=lap.time,
                           start_s=lap.start, clean=lap.clean))
-    rec.meta = {**rec.meta, "lap_source": timing.source}
+    meta = {**rec.meta, "lap_source": timing.source}
+    if timing.laps:
+        meta.pop("untimed", None)  # a log kept with laps it couldn't time (empty_runs.py) is timed now
+    rec.meta = meta
     if track is None:
         return
     if timing.source in RANK and timing.line is not None and RANK[timing.source] > _rank(track.timing_line):
