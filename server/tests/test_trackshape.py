@@ -45,6 +45,10 @@ def test_banked_note_names_banked_corners_by_number():
                                 "corners.")
     three = [*two, {"kind": "banked", "start_m": 3900, "end_m": 3950, "value": 6.2, "corner": "T14"}]
     assert banked_note(three).startswith("C3, C9 and T14 are banked (about 15, 18 and 6 degrees)")
+    same = [{"kind": "banked", "start_m": 800, "end_m": 880, "value": v, "corner": c}
+            for v, c in ((12.2, "T3"), (11.8, "T14"))]
+    assert banked_note(same) == ("T3 and T14 are banked (both about 12 degrees): their grip isn't compared with "
+                                 "flat corners.")
 
 
 def _setup(client):

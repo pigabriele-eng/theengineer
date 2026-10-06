@@ -119,8 +119,11 @@ def banked_note(features: list[dict]) -> str | None:
 
     if len(codes) == 1:
         return f"{codes[0]} is banked (about {degrees[0]} degrees): its grip isn't compared with flat corners."
-    return (f"{listed(codes)} are banked (about {listed(degrees)} degrees): their grip isn't compared with flat "
-            "corners.")
+    if len(set(degrees)) == 1:
+        about = f"{'both' if len(codes) == 2 else 'all'} about {degrees[0]}"
+    else:
+        about = f"about {listed(degrees)}"
+    return f"{listed(codes)} are banked ({about} degrees): their grip isn't compared with flat corners."
 
 
 def _work_out(db: Session, uses: list[_Use]) -> dict | str:
