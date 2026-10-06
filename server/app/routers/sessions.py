@@ -202,6 +202,7 @@ def official_corners(track: models.Track | None) -> list[CornerSpec] | None:
     """The track's official corner numbers, where their position on the lap is known."""
     if track is None:
         return None
+    fill_corners(track)  # a track stored before we knew its corners gets them now, saved with the next commit
     known = [(c.code, c.apex_m, c.sector) for c in track.corners if c.apex_m is not None]
     return known or None
 
