@@ -4,6 +4,7 @@ import Svg, { Circle, G, Line, Path, Rect, Text as SvgText } from 'react-native-
 
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
+import { glyph, ShapeLegend, ShapePanel, useShapeColors, useTrackShape } from '@/components/TrackShape';
 import { formatLap } from '@/lib/api';
 import {
   Box,
@@ -15,6 +16,7 @@ import {
   placeLabels,
   TrackMapData,
 } from '@/lib/trackmap';
+import { featureMid, featureSpan, TrackShapeData } from '@/lib/trackshape';
 
 type Props = {
   session?: number; // draw this session's best clean lap
@@ -23,6 +25,8 @@ type Props = {
   marks?: MapMark[]; // numbered points on the lap, such as a lap's mistakes
   selectedMark?: number | null; // its stretch of the lap drawn over the track
   marksLengthM?: number; // the lap length the marks' metres are measured on, when it isn't the map's own
+  withShape?: boolean; // also the track's shape: banking, crests and compressions on the map, the height below it
+  onShape?: (shape: TrackShapeData | null) => void; // the shape once it has loaded (null until then, or when none)
 };
 
 export type MapMark = { n: number; at_m: number; from_m: number; to_m: number };
@@ -126,14 +130,17 @@ function layout(map: TrackMapData, width: number) {
 /** The track drawn from a session's or an event's reference lap, with its corners and sections numbered as
  * the analysis numbers them, the start/finish line and the direction of travel. Tap or hover a section for
  * its distances; switch to speed to colour the lap by speed. */
-export function TrackMap({ session, event, highlight, marks, selectedMark, marksLengthM }: Props) {
+export function TrackMap({ session, event, highlight, marks, selectedMark, marksLengthM, withShape, onShape }: Props) {
+  const shape = useTrackShape(withShape ? { session, event } : {});
   const [map, setMap] = useState<TrackMapData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [none, setNone] = useState(false);
   const [mode, setMode] = useState<Mode>('sections');
   const [width, setWidth] = useState(0);
   const [active, setActive] = useState<string | null>(null);
+  const [heightAt, setHeightAt] = useState<number | null>(null); // the metre read on the height strip
   const c = PALETTE[useColorScheme() === 'dark' ? 'dark' : 'light'];
+  const sc = useShapeColors();
   const surface = useThemeColor({}, 'background');
 
   useEffect(() => {
@@ -167,6 +174,27 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
       return { ...k, p: pt(at(k.at_m)), d: line(run) };
     }).sort((a, b) => b.n - a.n); // the costliest drawn last, on top
   }, [g, map, marks, marksLengthM]);
+  // the shape on the map: banked stretches as a band under the track, crests and compressions as ▲ and ▼
+  const shapeData = shape.status === 'ready' ? shape.data : null;
+  useEffect(() => {
+    onShape?.(shapeData);
+  }, [shapeData, onShape]);
+  const relief = useMemo(() => {
+    if (!g || !map || !shapeData) return null;
+    const n = g.pts.length;
+    const scale = map.length_m / (shapeData.length_m || map.length_m);
+    const at = (m: number) => Math.round((m * scale) / map.step_m);
+    const pt = (i: number) => g.pts[((i % n) + n) % n];
+    const banked = shapeData.features.filter((f) => f.kind === 'banked').map((f) => {
+      const { start, end } = featureSpan(f, shapeData.length_m); // through the line: on round past it
+      const run: MapPoint[] = [];
+      for (let i = at(start); i <= Math.max(at(end), at(start) + 1); i++) run.push(pt(i));
+      return line(run);
+    });
+    const rises = shapeData.features.filter((f) => f.kind !== 'banked')
+      .map((f) => ({ kind: f.kind, p: pt(at(featureMid(f, shapeData.length_m))) }));
+    return { banked, rises, at: (m: number) => pt(at(m)) };
+  }, [g, map, shapeData]);
 
   if (none) return null;
   if (error) return <Text style={styles.note}>The track map didn&apos;t load: {error}</Text>;
@@ -243,6 +271,10 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
             }}>
             <Svg width={g.width} height={g.height} pointerEvents="none"
               accessibilityLabel={`Track map from lap ${map.reference_lap}: ${map.sections.map((s) => s.code).join(', ')}`}>
+              {relief?.banked.map((d, i) => (
+                <Path key={`bank-${i}`} d={d} stroke={sc.banked} strokeWidth={g.z.track + 9} fill="none"
+                  strokeLinejoin="round" strokeLinecap="round" />
+              ))}
               {mode === 'speed' ? (
                 <>
                   <Path d={g.loop} stroke={c.casing} strokeWidth={g.z.track + 3} fill="none" strokeLinejoin="round" />
@@ -273,6 +305,14 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
                       y2={b.p.y - b.t.x * 6} stroke={surface} strokeWidth={2} />
                   ))}
                 </>
+              )}
+              {relief?.rises.map((k, i) => (
+                <Path key={`rise-${i}`} d={glyph(k.kind, k.p.x, k.p.y, 6)} fill={sc.rise} stroke={surface}
+                  strokeWidth={1.5} strokeLinejoin="round" />
+              ))}
+              {relief && heightAt != null && (
+                <Circle cx={relief.at(heightAt).x} cy={relief.at(heightAt).y} r={5} fill={c.ink} stroke={surface}
+                  strokeWidth={2} />
               )}
               {g.labels.map((l) => {
                 const end = leaderEnd(l);
@@ -345,8 +385,20 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
             </Svg>
             <Text style={styles.small}>Direction of travel</Text>
           </View>
+          {shapeData && <ShapeLegend shape={shapeData} />}
           <Text style={styles.small}>{caption}</Text>
         </>
+      )}
+      {shape.status === 'loading' && map && (
+        <Text style={styles.note}>Working out the track&apos;s height and banking from the logs…</Text>
+      )}
+      {shape.status === 'error' && (
+        <Text style={styles.note}>The track&apos;s height and banking didn&apos;t load: {shape.message}</Text>
+      )}
+      {shapeData && (
+        <View style={styles.strip}>
+          <ShapePanel shape={shapeData} onCursor={setHeightAt} />
+        </View>
       )}
     </View>
   );
@@ -380,4 +432,5 @@ const styles = StyleSheet.create({
   detail: { fontSize: 14, fontVariant: ['tabular-nums'] },
   small: { fontSize: 12, opacity: 0.6, fontVariant: ['tabular-nums'] },
   note: { fontSize: 12, opacity: 0.6 },
+  strip: { marginTop: 8 },
 });

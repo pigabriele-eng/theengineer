@@ -13,6 +13,7 @@ from app.routers import balance as report_balance
 from app.routers import comparisons, drivers, lapcompare, report_grip, reports, setups, tyre_model, tyreprep
 from app.routers import events, technique
 from app.routers import stint as stint_tool
+from app.routers import trackshape
 from app.vehicle import tyre_store
 
 
@@ -38,6 +39,7 @@ for r in (catalog.router, sessions.router, imports.router, debriefs.router, insi
           vehicle.router):
     app.include_router(r, dependencies=signed_in)
 app.include_router(trackmap.router, dependencies=signed_in)
+app.include_router(trackshape.router, dependencies=signed_in)
 app.include_router(report_grip.router, dependencies=signed_in)
 app.include_router(report_balance.router, dependencies=signed_in)
 app.include_router(setups.router, dependencies=signed_in)

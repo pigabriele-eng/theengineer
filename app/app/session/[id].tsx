@@ -112,7 +112,7 @@ export default function SessionScreen() {
         )}
         {/* drawn from a clean lap; keyed so an upload that changes the laps redraws it */}
         {session?.laps.some((l) => l.clean) && (
-          <TrackMap key={`${session.id}-${session.files.length}-${best}`} session={session.id} />
+          <TrackMap key={`${session.id}-${session.files.length}-${best}`} session={session.id} withShape />
         )}
 
         <Pressable style={[styles.button, { backgroundColor: tint }]} onPress={upload} disabled={busy}>

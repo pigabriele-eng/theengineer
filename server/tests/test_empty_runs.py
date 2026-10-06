@@ -1,6 +1,7 @@
 """Runs with no laps: a pit-lane log isn't kept, a lapped log with no lap beacon is kept and flagged, and the
 runs already on the server are cleared once without touching what the user entered. Synthetic logs only."""
 import json
+import time
 from functools import cache
 
 import httpx
@@ -165,9 +166,15 @@ def _old_import(client, monkeypatch, entries: dict[str, bytes]) -> dict[str, int
     import app.routers.sessions
     import app.timing
 
+    import app.routers.imports
+
     with monkeypatch.context() as m:
         m.setattr(app.routers.sessions, "judge", lambda *a: emptyrun.Verdict(True, "kept"))
         job = upload(client, ("T01.zip", make_zip(entries)))
+    # the import says it's done before it starts the reports of what it imported: wait until it has
+    deadline = time.monotonic() + 120
+    while app.routers.imports._jobs.unfinished_tasks and time.monotonic() < deadline:
+        time.sleep(0.05)
     app.timing.wait_idle()
     app.routers.reports.wait_idle()
     with app.db.SessionLocal() as db:
