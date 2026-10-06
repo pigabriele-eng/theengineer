@@ -4,7 +4,7 @@ import { apiFetch, Session } from '@/lib/api';
 export type Driver = { id: number; name: string };
 
 // Sessions from GET /sessions carry these too; the shared Session type leaves them out.
-export type Tagged = Session & { driver_id?: number | null; event_id?: number | null };
+export type Tagged = Session & { driver_id?: number | null; car_id?: number | null; event_id?: number | null };
 
 export type EventRow = { id: number; name: string; date: string | null; track_id: number | null };
 
