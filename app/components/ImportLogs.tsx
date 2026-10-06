@@ -153,7 +153,8 @@ export function ImportLogs({ onProgress, events, into }: {
           </ScrollView>
           <Text style={styles.sub}>
             {target == null
-              ? 'A zip of a test becomes an event named after the zip; loose logs go to Not in an event.'
+              ? 'Logs from a planned event’s track and days go into it. Otherwise a zip becomes an event named after the ' +
+                'zip, and loose logs go to Not in an event.'
               : `Every log in the upload becomes a session of ${target.name}.`}
           </Text>
           {making && (

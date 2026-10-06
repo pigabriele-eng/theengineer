@@ -4,8 +4,9 @@ A zip makes an event named after the zip (routers/imports.py), so a race weekend
 05_R2) lands as three events. GET /imports/{id}/events lists the events an import made, each with a name taken from
 its logs' headers (the championship's event name and the venue, e.g. "GT4_ES_R05 Zandvoort"; else the zip's name),
 the days its logs were recorded, and the events already there that look like the same weekend: the same venue and
-header event name, or the same venue on overlapping or back-to-back days. POST /events/{id}/merge puts every session
-of an event into another one and removes the event left empty. Renaming is PATCH /events/{id} (routers/events.py).
+header event name, or the same venue on overlapping or back-to-back days; a planned event with no data yet
+(routers/planned.py) by its planned venue and days. POST /events/{id}/merge puts every session of an event into
+another one and removes the event left empty. Renaming is PATCH /events/{id} (routers/events.py).
 Neither reads a log.
 """
 from __future__ import annotations
@@ -18,7 +19,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, selectinload
 
-from app import models
+from app import models, plans
 from app.db import get_db
 from app.routers import events
 
@@ -73,8 +74,17 @@ def _span(folder: dict) -> tuple[date, date] | None:
 
 def _why(new: dict, other: dict) -> str | None:
     """Why the other event looks like the same weekend: "event" (same venue and header event name), "dates" (same
-    venue, overlapping or back-to-back days), or None."""
-    if not new["venue"] or new["venue"].lower() not in other["venues"]:
+    venue, overlapping or back-to-back days), "planned" (a planned event with no data yet, at that venue (or with no
+    venue) on overlapping or back-to-back days), or None."""
+    if not new["venue"]:
+        return None
+    if other.get("planned") and not other["session_ids"]:
+        venue = other["plan_venue"]
+        if venue and not plans.any_same_venue([new["venue"]], [venue, other["folder"]["name"]]):
+            return None
+        a, b = _span(new["folder"]), _span(other["folder"])
+        return "planned" if a and b and a[0] <= b[1] + SLACK and b[0] <= a[1] + SLACK else None
+    if new["venue"].lower() not in other["venues"]:
         return None
     if new["log_event"] and new["log_event"].lower() in other["log_events"]:
         return "event"
@@ -110,6 +120,9 @@ def new_events(job_id: int, db: Session = Depends(get_db)):
     dates = {d.event_id: d for d in db.scalars(select(models.EventDates)).all()}
     facts = {ev.id: _facts(ev, by_event.get(ev.id, []), dates.get(ev.id))
              for ev in db.scalars(select(models.Event).options(selectinload(models.Event.track))).all()}
+    for p in db.scalars(select(models.EventPlan)).all():  # planned events: their venue as planned
+        if p.event_id in facts:
+            facts[p.event_id].update(planned=True, plan_venue=p.venue)
     imported = set(job.session_ids or [])
     out, seen = [], set()
     for row in made:
@@ -125,7 +138,8 @@ def new_events(job_id: int, db: Session = Depends(get_db)):
             if why is None:
                 continue
             gap = abs((_span(other["folder"])[0] - start[0]).days) if start and _span(other["folder"]) else 9999
-            matches.append(((why != "event", gap, -eid), {**_summary(other["folder"]), "why": why}))
+            order = {"event": 0, "planned": 1}.get(why, 2)
+            matches.append(((order, gap, -eid), {**_summary(other["folder"]), "why": why}))
         matches.sort(key=lambda m: m[0])
         fallback = row.archive or new["folder"]["name"]
         out.append({**_summary(new["folder"]), "zip": row.archive, "venue": new["venue"],
