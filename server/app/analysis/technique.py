@@ -1,12 +1,13 @@
 """Technique check: one lap's driving mistakes against perfect driving, each with the time it costs.
 
 Perfect driving is the theoretical lap (lapsim.py): the lap's own line taken at the limits the car has shown at every
-place of the track (local_limits.py). The lap is cut where the driver's actions change (the lift, the brake point,
-the release, the slowest point, the throttle pick-up, full throttle, any lift on a straight) and every piece is
-costed the same way: the driver's lap up to its start and perfect driving from there, against the driver's lap up to
-its end and perfect driving from there. That difference is the time the piece costs, including what it carries down
-the road (a slow exit costs time all the way down the next straight). The pieces add up to the whole gap to the
-perfect lap.
+place of the track (local_limits.py), with the model's own error at every metre taken out as the report's targets
+have it (lapsim.Calibration, measured on the fastest lap). The lap is cut where the driver's actions change (the
+lift, the brake point, the release, the slowest point, the throttle pick-up, full throttle, any lift on a straight)
+and every piece is costed the same way: the driver's lap up to its start and perfect driving from there, against the
+driver's lap up to its end and perfect driving from there. That difference is the time the piece costs, including
+what it carries down the road (a slow exit costs time all the way down the next straight). The pieces add up to the
+whole gap to the perfect lap.
 
 Perfect driving takes the best the car has shown at every place, which no single lap puts together. So every piece
 is also costed against the realistic target (the same lap at the grip a quick lap usually shows at each place, as in
@@ -29,7 +30,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from app.analysis.channels import EXIT, POWER
-from app.analysis.lapsim import LapModel
+from app.analysis.lapsim import Calibration, LapModel, SimLap
 from app.analysis.laps import Section
 from app.analysis.local_limits import PlaceLimits
 
@@ -56,15 +57,30 @@ class Envelope(LapModel):
     """Perfect driving along one lap's line (the theoretical lap's own model, lapsim.LapModel), able to drive the rest
     of the lap perfectly from any metre at any speed.
 
-    curvature and speeds are per metre of the line, 0..n (the timing line at both ends)."""
+    curvature and speeds are per metre of the line, 0..n (the timing line at both ends). calibration: the model's
+    own error at every metre (lapsim.Calibration), added to every time and speed perfect driving is quoted at; the
+    model itself (P, F, B, vc) stays as it drives."""
 
-    def __init__(self, curvature: np.ndarray, lim: PlaceLimits):
+    def __init__(self, curvature: np.ndarray, lim: PlaceLimits, calibration: Calibration | None = None):
         super().__init__(np.asarray(curvature, float)[:-1], lim)
+        n1 = self.n + 1
+        self.cal = calibration if calibration is not None and len(calibration.t) == n1 else None
+        self.dt = self.cal.dt if self.cal is not None else np.zeros(n1)  # s to each metre
+        self.dv = self.cal.dv if self.cal is not None else np.zeros(n1)  # km/h at each metre
+        # m/s: how much faster the model drives each metre than the fastest lap really did at its own limits
+        self.ahead = (self.cal.own.speed - self.cal.speed) / 3.6 if self.cal is not None else np.zeros(n1)
+
+    def sim(self) -> SimLap:
+        raw = super().sim()
+        return self.cal.lap(raw) if self.cal is not None else raw
 
     def restart(self, i0: int, v0: float) -> Restart:
-        """Perfect driving from metre i0 at v0 (m/s) until it rejoins the perfect lap."""
+        """Perfect driving from metre i0 at v0 (m/s, the driver's speed) until it rejoins the perfect lap. The model
+        starts where it would be had it driven as the driver did: v0 plus what it drives that metre faster than the
+        fastest lap really did at its own limits, so that the fastest lap checked against its own limits costs
+        nothing anywhere."""
         n, F, B = self.n, self.F, self.B
-        fw = v0
+        fw = max(v0 + float(self.ahead[i0]), 1.0)
         out = [min(fw, B[i0])]
         i = i0
         while i < n:
@@ -91,17 +107,22 @@ class Restart:
             return self.env.P[a:b + 1]
         return np.concatenate([self.speed[a - self.i0:], self.env.P[j:b + 1]])
 
+    def kmh(self, a: int, b: int) -> np.ndarray:
+        """Speeds over metres a..b (inclusive) as quoted: km/h, calibrated."""
+        return self.at(a, b) * 3.6 + self.env.dv[a:b + 1]
+
     def time(self, a: int, b: int) -> float:
-        """Seconds from metre a to metre b."""
+        """Seconds from metre a to metre b, calibrated."""
         if b <= a:
             return 0.0
+        cal = float(self.env.dt[b] - self.env.dt[a])
         j = self.i0 + len(self.speed)
         if a >= j:
-            return float(self.env.cum[b] - self.env.cum[a])
+            return float(self.env.cum[b] - self.env.cum[a]) + cal
         e = min(b, j)
         v = self.at(a, e)
         t = float(np.sum(2 / (v[:-1] + v[1:])))
-        return t + (float(self.env.cum[b] - self.env.cum[e]) if b > e else 0.0)
+        return t + (float(self.env.cum[b] - self.env.cum[e]) if b > e else 0.0) + cal
 
     def to_end(self) -> float:
         return self.time(self.i0, self.env.n)
@@ -334,10 +355,6 @@ def _reversals(x: np.ndarray, step: float) -> int:
     return count
 
 
-def _kmh(ms: float) -> float:
-    return ms * 3.6
-
-
 @dataclass
 class Mistake:
     key: str  # what kind of mistake
@@ -353,7 +370,7 @@ class Mistake:
 
 def _corner_limit(env: Envelope, m: int) -> float:
     lo, hi = max(m - 10, 0), min(m + 10, env.n)
-    return _kmh(float(env.vc[lo:hi + 1].min()))
+    return float((env.vc[lo:hi + 1] * 3.6 + env.dv[lo:hi + 1]).min())
 
 
 def _braking(tr: dict[str, np.ndarray], a: int, b: int, env: Envelope, units: dict[str, str]) -> dict:
@@ -427,8 +444,8 @@ def name_piece(p: Piece, tr: dict[str, np.ndarray], env: Envelope, env_r: Envelo
     if p.role == "braking":
         nb = _braking(tr, a, b, env_r, units)
         end_v = v[b]
-        perfect_v = _kmh(float(q.at(b, b)[0]))
-        real_v = _kmh(float(p.restart_r.at(b, b)[0]))
+        perfect_v = float(q.kmh(b, b)[0])
+        real_v = float(p.restart_r.kmh(b, b)[0])
         over = real_v - end_v
         limit_r = _corner_limit(env_r, c.m)
         limit_p = _corner_limit(env, c.m)
@@ -554,13 +571,14 @@ def name_piece(p: Piece, tr: dict[str, np.ndarray], env: Envelope, env_r: Envelo
         what = (f"{'You touched the brake' if braked else 'You lifted'} from {a} to {b} m"
                 + (f", down to {low:.0f}% throttle" if low is not None and not braked else "")
                 + f", and were at {v[b]:.0f} km/h at {b} m. ")
-        q_end = _kmh(float(qs[-1]))
+        quoted = p.restart_r.kmh(a, b)
+        q_end = float(quoted[-1])
         if flat:
             what += f"Perfect driving is flat out here, at {q_end:.0f} km/h by {b} m."
             do = f"Stay flat through {code}."
         elif qs.min() < qs[0] - 0.3:
-            what += f"Perfect driving slows only to {_kmh(float(qs.min())):.0f} km/h here."
-            do = f"Lift less in {code}: carry {_kmh(float(qs.min())):.0f} km/h."
+            what += f"Perfect driving slows only to {float(quoted.min()):.0f} km/h here."
+            do = f"Lift less in {code}: carry {float(quoted.min()):.0f} km/h."
         else:
             what += f"Perfect driving keeps accelerating here at the limit of grip, to {q_end:.0f} km/h by {b} m."
             do = f"Keep accelerating through {code}: squeeze the throttle rather than lift."
@@ -597,7 +615,7 @@ def pit_entry(tr: dict[str, np.ndarray], env_r: Envelope) -> int | None:
     None for a flying lap."""
     v = tr["speed"]
     n = len(v) - 1
-    q = env_r.P * 3.6
+    q = env_r.P * 3.6 + env_r.dv
     slow = v < PIT_SPEED_SHARE * q
     if not slow[n]:
         return None
@@ -612,16 +630,18 @@ def pit_entry(tr: dict[str, np.ndarray], env_r: Envelope) -> int | None:
 
 
 def check_lap(tr: dict[str, np.ndarray], perfect: PlaceLimits, held: PlaceLimits, sections: list[Section], *,
-              lap_time: float, units: dict[str, str] | None = None, detail: bool = True) -> dict:
+              lap_time: float, units: dict[str, str] | None = None, detail: bool = True,
+              calibrations: tuple[Calibration | None, Calibration | None] = (None, None)) -> dict:
     """The lap's mistakes against perfect driving, most costly first, and how the gap to the perfect lap splits:
     named mistakes, losses with the pedals at the limit, the perfect lap's optimism, the pit lane and what no single
     mistake explains.
 
     tr: the lap's trace on the line (every metre, timing line at both ends). perfect and held: the limits the car has
     shown at every place, at their best and as a quick lap usually shows them (the report's theoretical lap and
-    realistic target)."""
+    realistic target); calibrations: the model's own error at every metre at each, as the report's targets have it
+    (Prepared.calibration and held_calibration)."""
     units = units or {}
-    env, env_r = Envelope(tr["curvature"], perfect), Envelope(tr["curvature"], held)
+    env, env_r = (Envelope(tr["curvature"], lim, cal) for lim, cal in zip((perfect, held), calibrations, strict=True))
     sim, realistic = env.sim(), env_r.sim()
     corners = corner_events(tr, sections)
     lifts = straight_lifts(tr, corners)

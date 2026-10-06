@@ -290,8 +290,6 @@ def prepare_compact(sessions: list[tuple[int | None, CompactSession]], corners: 
                             {k: v for k, v in s.channels.items() if k not in mapped}))
         extras.units = {**s.units, **extras.units}
     assert reference is not None
-    t = targets(laps, reference.trace)
     sections, numbering = make_sections(reference.trace, corners)
-    prep = Prepared(line, len(reference.trace["distance"]), reference, laps, t.limits, t.sim, sections, numbering,
-                    t.perfect, t.held, t.realistic)
-    return prep, extras
+    t = targets(laps, reference.trace, reference.time, sections)
+    return t.prepared(line, reference, laps, sections, numbering), extras

@@ -61,11 +61,12 @@ def test_insights_without_a_reference_lap(data):
     d, lap_times = data
     res = analyze_runs([RunInput("run", d)])
     best = min(lap_times[1:5])
-    assert res["theoretical_lap"] < best
+    # the laps are one lap at different paces: no place shows more than the fastest lap, so the theoretical lap is it
+    assert res["theoretical_lap"] == pytest.approx(best, abs=0.01)
     assert res["ideal_lap"] <= best + 0.01
     assert res["numbering"] == "detected"
     assert [s["code"] for s in res["sections"]] == ["C1", "C2"]
-    assert all(s["to_theoretical"] > 0 for s in res["sections"])
+    assert all(s["to_theoretical"] >= 0 for s in res["sections"])
     laps = {l["lap"]: l for l in res["laps"]}
     assert laps[2]["extraction"] > laps[3]["extraction"]  # the quicker lap extracted more
     assert 90 < laps[3]["extraction"] < 100
@@ -191,7 +192,7 @@ def test_engine_endpoints(client):
     assert one["numbering"] == "official" and [s["code"] for s in one["sections"]] == ["T1", "T2"]
     assert one["laps"][0]["driver"] == "Anna"
     both = client.post("/insights", json={"session_ids": ids}).json()
-    assert len(both["runs"]) == 2 and both["theoretical_lap"] < min(r["best"] for r in both["runs"])
+    assert len(both["runs"]) == 2 and both["theoretical_lap"] <= min(r["best"] for r in both["runs"])
 
     cmp = client.post("/compare/drivers", json={"a": {"label": "Anna", "session_ids": [ids[0]]},
                                                 "b": {"label": "Ben", "session_ids": [ids[1]]}})
