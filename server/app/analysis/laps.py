@@ -63,6 +63,7 @@ TIMING_LINE_WIDTH_M = 40  # how far either side of the start/finish point a GPS 
 # marker, a GPS position wobbling across the line while the car stands near it. No circuit's lap is this short.
 MIN_LAP_S = 20.0
 MIN_LAP_M = 500.0  # ... or with less than this driven between them (by the speed channel)
+MOVING_KMH = 20.0  # slower than this at a line crossing, the car was standing (or pushed), not crossing the line
 # Raise when the laps a log gives change (how line crossings are found or split into laps): every stored log is
 # then timed again once, in the background (timing.py).
 TIMING_VERSION = 2  # 2: crossings closer than MIN_LAP_S / MIN_LAP_M are one crossing
@@ -209,28 +210,33 @@ def gps_crossings(ld: LdFile, line: TimingLine, min_gap_s: float = 10.0) -> np.n
     return np.array(out)
 
 
-def _driven_at(ld: LdFile, times: np.ndarray) -> np.ndarray | None:
-    """Distance driven (m) from the start of the log to each of these times, by the speed channel (None without
-    one)."""
+def _speed_and_driven(ld: LdFile, times: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
+    """The speed (km/h) at each of these times, and the distance driven (m) from the start of the log to it, by
+    the speed channel (None without one)."""
     speed = ld.channel(*DEFAULT_CHANNEL_MAP["speed"])
     if speed is None or speed.count < 2:
         return None
     t, v = speed.times(), np.abs(np.nan_to_num(speed.values(), nan=0.0))
-    return np.interp(times, t, np.concatenate([[0.0], np.cumsum(v[:-1] * np.diff(t))]) / 3.6)
+    driven = np.concatenate([[0.0], np.cumsum(v[:-1] * np.diff(t))]) / 3.6
+    return np.interp(times, t, v), np.interp(times, t, driven)
 
 
 def one_per_pass(starts: np.ndarray, ld: LdFile) -> np.ndarray:
     """Line crossings with those that follow one too soon dropped: less than MIN_LAP_S, or MIN_LAP_M driven, after
     the last crossing kept. A double marker pulse or a GPS wobble at the line is one pass of the line, so a lap it
-    would split stays one lap, and a car standing at the line does no lap."""
+    would split stays one lap, and a car standing at the line does no lap. Of crossings too close together the
+    first is kept, unless the car stood still at it and was moving at a later one (a pulse as the dash starts up,
+    GPS wandering while the car waits near the line): the car crossed the line then."""
     starts = np.asarray(starts, float)
     if len(starts) < 2:
         return starts
-    at = _driven_at(ld, starts)
+    sd = _speed_and_driven(ld, starts)
     keep = [0]
     for i in range(1, len(starts)):
         j = keep[-1]
-        if starts[i] - starts[j] < MIN_LAP_S or (at is not None and at[i] - at[j] < MIN_LAP_M):
+        if starts[i] - starts[j] < MIN_LAP_S or (sd is not None and sd[1][i] - sd[1][j] < MIN_LAP_M):
+            if sd is not None and sd[0][j] < MOVING_KMH <= sd[0][i]:
+                keep[-1] = i
             continue
         keep.append(i)
     return starts[keep]

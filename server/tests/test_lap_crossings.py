@@ -17,6 +17,21 @@ def pulses(n: int, *at_s: float) -> np.ndarray:
     return marker
 
 
+def test_crossings_too_close_together_are_one():
+    from app.analysis.laps import one_per_pass
+
+    # standing for 10 s, then 100 km/h: 28 m a second
+    ld = read_ld(write_ld({"vCar": (100, "km/h", np.r_[np.zeros(1000), np.full(20000, 100.0)])}))
+    assert list(one_per_pass(np.array([12.0, 14.0, 72.0, 73.0]), ld)) == [12.0, 72.0]  # double pulses at speed
+    assert list(one_per_pass(np.array([1.0, 4.0, 9.0]), ld)) == [1.0]  # standing still
+    # a pulse as the dash starts up, then the car crosses the line 2 s after driving off: the crossing counts
+    assert list(one_per_pass(np.array([1.0, 12.0, 72.0]), ld)) == [12.0, 72.0]
+    assert list(one_per_pass(np.array([12.0, 31.0, 72.0]), ld)) == [12.0, 72.0]  # 528 m, but 19 s apart
+    assert list(one_per_pass(np.array([12.0, 33.0, 72.0]), ld)) == [12.0, 33.0, 72.0]  # 21 s and 583 m apart
+    assert list(one_per_pass(np.array([12.0, 72.0]), read_ld(write_ld({"nGear": (10, "", np.ones(10))})))) == [
+        12.0, 72.0]  # no speed channel: by time alone
+
+
 def test_a_double_pulse_in_a_pit_log_is_no_lap():
     """Like the Zandvoort race 2 pit log: rolling down the pit lane past the line, the dash's marker pulses twice,
     3 s apart. That was a 3 s "lap", clean (it was its own session's best) and the best of the whole event."""
