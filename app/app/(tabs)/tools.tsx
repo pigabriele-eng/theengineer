@@ -55,6 +55,16 @@ const GROUPS: { name: string; tools: Tool[] }[] = [
     ],
   },
   {
+    name: 'Events',
+    tools: [
+      {
+        href: '/tools/calendar',
+        title: 'Racing calendar',
+        blurb: 'Bring in your tests and race weekends from Google Calendar as planned events, and pick which ones.',
+      },
+    ],
+  },
+  {
     name: 'Logger data',
     tools: [
       {

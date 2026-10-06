@@ -37,7 +37,7 @@ from app.routers.sessions import official_corners
 router = APIRouter(prefix="/technique")
 log = logging.getLogger(__name__)
 
-TECHNIQUE_VERSION = 2  # raise when the check changes, so every kept one is worked out again
+TECHNIQUE_VERSION = 3  # raise when the check changes, so every kept one is worked out again
 TRACES_WAIT_S = 3600  # longest the check waits for the logs to be read into lap traces
 HABITS_SHOWN = 12
 DETAILS_KEPT = 16  # laps' full checks kept in memory
@@ -363,7 +363,8 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
             row.done, row.current = i, f"Checking lap {i + 1} of {len(prep.laps)}"
             db.commit()
         out = reports._plain(check_lap(x.trace, prep.perfect, prep.held, prep.sections, lap_time=x.time,
-                                       units=extras.units))
+                                       units=extras.units,
+                                       calibrations=(prep.calibration, prep.held_calibration)))
         member = f"l{i}"
         laps.append({"key": x.key, "session_id": extras.session_of[x.key], "run": x.run, "number": x.number,
                      "time": x.time, "driver": x.driver, "perfect": out["perfect"], "realistic": out["realistic"],

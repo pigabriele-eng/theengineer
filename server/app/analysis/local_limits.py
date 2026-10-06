@@ -15,9 +15,11 @@ PLACE_STEP_M metres along the line, from what the quick laps did within PLACE_WI
 
 Across the laps each limit is a percentile: PERFECT takes a high one (the place's best, not one lap's spike, and the
 upper quartile of the drive at full throttle, gear changes included); REALISTIC the median (what a quick lap usually
-shows there). The fastest lap's own values at the place itself are a floor: neither asks the car for less than the
-fastest lap showed there. Where most laps were flat out the grip was not the limit, so the corner speed there may use
-the cornering the car shows in its other corners.
+shows there). The fastest lap's own limits (own=True: the same limits from that lap alone, plus its own values at the
+place itself as its line reads them) are a floor: neither asks the car for less than the fastest lap showed there, so
+perfect driving at either is nowhere slower than at the fastest lap's own (lapsim.Calibration). Where most laps were
+flat out the grip was not the limit, so the corner speed there may use the cornering the car shows in its other
+corners.
 
 Accelerations are the accelerometer's less the slope of the road at the place (the slope shows as a steady offset
 between the accelerometer and the change in speed), so braking and drive are the car's, not gravity's. Cornering
@@ -72,6 +74,7 @@ class PlaceLimits:
     drive: np.ndarray  # g per metre of the line: what the place adds to the power curve at full throttle
     grade: np.ndarray  # g per metre: the slope of the road as the accelerometer reads it
     top_speed: float  # km/h
+    floor: PlaceLimits | None = field(default=None, repr=False, compare=False)  # braking and acceleration never below
     _tables: dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
@@ -95,19 +98,27 @@ class PlaceLimits:
 
     def tables(self, ay_step: float, ay_max: float) -> tuple[array, array, int]:
         """Acceleration and braking (g) for every place against cornering g in steps of ay_step, flat (place by
-        place, cols values each) for the lap simulation's quick lookups, and cols."""
+        place, cols values each) for the lap simulation's quick lookups, and cols. Never below the floor's at the
+        same cornering, so that perfect driving at these limits is nowhere slower than at the floor."""
         key = (ay_step, ay_max)
         if key not in self._tables:
             ayg = np.arange(0, ay_max + ay_step / 2, ay_step)
-            lat = np.maximum(self.lateral, 1e-3)
             out = []
-            for table in (self.accel, self.brake):
-                t = np.array([np.interp(ayg, LEVELS * lv, row) for lv, row in zip(lat, table, strict=True)])
+            for t in self._grid(ayg):
                 flat = array("d")
                 flat.frombytes(np.ascontiguousarray(t, dtype=np.float64).tobytes())
                 out.append(flat)
             self._tables[key] = (out[0], out[1], len(ayg))
         return self._tables[key]
+
+    def _grid(self, ayg: np.ndarray) -> list[np.ndarray]:
+        """Acceleration and braking (g), [place, cornering g ayg], never below the floor's."""
+        lat = np.maximum(self.lateral, 1e-3)
+        out = [np.array([np.interp(ayg, LEVELS * lv, row) for lv, row in zip(lat, table, strict=True)])
+               for table in (self.accel, self.brake)]
+        if self.floor is not None:
+            out = [np.maximum(t, f) for t, f in zip(out, self.floor._grid(ayg), strict=True)]
+        return out
 
     def to_dict(self) -> dict:
         return {"step_m": self.step, "lateral_g": np.round(self.lateral, 2).tolist(),
@@ -174,9 +185,14 @@ def _power_fit(v: np.ndarray, a: np.ndarray) -> tuple[float, float, float] | Non
 
 
 def place_limits(traces: list[dict[str, np.ndarray]], reference: dict[str, np.ndarray] | None = None,
-                 percentiles: tuple[Percentiles, ...] = (PERFECT, REALISTIC)) -> list[PlaceLimits]:
+                 percentiles: tuple[Percentiles, ...] = (PERFECT, REALISTIC), own: bool = False) -> list[PlaceLimits]:
     """The limits at every place, one set per percentiles, from the quick laps' traces (on the line's distance grid,
-    timing line at both ends, with math channels). reference: the fastest lap, whose own values are a floor."""
+    timing line at both ends, with math channels). reference: the fastest lap, whose own limits are the floor of
+    every set. own: also its own limits, last: what that lap alone shows at every place, read as the laps' are, and
+    at the place itself its cornering as perfect driving on its line reads it (the line's curvature smoothed,
+    lapsim.py), so that at no more than its speed, perfect driving has at least its grip at every metre."""
+    if own and reference is None:
+        raise ValueError("own limits need the reference lap")
     n = len(traces[0]["speed"]) - 1
     nl = len(traces)
     f32 = np.float32
@@ -216,30 +232,31 @@ def place_limits(traces: list[dict[str, np.ndarray]], reference: dict[str, np.nd
     del left, count
     shown = np.sum(~np.isnan(lap_means), axis=0) >= max(1.0, 0.2 * nl)
     top = float(np.percentile(speed, TOP_SPEED_PERCENTILE))
-    if reference is not None:
-        top = max(top, float(np.percentile(np.asarray(reference["speed"], float), TOP_SPEED_PERCENTILE)))
     del speed
 
     if reference is not None:
-        # its cornering as perfect driving on its line reads it (the line's curvature smoothed, lapsim.py), so that
-        # at no more than its speed, perfect driving has at least its grip at every metre
-        r_v = np.asarray(reference["speed"][:n], float) / 3.6
-        r_lat = (r_v * r_v * smoothed_curvature(np.asarray(reference["curvature"], float)[:n]) / G).astype(f32)
+        r_speed = np.asarray(reference["speed"][:n], float)
+        r_top = float(np.percentile(np.asarray(reference["speed"], float), TOP_SPEED_PERCENTILE))
+        top = max(top, r_top)
+        r_v = r_speed / 3.6
+        r_line = (r_v * r_v * smoothed_curvature(np.asarray(reference["curvature"], float)[:n]) / G).astype(f32)
+        r_lat = np.abs(np.asarray(reference["ay"][:n], float)).astype(f32)
         r_lon = (np.asarray(reference["ax"][:n], float) - grade).astype(f32)
-        # the fastest lap's own drive, as the other laps' (its mean over the power curve near each metre)
+        # its own drive, as the other laps' (its mean over the power curve near each metre); where it was not flat
+        # out, the power curve alone
         r_full = full_of(reference)
         r_count = _moving(r_full[None, :].astype(float), DRIVE_WINDOW_M)[0]
-        r_sum = _moving(np.where(r_full, over_curve(np.asarray(reference["speed"][:n], float), r_lon), 0.0)[None, :],
-                        DRIVE_WINDOW_M)[0]
-        r_drive = np.where(r_count >= 0.5 * (2 * DRIVE_WINDOW_M + 1), r_sum / np.maximum(r_count, 1), -np.inf)
+        r_sum = _moving(np.where(r_full, over_curve(r_speed, r_lon), 0.0)[None, :], DRIVE_WINDOW_M)[0]
+        r_drive = np.where(r_count >= 0.5 * (2 * DRIVE_WINDOW_M + 1), r_sum / np.maximum(r_count, 1), 0.0)
 
+    sets: list[Percentiles | None] = [*percentiles, *([None] if reference is not None else [])]  # None: its own
     centres = np.arange(0, n, PLACE_STEP_M)
     places = len(centres)
     span = np.arange(-PLACE_WINDOW_M, PLACE_WINDOW_M + 1)
     near = np.arange(-REFERENCE_WINDOW_M, REFERENCE_WINDOW_M + 1)
-    out_lat = np.zeros((len(percentiles), places))
-    out_brk = np.zeros((len(percentiles), places, len(LEVELS)))
-    out_acc = np.zeros((len(percentiles), places, len(LEVELS)))
+    out_lat = np.zeros((len(sets), places))
+    out_brk = np.zeros((len(sets), places, len(LEVELS)))
+    out_acc = np.zeros((len(sets), places, len(LEVELS)))
     flat = np.zeros(places, bool)
     for c0_ in range(0, places, CHUNK):
         cs = centres[c0_:c0_ + CHUNK]
@@ -249,38 +266,56 @@ def place_limits(traces: list[dict[str, np.ndarray]], reference: dict[str, np.nd
         flat[sl] = np.mean(full[:, idx].all(axis=2), axis=0) >= FLAT_SHARE
         peak = lw.max(axis=2)
         if reference is not None:
+            # the fastest lap's own at each place: its values within the window, as the laps' are read, and at the
+            # place itself its cornering as its line reads it
             ridx = (cs[:, None] + near[None, :]) % n
-            rl, ra = r_lat[ridx], r_lon[ridx]
-        for p, pc in enumerate(percentiles):
-            lv = np.percentile(peak, pc.grip, axis=0)
-            if reference is not None:
-                lv = np.maximum(lv, rl.max(axis=1))
+            ol = np.concatenate([r_lat[idx], r_line[ridx]], axis=1)  # places x samples
+            oa = np.concatenate([r_lon[idx], r_lon[ridx]], axis=1)
+            own_lv = ol.max(axis=1)
+        for p, pc in enumerate(sets):
+            if pc is None:
+                lv = own_lv
+            else:
+                lv = np.percentile(peak, pc.grip, axis=0)
+                if reference is not None:
+                    lv = np.maximum(lv, own_lv)
             out_lat[p, sl] = lv
             for j, share in enumerate(LEVELS):
                 thr = (share * lv - 1e-6).astype(f32)
-                m = lw >= thr[None, :, None]
-                brk = np.maximum(np.where(m, -aw, -np.inf).max(axis=2), 0)
-                acc = np.maximum(np.where(m, aw, -np.inf).max(axis=2), 0)
-                b, a = np.percentile(brk, pc.grip, axis=0), np.percentile(acc, pc.grip, axis=0)
-                if reference is not None:
-                    rm = rl >= thr[:, None]
-                    b = np.maximum(b, np.maximum(np.where(rm, -ra, -np.inf).max(axis=1), 0))
-                    a = np.maximum(a, np.maximum(np.where(rm, ra, -np.inf).max(axis=1), 0))
+                b = a = np.zeros(len(cs))
+                if pc is not None:
+                    m = lw >= thr[None, :, None]
+                    brk = np.maximum(np.where(m, -aw, -np.inf).max(axis=2), 0)
+                    acc = np.maximum(np.where(m, aw, -np.inf).max(axis=2), 0)
+                    b, a = np.percentile(brk, pc.grip, axis=0), np.percentile(acc, pc.grip, axis=0)
+                    del m
+                if reference is not None:  # never less than the fastest lap's own at the same cornering
+                    om = ol >= thr[:, None]
+                    b = np.maximum(b, np.maximum(np.where(om, -oa, -np.inf).max(axis=1), 0))
+                    a = np.maximum(a, np.maximum(np.where(om, oa, -np.inf).max(axis=1), 0))
                 out_brk[p, sl, j], out_acc[p, sl, j] = b, a
-        del lw, aw, m
+        del lw, aw
 
     out = []
-    for p, pc in enumerate(percentiles):
+    for p, pc in enumerate(sets):
         lv = out_lat[p]
         corners = lv[~flat] if (~flat).any() else lv
         car = float(np.percentile(corners, CORNER_PERCENTILE))
-        drive = np.zeros(n)  # where no lap was at full throttle, the power curve alone
-        if shown.any():
-            drive[shown] = np.nanpercentile(lap_means[:, shown], pc.drive, axis=0)
-        if reference is not None:
-            drive = np.maximum(drive, r_drive)
+        if pc is None:
+            drive = r_drive
+        else:
+            drive = np.zeros(n)  # where no lap was at full throttle, the power curve alone
+            if shown.any():
+                drive[shown] = np.nanpercentile(lap_means[:, shown], pc.drive, axis=0)
+            if reference is not None:
+                drive = np.maximum(drive, r_drive)
         out.append(PlaceLimits(
             step=PLACE_STEP_M, lateral=lv, corner=np.where(flat, np.maximum(lv, car), lv),
             brake=np.minimum.accumulate(out_brk[p], axis=1), accel=np.minimum.accumulate(out_acc[p], axis=1),
-            power=power, drive=drive, grade=grade, top_speed=top))
+            power=power, drive=drive, grade=grade, top_speed=r_top if pc is None else top))
+    if reference is not None:  # the fastest lap's own, as perfect driving reads them, are every set's floor
+        for lim in out[:-1]:
+            lim.floor = out[-1]
+        if not own:
+            out.pop()
     return out

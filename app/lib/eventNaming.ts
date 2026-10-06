@@ -14,7 +14,9 @@ export type EventMatch = {
   sessions: number;
   clean_laps: number;
   best_lap_s: number | null;
-  why: 'event' | 'dates'; // the same header event name at the same venue, or the same venue on the same days
+  // the same header event name at the same venue, the same venue on the same days, or a planned event with no data
+  // yet planned there on those days
+  why: 'event' | 'dates' | 'planned';
 };
 
 export type NewEvent = Omit<EventMatch, 'why'> & {
