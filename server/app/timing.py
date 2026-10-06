@@ -7,9 +7,16 @@ learned from beacons, and the track's other logs are then re-timed in the backgr
 a time under heavy.lock (so never alongside a request or import that reads a log), reading only the channels lap
 timing needs (speed, marker, lap time, GPS), which keeps memory low.
 
-Each log keeps the line it was timed from (meta "timed_line"), so it is re-timed only when its track's line has
-changed since. On startup every track is checked once the same way; a line saved before its source was recorded is
-replaced by the one from a marker log of that track, so a database timed by older code corrects itself.
+Each log keeps the line it was timed from (meta "timed_line") and the version of the lap timing that timed it
+(meta "timing_version", laps.TIMING_VERSION), so it is re-timed only when its track's line has changed since, or
+when the lap timing itself has (before version 2 a double pulse of the dash's marker made a 3 s "lap"). On startup
+every track, and the logs at no track, are checked once the same way; a line saved before its source was recorded
+is replaced by the one from a marker log of that track, so a database timed by older code corrects itself.
+
+What depends on a log's laps follows a re-timing: the report, lap traces, technique check and the other cached
+results carry a signature of the laps they were made from, so they are worked out again; the tyre-data summary of
+a log whose laps changed is made again; and a session an import made that is left with no laps is checked as an
+empty run (empty_runs.py: removed, unless a missing lap beacon explains it or the user entered something on it).
 """
 from __future__ import annotations
 
@@ -26,7 +33,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app import db as app_db  # SessionLocal is looked up when used: the tests swap the database
 from app import heavy, models, storage
-from app.analysis.laps import LapTiming, TimingLine, time_laps
+from app.analysis.laps import TIMING_VERSION, LapTiming, TimingLine, time_laps
 from app.importers.csvlog import read_log
 from app.importers.motec import LdFile
 
@@ -37,8 +44,10 @@ SAME_LINE_M = 1.0  # lines closer than this (and within SAME_HEADING_DEG) time l
 SAME_HEADING_DEG = 2.0
 _PENDING = "retime_tracks"  # Session.info key: tracks to re-time once the session commits
 
-_queue: queue.Queue[int] = queue.Queue()
-_queued: set[int] = set()
+NO_TRACK = None  # scheduled like a track: the logs at no track (no event track, no venue in the header)
+
+_queue: queue.Queue[int | None] = queue.Queue()
+_queued: set[int | None] = set()
 _lock = threading.Lock()
 _worker: threading.Thread | None = None
 
@@ -72,25 +81,40 @@ def same_line(a: dict | None, b: dict | None) -> bool:
 
 
 def store_laps(db: Session, s: models.RunSession, rec: models.LoggerFile, timing: LapTiming,
-               track: models.Track | None) -> None:
+               track: models.Track | None) -> bool:
     """Replace the log's laps. A log with a better source than the track's line so far (the dash's marker over
-    beacons) teaches the track its line, and the track's other logs are re-timed once this is committed."""
-    for old in [l for l in s.laps if l.file_id == rec.id]:
-        s.laps.remove(old)
+    beacons) teaches the track its line, and the track's other logs are re-timed once this is committed. Returns
+    whether the log's laps changed; when they did, its tyre-data summary is made again."""
+    old = [l for l in s.laps if l.file_id == rec.id]
+    before = [(l.number, l.start_s, l.time_s, l.clean) for l in old]
+    for lap in old:
+        s.laps.remove(lap)
     db.flush()
     for lap in timing.laps:
         db.add(models.Lap(session=s, file_id=rec.id, number=lap.number, time_s=lap.time,
                           start_s=lap.start, clean=lap.clean))
-    meta = {**rec.meta, "lap_source": timing.source}
+    changed = not _same_laps(before, [(l.number, l.start, l.time, l.clean) for l in timing.laps])
+    if changed:  # the tyre data job (vehicle/tyre_store.py) summarises the log again when this doesn't match
+        for row in db.scalars(select(models.TyreData).where(models.TyreData.file_id == rec.id)):
+            row.lap_source = None
+    meta = {**rec.meta, "lap_source": timing.source, "timing_version": TIMING_VERSION}
     if timing.laps:
         meta.pop("untimed", None)  # a log kept with laps it couldn't time (empty_runs.py) is timed now
     rec.meta = meta
     if track is None:
-        return
+        return changed
     if timing.source in RANK and timing.line is not None and RANK[timing.source] > _rank(track.timing_line):
         track.timing_line = asdict(timing.line)
         retime_after_commit(db, track)
     rec.meta = {**rec.meta, "timed_line": dict(track.timing_line) if track.timing_line else None}
+    return changed
+
+
+def _same_laps(a: list[tuple], b: list[tuple]) -> bool:
+    """(number, start, time, clean) of two timings, alike to the millisecond."""
+    return len(a) == len(b) and all(
+        n == m and abs(s - t) < 1e-3 and abs(x - y) < 1e-3 and bool(c) == bool(d)
+        for (n, s, x, c), (m, t, y, d) in zip(a, b, strict=True))
 
 
 def retime_after_commit(db: Session, track: models.Track) -> None:
@@ -107,8 +131,9 @@ def _schedule_pending(db: Session) -> None:
         schedule(pending.pop())
 
 
-def schedule(track_id: int) -> None:
-    """Check the track's line and re-time its logs timed from an older one, in the background."""
+def schedule(track_id: int | None) -> None:
+    """Check the track's line and re-time its logs timed from an older one or by older lap timing, in the
+    background. NO_TRACK: the logs at no track."""
     global _worker
     with _lock:
         if track_id not in _queued:
@@ -120,10 +145,11 @@ def schedule(track_id: int) -> None:
 
 
 def check_all_tracks() -> None:
-    """On startup: every track, in the background (a database timed by older code corrects itself)."""
+    """On startup: every track and the logs at no track, in the background (a database timed by older code
+    corrects itself)."""
     with app_db.SessionLocal() as db:
         ids = db.scalars(select(models.Track.id).order_by(models.Track.id)).all()
-    for track_id in ids:
+    for track_id in [*ids, NO_TRACK]:
         schedule(track_id)
 
 
@@ -145,25 +171,30 @@ def _work() -> None:
             _queue.task_done()
 
 
-def check_track(track_id: int) -> None:
+def check_track(track_id: int | None) -> None:
+    """Re-time the track's logs (NO_TRACK: the logs at no track) that aren't up to date, one at a time; then check
+    the sessions an import made that this left with no laps, as empty runs."""
+    changed: set[int] = set()
     with app_db.SessionLocal() as db:
-        track = db.get(models.Track, track_id)
-        if track is None:
+        track = db.get(models.Track, track_id) if track_id is not NO_TRACK else None
+        if track is None and track_id is not NO_TRACK:
             return
         files = files_at(db, track)
-        if (track.timing_line or {}).get("source") != "marker":
+        if track is not None and (track.timing_line or {}).get("source") != "marker":
             _learn_from_marker_log(db, track, [f for f in files if f.meta.get("lap_source") == "marker"])
         for f in files:
             if _up_to_date(f, track):
                 continue
             with heavy.lock:  # one log at a time, across this worker, imports and requests
                 try:
-                    db.refresh(track)  # what's stored now: a request may have changed them while this waited
+                    if track is not None:
+                        db.refresh(track)  # what's stored now: a request may have changed them while this waited
                     db.refresh(f)
                     if _up_to_date(f, track):
                         continue
                     ld = read_file(f)
-                    store_laps(db, f.session, f, time_laps(ld, f.meta.get("beacons"), track_line(track)), track)
+                    if store_laps(db, f.session, f, time_laps(ld, f.meta.get("beacons"), track_line(track)), track):
+                        changed.add(f.session_id)
                     del ld
                     db.commit()
                 except Exception:
@@ -171,25 +202,37 @@ def check_track(track_id: int) -> None:
                     db.rollback()
                 finally:
                     _release_memory()
+    if changed:
+        from app import empty_runs  # imported here: it reads logs through this module
+
+        empty_runs.cleanup(only=changed)
 
 
-def _up_to_date(f: models.LoggerFile, track: models.Track) -> bool:
-    """Timed by the dash's own marker, or from the track's line as it is now."""
-    return f.meta.get("lap_source") == "marker" or same_line(f.meta.get("timed_line"), track.timing_line)
+def _up_to_date(f: models.LoggerFile, track: models.Track | None) -> bool:
+    """Timed by this version of the lap timing, and by the dash's own marker or from the track's line as it is
+    now."""
+    if f.meta.get("timing_version") != TIMING_VERSION:
+        return False
+    line = track.timing_line if track is not None else None
+    return f.meta.get("lap_source") == "marker" or same_line(f.meta.get("timed_line"), line)
 
 
-def files_at(db: Session, track: models.Track) -> list[models.LoggerFile]:
+def files_at(db: Session, track: models.Track | None) -> list[models.LoggerFile]:
     """The logs driven at the track, as the sessions router finds a log's track: its session's event's track,
-    else the venue in its header. Read from the database only, no log is opened."""
+    else the venue in its header (track None: the logs at no track). Read from the database only, no log is
+    opened."""
     rows = db.scalars(select(models.LoggerFile).order_by(models.LoggerFile.id)
                       .options(selectinload(models.LoggerFile.session).selectinload(models.RunSession.event))).all()
+    names = set(db.scalars(select(models.Track.name))) if track is None else set()
     out = []
     for f in rows:
         ev = f.session.event
+        venue = (f.meta.get("venue") or "")[:120]
         if ev is not None and ev.track_id is not None:
-            if ev.track_id == track.id:
-                out.append(f)
-        elif (f.meta.get("venue") or "")[:120] == track.name:
+            at = track is not None and ev.track_id == track.id
+        else:
+            at = venue == track.name if track is not None else venue not in names
+        if at:
             out.append(f)
     return out
 

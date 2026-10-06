@@ -59,6 +59,13 @@ CLEAN_LAP_MARGIN = 1.05  # a clean lap is within 5 % of the session's best
 PIT_SPEED_KMH = 70  # below this for PIT_SECONDS in one lap means pit lane or a slow lap, not a clean lap
 PIT_SECONDS = 8
 TIMING_LINE_WIDTH_M = 40  # how far either side of the start/finish point a GPS crossing still counts
+# Line crossings closer together than a real lap can be are one pass of the line: a double pulse of the dash's
+# marker, a GPS position wobbling across the line while the car stands near it. No circuit's lap is this short.
+MIN_LAP_S = 20.0
+MIN_LAP_M = 500.0  # ... or with less than this driven between them (by the speed channel)
+# Raise when the laps a log gives change (how line crossings are found or split into laps): every stored log is
+# then timed again once, in the background (timing.py).
+TIMING_VERSION = 2  # 2: crossings closer than MIN_LAP_S / MIN_LAP_M are one crossing
 
 
 @dataclass
@@ -202,31 +209,60 @@ def gps_crossings(ld: LdFile, line: TimingLine, min_gap_s: float = 10.0) -> np.n
     return np.array(out)
 
 
+def _driven_at(ld: LdFile, times: np.ndarray) -> np.ndarray | None:
+    """Distance driven (m) from the start of the log to each of these times, by the speed channel (None without
+    one)."""
+    speed = ld.channel(*DEFAULT_CHANNEL_MAP["speed"])
+    if speed is None or speed.count < 2:
+        return None
+    t, v = speed.times(), np.abs(np.nan_to_num(speed.values(), nan=0.0))
+    return np.interp(times, t, np.concatenate([[0.0], np.cumsum(v[:-1] * np.diff(t))]) / 3.6)
+
+
+def one_per_pass(starts: np.ndarray, ld: LdFile) -> np.ndarray:
+    """Line crossings with those that follow one too soon dropped: less than MIN_LAP_S, or MIN_LAP_M driven, after
+    the last crossing kept. A double marker pulse or a GPS wobble at the line is one pass of the line, so a lap it
+    would split stays one lap, and a car standing at the line does no lap."""
+    starts = np.asarray(starts, float)
+    if len(starts) < 2:
+        return starts
+    at = _driven_at(ld, starts)
+    keep = [0]
+    for i in range(1, len(starts)):
+        j = keep[-1]
+        if starts[i] - starts[j] < MIN_LAP_S or (at is not None and at[i] - at[j] < MIN_LAP_M):
+            continue
+        keep.append(i)
+    return starts[keep]
+
+
 def lap_starts(ld: LdFile, beacons: list[float] | None = None,
                line: TimingLine | None = None) -> tuple[np.ndarray, str]:
     """Line-crossing times. The dash's own S/F marker comes first; then the GPS crossing of a line learned from
     the dash's marker, so every log of a track starts its laps at the same place; then .ldx beacons (i2's "Auto
     GPS" beacons can sit tens of metres from the dash's line, and miss laps); then the GPS crossing of any other
-    line; then the lap counter."""
+    line; then the lap counter. Whatever the source, crossings too close together are one pass (one_per_pass)."""
     sf = ld.channel("S/F Marker", "Start Finish", "SF Marker")
     if sf is not None:
-        starts = sf.times()[1:][np.diff(sf.values()) > 0]
+        starts = one_per_pass(sf.times()[1:][np.diff(sf.values()) > 0], ld)
         if len(starts) >= 2:
             return starts, "marker"
     marker_line = line is not None and line.source == "marker"
     if marker_line:
-        starts = gps_crossings(ld, line)
+        starts = one_per_pass(gps_crossings(ld, line), ld)
         if len(starts) >= 2:
             return starts, "gps"
     if beacons and len(beacons) >= 2:
-        return np.asarray(beacons, float), "beacons"
+        starts = one_per_pass(np.asarray(beacons, float), ld)
+        if len(starts) >= 2:
+            return starts, "beacons"
     if line is not None and not marker_line:
-        starts = gps_crossings(ld, line)
+        starts = one_per_pass(gps_crossings(ld, line), ld)
         if len(starts) >= 2:
             return starts, "gps"
     ln = ld.channel("Lap Number", "Lap", "lap_number")
     if ln is not None:
-        starts = ln.times()[1:][np.diff(ln.values()) != 0]
+        starts = one_per_pass(ln.times()[1:][np.diff(ln.values()) != 0], ld)
         if len(starts) >= 2:
             return starts, "counter"
     return np.array([]), ""
@@ -353,9 +389,10 @@ def make_sections(ref: dict[str, np.ndarray], corners: list[CornerSpec] | None =
     """Split the lap at the fast points between corners.
 
     With the track's official corners, each section carries the official numbers inside it, grouped like
-    "T8/T9" or "T2-T4"; a flat-out kink far from any slow point gets its own section. Corners the track
-    puts in one sector become one section. Without official corners, the slowest points are numbered
-    C1, C2... so they are never mistaken for official numbers.
+    "T8/T9" or "T2-T4"; each flat-out kink far from any slow point gets its own section. Corners the track
+    puts in one sector become one section, labelled first to last ("T6-T7", "T2-T5"), and never share it with a
+    corner outside the sector. Without official corners, the slowest points are numbered C1, C2... so they are
+    never mistaken for official numbers.
     """
     found = detect_corners(ref)
     n = len(ref["speed"])
@@ -365,6 +402,7 @@ def make_sections(ref: dict[str, np.ndarray], corners: list[CornerSpec] | None =
         secs = [Section(f"C{i + 1}", c.start, c.end, c.apex) for i, c in enumerate(found)]
         return secs, "detected"
     official = sorted(((c[0], int(c[1])) for c in corners if c[1] is not None and 0 <= c[1] < n), key=lambda c: c[1])
+    sector = {c[0]: c[2] for c in corners if len(c) > 2 and c[2]}
     secs: list[Section] = []
     for c in found:
         inside = [(code, a) for code, a in official if c.start <= a < c.end or (c is found[-1] and a >= c.start)]
@@ -373,30 +411,46 @@ def make_sections(ref: dict[str, np.ndarray], corners: list[CornerSpec] | None =
         if not near and secs and not far:  # a slow point the track map has no number for: part of the last one
             secs[-1].end = c.end
             continue
-        start = c.start
         before = [x for x in far if x[1] < c.apex]
         after = [x for x in far if x[1] > c.apex]
-        if before:
-            split = (before[-1][1] + (near[0][1] if near else c.apex)) // 2
-            secs.append(Section(_label([x[0] for x in before]), start, split, None, [x[0] for x in before]))
-            start = split
-        end = c.end
-        if after:
-            split = ((near[-1][1] if near else c.apex) + after[0][1]) // 2
-            end = split
-        secs.append(Section(_label([x[0] for x in near]) if near else f"C{len(secs) + 1}", start, end, c.apex,
-                            [x[0] for x in near]))
-        if after:
-            secs.append(Section(_label([x[0] for x in after]), split, c.end, None, [x[0] for x in after]))
+        first, last = (near[0][1], near[-1][1]) if near else (c.apex, c.apex)
+        # each flat kink a section of its own, split halfway between official positions
+        cuts = [(a + b) // 2 for a, b in pairwise([*(x[1] for x in before), first])]
+        ends = [(a + b) // 2 for a, b in pairwise([last, *(x[1] for x in after)])]
+        for x, s0, e0 in zip(before, [c.start, *cuts], cuts, strict=False):
+            secs.append(Section(x[0], s0, e0, None, [x[0]]))
+        start, end = (cuts[-1] if cuts else c.start), (ends[0] if ends else c.end)
+        if near:
+            secs += _by_sector(near, start, end, c.apex, sector)
+        else:
+            secs.append(Section(f"C{len(secs) + 1}", start, end, c.apex))
+        for x, s0, e0 in zip(after, ends, [*ends[1:], c.end], strict=False):
+            secs.append(Section(x[0], s0, e0, None, [x[0]]))
     secs[0].start, secs[-1].end = 0, n - 1
     for a, b in pairwise(secs):
         b.start = a.end
-    return _join_sectors(secs, corners, ref["speed"]), "official"
+    return _join_sectors(secs, sector, ref["speed"]), "official"
 
 
-def _join_sectors(secs: list[Section], corners: list[CornerSpec], speed: np.ndarray) -> list[Section]:
-    """Neighbouring sections whose corners all belong to one sector of the track become one section."""
-    sector = {c[0]: c[2] for c in corners if len(c) > 2 and c[2]}
+def _by_sector(near: list[tuple[str, int]], start: int, end: int, apex: int,
+               sector: dict[str, str]) -> list[Section]:
+    """The official corners around one slow point as one section, or one per sector when they belong to
+    different sectors of the track (split halfway between them); the slow point goes to the corners nearest it."""
+    runs: list[list[tuple[str, int]]] = []
+    for x in near:
+        if runs and sector.get(runs[-1][-1][0]) == sector.get(x[0]):
+            runs[-1].append(x)
+        else:
+            runs.append([x])
+    cuts = [(a[-1][1] + b[0][1]) // 2 for a, b in pairwise(runs)]
+    nearest = min(range(len(runs)), key=lambda i: min(abs(a - apex) for _, a in runs[i]))
+    return [Section(_label([x[0] for x in run]), s0, e0, apex if i == nearest else None, [x[0] for x in run])
+            for i, (run, s0, e0) in enumerate(zip(runs, [start, *cuts], [*cuts, end], strict=True))]
+
+
+def _join_sectors(secs: list[Section], sector: dict[str, str], speed: np.ndarray) -> list[Section]:
+    """The sections whose corners all belong to one sector of the track become one section, with any section
+    between them that has no official corner (a slow point the track map has no number for)."""
     if not sector:
         return secs
 
@@ -406,16 +460,19 @@ def _join_sectors(secs: list[Section], corners: list[CornerSpec], speed: np.ndar
 
     out: list[Section] = []
     for s in secs:
-        last = out[-1] if out else None
-        if last is not None and key(s) is not None and key(s) == key(last):
-            apexes = [a for a in (last.apex, s.apex) if a is not None]
+        k, j = key(s), len(out) - 1
+        while k is not None and j >= 0 and not out[j].corners:
+            j -= 1
+        if k is not None and j >= 0 and key(out[j]) == k:
+            joined = [*out[j:], s]
+            apexes = [x.apex for x in joined if x.apex is not None]
             apex = min(apexes, key=lambda a: speed[a]) if apexes else None
-            out[-1] = Section("", last.start, s.end, apex, last.corners + s.corners)
+            out[j:] = [Section("", joined[0].start, s.end, apex, [code for x in joined for code in x.corners])]
         else:
             out.append(s)
     for s in out:
-        if s.corners and key(s) is not None:
-            s.code = _label(s.corners)
+        if s.corners and key(s) is not None:  # a sector: first to last, however many corners it has
+            s.code = s.corners[0] if len(s.corners) == 1 else f"{s.corners[0]}-{s.corners[-1]}"
     return out
 
 

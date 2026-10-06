@@ -36,7 +36,7 @@ from app.routers.sessions import _channel_map, _line, official_corners, read_fil
 router = APIRouter(prefix="/reports")
 log = logging.getLogger(__name__)
 
-REPORT_VERSION = 2  # raise when the advice changes, so every kept report is worked out again
+REPORT_VERSION = 3  # raise when the advice or the sections change, so every kept report is worked out again
 TRACES_VERSION = compact.FORMAT  # raise (in compact.py) when the reduction changes
 IMPORT_WAIT_S = 1800  # longest the report waits for an import that is reading logs
 MAX_LAPS = 250  # the quickest laps of an event the report works from, to keep within the server's memory
