@@ -60,6 +60,7 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
           <Stack.Screen name="session/[id]" options={{ title: 'Session' }} />
           <Stack.Screen name="report" options={{ title: 'Report' }} />
           <Stack.Screen name="technique" options={{ title: 'Technique check' }} />
+          <Stack.Screen name="quali" options={{ title: 'Quali prep' }} />
           <Stack.Screen name="debrief/[id]" options={{ title: 'Debrief report' }} />
           <Stack.Screen name="tools/pressures" />
           <Stack.Screen name="tools/tyre-temps" />

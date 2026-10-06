@@ -185,6 +185,13 @@ export default function EventScreen() {
             </Link>
           )}
           {timed && (
+            <Link href={{ pathname: '/quali', params: { event: eventId } }} asChild>
+              <Pressable style={StyleSheet.flatten([styles.action, { borderColor: tint }])}>
+                <Text style={StyleSheet.flatten([styles.actionText, { color: tint }])}>Quali prep</Text>
+              </Pressable>
+            </Link>
+          )}
+          {timed && (
             <Link href={{ pathname: '/technique', params: { event: eventId } }} asChild>
               <Pressable style={StyleSheet.flatten([styles.action, { borderColor: tint }])}>
                 <Text style={StyleSheet.flatten([styles.actionText, { color: tint }])}>Technique check</Text>

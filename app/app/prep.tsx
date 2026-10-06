@@ -447,10 +447,15 @@ function Corner({ r }: { r: CornerRow }) {
 }
 
 function Quali({ report }: { report: PrepReport }) {
+  const router = useRouter();
   const q = report.quali;
   if (!q) return null;
   return (
     <Section title="Quali prep that worked" sub={`From the tyre sensors in ${q.from}.`}>
+      <Pressable accessibilityRole="link"
+        onPress={() => router.push({ pathname: '/quali', params: { event: String(q.event_id) } })}>
+        <Text style={styles.link}>Open the full quali prep of {q.from}</Text>
+      </Pressable>
       {q.advice.filter((a) => ['plan', 'ready', 'build', 'brakes', 'push'].includes(a.key)).map((a) => (
         <Text key={a.key} style={styles.para}><Text style={styles.label}>{a.title}: </Text>{a.text}</Text>
       ))}

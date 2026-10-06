@@ -116,6 +116,13 @@ export default function SessionScreen() {
             </Pressable>
           </Link>
         )}
+        {session?.laps.some((l) => l.clean) && (
+          <Link href={{ pathname: '/quali', params: { session: sessionId } }} asChild>
+            <Pressable style={StyleSheet.flatten([styles.button, styles.outline, { borderColor: tint }])}>
+              <Text style={[styles.buttonText, { color: tint }]}>Quali prep</Text>
+            </Pressable>
+          </Link>
+        )}
         {/* drawn from a clean lap; keyed so an upload that changes the laps redraws it */}
         {session?.laps.some((l) => l.clean) && (
           <TrackMap key={`${session.id}-${session.files.length}-${best}`} session={session.id} withShape />
