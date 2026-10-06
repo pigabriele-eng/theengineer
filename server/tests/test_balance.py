@@ -133,7 +133,7 @@ def _row(code, min_speed, entry=None, mid=None, exit_=None, car=0.0, where="exit
 
 
 def _analysis(sections, table, tc_per_lap=0.5, spread=0.5):
-    return {"reference": {"run": "Run 1", "lap": 3, "time": 100.0}, "laps": 20, "held_share": 0.95,
+    return {"reference": {"run": "Run 1", "lap": 3, "time": 100.0}, "laps": 20,
             "ideal_lap": 99.4, "held_lap": 98.9, "theoretical_lap": 98.0,
             "gradient": {"per_g": 1.0, "fit_slope": 2.0, "fit_offset": -1.0, "by_g": [], "spread": spread,
                          "notes": [], "table": [{"speed": s, "range_kmh": [0, 1], "entry": e, "mid": m, "exit": x}
@@ -216,7 +216,15 @@ def test_car_limits_split_the_lap():
     assert [s["where"] for s in out["sections"]] == ["braking", None, None]  # too small to say where
     assert out["total_car"] == 0.21
     assert "2.00 s off the theoretical lap: 0.60 s is driving" in out["text"]
-    assert "In T2 the quickest passes already beat the 95 % target." in out["text"]
+    assert "In T2 the quickest passes already beat the realistic target." in out["text"]
+
+
+def test_best_sections_beating_the_realistic_target_leave_the_car_nothing():
+    a = _analysis([_row("T1", 80, car=-0.2)], [])
+    a["held_lap"] = 99.7  # the best sections (99.4) already beat it
+    out = car_limits(a)
+    assert out["lap"]["car"] == 0.0 and out["lap"]["optimism"] == 1.4  # the parts still add up to the 2 s
+    assert "already beat the realistic target (the grip" in out["text"] and "by 0.30 s" in out["text"]
 
 
 def test_where_the_car_loses_groups_the_phases():

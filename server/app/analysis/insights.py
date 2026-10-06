@@ -1,8 +1,10 @@
 """Lap time opportunities, driving trends, setup weaknesses and driver scores from any set of laps.
 
-No reference lap is needed. The car's own laps give its limits (limits.py); the fastest lap's line driven at
-those limits everywhere gives the theoretical lap (lapsim.py). Every lap is then measured against that, corner
-by corner and phase by phase, and the laps are compared with each other to find what the quick ones do.
+No reference lap is needed. The car's own quick laps give its limits at every place of the track
+(local_limits.py); the fastest lap's line driven at those limits everywhere gives the theoretical lap (lapsim.py),
+and at the limits a quick lap usually shows there, the realistic target. Every lap is then measured against the
+theoretical lap, corner by corner and phase by phase, and the laps are compared with each other to find what the
+quick ones do. The car's grip envelope (limits.py) describes how much of its grip each lap used.
 """
 from __future__ import annotations
 
@@ -16,6 +18,7 @@ from app.analysis.channels import BRAKE, EXIT, MID, PHASES, POWER, TRAIL, math_c
 from app.analysis.laps import CornerSpec, SessionData, Section, lap_length, make_sections
 from app.analysis.lapsim import LIMITED_BY, SimLap, theoretical_lap
 from app.analysis.limits import CarLimits, car_limits
+from app.analysis.local_limits import PlaceLimits, place_limits
 from app.analysis.scan import channel_scan
 from app.importers.motec import LdFile
 
@@ -57,10 +60,13 @@ class Prepared:
     length: int
     reference: LapRecord
     laps: list[LapRecord]
-    limits: CarLimits
-    sim: SimLap  # the reference line at the car's limits
+    limits: CarLimits  # the grip envelope: how much of its grip a lap used
+    sim: SimLap  # the theoretical lap: the reference line at the limits the car has shown at every place
     sections: list[Section]
     numbering: str  # "official" when the track's corner numbers were used, else "detected"
+    perfect: PlaceLimits | None = None  # the limits sim drives at
+    held: PlaceLimits | None = None  # the limits a quick lap usually shows at every place
+    realistic: SimLap | None = None  # the realistic target: the reference line at the held limits
 
 
 # ---------- preparation ----------
@@ -93,12 +99,31 @@ def prepare(runs: list[RunInput], corners: list[CornerSpec] | None = None, *,
         if drop_channels:
             r.data.channels = {}
     reference = next(x for x in laps if x.run == ref_run.name and x.number == ref_lap.number)
-    limits = car_limits([x.trace for x in _limit_laps(laps)])
-    sim = _closed_sim(reference.trace["curvature"], limits)
+    t = targets(laps, reference.trace)
     for x in laps:
-        x.own_sim = _closed_sim(x.trace["curvature"], limits)
+        x.own_sim = _closed_sim(x.trace["curvature"], t.perfect)
     sections, numbering = make_sections(reference.trace, corners)
-    return Prepared(line, len(reference.trace["distance"]), reference, laps, limits, sim, sections, numbering)
+    return Prepared(line, len(reference.trace["distance"]), reference, laps, t.limits, t.sim, sections, numbering,
+                    t.perfect, t.held, t.realistic)
+
+
+@dataclass
+class Targets:
+    limits: CarLimits
+    perfect: PlaceLimits
+    held: PlaceLimits
+    sim: SimLap
+    realistic: SimLap
+
+
+def targets(laps: list, reference: dict[str, np.ndarray]) -> Targets:
+    """The car's limits from its quick laps, the theoretical lap and the realistic target on the reference line.
+
+    laps: anything with .time and .trace (the clean laps on one distance grid); reference: the fastest lap's trace."""
+    traces = [x.trace for x in _limit_laps(laps)]
+    perfect, held = place_limits(traces, reference)
+    curvature = reference["curvature"]
+    return Targets(car_limits(traces), perfect, held, _closed_sim(curvature, perfect), _closed_sim(curvature, held))
 
 
 def _limit_laps(laps: list[LapRecord]) -> list[LapRecord]:
@@ -111,11 +136,9 @@ def _limit_laps(laps: list[LapRecord]) -> list[LapRecord]:
     return [x for i, x in enumerate(quick) if x.time <= cut or i < MIN_LIMIT_LAPS]
 
 
-def _closed_sim(curvature: np.ndarray, limits: CarLimits) -> SimLap:
-    """Traces include the timing line at both ends; simulate the loop once and repeat the line point."""
-    sim = theoretical_lap(curvature[:-1], limits)
-    return SimLap(np.append(sim.speed, sim.speed[0]), np.append(sim.t, sim.time), sim.time,
-                  np.append(sim.limited_by, sim.limited_by[0]))
+def _closed_sim(curvature: np.ndarray, limits: PlaceLimits) -> SimLap:
+    """Perfect driving on a lap's line (curvature per metre, the timing line at both ends) at the place limits."""
+    return theoretical_lap(np.asarray(curvature, float), limits)
 
 
 # ---------- per lap, per section ----------

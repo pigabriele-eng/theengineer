@@ -66,7 +66,7 @@ def describe(v: float | None) -> dict | None:
 
 
 def where_car_loses(row: dict) -> str | None:
-    """The part of the corner where the quickest pass is furthest from the car holding 95 % of its grip."""
+    """The part of the corner where the quickest pass is furthest from the realistic target."""
     groups: dict[str, float] = {}
     for phase, s in row["car_by_phase"].items():
         groups[PHASE_GROUP[phase]] = groups.get(PHASE_GROUP[phase], 0.0) + s
@@ -382,15 +382,28 @@ def car_limits(a: dict) -> dict:
              "held_grip": (s.get("held_grip") or {}).get("max")} for s in a["sections"]]
     beaten = [s["code"] for s in a["sections"] if s["car"] < -CAR_SHARE_MIN]
     text = (f"The fastest lap is {ref - theo:.2f} s off the theoretical lap: {ref - ideal:.2f} s is driving (the "
-            f"fastest lap against the best of every section), {ideal - held:.2f} s is the car (the best sections "
-            f"against the car holding {a['held_share'] * 100:.0f} % of its peak grip) and {held - theo:.2f} s is the "
-            "theoretical lap asking for more grip than any lap held.")
+            "fastest lap against the best of every section)")
+    if ideal >= held:
+        text += (f", {ideal - held:.2f} s is the car (the best sections against the realistic target: the grip a "
+                 f"quick lap usually shows at each place, used without a mistake) and {held - theo:.2f} s is the "
+                 "theoretical lap asking for the best the car has shown at every place at once.")
+    else:
+        text += (f". The best sections already beat the realistic target (the grip a quick lap usually shows at each "
+                 f"place, used without a mistake) by {held - ideal:.2f} s; the theoretical lap, the best the car has "
+                 f"shown at every place at once, is {ideal - theo:.2f} s quicker still.")
     if beaten:
-        text += f" In {listed(beaten)} the quickest passes already beat the {a['held_share'] * 100:.0f} % target."
+        text += f" In {listed(beaten)} the quickest passes already beat the realistic target."
+    car = max(ideal - held, 0.0)  # where the best sections beat the realistic target, the car holds back nothing
     return {"lap": {"reference": ref, "ideal": ideal, "held": held, "theoretical": theo,
-                    "driving": round(ref - ideal, 3), "car": round(ideal - held, 3),
-                    "optimism": round(held - theo, 3)},
+                    "driving": round(ref - ideal, 3), "car": round(car, 3), "optimism": round(ideal - car - theo, 3)},
             "total_car": round(sum(r["car"] for r in rows), 3), "sections": rows, "text": text}
+
+
+def _split(f: dict) -> dict:
+    """The focus section's car and theoretical shares, neither below zero: where the quickest pass beats the
+    realistic target, the car holds back nothing and the theoretical lap's share is the rest."""
+    car = max(f["car"], 0.0)
+    return {"car": round(car, 3), "optimism": round(f["car"] + f["optimism"] - car, 3)}
 
 
 def focus_text(a: dict) -> list[dict]:
@@ -406,12 +419,15 @@ def focus_text(a: dict) -> list[dict]:
     if "throttle_lifts" in r and "throttle_lifts" in b and b["throttle_lifts"] < r["throttle_lifts"]:
         drive += f", and lifted off the throttle {b['throttle_lifts']} times against {r['throttle_lifts']}"
     drive += "." + (" Same run, same tyres: the car could do it." if same_run else "")
-    car = "Even the quickest pass doesn't hold the car's grip through the section"
-    hg = f.get("held_grip")
-    if hg:
-        car += (f": the most cornering g any lap held over 40 m here is {hg['max'] * 100:.0f} % of the car's peak, and "
-                f"{hg['p98'] * 100:.0f} % is usual for the best of them")
-    car += "."
+    if f["car"] > 0:
+        car = "Even the quickest pass doesn't reach the realistic target through the section"
+        hg = f.get("held_grip")
+        if hg:
+            car += (f": the most cornering g any lap held over 40 m here is {hg['max'] * 100:.0f} % of the car's peak, "
+                    f"and {hg['p98'] * 100:.0f} % is usual for the best of them")
+        car += "."
+    else:
+        car = "The quickest pass already beats the realistic target here: the car isn't what holds the section back."
     extra = []
     if s.get("tc_s") and s["tc_s"]["typical"] > 0:
         extra.append(f"traction control works {s['tc_s']['typical']:.1f} s per pass here"
@@ -430,12 +446,13 @@ def focus_text(a: dict) -> list[dict]:
         if low_b is not None and low_b > low_r + 0.5:
             car += f" The quickest pass had less of it ({abs(low_b):.1f}°), but not none." if low_b <= -0.5 else \
                 " The quickest pass had almost none of it."
-    theo = (f"The theoretical lap holds the car's peak, {f['theoretical_peak_g']:.2f} g, all the way through. Held to "
-            f"{a['held_share'] * 100:.0f} % of it, {f['code']} takes {f['held_time']:.2f} s and the whole lap "
-            f"{lap_time(a['held_lap'])}.")
+    theo = (f"The theoretical lap takes {f['code']} at up to {f['theoretical_peak_g']:.2f} g, the most the car has "
+            f"shown there. At the grip a quick lap usually shows there (the realistic target), {f['code']} takes "
+            f"{f['held_time']:.2f} s and the whole lap {lap_time(a['held_lap'])}.")
+    split = _split(f)
     return [{"part": "driving", "seconds": f["driving"], "text": drive},
-            {"part": "car", "seconds": f["car"], "text": car},
-            {"part": "theoretical", "seconds": f["optimism"], "text": theo}]
+            {"part": "car", "seconds": split["car"], "text": car},
+            {"part": "theoretical", "seconds": split["optimism"], "text": theo}]
 
 
 def balance_section(a: dict) -> dict:
@@ -493,9 +510,10 @@ def method(a: dict, geometry: dict, sessions: list[dict], preset: str | None) ->
                      "tenth of passes. Within ±0.3° is normal, slight to 0.8°, clear to 1.5°, strong beyond. "
                      f"Differences under {g['spread']:.1f}° are within the usual lap-to-lap scatter.")
     notes.append("Driving, car and theoretical: in each section the fastest lap against the quickest pass is "
-                 "driving, since the car has shown it can do better. The quickest pass against the theoretical lap "
-                 f"with the car holding {a['held_share'] * 100:.0f} % of its peak grip is the car's share. The rest, "
-                 "down to the theoretical lap at full grip, is the theoretical asking for more than any lap held.")
+                 "driving, since the car has shown it can do better. The quickest pass against the realistic target "
+                 "(the grip a quick lap usually shows at each place, used without a mistake) is the car's share. The "
+                 "rest, down to the theoretical lap (the best the car has shown at each place), is the theoretical "
+                 "asking for the best of every place at once.")
     if preset in PRESETS:
         notes.append(f"Bar changes are run through the steady-state vehicle model on the {PRESETS[preset][0]} "
                      "preset. Its bar rates are estimates and it assumes the middle settings: enter the car's real "
@@ -526,7 +544,8 @@ def report(a: dict, geometry: dict, sessions: list[dict], preset: str | None) ->
         "recommendations": adv["recommendations"],
         "notes": adv["notes"],
         "car_limits": car_limits(a),
-        "focus": {**{k: v for k, v in focus.items() if k != "held_grip"}, "explain": focus_text(a)} if focus else None,
+        "focus": {**{k: v for k, v in focus.items() if k != "held_grip"}, **_split(focus), "explain": focus_text(a)}
+        if focus else None,
         "balance": balance_section(a),
         "checks": adv["checks"],
         "method": method(a, geometry, sessions, preset),

@@ -48,7 +48,7 @@ from app.vehicle.tyre_fit import (
     session_samples,
 )
 
-VERSION = 1  # bump when the summary's method changes: older summaries are then made again in the background
+VERSION = 2  # bump when the summary's method changes: older summaries are then made again in the background
 BAND_MU = BIN_MU
 RACING_KMH = 60.0  # TPMS medians only from samples at racing speed
 SET_START_SLACK_S = 5.0  # a lap starting this soon before a set's cold start is still on that set

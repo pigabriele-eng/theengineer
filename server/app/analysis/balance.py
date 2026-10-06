@@ -9,9 +9,10 @@ reads about 9 % low). Every car has some understeer that grows with cornering lo
 from the car's normal. On the Hockenheim test that gradient was about 1 degree per g.
 
 Where the car limits the lap: in each section, the reference lap against the quickest pass of the same section
-is driving (the car has shown it can do better); the quickest pass against the theoretical lap with the car
-holding 95 % of its peak grip is the car's share; the rest, down to the theoretical lap at 100 %, is the
-theoretical lap asking for more than any lap held there.
+is driving (the car has shown it can do better); the quickest pass against the realistic target (the grip a quick
+lap usually shows at each place, used without a mistake: lapsim.py) is the car's share where the pass is slower;
+the rest, down to the theoretical lap (the best the car has shown at each place), is the theoretical lap asking for
+the best of every place at once.
 
 Multi-session work loads one session at a time and keeps only each clean lap's few channels on the distance
 grid (a few hundred kB per lap), so an event fits in the memory of a small server.
@@ -29,15 +30,14 @@ from app.analysis.insights import (
     LapRecord,
     Prepared,
     _balance_notes,
-    _closed_sim,
-    _limit_laps,
     cornering,
     setup_diagnostics,
+    targets,
     understeer_fit,
 )
-from app.analysis.lapsim import CURVE_SMOOTH_M, SimLap
+from app.analysis.lapsim import SimLap
 from app.analysis.laps import MASTER_HZ, CornerSpec, SessionData, lap_length, make_sections
-from app.analysis.limits import CarLimits, car_limits
+from app.analysis.local_limits import PlaceLimits, smoothed_curvature
 from app.vehicle.tyre_fit import NotEnoughData, _logged_ratio, yaw_rate_scale
 
 # Fallbacks from the Hockenheim test (BMW M4 GT4): the ratio between the logger's two steering channels, and the
@@ -45,7 +45,6 @@ from app.vehicle.tyre_fit import NotEnoughData, _logged_ratio, yaw_rate_scale
 HOCKENHEIM_STEERING_RATIO = 15.6
 HOCKENHEIM_WHEELBASE_MM = 2857.0
 
-HELD_SHARE = 0.95  # the realistic target: the car holding this share of its peak grip everywhere
 HELD_WINDOW_M = 40  # grip "held" is the least lateral g over this many metres
 CORNERING_G = 0.5  # balance is read where the car corners at least this hard
 MIN_SAMPLES = 5  # per lap and phase
@@ -209,24 +208,19 @@ def collect(name: str, data: SessionData, geo: Geometry, out: Collected, *, driv
 
 
 def prepared(col: Collected, corners: list[CornerSpec] | None) -> Prepared | None:
-    """The engine's Prepared from collected laps: limits, the theoretical lap and the sections."""
+    """The engine's Prepared from collected laps: limits, the theoretical lap, the realistic target and the
+    sections."""
     laps = col.laps
     if not laps:
         return None
     reference = min(laps, key=lambda x: x.time)
-    limits = car_limits([x.trace for x in _limit_laps(laps)])
-    sim = _closed_sim(reference.trace["curvature"].astype(float), limits)
+    t = targets(laps, reference.trace)
     sections, numbering = make_sections(reference.trace, corners)
-    return Prepared(col.line, len(reference.trace["t"]), reference, laps, limits, sim, sections, numbering)
+    return Prepared(col.line, len(reference.trace["t"]), reference, laps, t.limits, t.sim, sections, numbering,
+                    t.perfect, t.held, t.realistic)
 
 
 # ---------- the analysis ----------
-
-def _held(limits: CarLimits, share: float) -> CarLimits:
-    """The same car holding only a share of its peak grip (straight-line braking and power unchanged)."""
-    return CarLimits(limits.speeds, limits.envelope * share, limits.line_speeds, limits.accel, limits.brake,
-                     limits.top_speed)
-
 
 def _f(x: np.ndarray) -> np.ndarray:
     return np.asarray(x, dtype=float)
@@ -359,11 +353,11 @@ def _section_rows(prep: Prepared, held_sim: SimLap, k: float | None) -> list[dic
     return rows
 
 
-def _sim_ay(sim_speed: np.ndarray, curvature: np.ndarray, limits: CarLimits) -> np.ndarray:
-    """A theoretical lap's cornering g: speed squared times the (smoothed) curvature, capped at the limit."""
-    w = CURVE_SMOOTH_M | 1
-    k = np.convolve(np.pad(np.abs(curvature), w // 2, mode="wrap"), np.ones(w) / w, "valid")
-    return np.minimum((sim_speed / 3.6) ** 2 * k / G, limits.max_lateral(sim_speed))
+def _sim_ay(sim_speed: np.ndarray, curvature: np.ndarray, limits: PlaceLimits) -> np.ndarray:
+    """A simulated lap's cornering g: speed squared times the (smoothed) curvature, capped at each place's limit."""
+    k = smoothed_curvature(curvature)
+    cap = limits.corner[limits.place_of(np.arange(len(k)))]
+    return np.minimum((sim_speed / 3.6) ** 2 * k / G, cap)
 
 
 def _lap_through(x: LapRecord, a: int, b: int, k: float | None) -> dict:
@@ -396,8 +390,8 @@ def focus_section(prep: Prepared, rows: list[dict], held_sim: SimLap, corners: l
     a, b = row["start_m"], row["end_m"]
     best = next(x for x in prep.laps if x.key == row["best_lap"])
     curv = _f(prep.reference.trace["curvature"])
-    held_ay = _sim_ay(held_sim.speed, curv, _held(prep.limits, HELD_SHARE))
-    theo_ay = _sim_ay(prep.sim.speed, curv, prep.limits)
+    held_ay = _sim_ay(held_sim.speed, curv, prep.held)
+    theo_ay = _sim_ay(prep.sim.speed, curv, prep.perfect)
     idx = np.arange(a, b + 1, max(1, round((b - a) / 150)))
 
     def rnd(v: np.ndarray, nd: int = 1) -> list[float]:
@@ -428,7 +422,7 @@ def analyse(prep: Prepared, corners: list[CornerSpec] | None = None) -> dict:
     diag.pop("balance", None)  # measured against a gradient with an offset; see gradient()
     diag.pop("lateral_grip_by_speed", None)
     grad = gradient(prep)
-    held_sim = _closed_sim(_f(prep.reference.trace["curvature"]), _held(prep.limits, HELD_SHARE))
+    held_sim = prep.realistic  # the realistic target
     k = grad["per_g"] if grad else None
     rows = _section_rows(prep, held_sim, k)
     return {
@@ -438,7 +432,6 @@ def analyse(prep: Prepared, corners: list[CornerSpec] | None = None) -> dict:
         "numbering": prep.numbering,
         "theoretical_lap": round(prep.sim.time, 3),
         "held_lap": round(held_sim.time, 3),
-        "held_share": HELD_SHARE,
         "ideal_lap": round(sum(r["best"] for r in rows), 3),
         "peak_lateral_g": round(float(prep.limits.max_lateral(prep.limits.speeds).max()), 2),
         "gradient": grad,

@@ -5,9 +5,11 @@ the lap it compares the quickest passes with a typical pass: where in the corner
 mid-corner, exit, full throttle), what the quick passes do differently, and how strongly each habit goes with a
 quicker section lap to lap within the same run. It then ranks the sections by the time a typical lap can gain.
 
-The ladder from the fastest lap down: the ideal lap (the best pass of every section), a realistic target (the car
-holding 95 % of its peak grip, as no car holds its peak through a long corner) and the theoretical lap (the car's
-peak limits on the fastest lap's line everywhere).
+Beside the fastest lap: the ideal lap (the best pass of every section), the realistic target and the theoretical lap.
+Both are the fastest lap's line driven without a mistake at the limits the car has shown at each place of the track
+(local_limits.py): the theoretical lap at the best of them, the realistic target at what a quick lap usually shows
+there. No lap puts the best of every place together, but a quick lap's usual grip at every place, used fully, is
+within reach.
 
 Corners are named only by their official numbers (or C1, C2... where the track has none).
 """
@@ -26,7 +28,6 @@ from app.analysis.insights import (
     SIGNIFICANT_P,
     LapRecord,
     Prepared,
-    _closed_sim,
     _dt,
     _within,
     consistency,
@@ -40,7 +41,6 @@ from app.analysis.scan import scan_medians
 
 QUICK_SHARE = 0.1  # the quick passes are the quickest tenth of all passes of a section
 MIN_QUICK = 3
-REALISTIC_GRIP = 0.95
 TOP_GAINS = 3
 MAX_ADVICE = 3
 MAX_SPEED_ADVICE = 2  # of those, at most this many are "carry more speed"
@@ -595,12 +595,6 @@ def lap_time_relations(prep: Prepared, per_lap: dict[str, list[dict]], extras: E
 
 # ---------- the whole report ----------
 
-def _realistic(prep: Prepared):
-    lim = prep.limits
-    held = replace(lim, envelope=lim.envelope * REALISTIC_GRIP)
-    return _closed_sim(prep.reference.trace["curvature"], held)
-
-
 def _profiles(prep: Prepared, sections: list[dict], realistic) -> dict:
     """Speed every few metres: a typical pass (median of all laps), the quick passes of each section, the fastest
     lap, the realistic target and the theoretical lap, for the section charts."""
@@ -629,7 +623,8 @@ def build_report(prep: Prepared, extras: Extras | None = None, corners: list | N
     """Everything the report screen shows about going faster, from the prepared laps. corners: the track's official
     corners as given to the engine, to check the speed at each corner of a section that holds several."""
     laps = prep.laps
-    realistic = _realistic(prep)
+    realistic = prep.realistic
+    assert realistic is not None, "prepared without the realistic target"
     brake_unit = (extras.units.get("brake", "") if extras else "")
     corner_at = {c[0]: int(c[1]) for c in corners or [] if c[1] is not None} if prep.numbering == "official" else {}
     secs = prep.sections
@@ -719,8 +714,8 @@ def _summary(fastest: LapRecord, score: dict, typical: float, ideal: float, real
     else:
         out += "."
     if ideal < fastest.time - 0.01:
-        out += (f" The best pass of every section adds up to {lap_text(ideal)}, and the realistic target with the car "
-                f"holding 95% of its grip is {lap_text(realistic)}.")
+        out += (f" The best pass of every section adds up to {lap_text(ideal)}, and the realistic target (the grip a "
+                f"quick lap usually shows at each place, used without a mistake) is {lap_text(realistic)}.")
     if gains:
         names = ", ".join(f"{g['code']} ({g['seconds']:.2f} s)" for g in gains)
         out += (f" A typical lap ({lap_text(typical)}) gains most by driving like the quickest passes in {names}")
@@ -735,10 +730,13 @@ def _summary(fastest: LapRecord, score: dict, typical: float, ideal: float, real
 METHOD = [
     "Every clean lap is lined up on the fastest lap by position (GPS, with wheel-speed distance between fixes) and "
     "timed line to line.",
-    "The car's limits are the 98th percentile of the grip it used in every direction and at every speed on the laps "
-    "within 2% of the quickest. The theoretical lap is the fastest lap's line driven at those limits everywhere.",
-    "No car holds its peak grip all the way through a long corner, so the realistic target is the same lap with the "
-    "car holding 95% of it.",
+    "The car's limits are learned place by place, every 5 m, from the laps within 2% of the quickest: the cornering "
+    "it showed there, how hard it braked and drove out while cornering that hard, and its power against speed. A "
+    "banked corner or a crest keeps its own grip and lends it to no other corner.",
+    "The theoretical lap is the fastest lap's line driven without a mistake at the best of those limits at every "
+    "place (90th percentile of the laps; never less than the fastest lap itself showed there).",
+    "The realistic target is the same at what a quick lap usually shows at each place (the median, and again never "
+    "less than the fastest lap): no lap puts the best of every place together, but this is within reach.",
     "Sections run from the fast point before a corner to the same point before the next one, so each holds the "
     "braking, the corner and the straight after it. They carry the track's official corner numbers.",
     "Quick passes are the quickest tenth of all passes of a section (at least three). Typical is the median pass. "

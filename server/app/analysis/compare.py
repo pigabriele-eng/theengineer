@@ -17,10 +17,9 @@ import numpy as np
 from app import heavy
 from app.analysis.align import aligned_trace, track_line
 from app.analysis.channels import BRAKE, EXIT, MID, PHASES, POWER, TRAIL, TURNING_G, math_channels
-from app.analysis.insights import RunInput, _closed_sim, _first, _limit_laps, _wmean, _within, consistency, corr, \
-    top_speeds
+from app.analysis.insights import RunInput, _first, _wmean, _within, consistency, corr, targets, top_speeds
 from app.analysis.laps import CornerSpec, Lap, SessionData, lap_length, make_sections
-from app.analysis.limits import CarLimits, car_limits
+from app.analysis.limits import CarLimits
 
 SIDES = ("a", "b")
 SIGNIFICANT_P = 0.05  # a technique difference is worth something when it goes with section time at this level
@@ -504,10 +503,13 @@ def compare_groups(sources: list[RunSource], labels: dict[str, str] | None = Non
         missing = [labels[g] for g in SIDES if not by[g]]
         return {"error": f"No clean laps for {' and '.join(missing) or 'either side'}", "sections": []}
     sections = ref.sections
-    limits = car_limits([x.trace for x in _limit_laps(laps)])
+    # the reference lap as the theoretical lap needs it: its line, and its own speed and g (no lap is slower)
+    ref_lap = next((x for x in laps if x.run == ref.run and x.number == ref.number), min(laps, key=lambda x: x.time))
+    t = targets(laps, {**ref_lap.trace, "curvature": ref.trace["curvature"]})
+    limits = t.limits
     for x in laps:
         _grip(x, sections, limits)
-    sim = _closed_sim(ref.trace["curvature"], limits)
+    sim = t.sim
 
     sides = np.array([x.side for x in laps])
     runs_of = [x.run for x in laps]

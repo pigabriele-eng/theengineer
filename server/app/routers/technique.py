@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 
 from app import heavy, models, storage
 from app.analysis import compact
-from app.analysis.technique import REALISTIC_GRIP, check_lap, habits
+from app.analysis.technique import check_lap, habits
 from app.db import SessionLocal, get_db
 from app.routers import reports
 from app.routers.sessions import official_corners
@@ -37,7 +37,7 @@ from app.routers.sessions import official_corners
 router = APIRouter(prefix="/technique")
 log = logging.getLogger(__name__)
 
-TECHNIQUE_VERSION = 1  # raise when the check changes, so every kept one is worked out again
+TECHNIQUE_VERSION = 2  # raise when the check changes, so every kept one is worked out again
 TRACES_WAIT_S = 3600  # longest the check waits for the logs to be read into lap traces
 HABITS_SHOWN = 12
 DETAILS_KEPT = 16  # laps' full checks kept in memory
@@ -111,7 +111,6 @@ def _head(plan: reports.Plan, row: models.TechniqueCache | None, status: str) ->
         "progress": {"done": row.done, "total": row.total, "current": row.current} if working and row else None,
         "error": (plan.error or (row.error if row else None)) if status == "failed" else None,
         "stale": row is not None and row.result is not None and row.result_signature != sig,
-        "grip": REALISTIC_GRIP,
     }
 
 
@@ -363,7 +362,8 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
         if i % 10 == 0:
             row.done, row.current = i, f"Checking lap {i + 1} of {len(prep.laps)}"
             db.commit()
-        out = reports._plain(check_lap(x.trace, prep.limits, prep.sections, lap_time=x.time, units=extras.units))
+        out = reports._plain(check_lap(x.trace, prep.perfect, prep.held, prep.sections, lap_time=x.time,
+                                       units=extras.units))
         member = f"l{i}"
         laps.append({"key": x.key, "session_id": extras.session_of[x.key], "run": x.run, "number": x.number,
                      "time": x.time, "driver": x.driver, "perfect": out["perfect"], "realistic": out["realistic"],

@@ -19,13 +19,12 @@ import numpy as np
 from app.heavy import release_memory
 from app.analysis.align import MAX_OFFSET_M, TrackLine, lap_position, track_line
 from app.analysis.channels import math_channels
-from app.analysis.insights import LapRecord, Prepared, _closed_sim, _limit_laps
+from app.analysis.insights import LapRecord, Prepared, targets
 from app.analysis.laps import MASTER_HZ, CornerSpec, SessionData, lap_length, load_session, make_sections
-from app.analysis.limits import car_limits
 from app.analysis.scan import lap_medians
 from app.importers.motec import LdFile
 
-FORMAT = 1
+FORMAT = 2  # 2: accelerometers logged in m/s² (or g mislabelled) read as g
 PAD_M = 40  # metres kept before the line and after it, so another session's line can start a little earlier or later
 FLOAT_ROLES = ("speed", "ax", "ay", "curvature", "throttle", "brake", "steer", "understeer", "rear_slip",
                "front_lock", "slide_rate")
@@ -291,8 +290,8 @@ def prepare_compact(sessions: list[tuple[int | None, CompactSession]], corners: 
                             {k: v for k, v in s.channels.items() if k not in mapped}))
         extras.units = {**s.units, **extras.units}
     assert reference is not None
-    limits = car_limits([x.trace for x in _limit_laps(laps)])
-    sim = _closed_sim(reference.trace["curvature"], limits)
+    t = targets(laps, reference.trace)
     sections, numbering = make_sections(reference.trace, corners)
-    prep = Prepared(line, len(reference.trace["distance"]), reference, laps, limits, sim, sections, numbering)
+    prep = Prepared(line, len(reference.trace["distance"]), reference, laps, t.limits, t.sim, sections, numbering,
+                    t.perfect, t.held, t.realistic)
     return prep, extras

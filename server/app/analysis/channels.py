@@ -45,6 +45,31 @@ def _brake_threshold(brake: np.ndarray) -> float:
     return 0.04 * float(np.percentile(brake, 99.5))
 
 
+def _g_scale(logged: np.ndarray, expected: np.ndarray, where: np.ndarray) -> float | None:
+    """What turns an accelerometer channel into g: 1 when it reads as g, 1/G when it reads G times what the car's
+    motion says (m/s² under a g label), G when it reads 1/G of it (g under an m/s² label, divided once already);
+    None when it can't be told.
+
+    expected is the same acceleration in g from another source (the change in speed, or the turning rate times
+    speed), compared where it is clear and only when the two move together. A source a little off (a gyro reading
+    10 % low) still reads as g."""
+    if np.count_nonzero(where) < 2 * MASTER_HZ:
+        return None
+    x, y = smooth(logged, 0.3)[where], expected[where]
+    with np.errstate(all="ignore"):
+        r = np.corrcoef(x, y)[0, 1]
+    if not np.isfinite(r) or abs(r) < 0.6:  # not the same motion: nothing to tell the unit by
+        return None
+    ratio = float(np.median(np.abs(x))) / max(float(np.median(np.abs(y))), 1e-6)
+    if 0.5 < ratio < 2:
+        return 1.0
+    if G / 2 < ratio < 2 * G:
+        return 1 / G
+    if 1 / (2 * G) < ratio < 2 / G:
+        return G
+    return None
+
+
 def _wheel_scale(wheels: np.ndarray, v: np.ndarray, cruising: np.ndarray) -> float | None:
     """Factor turning a wheel-speed channel (rad/s, rpm or km/h) into km/h, from steady cruising."""
     ok = cruising & (wheels > 1)
@@ -61,14 +86,27 @@ def math_channels(data: SessionData) -> dict[str, np.ndarray]:
     dv = np.gradient(smooth(v, 0.3)) / 3.6 * MASTER_HZ / G  # longitudinal g from speed
     out: dict[str, np.ndarray] = {}
 
+    # loggers label units loosely, and an accelerometer in m/s² read as g has the car pulling 15 g: each axis is
+    # checked against the car's motion (the change in speed; the turning rate times speed) and put in g
     ax = c.get("g_long")
+    long_scale = None
     if ax is None:
         ax = dv
-    elif np.corrcoef(ax, dv)[0, 1] < 0:  # logged with braking positive
-        ax = -ax
+    else:
+        if np.corrcoef(ax, dv)[0, 1] < 0:  # logged with braking positive
+            ax = -ax
+        long_scale = _g_scale(ax, dv, (v > 40) & (np.abs(dv) > 0.2))
+        ax = ax * (long_scale or 1.0)
     yaw = np.radians(c["yaw"]) if "yaw" in c else None
     if "g_lat" in c:
-        ay = c["g_lat"]
+        rate = yaw if yaw is not None else _gps_heading_rate(c)
+        lat_scale = None
+        if rate is not None:
+            turn_g = rate * vm / G
+            lat_scale = _g_scale(c["g_lat"], turn_g, (v > 40) & (np.abs(turn_g) > 0.3))
+        if lat_scale is None:  # nothing to tell it by: one accelerometer, both axes in the same unit
+            lat_scale = long_scale
+        ay = c["g_lat"] * (lat_scale or 1.0)
     elif yaw is not None:
         ay = yaw * vm / G
     else:

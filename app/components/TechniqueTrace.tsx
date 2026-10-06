@@ -38,7 +38,7 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
   const i1 = Math.min(last, Math.ceil((to ?? last * stepM) / stepM));
   const x = useMemo(() => Array.from({ length: i1 - i0 + 1 }, (_, k) => (i0 + k) * stepM), [i0, i1, stepM]);
   const series = [
-    { key: 'realistic', label: 'Realistic target (95% grip)', values: realistic.slice(i0, i1 + 1), color: c.axis,
+    { key: 'realistic', label: 'Realistic target', values: realistic.slice(i0, i1 + 1), color: c.axis,
       dash: '5,4', width: 1.5 },
     { key: 'perfect', label: 'Perfect driving', values: perfect.slice(i0, i1 + 1), color: c.s3, width: 2 },
     { key: 'driven', label: 'Your lap', values: driven.slice(i0, i1 + 1), color: c.s1, width: 2 },

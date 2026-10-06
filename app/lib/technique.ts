@@ -15,7 +15,7 @@ export type Mistake = {
   start_m: number; // the stretch of the lap it covers, metres from the line
   end_m: number;
   at_m: number; // where to mark it
-  cost_s: number; // against the realistic target (the car at 95% of its grip): time a driver can find
+  cost_s: number; // against the realistic target (a quick lap's usual grip at each place): time a driver can find
   cost_perfect_s: number; // against perfect driving (the car at 100%)
   carried_s: number; // of cost_s, what it carries on past its stretch (a slow exit, all down the next straight)
   title: string;
@@ -29,7 +29,7 @@ export type Mistake = {
 export type Budget = {
   mistakes: number; // the named mistakes
   at_limit: number; // flat out, on the ABS or on the traction control, yet the car below its best
-  optimism: number; // the perfect lap's optimism: the car at 100% rather than 95% of its grip
+  optimism: number; // the perfect lap's optimism: the car's best at every place rather than a quick lap's usual
   pit_lane: number; // the lap ends in the pit lane
   other: number; // small losses no single mistake explains, less the places the lap beat the target
   other_losses: number;
@@ -44,7 +44,7 @@ export type LapCheck = {
   time: number;
   driver: string | null;
   perfect: number; // this lap's line at the car's limits
-  realistic: number; // the same at 95% of the grip
+  realistic: number; // the same at the grip a quick lap usually shows at each place
   gap: number; // to perfect
   pit_from_m: number | null;
   budget: Budget;
@@ -88,7 +88,6 @@ type Head = {
   progress: { done: number; total: number; current: string | null } | null;
   error: string | null;
   stale: boolean; // from before the sessions last changed; a new check is being worked out
-  grip: number; // the realistic target's share of the car's grip
 };
 
 export type SessionTechnique = Head & {

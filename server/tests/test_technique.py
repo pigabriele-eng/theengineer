@@ -6,7 +6,7 @@ import pytest
 
 from app.analysis.insights import _closed_sim
 from app.analysis.laps import Section
-from app.analysis.limits import DIRECTIONS, CarLimits
+from app.analysis.local_limits import PlaceLimits
 from app.analysis.technique import Envelope, check_lap, habits
 from tests.synthetic import curvature_at, simulate, write_ld
 
@@ -16,12 +16,19 @@ SECTIONS = [Section("T1", 0, 500, 300, ["T1"]), Section("T2", 500, N, 700, ["T2"
 CORNERS = [("T1", 300.0, None), ("T2", 700.0, None)]
 
 
+def uniform(share: float = 1.0) -> PlaceLimits:
+    """1.5 g of cornering, 1.4 g of braking and 0.9 g of drive everywhere (less while cornering), power falling off
+    as 40 / km/h g."""
+    return PlaceLimits.uniform(N, lateral=1.5 * share, brake=1.4 * share, accel=0.9 * share,
+                               power=(40 / 3.6, 0.0, 0.0), top_speed=210.0)
+
+
+HELD = uniform(0.95)  # what a quick lap usually shows: a little less everywhere
+
+
 @pytest.fixture(scope="module")
-def lim() -> CarLimits:
-    speeds = np.array([50.0, 100.0, 150.0, 200.0])
-    line = np.arange(0, 260, 10.0)
-    return CarLimits(speeds=speeds, envelope=np.full((len(speeds), len(DIRECTIONS)), 1.5), line_speeds=line,
-                     accel=np.minimum(0.9, 40 / np.maximum(line, 1)), brake=np.full(len(line), 1.4), top_speed=210.0)
+def lim() -> PlaceLimits:
+    return uniform()
 
 
 @pytest.fixture(scope="module")
@@ -53,8 +60,8 @@ def lap(v_kmh: np.ndarray, k: np.ndarray, throttle: np.ndarray | None = None) ->
     return out
 
 
-def check(tr: dict, lim: CarLimits) -> dict:
-    return check_lap(tr, lim, SECTIONS, lap_time=float(tr["t"][-1]))
+def check(tr: dict, lim: PlaceLimits) -> dict:
+    return check_lap(tr, lim, HELD, SECTIONS, lap_time=float(tr["t"][-1]))
 
 
 def test_perfect_driving_from_any_point_is_the_theoretical_lap(env, k, lim):
@@ -78,7 +85,7 @@ def test_a_perfect_lap_has_no_mistakes(env, k, lim):
     assert out["perfect"] < out["realistic"]
     b = out["budget"]
     assert b["optimism"] == pytest.approx(out["realistic"] - out["perfect"], abs=1e-3)
-    # at the car's full grip the lap beats the 95 % target: gains, not mistakes
+    # at the best limits everywhere the lap beats the realistic target: gains, not mistakes
     assert b["other_gains"] < 0 and b["mistakes"] == 0
 
 
@@ -201,7 +208,7 @@ def test_technique_check_api(client):
 
     body = _wait(client, f"/technique/sessions/{ids[1]}")
     assert body["status"] == "ready", body.get("error")
-    assert body["scope"] == "event" and body["map"] == {"event": event["id"]} and body["grip"] == 0.95
+    assert body["scope"] == "event" and body["map"] == {"event": event["id"]}
     assert [x["number"] for x in body["laps"]] == [1, 2, 3]  # its clean laps: not the out-lap (0) or in-lap
     best = min(body["laps"], key=lambda x: x["time"])
     lap_ = body["lap"]

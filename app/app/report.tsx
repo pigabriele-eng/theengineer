@@ -338,8 +338,8 @@ function Glance({ report, onPick, focus }: { report: Report; onPick: (code: stri
         <Tile label="Fastest lap" value={formatLap(h.fastest.time)}
           detail={`${h.fastest.run}, lap ${h.fastest.lap}`} />
         <Tile label="Ideal lap" value={formatLap(h.ideal)} detail="best pass of every section" />
-        <Tile label="Realistic target" value={formatLap(h.realistic)} detail="the car at 95% of its grip" />
-        <Tile label="Theoretical lap" value={formatLap(h.theoretical)} detail="the car at its limits everywhere" />
+        <Tile label="Realistic target" value={formatLap(h.realistic)} detail="a quick lap's usual grip at each place" />
+        <Tile label="Theoretical lap" value={formatLap(h.theoretical)} detail="the car's best at every place" />
       </View>
 
       <Text style={styles.h3}>Top three ways to gain time</Text>
