@@ -104,6 +104,35 @@ def test_uniform_limits_are_a_friction_circle():
     assert np.allclose(model.P * 3.6, 200 * 1.02)  # a straight line: flat out at the top speed all the way
 
 
+def test_every_laps_own_line_theoretical_lap_follows_its_line(monkeypatch):
+    """The insights' theoretical lap on each lap's own line (insights.prepare) drives a lap that moves across the
+    road on the run into T1, where the quick laps go straight, at the cornering that lap showed there itself: not
+    held to the quick laps' next to none, which made it seconds slower than the lap."""
+    import app.analysis.insights as insights
+
+    channels, times = simulate((0.99, 1.0, 0.995, 0.99, 0.96))
+    hz = channels["vCar"][0]
+    a, b = round(sum(times[:5]) * hz), round(sum(times[:6]) * hz)  # the 0.96 lap: 4 % off, not a limit lap
+    v = channels["vCar"][2][a:b]
+    d = np.cumsum(v) / 3.6 / hz
+    swerve = 0.6 * (np.exp(-((d - 188) / 8) ** 2) - np.exp(-((d - 212) / 8) ** 2))  # g: out and back
+    channels["gLat"][2][a:b] += swerve
+    channels["nYaw"][2][a:b] += np.degrees(swerve * G / np.maximum(v / 3.6, 1.0))
+    log = write_ld(channels)
+
+    def own_line(lap: int) -> tuple[float, float]:
+        res = analyze_runs([RunInput("run", load_session(read_ld(log)))])
+        row = next(r for r in res["laps"] if r["lap"] == lap)
+        return row["theoretical_own_line"], row["time"]
+
+    with monkeypatch.context() as mp:
+        mp.setattr(insights, "on_own_line", lambda lim, tr: lim)  # how it was
+        before, time = own_line(5)
+    after, _ = own_line(5)
+    assert before > time + 1.0
+    assert after < time - 0.3
+
+
 # ---------- accelerometers in m/s² ----------
 
 def _log(unit: str, factor: float, gyro: bool = True):

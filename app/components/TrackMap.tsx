@@ -237,7 +237,8 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
   };
   const caption = map
     ? `Drawn from ${event != null && map.session_name ? `${map.session_name}, ` : ''}lap ${map.reference_lap} ` +
-      `(${formatLap(map.lap_time)})${event != null ? ', the fastest of the event' : ''} · ${map.length_m} m · ` +
+      `(${formatLap(map.lap_time)})${event == null ? '' : map.event_fastest === false
+        ? ', the quickest whose log can draw the track' : ', the fastest of the event'} · ${map.length_m} m · ` +
       `runs ${map.clockwise ? 'clockwise' : 'anticlockwise'}`
     : '';
 
