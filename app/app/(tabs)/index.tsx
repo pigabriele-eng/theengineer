@@ -4,9 +4,9 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-nati
 
 import { DriverLinks } from '@/components/DriverPicker';
 import { FilterBar, PlanForm, plannedLine, RemovePlanned } from '@/components/EventFilter';
-import { ImportLogs } from '@/components/ImportLogs';
 import { PrepButton, usePrepAvailability } from '@/components/PrepButton';
 import { RenameEvent } from '@/components/RenameEvent';
+import { SeasonsLink } from '@/components/SeasonsLink';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
 import { CalendarState, calendarApi, countByWhen, defaultFilter, Filter, filtered, Plan, todayIso, When, whenOf } from '@/lib/calendar';
@@ -70,7 +70,12 @@ export default function SessionsScreen() {
   return (
     <ScrollView contentContainerStyle={styles.outer}>
       <View style={styles.page}>
-        <ImportLogs onProgress={load} events={folders} />
+        {/* uploads have a page of their own (the Upload tab): one big drop box */}
+        <Link href="/upload" asChild>
+          <Pressable style={StyleSheet.flatten([styles.linkButton, styles.upload, { borderColor: tint }])}>
+            <Text style={StyleSheet.flatten([styles.linkText, { color: tint }])}>Upload runs and files</Text>
+          </Pressable>
+        </Link>
         {making ? (
           <View style={styles.panel}>
             <Text style={styles.panelTitle}>New event</Text>
@@ -116,6 +121,7 @@ export default function SessionsScreen() {
               load();
             }} />
         )}
+        {folders && <SeasonsLink />}
         {shown && shown.length === 0 && folders && folders.length > 0 && (
           <Text style={styles.empty}>{EMPTY[active]}</Text>
         )}
@@ -210,6 +216,7 @@ const useStyles = themed((c) => ({
   page: { width: '100%', maxWidth: 820, alignSelf: 'center', gap: 12 },
   links: { flexDirection: 'row', gap: 8 },
   linkButton: { flex: 1, borderWidth: 1, borderRadius: Radius.control, paddingVertical: 10, alignItems: 'center' },
+  upload: { flex: 0, paddingVertical: 14 },
   linkText: { fontWeight: '600', fontSize: 15 },
   panel: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 12, gap: 8, backgroundColor: c.surface },
   panelTitle: { fontSize: 16, fontWeight: '700' },

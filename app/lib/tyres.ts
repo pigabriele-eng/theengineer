@@ -72,6 +72,7 @@ export type PressureInput = {
   track_c?: number;
   atmospheric_bar?: number;
   series?: string;
+  tyre_kind_id?: number; // the tyre: its P-Book minimums, and only the runs on it to learn from
   car_id?: number;
 };
 
@@ -109,6 +110,7 @@ export type PressurePlan = {
     message?: string;
     reference: Reference;
   };
+  tyre?: { id: number; label: string };
   runs_used: number;
 };
 
@@ -152,10 +154,14 @@ const send = (method: string, body: unknown): RequestInit => ({
 });
 
 export const tyres = {
-  runs: (carId?: number) =>
-    request<{ runs: LoggedRun[]; summary: PerCorner<RunSummary> }>(
-      `/tyres/runs${carId != null ? `?car_id=${carId}` : ''}`,
-    ),
+  /** The logged runs: with a tyre kind, only those of the sessions on it. */
+  runs: (q: { carId?: number; tyreKindId?: number } = {}) => {
+    const p = new URLSearchParams();
+    if (q.carId != null) p.set('car_id', String(q.carId));
+    if (q.tyreKindId != null) p.set('tyre_kind_id', String(q.tyreKindId));
+    const qs = p.toString();
+    return request<{ runs: LoggedRun[]; summary: PerCorner<RunSummary> }>(`/tyres/runs${qs ? `?${qs}` : ''}`);
+  },
   setConditions: (sessionId: number, body: { ambient_temp_c?: number | null; track_temp_c?: number | null }) =>
     request<{ ambient_temp_c: number | null; track_temp_c: number | null }>(
       `/sessions/${sessionId}/conditions`,

@@ -19,9 +19,9 @@ from collections import Counter
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Integer, String, delete, select, update
+from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Integer, String, delete, func, select, update
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app import calendar_sync, catalog, garage, models, plans
@@ -29,6 +29,8 @@ from app.db import Base, get_db
 
 MAX_DRIVERS = 4
 MAX_ROUNDS = 40
+MAX_LOOKBACK = 30  # earlier events looked through for the previous event of the same car
+MAX_RUNS = 500
 MISSING = ("tyre brand", "compound", "car", "team", "drivers")  # the checklist, in the order the app shows it
 
 
@@ -171,9 +173,25 @@ def entry_row(entry: dict | None) -> dict:
     return {**{f: entry.get(f) for f in FIELDS}, "drivers": _ids(entry.get("drivers"))}
 
 
-def info_for_event(db: Session, event_id: int) -> dict:
+def _previous(db: Session, event_id: int, car_id: int | None) -> dict | None:
+    """What the latest earlier event with info of its own was run with: of the same car when the car is known."""
+    ev = db.get(models.Event, event_id)
+    rows = db.scalars(select(EventInfo).where(EventInfo.event_id != event_id)).all()
+    events = {e.id: e for e in db.scalars(select(models.Event).where(
+        models.Event.id.in_([r.event_id for r in rows])))} if rows else {}
+    earlier = [e for e in events.values() if not (ev and ev.date and e.date and e.date > ev.date)]
+    earlier.sort(key=lambda e: (e.date or date.min, e.id), reverse=True)
+    for e in earlier[:MAX_LOOKBACK]:
+        ids = _resolve(db, e.id)["ids"]
+        if car_id is None or ids["car_id"] == car_id:
+            return {"event_id": e.id, "event_name": e.name, **ids}
+    return None
+
+
+def info_for_event(db: Session, event_id: int, suggest: bool = False) -> dict:
     """What the event was run with (resolved: each field from the event, else its season, else its runs and car),
-    what it sets itself (own), its season and the checklist of what is missing."""
+    what it sets itself (own), its season and the checklist of what is missing. With suggest, also what the
+    previous event of the same car was run with (previous), to fill the event's form from."""
     r = _resolve(db, event_id)
     ids = r["ids"]
     tyre = db.get(catalog.TyreKind, ids["tyre_kind_id"]) if ids["tyre_kind_id"] is not None else None
@@ -193,8 +211,10 @@ def info_for_event(db: Session, event_id: int) -> dict:
     if not drivers:
         missing.append("drivers")
     season, rnd = r["season"], r["round"]
+    ev = db.get(models.Event, event_id)
     return {
         "event_id": event_id,
+        "event_name": ev.name if ev is not None else None,
         "resolved": {
             "tyre_kind": catalog.tyre_row(tyre) if tyre is not None else None,
             "car": car,
@@ -210,6 +230,7 @@ def info_for_event(db: Session, event_id: int) -> dict:
             "car_number": season.car_number, "entry": entry_row(season.entry),
             "round": None if rnd is None else {"id": rnd.id, "order": rnd.order, "name": rnd.name}},
         "missing": missing,
+        **({"previous": _previous(db, event_id, ids["car_id"])} if suggest else {}),
     }
 
 
@@ -263,6 +284,11 @@ def _event_alive(db: Session, r: SeasonRound) -> models.Event | None:
     return db.get(models.Event, r.event_id) if r.event_id is not None else None
 
 
+def event_name(season: Season, round_name: str) -> str:
+    """The name of the planned event a round makes: "Zandvoort · GT4 European Series 2026"."""
+    return f"{round_name} · {season.name}"[:160]
+
+
 def _attach(db: Session, season: Season, r: SeasonRound, taken: set[int], index) -> None:
     """Link a new round to an event already there on its days at its venue, else make its planned event."""
     ev = None
@@ -273,7 +299,7 @@ def _attach(db: Session, season: Season, r: SeasonRound, taken: set[int], index)
         plans.ensure_plan(db, ev.id, r.venue)
         r.event_id, r.made_event = ev.id, False
     else:
-        ev = plans.create(db, r.name, r.venue, r.start or r.end, r.end or r.start)
+        ev = plans.create(db, event_name(season, r.name), r.venue, r.start or r.end, r.end or r.start)
         ev.series = season.name[:80]
         r.event_id, r.made_event = ev.id, True
     db.flush()
@@ -282,7 +308,7 @@ def _attach(db: Session, season: Season, r: SeasonRound, taken: set[int], index)
     taken.add(ev.id)
 
 
-def _follow(db: Session, r: SeasonRound, name: str, venue: str | None, start: date | None,
+def _follow(db: Session, season: Season, r: SeasonRound, name: str, venue: str | None, start: date | None,
             end: date | None) -> None:
     """A round that changed changes the planned event the season made for it (days, venue, and its name unless
     renamed in the app); an event that was there before is left as it is."""
@@ -290,8 +316,8 @@ def _follow(db: Session, r: SeasonRound, name: str, venue: str | None, start: da
     if ev is not None and r.made_event:
         if (start, end) != (r.start, r.end) and (start or end):
             plans.set_days(db, ev, start or end, end or start)
-        if name != r.name and ev.name == r.name:
-            ev.name = name[:160]
+        if name != r.name and ev.name == event_name(season, r.name):
+            ev.name = event_name(season, name)
         if venue != r.venue:
             plan = plans.plan_of(db, ev.id)
             if plan is not None and plan.venue == r.venue:
@@ -351,7 +377,7 @@ def set_rounds(db: Session, season: Season, incoming: list[RoundIn]) -> int:
         order = rin.order if rin.order is not None else i + 1
         rid = (rin.round_id or "").strip() or None
         if row is not None:
-            _follow(db, row, name, venue, start, end)
+            _follow(db, season, row, name, venue, start, end)
             row.order, row.round_id = order, rid or row.round_id
             continue
         row = SeasonRound(season_id=season.id, order=order, name=name, venue=venue, start=start, end=end,
@@ -484,6 +510,95 @@ def delete_season(season_id: int, db: Session = Depends(get_db)):
     return {"deleted": season_id, "events_removed": gone}
 
 
+# ---------- our entry from the series' entry list ----------
+
+class EntryRowIn(BaseModel):
+    """Our car's row on a round's entry list (GET /results/entries)."""
+    car_number: str | None = Field(None, max_length=8)
+    drivers: list[str] = Field(default_factory=list, max_length=10)
+    team: str | None = Field(None, max_length=200)  # as the entry list writes it; a garage team keeps 120 characters
+    car_model: str | None = Field(None, max_length=200)
+
+
+def _words(text: str | None) -> set[str]:
+    return set(plans._plain(text).split())
+
+
+def _driver_named(db: Session, name: str) -> models.Driver:
+    """The garage's driver of that name (whatever its capitals), else the only one whose name is part of it or the
+    other way round ("Gabriele" for "Gabriele Rossi"), else a new driver."""
+    found = garage.find_driver(db, name)
+    if found is not None:
+        return found
+    words = _words(name)
+    like = [d for d in db.scalars(select(models.Driver)).all()
+            if (w := _words(d.name)) and words and (w <= words or words <= w)]
+    if len(like) == 1:
+        return like[0]
+    d = models.Driver(name=name[:120])
+    db.add(d)
+    db.flush()
+    return d
+
+
+def _team_named(db: Session, name: str) -> garage.Team:
+    name = name[:120]
+    same = select(garage.Team).where(func.lower(garage.Team.name) == name.lower()).order_by(garage.Team.id)
+    t = db.scalars(same).first()
+    if t is None:
+        t = garage.Team(name=name)
+        db.add(t)
+        db.flush()
+    return t
+
+
+def _vehicle_like(db: Session, car_model: str) -> int | None:
+    """The only vehicle named like the entry list's car model ("BMW M4 GT4 EVO" for "BMW M4 GT4 Evo (G82)")."""
+    words = _words(car_model)
+    like = [v.id for v in db.scalars(select(catalog.VehicleModel)).all()
+            if (w := _words(v.name)) and words and (words <= w or w <= words)]
+    return like[0] if len(like) == 1 else None
+
+
+def fill_entry(db: Session, s: Season, row: EntryRowIn) -> list[str]:
+    """Fill what our entry leaves blank from our car's row on the entry list: the drivers and team (found in the
+    garage by name, else added), the car (the garage car with our number) and the vehicle (the one named like the
+    row's car model). What is set already stays. What was filled."""
+    entry = entry_row(s.entry)
+    filled = []
+    names = [n.strip() for n in row.drivers if n and n.strip()][:MAX_DRIVERS]
+    if not entry["drivers"] and names:
+        entry["drivers"] = list(dict.fromkeys(_driver_named(db, n).id for n in names))
+        filled.append("drivers")
+    if entry["team_id"] is None and (row.team or "").strip():
+        entry["team_id"] = _team_named(db, row.team.strip()).id
+        filled.append("team")
+    number = (row.car_number or s.car_number or "").strip()
+    if entry["car_id"] is None and number:
+        car_id = db.scalar(select(garage.CarInfo.car_id).where(garage.CarInfo.number == number)
+                           .order_by(garage.CarInfo.id))
+        if car_id is not None:
+            entry["car_id"] = car_id
+            filled.append("car")
+    if entry["vehicle_model_id"] is None and (row.car_model or "").strip():
+        if (vid := _vehicle_like(db, row.car_model)) is not None:
+            entry["vehicle_model_id"] = vid
+            filled.append("vehicle")
+    s.entry = entry
+    if not s.car_number and number:
+        s.car_number = number[:8]
+    return filled
+
+
+@router.post("/seasons/{season_id}/fill-entry")
+def fill_season_entry(season_id: int, body: EntryRowIn, db: Session = Depends(get_db)):
+    """Our entry's blanks filled from our car's row on a round's entry list."""
+    s = _season(db, season_id)
+    filled = fill_entry(db, s, body)
+    db.commit()
+    return {**season_row(db, s), "filled": filled}
+
+
 # ---------- event info API ----------
 
 class InfoIn(BaseModel):
@@ -505,8 +620,24 @@ def _event(db: Session, event_id: int) -> models.Event:
 
 @router.get("/events/{event_id}/info")
 def get_event_info(event_id: int, db: Session = Depends(get_db)):
+    """What the event was run with, the checklist of what is missing, and what the previous event of the same car
+    was run with (to fill the form from)."""
     _event(db, event_id)
-    return info_for_event(db, event_id)
+    return info_for_event(db, event_id, suggest=True)
+
+
+@router.get("/event-info/for-runs")
+def info_for_runs(ids: str = Query(max_length=6000), db: Session = Depends(get_db)):
+    """The event info of the events these runs are in (e.g. the runs an upload just made), each event once."""
+    try:
+        run_ids = [int(x) for x in ids.split(",") if x.strip()][:MAX_RUNS]
+    except ValueError:
+        raise HTTPException(422, "ids is a comma separated list of run ids") from None
+    found = db.execute(select(models.RunSession.id, models.RunSession.event_id)
+                       .where(models.RunSession.id.in_(run_ids))).all() if run_ids else []
+    of = dict(found)
+    events = list(dict.fromkeys(of[i] for i in run_ids if of.get(i) is not None))
+    return [info_for_event(db, eid, suggest=True) for eid in events if db.get(models.Event, eid) is not None]
 
 
 @router.put("/events/{event_id}/info")

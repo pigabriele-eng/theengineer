@@ -1,9 +1,10 @@
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { ReactNode, useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 
 import { SetupLoader } from '@/components/SetupLoader';
 import { Text, View, useThemeColor } from '@/components/Themed';
+import { toolLists, VehicleDetail, VehicleItem } from '@/lib/toolLists';
 import {
   Change,
   DEFAULT_PRESET,
@@ -51,16 +52,24 @@ const NUMERIC: Field[] = [...CAR_FIELDS, ...axleFields('front'), ...axleFields('
 
 type BarState = { rates: string; setting: number | null; rate: string };
 
-const toText = (v: Vehicle, f: Field) => {
-  const x = v[f.key] as number;
+const toText = (v: Partial<Record<keyof Vehicle, unknown>>, f: Field) => {
+  const x = v[f.key];
+  if (typeof x !== 'number') return ''; // a value the vehicle's specs don't have yet
   return f.percent ? String(Math.round(x * 1000) / 10) : String(x);
 };
+
+const CONFIDENCE: Record<string, string> = { stored: "this vehicle's specs" };
 
 export default function VehicleScreen() {
   const styles = useStyles();
   const theme = useTheme();
-  const params = useLocalSearchParams<{ session?: string }>(); // ?session=<id> loads that run's setup sheet
-  const [preset, setPreset] = useState<Preset | null>(null);
+  // ?session=<id> loads that run's setup sheet; ?vehicle=<id> picks the vehicle (else the session's)
+  const params = useLocalSearchParams<{ session?: string; vehicle?: string }>();
+  const [vehicles, setVehicles] = useState<VehicleItem[] | null>(null);
+  const [vehicleId, setVehicleId] = useState<number | null>(null); // null: none in the garage, the built-in preset
+  const [preset, setPreset] = useState<Preset | VehicleDetail | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
   const [bars, setBars] = useState<Record<Axle, BarState>>({
     front: { rates: '', setting: null, rate: '0' },
@@ -75,12 +84,12 @@ export default function VehicleScreen() {
   const tint = useThemeColor({}, 'tint');
   const text = useThemeColor({}, 'text');
 
-  const fill = (v: Vehicle) => {
+  const fill = (v: Partial<Record<keyof Vehicle, unknown>>) => {
     setForm(Object.fromEntries(NUMERIC.map((f) => [f.key, toText(v, f)])));
     const bar = (a: Axle): BarState => ({
       rates: (v[k(`arb_${a}_settings_n_per_mm`)] as number[] | null)?.join(', ') ?? '',
-      setting: v[k(`arb_${a}_setting`)] as number | null,
-      rate: String(v[k(`arb_${a}_n_per_mm`)]),
+      setting: (v[k(`arb_${a}_setting`)] as number | null) ?? null,
+      rate: String(v[k(`arb_${a}_n_per_mm`)] ?? 0),
     });
     setBars({ front: bar('front'), rear: bar('rear') });
   };
@@ -113,16 +122,65 @@ export default function VehicleScreen() {
     }
   }, [vehicle]);
 
+  // the garage's vehicles: the one asked for, else the session's, else the first
   useEffect(() => {
-    vehicleApi.preset(DEFAULT_PRESET).then(
-      (p) => {
-        setPreset(p);
-        fill(p.vehicle);
-        vehicleApi.model(p.vehicle).then(setResult, (e) => setError(e.message));
+    toolLists.vehicles(params.session ? Number(params.session) : undefined).then(
+      (r) => {
+        setVehicles(r.vehicles);
+        const asked = params.vehicle ? Number(params.vehicle) : null;
+        const pick = [asked, r.session_vehicle_id].find((id) => id != null && r.vehicles.some((v) => v.id === id));
+        setVehicleId(pick ?? r.vehicles[0]?.id ?? null);
       },
-      (e) => setError(e.message),
+      (e) => {
+        setVehicles([]);
+        setError(e.message);
+      },
     );
   }, []);
+
+  // the picked vehicle's stored specs fill the inputs (the rest from the preset its name points to); with no
+  // vehicle in the garage, the built-in preset
+  useEffect(() => {
+    if (vehicles == null) return;
+    let live = true;
+    setPreset(null);
+    setResult(null);
+    setWhatIf(null);
+    setSaved(null);
+    const load: Promise<Preset | VehicleDetail> =
+      vehicleId != null ? toolLists.vehicle(vehicleId) : vehicleApi.preset(DEFAULT_PRESET);
+    load.then(
+      (p) => {
+        if (!live) return;
+        setPreset(p);
+        fill(p.vehicle);
+        if (!('missing' in p) || (!p.missing.length && !p.problem))
+          vehicleApi.model(p.vehicle as Vehicle).then((r) => live && setResult(r), (e) => setError(e.message));
+      },
+      (e) => live && setError(e.message),
+    );
+    return () => {
+      live = false;
+    };
+  }, [vehicles == null, vehicleId]);
+
+  const pickedVehicle = vehicles?.find((v) => v.id === vehicleId) ?? null;
+  const saveToVehicle = async () => {
+    if (vehicleId == null) return;
+    setSaving(true);
+    setError(null);
+    setSaved(null);
+    try {
+      const d = await toolLists.saveVehicle(vehicleId, vehicle());
+      setPreset(d);
+      setSaved(`Saved as ${d.name}'s specs.`);
+      toolLists.vehicles().then((r) => setVehicles(r.vehicles), () => {});
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const quick = whatIfOptions(bars);
   const compare = async () => {
@@ -137,6 +195,7 @@ export default function VehicleScreen() {
     }
   };
 
+  const missing = preset && 'missing' in preset ? preset.missing : [];
   const input = (f: Field) => (
     <View key={f.key} style={styles.field}>
       <View style={styles.fieldRow}>
@@ -144,14 +203,20 @@ export default function VehicleScreen() {
           <Text>{f.label}</Text>
           <Text style={styles.unit}>
             {f.unit}
-            {preset?.values[f.key] ? ` · ${preset.values[f.key]!.confidence}` : ''}
+            {preset?.values[f.key]
+              ? ` · ${CONFIDENCE[preset.values[f.key]!.confidence] ?? preset.values[f.key]!.confidence}`
+              : missing.includes(f.key)
+                ? ' · needed'
+                : ''}
           </Text>
         </View>
         <TextInput
-          style={[styles.input, { color: text, borderColor: theme.border }]}
+          style={[styles.input, { color: text, borderColor: missing.includes(f.key) ? theme.warning : theme.border }]}
           value={form[f.key] ?? ''}
           onChangeText={(t) => setForm((s) => ({ ...s, [f.key]: t }))}
           keyboardType="decimal-pad"
+          placeholder={missing.includes(f.key) ? 'needed' : undefined}
+          placeholderTextColor={theme.textMuted}
           selectTextOnFocus
         />
       </View>
@@ -213,14 +278,23 @@ export default function VehicleScreen() {
       <Stack.Screen options={{ title: 'Vehicle model' }} />
       <Text style={styles.intro}>
         Weight transfer, roll stiffness and ride frequencies from springs, bars and motion ratios
-        {preset ? `. Starting point: ${preset.name}, with every value it does not publish marked as an estimate.` : '.'}
+        {preset ? `. Starting point: ${startingPoint(preset)}` : '.'}
       </Text>
+      <VehiclePicker vehicles={vehicles} vehicleId={vehicleId} onPick={setVehicleId} />
+      {missing.length > 0 && (
+        <Text style={styles.warn}>
+          {pickedVehicle?.name}'s specs don't have every input yet: fill in the ones marked "needed", then save them to the
+          vehicle.
+        </Text>
+      )}
+      {preset && 'problem' in preset && preset.problem && <Text style={styles.warn}>{preset.problem}</Text>}
       <Pressable onPress={() => setShowSources((s) => !s)}>
         <Text style={{ color: tint }}>{showSources ? 'Hide' : 'Show'} where each value comes from</Text>
       </Pressable>
       <SetupLoader
         initial={params.session ? Number(params.session) : undefined}
         ready={preset != null}
+        vehicleId={vehicleId}
         onLoad={(v) => {
           fill(v);
           setWhatIf(null);
@@ -244,6 +318,17 @@ export default function VehicleScreen() {
       <Pressable style={[styles.button, { backgroundColor: tint }]} onPress={calculate}>
         <Text style={styles.buttonText}>Calculate</Text>
       </Pressable>
+      {pickedVehicle && (
+        <Pressable
+          style={StyleSheet.flatten([styles.button, styles.outline, { borderColor: tint }])}
+          onPress={saveToVehicle}
+          disabled={saving}>
+          <Text style={[styles.buttonText, { color: tint }]}>
+            {saving ? 'Saving…' : `Save these inputs as ${pickedVehicle.name}'s specs`}
+          </Text>
+        </Pressable>
+      )}
+      {saved && <Text style={styles.sub}>{saved}</Text>}
       {error && <Text style={styles.error}>{error}</Text>}
 
       {result && <Results r={result} />}
@@ -292,6 +377,64 @@ export default function VehicleScreen() {
         </Section>
       )}
     </ScrollView>
+  );
+}
+
+function startingPoint(p: Preset | VehicleDetail): string {
+  if (!('stored' in p)) return `${p.name}, with every value it does not publish marked as an estimate.`;
+  const stored = `${p.stored.length} value${p.stored.length === 1 ? '' : 's'} from its specs`;
+  if (p.base) return `${p.name}: ${stored}, the rest from the ${p.base.name} values (published or estimate).`;
+  return `${p.name}: ${stored}.`;
+}
+
+// The garage's vehicles: the car model is per vehicle, and its stored specs fill the inputs.
+function VehiclePicker({
+  vehicles,
+  vehicleId,
+  onPick,
+}: {
+  vehicles: VehicleItem[] | null;
+  vehicleId: number | null;
+  onPick: (id: number) => void;
+}) {
+  const styles = useStyles();
+  const tint = useThemeColor({}, 'tint');
+  const router = useRouter();
+  if (vehicles == null) return <ActivityIndicator />;
+  return (
+    <View style={styles.section}>
+      <View style={styles.headRow}>
+        <Text style={styles.h2}>Vehicle</Text>
+        <Pressable onPress={() => router.push('/garage')} hitSlop={6}>
+          <Text style={{ color: tint }}>Add a vehicle in the garage</Text>
+        </Pressable>
+      </View>
+      {vehicles.length === 0 && (
+        <Text style={styles.sub}>
+          No vehicles in the garage yet, so the inputs start from the built-in values. Add your vehicle there to keep
+          its specs.
+        </Text>
+      )}
+      <View style={styles.chips}>
+        {vehicles.map((v) => {
+          const on = v.id === vehicleId;
+          return (
+            <Pressable
+              key={v.id}
+              onPress={() => onPick(v.id)}
+              style={on ? StyleSheet.flatten([styles.chip, { borderColor: tint }]) : styles.chip}
+              accessibilityRole="button"
+              accessibilityState={{ selected: on }}>
+              <Text style={on ? { color: tint, fontWeight: '600' } : undefined}>{v.name}</Text>
+              <Text style={styles.chipSub}>
+                {v.stored ? `${v.stored} spec${v.stored === 1 ? '' : 's'} stored` : 'no specs yet'}
+                {v.missing.length ? ` · ${v.missing.length} needed` : ''}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
   );
 }
 
@@ -432,7 +575,7 @@ const useStyles = themed((c) => ({
   stepper: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   step: { fontSize: 24, fontWeight: '600', paddingHorizontal: 6 },
   stepValue: { fontVariant: ['tabular-nums'] },
-  button: { borderRadius: 8, padding: 14, alignItems: 'center' },
+  button: { borderRadius: Radius.control, padding: 14, alignItems: 'center' },
   buttonText: { color: c.onTint, fontWeight: '600', fontSize: 16 },
   error: { color: c.error },
   card: { gap: 6, padding: 12, borderRadius: Radius.card, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface },
@@ -451,5 +594,9 @@ const useStyles = themed((c) => ({
   factValue: { fontSize: 22, fontWeight: '600', fontVariant: ['tabular-nums'] },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: c.surface },
+  chipSub: { fontSize: 12, opacity: 0.6 },
+  headRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 },
+  outline: { borderWidth: 1, backgroundColor: 'transparent' },
+  warn: { color: c.warning },
   dim: { opacity: 0.5 },
 }));

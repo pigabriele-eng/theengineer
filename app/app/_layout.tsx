@@ -99,6 +99,7 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
             <Stack.Screen name="tools/setup" />
             <Stack.Screen name="tools/calendar" options={{ title: 'Racing calendar' }} />
             <Stack.Screen name="garage" options={{ title: 'Cars, drivers and teams' }} />
+            <Stack.Screen name="seasons" options={{ title: 'Seasons' }} />
             <Stack.Screen name="drivers/tag" options={{ title: 'Tag drivers' }} />
             <Stack.Screen name="drivers/compare" options={{ title: 'Compare drivers' }} />
             <Stack.Screen name="compare" options={{ title: 'Compare laps' }} />

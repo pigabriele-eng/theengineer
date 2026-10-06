@@ -8,11 +8,12 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import models
+from app import catalog, models
 from app.routers.imports import _date
 from app.setup import results
 from app.setup.models import SessionSetup
 from app.setup.templates import TEMPLATES, Template, diff, format_value, template_for_car, warnings
+from app.vehicle import specs as vehicle_specs
 from app.vehicle.model import Vehicle
 from app.vehicle.presets import PRESETS, preset_vehicle
 
@@ -41,9 +42,14 @@ def setup_of(db: Session, session_id: int) -> SessionSetup | None:
 
 
 def template_of(db: Session, s: models.RunSession, setup: SessionSetup | None = None) -> Template:
-    """The session's own template, else the previous run's, else the one its car's name points to."""
+    """The session's own template, else the one its vehicle's name points to (the garage vehicle its event or car
+    names), else the previous run's, else the one its car's name points to."""
     if setup is not None and setup.template in TEMPLATES:
         return TEMPLATES[setup.template]
+    vid = vehicle_specs.session_vehicle(db, s.id)
+    key = vehicle_specs.template_for(db.get(catalog.VehicleModel, vid)) if vid is not None else "generic"
+    if key != "generic":
+        return TEMPLATES[key]
     prev = previous_setup(db, s)
     if prev is not None and prev[1].template in TEMPLATES:
         return TEMPLATES[prev[1].template]
@@ -177,12 +183,13 @@ VEHICLE_LINKS = {
 }
 
 
-def to_vehicle(template: Template, values: dict) -> dict:
-    """The vehicle model's inputs for this setup: the car's preset with what the sheet sets on top, and a list of
-    what was taken from the sheet and what the model can't use."""
-    if template.vehicle_preset not in PRESETS:
+def to_vehicle(template: Template, values: dict, base: dict | None = None) -> dict:
+    """The vehicle model's inputs for this setup: the car's preset (or base: a garage vehicle's inputs,
+    vehicle/specs.py) with what the sheet sets on top, and a list of what was taken from the sheet and what the
+    model can't use."""
+    if base is None and template.vehicle_preset not in PRESETS:
         raise LookupError(f"The {template.name} sheet has no vehicle model preset yet")
-    car = preset_vehicle(template.vehicle_preset).model_dump()
+    car = dict(base) if base is not None else preset_vehicle(template.vehicle_preset).model_dump()
     link = VEHICLE_LINKS.get(template.vehicle_preset)
     rows = template.rows
     applied: list[dict] = []

@@ -16,6 +16,7 @@ from app.setup import results, sheet
 from app.setup.models import SessionSetup
 from app.setup.suggest import Observation, _speed_of, data_observations, driver_observations, observation_dict, suggest
 from app.setup.templates import TEMPLATES, InvalidSetup, clean_values
+from app.vehicle import specs as vehicle_specs
 from app.vehicle.model import Vehicle
 
 log = logging.getLogger(__name__)
@@ -110,16 +111,30 @@ def setup_results(session_id: int, db: Session = Depends(get_db)):
     return {"session_id": s.id, "laps": results.lap_times(s.laps), "summary": results.run_summary(db, s)}
 
 
+def _base(db: Session, s: models.RunSession, vehicle_model_id: int | None) -> tuple[dict | None, dict | None]:
+    """The vehicle model inputs a setup goes on top of: the vehicle named, else the session's (its event's, else
+    its car's), from its specs; None (the sheet's preset) when there is neither. LookupError when the vehicle's
+    specs are incomplete."""
+    vid = vehicle_model_id if vehicle_model_id is not None else vehicle_specs.session_vehicle(db, s.id)
+    if vid is None:
+        return None, None
+    base, v = vehicle_specs.vehicle_inputs(db, vid)
+    return base, {"id": v.id, "name": v.name}
+
+
 @router.get("/sessions/{session_id}/setup/vehicle")
-def setup_vehicle(session_id: int, db: Session = Depends(get_db)):
-    """The session's setup as vehicle model inputs: the car's preset with the sheet's bars, spring rates, fuel,
-    ballast and ride heights, plus what the model can't take from the sheet."""
+def setup_vehicle(session_id: int, vehicle_model_id: int | None = None, db: Session = Depends(get_db)):
+    """The session's setup as vehicle model inputs: the vehicle's (the one named, else the session's, else the
+    sheet's preset) with the sheet's bars, spring rates, fuel, ballast and ride heights, plus what the model can't
+    take from the sheet."""
     s = _get(db, session_id)
     own = sheet.setup_of(db, s.id)
     if own is None:
         raise HTTPException(404, "This session has no setup sheet yet")
     try:
-        return {"session_id": s.id, "name": s.name, **sheet.to_vehicle(sheet.template_of(db, s, own), own.values)}
+        base, vehicle = _base(db, s, vehicle_model_id)
+        return {"session_id": s.id, "name": s.name, "vehicle_model": vehicle,
+                **sheet.to_vehicle(sheet.template_of(db, s, own), own.values, base)}
     except LookupError as e:
         raise HTTPException(404, str(e)) from e
 
@@ -139,7 +154,8 @@ class SuggestIn(BaseModel):
     observations: list[ObservationIn] = Field([], max_length=200)
 
 
-def _suggestions(db: Session, s: models.RunSession, extra: list[Observation]) -> dict:
+def _suggestions(db: Session, s: models.RunSession, extra: list[Observation],
+                 vehicle_model_id: int | None = None) -> dict:
     own = sheet.setup_of(db, s.id)
     template = sheet.template_of(db, s, own)
     values = own.values if own else {}
@@ -167,9 +183,13 @@ def _suggestions(db: Session, s: models.RunSession, extra: list[Observation]) ->
     measured = balance_data.measured(summary)
     advice = (summary or {}).get("advice") or {}
     vehicle = None
-    if template.vehicle_preset:
+    try:
+        base, _ = _base(db, s, vehicle_model_id)
+    except LookupError:  # the vehicle's specs aren't complete yet: the sheet's preset, as without a vehicle
+        base = None
+    if base is not None or template.vehicle_preset:
         try:
-            vehicle = Vehicle.model_validate(sheet.to_vehicle(template, values)["vehicle"])
+            vehicle = Vehicle.model_validate(sheet.to_vehicle(template, values, base)["vehicle"])
         except (LookupError, ValueError):
             vehicle = None
     ranked = suggest(template, values, observations, vehicle, advice=advice.get("recommendations"),
@@ -192,15 +212,17 @@ def _suggestions(db: Session, s: models.RunSession, extra: list[Observation]) ->
 
 
 @router.get("/sessions/{session_id}/setup/suggestions")
-def setup_suggestions(session_id: int, db: Session = Depends(get_db)):
+def setup_suggestions(session_id: int, vehicle_model_id: int | None = None, db: Session = Depends(get_db)):
     """Ranked setup changes to try, in one list from the session's debrief and the balance report's analysis of
     its log: each with its reason, what to expect and what to watch, whether driver and data agree, and where they
-    disagree. Driver remarks carry the data's check of them."""
-    return _suggestions(db, _get(db, session_id), [])
+    disagree. Driver remarks carry the data's check of them. The vehicle model behind them is the vehicle named,
+    else the session's."""
+    return _suggestions(db, _get(db, session_id), [], vehicle_model_id)
 
 
 @router.post("/sessions/{session_id}/setup/suggestions")
-def setup_suggestions_with(session_id: int, body: SuggestIn, db: Session = Depends(get_db)):
+def setup_suggestions_with(session_id: int, body: SuggestIn, vehicle_model_id: int | None = None,
+                           db: Session = Depends(get_db)):
     """The same, with extra observations from the caller (for example another analysis's findings)."""
     extra = [Observation(**o.model_dump()) for o in body.observations]
-    return _suggestions(db, _get(db, session_id), extra)
+    return _suggestions(db, _get(db, session_id), extra, vehicle_model_id)

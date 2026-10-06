@@ -146,7 +146,8 @@ export type Suggestions = {
 export type SetupVehicle = {
   session_id: number;
   name: string | null;
-  preset: string;
+  preset: string | null;
+  vehicle_model: { id: number; name: string } | null; // the garage vehicle whose specs it starts from
   vehicle: Vehicle;
   applied: { field: string; value: number; from: string }[];
   notes: string[];
@@ -184,8 +185,15 @@ export const setupApi = {
   history: (sessionId: number) => request<History>(`/sessions/${sessionId}/setup/history`),
   results: (sessionId: number) =>
     request<{ session_id: number; laps: LapNumbers; summary: RunSummary }>(`/sessions/${sessionId}/setup/results`),
-  vehicle: (sessionId: number) => request<SetupVehicle>(`/sessions/${sessionId}/setup/vehicle`),
-  suggestions: (sessionId: number) => request<Suggestions>(`/sessions/${sessionId}/setup/suggestions`),
+  /** The run's setup as vehicle model inputs, on top of the vehicle named (else the session's) or the preset. */
+  vehicle: (sessionId: number, vehicleId?: number | null) =>
+    request<SetupVehicle>(
+      `/sessions/${sessionId}/setup/vehicle${vehicleId != null ? `?vehicle_model_id=${vehicleId}` : ''}`,
+    ),
+  suggestions: (sessionId: number, vehicleId?: number | null) =>
+    request<Suggestions>(
+      `/sessions/${sessionId}/setup/suggestions${vehicleId != null ? `?vehicle_model_id=${vehicleId}` : ''}`,
+    ),
 };
 
 // '+0.12', '−0.30', '–' for nothing. A real minus sign keeps the columns aligned.

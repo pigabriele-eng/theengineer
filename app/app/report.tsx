@@ -5,6 +5,7 @@ import { ActivityIndicator, LayoutChangeEvent, Pressable, ScrollView, StyleSheet
 import { Bars, LineChart, LineSeries, useChartColors } from '@/components/ReportCharts';
 import { Balance } from '@/components/report/Balance';
 import { GripReport } from '@/components/report/GripReport';
+import { TrackGrip } from '@/components/report/TrackGrip';
 import { SessionSwitcher, useEventFolder, useSessionEvent } from '@/components/SessionSwitcher';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
@@ -235,6 +236,11 @@ export default function ReportScreen() {
             <View style={styles.section}>
               {'event' in scope ? <GripReport event={scope.event} /> : <GripReport session={scope.session} />}
             </View>
+            {'event' in scope && (
+              <View style={styles.section}>
+                <TrackGrip event={scope.event} />
+              </View>
+            )}
             <View style={styles.section}>
               {'event' in scope ? <Balance event={scope.event} /> : <Balance session={scope.session} />}
             </View>

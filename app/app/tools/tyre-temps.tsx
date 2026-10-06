@@ -389,7 +389,7 @@ const useStyles = themed((c) => ({
   big: { fontSize: 22, fontWeight: '600', fontVariant: ['tabular-nums'] },
   small: { fontSize: 13, fontVariant: ['tabular-nums'] },
   verdict: { fontWeight: '700' },
-  button: { borderRadius: 8, padding: 14, alignItems: 'center' },
+  button: { borderRadius: Radius.control, padding: 14, alignItems: 'center' },
   buttonText: { color: c.onTint, fontWeight: '600', fontSize: 16 },
   outline: { borderRadius: Radius.control, padding: 12, alignItems: 'center', borderWidth: 1 },
   error: { color: c.error },

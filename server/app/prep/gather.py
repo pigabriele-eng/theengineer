@@ -250,7 +250,7 @@ def pooled_tyre_model(db: Session, p: Plan, tracks: list[str]) -> dict | None:
     for track in [*tracks, None]:
         try:
             with heavy.lock:  # a fit over many sessions' summaries takes a few seconds and some memory
-                m = tyre_model_router.tyre_model(car=p.car, tyre=None, track=track, ambient_min=None,
+                m = tyre_model_router.tyre_model(car=p.car, tyre_kind=None, track=track, ambient_min=None,
                                                  ambient_max=None, db=db)
         except HTTPException:
             return None

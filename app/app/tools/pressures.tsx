@@ -1,4 +1,4 @@
-import { Stack } from 'expo-router';
+import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { ReactNode, useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -11,12 +11,12 @@ import {
 } from 'react-native';
 
 import { Text, View, useThemeColor } from '@/components/Themed';
+import { eventLabel, NotSet, toolLists, TyreKind } from '@/lib/toolLists';
 import {
+  Axle,
   Corner,
   CORNERS,
   LoggedRun,
-  MinimumRow,
-  Minimums,
   num,
   PerCorner,
   PressurePlan,
@@ -25,6 +25,8 @@ import {
   tyres,
 } from '@/lib/tyres';
 import { Radius, themed, useTheme } from '@/constants/Theme';
+
+const AXLE_OF: Record<Corner, Axle> = { FL: 'front', FR: 'front', RL: 'rear', RR: 'rear' };
 
 const empty = (): Record<Corner, string> => ({ FL: '', FR: '', RL: '', RR: '' });
 const fmt = (x: number | null | undefined, digits = 2) => (x == null ? '–' : x.toFixed(digits));
@@ -90,24 +92,61 @@ export default function PressuresScreen() {
   const [atmos, setAtmos] = useState('1.013');
   const [targets, setTargets] = useState(empty);
   const [hotTemps, setHotTemps] = useState(empty);
-  const [series, setSeries] = useState('');
-  const [runs, setRuns] = useState<LoggedRun[]>([]);
+  const [kinds, setKinds] = useState<TyreKind[] | null>(null);
+  const [notSet, setNotSet] = useState<NotSet | null>(null);
+  const [reference, setReference] = useState<Reference | null>(null);
+  const [kindId, setKindId] = useState<number | null>(null);
+  const [runs, setRuns] = useState<LoggedRun[] | null>(null);
   const [summary, setSummary] = useState<PerCorner<RunSummary>>({});
   const [plan, setPlan] = useState<PressurePlan | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tint = useThemeColor({}, 'tint');
+  const kind = kinds?.find((k) => k.id === kindId) ?? null;
 
+  // the garage's tyres, again on coming back (a tyre may have been added there)
+  const loadKinds = useCallback(() => {
+    toolLists.tyres().then(
+      (r) => {
+        setKinds(r.tyres);
+        setNotSet(r.not_set);
+        setReference(r.reference);
+        setKindId((cur) => (cur != null && r.tyres.some((t) => t.id === cur) ? cur : (r.tyres[0]?.id ?? null)));
+      },
+      (e) => setError(e.message),
+    );
+  }, []);
+  useFocusEffect(loadKinds);
+
+  // only the runs on the tyre picked: reading the logs takes a moment
   const loadRuns = useCallback(() => {
-    tyres.runs().then((r) => {
-      setRuns(r.runs);
-      setSummary(r.summary);
-    }, (e) => setError(e.message));
-  }, []);
+    setRuns(null);
+    setSummary({});
+    if (kindId == null) return;
+    tyres.runs({ tyreKindId: kindId }).then(
+      (r) => {
+        setRuns(r.runs);
+        setSummary(r.summary);
+      },
+      (e) => setError(e.message),
+    );
+  }, [kindId]);
   useEffect(loadRuns, [loadRuns]);
+
+  // the tyre's P-Book hot targets fill the targets (a target with none for its axle stays as typed)
+  const hotTarget = kind?.pbook.hot_target_bar;
   useEffect(() => {
-    tyres.minimums().then((m) => setSeries((cur) => cur || m.series_list[0] || ''), () => {});
-  }, []);
+    setPlan(null);
+    if (!hotTarget) return;
+    setTargets((cur) => {
+      const next = { ...cur };
+      for (const c of CORNERS) {
+        const t = hotTarget[AXLE_OF[c]];
+        if (t != null) next[c] = String(t);
+      }
+      return next;
+    });
+  }, [kindId, hotTarget?.front, hotTarget?.rear]);
 
   const calculate = async () => {
     const t: PerCorner<number> = {};
@@ -115,6 +154,10 @@ export default function PressuresScreen() {
     for (const c of CORNERS) {
       if (num(targets[c]) !== undefined) t[c] = num(targets[c]);
       if (num(hotTemps[c]) !== undefined) hot[c] = num(hotTemps[c]);
+    }
+    if (kindId == null) {
+      setError('Pick the tyre first (add it in the garage if it is not listed).');
+      return;
     }
     if (!Object.keys(t).length) {
       setError('Enter a target hot pressure for at least one tyre.');
@@ -131,7 +174,7 @@ export default function PressuresScreen() {
           ambient_c: num(ambient),
           track_c: num(track),
           atmospheric_bar: num(atmos),
-          series: series.trim() || undefined,
+          tyre_kind_id: kindId,
         }),
       );
     } catch (e) {
@@ -150,9 +193,11 @@ export default function PressuresScreen() {
     <ScrollView contentContainerStyle={styles.container}>
       <Stack.Screen options={{ title: 'Tyre pressures' }} />
       <Text style={styles.intro}>
-        The cold pressures to set now so the tyres reach your target hot pressure: by the gas law, and by what this
-        car's own logged runs show.
+        The cold pressures to set now so the tyres reach your target hot pressure: by the gas law, and by what your
+        logged runs on this tyre show.
       </Text>
+
+      <TyrePicker kinds={kinds} kindId={kindId} onPick={setKindId} notSet={notSet} />
 
       <Text style={styles.h2}>Conditions now</Text>
       <View style={styles.row}>
@@ -175,6 +220,9 @@ export default function PressuresScreen() {
           <Text style={{ color: tint }}>Same for all</Text>
         </Pressable>
       </View>
+      {kind && (hotTarget?.front != null || hotTarget?.rear != null) && (
+        <Text style={styles.note}>Filled in from the P-Book hot target of {kind.label}; change it for today.</Text>
+      )}
       <CarGrid
         cell={(c) => (
           <Field
@@ -200,26 +248,102 @@ export default function PressuresScreen() {
         )}
       />
 
-      <Field label="Series (for the P-Book minimums)" value={series} onChangeText={setSeries}
-        keyboardType="default" placeholder="e.g. GT4 Germany" />
-
-      <Pressable style={[styles.button, { backgroundColor: tint }]} onPress={calculate} disabled={busy}>
+      <Pressable
+        style={[styles.button, { backgroundColor: tint, opacity: kindId == null ? 0.5 : 1 }]}
+        onPress={calculate}
+        disabled={busy || kindId == null}>
         {busy ? <ActivityIndicator color={theme.onTint} /> : <Text style={styles.buttonText}>Calculate cold pressures</Text>}
       </Pressable>
       {error && <Text style={styles.error}>{error}</Text>}
 
       {plan && <Results plan={plan} />}
 
-      <MinimumsEditor series={series.trim()} />
+      {kind && <PBookEditor key={kind.id} kind={kind} reference={reference} onSaved={loadKinds} />}
 
-      <LoggedRuns runs={runs} onChanged={loadRuns} />
+      {kind && <LoggedRuns tyre={kind.label} runs={runs} onChanged={loadRuns} />}
     </ScrollView>
   );
 }
 
-function Results({ plan }: { plan: PressurePlan }) {
+// The garage's tyres to pick from: different tyres are different pressure models.
+function TyrePicker({
+  kinds,
+  kindId,
+  onPick,
+  notSet,
+}: {
+  kinds: TyreKind[] | null;
+  kindId: number | null;
+  onPick: (id: number) => void;
+  notSet: NotSet | null;
+}) {
   const styles = useStyles();
+  const tint = useThemeColor({}, 'tint');
+  const router = useRouter();
+  if (kinds == null) return <ActivityIndicator />;
+  return (
+    <View style={styles.section}>
+      <View style={styles.headRow}>
+        <Text style={styles.h2}>Tyre</Text>
+        <Pressable onPress={() => router.push('/garage')} hitSlop={6}>
+          <Text style={{ color: tint }}>Add a tyre in the garage</Text>
+        </Pressable>
+      </View>
+      {kinds.length === 0 && (
+        <Text style={styles.note}>
+          No tyres in the garage yet. Add the tyre you run there (brand and compound): the calculator works per tyre,
+          with that tyre's P-Book pressures and only the runs on it.
+        </Text>
+      )}
+      <View style={styles.chips}>
+        {kinds.map((k) => {
+          const on = k.id === kindId;
+          return (
+            <Pressable
+              key={k.id}
+              onPress={() => onPick(k.id)}
+              style={on ? StyleSheet.flatten([styles.chip, { borderColor: tint }]) : styles.chip}
+              accessibilityRole="button"
+              accessibilityState={{ selected: on }}>
+              <Text style={on ? { color: tint, fontWeight: '600' } : undefined}>{k.label}</Text>
+              <Text style={styles.chipSub}>
+                {k.sessions} session{k.sessions === 1 ? '' : 's'}
+                {k.size ? ` · ${k.size}` : ''}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      {notSet && notSet.sessions > 0 && kinds.length > 0 && (
+        <View style={styles.unset}>
+          <Text style={styles.note}>
+            {notSet.sessions} session{notSet.sessions === 1 ? ' has' : 's have'} no tyre set, so{' '}
+            {notSet.sessions === 1 ? 'its runs are' : 'their runs are'} left out. Set the tyre on the event:
+          </Text>
+          {notSet.events.map((e) =>
+            e.event_id != null ? (
+              <Pressable
+                key={e.event_id}
+                onPress={() => router.push({ pathname: '/event/[id]', params: { id: e.event_id! } })}
+                accessibilityRole="link">
+                <Text style={{ color: tint }}>{eventLabel(e)}</Text>
+              </Pressable>
+            ) : (
+              <Text key="none" style={styles.dim}>
+                {e.sessions} session{e.sessions === 1 ? '' : 's'} in no event: put {e.sessions === 1 ? 'it' : 'them'}{' '}
+                in an event first
+              </Text>
+            ),
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
+
+function Results({ plan }: { plan: PressurePlan }) {
   const theme = useTheme();
+  const styles = useStyles();
   const by = Object.fromEntries(plan.corners.map((c) => [c.corner, c]));
   return (
     <View style={styles.section}>
@@ -273,43 +397,52 @@ function Results({ plan }: { plan: PressurePlan }) {
   );
 }
 
-function MinimumsEditor({ series }: { series: string }) {
+const BOOK_FIELDS = [
+  ['cold_min_bar', 'Cold min'],
+  ['hot_min_bar', 'Hot min'],
+  ['hot_target_bar', 'Hot target'],
+] as const;
+
+// The tyre's P-Book pressures, kept with the tyre: the minimums the answers are checked against and the hot targets
+// the targets above start from.
+function PBookEditor({ kind, reference, onSaved }: { kind: TyreKind; reference: Reference | null; onSaved: () => void }) {
   const styles = useStyles();
-  const [mins, setMins] = useState<Minimums | null>(null);
-  const [vals, setVals] = useState<Record<string, string>>({});
+  const book = kind.pbook;
+  const [vals, setVals] = useState<Record<string, string>>(() => {
+    const v: Record<string, string> = { source: book.source ?? '' };
+    for (const [key] of BOOK_FIELDS)
+      for (const axle of ['front', 'rear'] as const) {
+        const x = book[key][axle];
+        v[`${axle}-${key}`] = x != null ? String(x) : '';
+      }
+    return v;
+  });
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const tint = useThemeColor({}, 'tint');
 
-  const show = (m: Minimums) => {
-    setMins(m);
-    const v: Record<string, string> = {};
-    for (const r of m.rows) {
-      if (r.cold_min_bar != null) v[`${r.axle}-cold`] = String(r.cold_min_bar);
-      if (r.hot_min_bar != null) v[`${r.axle}-hot`] = String(r.hot_min_bar);
-      if (r.tyre) v.tyre = r.tyre;
-      if (r.source) v.source = r.source;
-    }
-    setVals(v);
-  };
-  useEffect(() => {
-    setMsg(null);
-    if (series) tyres.minimums(series).then(show, (e) => setMsg(e.message));
-    else setMins(null);
-  }, [series]);
-
   const save = async () => {
-    const rows: MinimumRow[] = (['front', 'rear'] as const).map((axle) => ({
-      axle,
-      tyre: vals.tyre?.trim() || null,
-      cold_min_bar: num(vals[`${axle}-cold`]) ?? null,
-      hot_min_bar: num(vals[`${axle}-hot`]) ?? null,
-      source: vals.source?.trim() || null,
-    }));
+    const pair = (key: string) => {
+      const out: Record<'front' | 'rear', number | null> = { front: null, rear: null };
+      for (const axle of ['front', 'rear'] as const) {
+        const raw = vals[`${axle}-${key}`] ?? '';
+        const x = num(raw);
+        if (raw.trim() && (x === undefined || x <= 0 || x >= 10)) throw new Error('Pressures are in bar, e.g. 1.40');
+        out[axle] = x ?? null;
+      }
+      return out;
+    };
     setSaving(true);
+    setMsg(null);
     try {
-      show(await tyres.saveMinimums(series, rows));
-      setMsg('Saved.');
+      await toolLists.saveTyreBook(kind, {
+        cold_min_bar: pair('cold_min_bar'),
+        hot_min_bar: pair('hot_min_bar'),
+        hot_target_bar: pair('hot_target_bar'),
+        source: vals.source.trim() || null,
+      });
+      setMsg('Saved with the tyre.');
+      onSaved();
     } catch (e) {
       setMsg((e as Error).message);
     } finally {
@@ -320,37 +453,48 @@ function MinimumsEditor({ series }: { series: string }) {
   const set = (k: string) => (v: string) => setVals((cur) => ({ ...cur, [k]: v }));
   return (
     <View style={styles.section}>
-      <Text style={styles.h2}>P-Book minimums{series ? ` · ${series}` : ''}</Text>
-      {!series && <Text style={styles.note}>Enter the series above to see or enter its P-Book minimums.</Text>}
-      {series && mins?.message && <Text style={styles.warn}>{mins.message}</Text>}
-      {series && mins?.origin === 'presets' && <Text style={styles.note}>Shipped with the app; see each source.</Text>}
-      {mins && <Ref r={mins.reference} />}
-      {series && (
-        <>
-          {(['front', 'rear'] as const).map((axle) => (
-            <View key={axle} style={styles.row}>
-              <Text style={styles.axle}>{axle === 'front' ? 'Front' : 'Rear'}</Text>
-              <Field label="Cold min bar" value={vals[`${axle}-cold`] ?? ''} onChangeText={set(`${axle}-cold`)}
-                keyboardType="decimal-pad" />
-              <Field label="Hot min bar" value={vals[`${axle}-hot`] ?? ''} onChangeText={set(`${axle}-hot`)}
-                keyboardType="decimal-pad" />
-            </View>
-          ))}
-          <Field label="Tyre" value={vals.tyre ?? ''} onChangeText={set('tyre')} keyboardType="default"
-            placeholder="e.g. Pirelli P Zero DHG" />
-          <Field label="Source" value={vals.source ?? ''} onChangeText={set('source')} keyboardType="default"
-            placeholder="P-Book edition and page" />
-          <Pressable style={[styles.outline, { borderColor: tint }]} onPress={save} disabled={saving}>
-            <Text style={{ color: tint }}>{saving ? 'Saving…' : 'Save minimums'}</Text>
-          </Pressable>
-        </>
+      <Text style={styles.h2}>P-Book pressures · {kind.label}</Text>
+      {book.origin === null && (
+        <Text style={styles.warn}>
+          Not entered yet. The P-Book is issued to teams and is not public: enter the minimums and hot targets from
+          your copy, and they stay with this tyre.
+        </Text>
       )}
+      {book.origin === 'series' && (
+        <Text style={styles.note}>
+          From the minimums entered for {(book.series ?? []).join(', ')} before tyres had their own. Save to keep them
+          with this tyre.
+        </Text>
+      )}
+      <Text style={styles.note}>In bar. The minimums are checked against every answer; the hot targets fill in the
+        targets above.</Text>
+      {(['front', 'rear'] as const).map((axle) => (
+        <View key={axle} style={styles.row}>
+          <Text style={styles.axle}>{axle === 'front' ? 'Front' : 'Rear'}</Text>
+          {BOOK_FIELDS.map(([key, label]) => (
+            <Field
+              key={key}
+              label={label}
+              value={vals[`${axle}-${key}`] ?? ''}
+              onChangeText={set(`${axle}-${key}`)}
+              keyboardType="decimal-pad"
+              accessibilityLabel={`${axle} ${label}`}
+            />
+          ))}
+        </View>
+      ))}
+      <Field label="Source" value={vals.source ?? ''} onChangeText={set('source')} keyboardType="default"
+        placeholder="P-Book edition and page" />
+      <Pressable style={StyleSheet.flatten([styles.outline, { borderColor: tint }])} onPress={save} disabled={saving}>
+        <Text style={{ color: tint }}>{saving ? 'Saving…' : `Save to ${kind.label}`}</Text>
+      </Pressable>
       {msg && <Text style={styles.note}>{msg}</Text>}
+      {reference && <Ref r={reference} />}
     </View>
   );
 }
 
-function LoggedRuns({ runs, onChanged }: { runs: LoggedRun[]; onChanged: () => void }) {
+function LoggedRuns({ tyre, runs, onChanged }: { tyre: string; runs: LoggedRun[] | null; onChanged: () => void }) {
   const theme = useTheme();
   const styles = useStyles();
   const [tracks, setTracks] = useState<Record<number, string>>({});
@@ -362,13 +506,24 @@ function LoggedRuns({ runs, onChanged }: { runs: LoggedRun[]; onChanged: () => v
   };
   return (
     <View style={styles.section}>
-      <Text style={styles.h2}>Your logged runs ({runs.length})</Text>
+      <Text style={styles.h2}>Your logged runs on {tyre}{runs ? ` (${runs.length})` : ''}</Text>
       <Text style={styles.note}>
-        Cold is where each TPMS sensor first reported after the car rolled; hot is where the pressure settled after
-        12 minutes at speed. Enter a session's track temperature so the model can learn its effect.
+        Only the sessions whose event ran this tyre. Cold is where each TPMS sensor first reported after the car
+        rolled; hot is where the pressure settled after 12 minutes at speed. Enter a session's track temperature so
+        the model can learn its effect.
       </Text>
-      {runs.length === 0 && <Text style={styles.dim}>Upload MoTeC logs with TPMS channels on the Sessions tab.</Text>}
-      {runs.map((r) => (
+      {runs == null && (
+        <View style={styles.statusRow}>
+          <ActivityIndicator size="small" />
+          <Text style={styles.dim}>Reading the logs…</Text>
+        </View>
+      )}
+      {runs?.length === 0 && (
+        <Text style={styles.dim}>
+          No logged run on this tyre yet: set the tyre on your events, and upload MoTeC logs with TPMS channels.
+        </Text>
+      )}
+      {runs?.map((r) => (
         <View key={`${r.file_id}-${r.set}`} style={styles.card}>
           <Text style={styles.cardTitle}>
             {r.session}
@@ -431,7 +586,7 @@ const useStyles = themed((c) => ({
   result: { gap: 2 },
   big: { fontSize: 26, fontWeight: '600', fontVariant: ['tabular-nums'] },
   small: { fontSize: 13, fontVariant: ['tabular-nums'] },
-  button: { borderRadius: 8, padding: 14, alignItems: 'center' },
+  button: { borderRadius: Radius.control, padding: 14, alignItems: 'center' },
   buttonText: { color: c.onTint, fontWeight: '600', fontSize: 16 },
   outline: { borderRadius: Radius.control, padding: 12, alignItems: 'center', borderWidth: 1 },
   error: { color: c.error },
@@ -442,5 +597,10 @@ const useStyles = themed((c) => ({
   card: { paddingVertical: 10, borderBottomWidth: 1, borderColor: c.separator, gap: 4 },
   cardTitle: { fontSize: 16, fontWeight: '600' },
   label: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4 },
-  axle: { width: 48, fontWeight: '600', paddingBottom: 10 },
+  axle: { width: 40, fontWeight: '600', paddingBottom: 10 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: c.surface },
+  chipSub: { fontSize: 12, opacity: 0.6 },
+  unset: { gap: 4 },
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 }));

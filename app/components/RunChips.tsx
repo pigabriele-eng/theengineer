@@ -1,9 +1,10 @@
 // A run's driver, car and name, each one or two taps away: on the event page's run rows and the session page.
-// Tap the driver chip for a short list (the drivers of the run's car first, then the rest, and "New driver"), tap a
-// name and it's set. The car chip works the same way; setting the car on one run of a weekend fits the run's logger
-// to the car, and every other run from that logger gets it too. Tap the run's name to rename it in place.
+// Tap the driver chip for a short list (the event's drivers 1 to 4 first, then the drivers of the run's car, then the
+// rest, and "New driver"), tap a name and it's set. The car chip works the same way; setting the car on one run of a
+// weekend fits the run's logger to the car, and every other run from that logger gets it too. Tap the run's name to
+// rename it in place.
 import { Link, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, TextInput } from 'react-native';
 
 import { Text, View, useThemeColor } from '@/components/Themed';
@@ -22,6 +23,7 @@ import {
   RunSet,
 } from '@/lib/garage';
 import { Radius, themed, useTheme } from '@/constants/Theme';
+import { seasonsApi } from '@/lib/seasons';
 
 export type PickerKind = 'driver' | 'car';
 export type RunRef = { id: number; name: string; driver_id?: number | null; driver?: string | null; car_id?: number | null };
@@ -89,24 +91,36 @@ export function RunChips({ run, garage, open, onOpen }: {
   );
 }
 
-/** The short list a chip opens: tap one and it's set. */
-export function RunPicker({ what, run, garage, onPick, onClose }: {
+/** The event's drivers 1 to 4 (from its event info, or its season's entry), to offer first on its runs. */
+export function useEventDrivers(eventId: number | null | undefined) {
+  const [ids, setIds] = useState<number[]>([]);
+  useEffect(() => {
+    if (eventId == null) return setIds([]);
+    seasonsApi.info(eventId).then((i) => setIds(i.resolved.drivers.map((d) => d.id)), () => setIds([]));
+  }, [eventId]);
+  return ids;
+}
+
+/** The short list a chip opens: tap one and it's set. eventDrivers: the event's drivers 1 to 4, offered first. */
+export function RunPicker({ what, run, garage, onPick, onClose, eventDrivers }: {
   what: PickerKind;
   run: RunRef;
   garage: Garage;
   onPick: (fields: RunFields) => Promise<void> | void;
   onClose: () => void;
+  eventDrivers?: number[];
 }) {
   return what === 'driver'
-    ? <DriverList run={run} garage={garage} onPick={onPick} onClose={onClose} />
+    ? <DriverList run={run} garage={garage} onPick={onPick} onClose={onClose} eventDrivers={eventDrivers ?? []} />
     : <CarList run={run} garage={garage} onPick={onPick} onClose={onClose} />;
 }
 
-function DriverList({ run, garage, onPick, onClose }: {
+function DriverList({ run, garage, onPick, onClose, eventDrivers }: {
   run: RunRef;
   garage: Garage;
   onPick: (fields: RunFields) => Promise<void> | void;
   onClose: () => void;
+  eventDrivers: number[];
 }) {
   const styles = useStyles();
   const theme = useTheme();
@@ -114,7 +128,10 @@ function DriverList({ run, garage, onPick, onClose }: {
   const [name, setName] = useState('');
   const tint = useThemeColor({}, 'tint');
   const text = useThemeColor({}, 'text');
-  const { first, rest } = driversFor(garage, run.car_id);
+  const ofEvent = eventDrivers.map((id) => garage.drivers.find((d) => d.id === id)).filter((d) => d != null);
+  const offered = driversFor(garage, run.car_id);
+  const first = offered.first.filter((d) => !eventDrivers.includes(d.id));
+  const rest = offered.rest.filter((d) => !eventDrivers.includes(d.id));
   const car = garage.cars.find((c) => c.id === run.car_id);
   const add = () => name.trim() && onPick({ driver_name: name.trim() });
   const option = (d: GarageDriver) => {
@@ -129,6 +146,12 @@ function DriverList({ run, garage, onPick, onClose }: {
   return (
     <View style={styles.panel}>
       <PanelHead title={`Who drove ${run.name}?`} onClose={onClose} />
+      {ofEvent.length > 0 && (
+        <>
+          <Text style={styles.group}>This event&apos;s drivers</Text>
+          <View style={styles.options}>{ofEvent.map(option)}</View>
+        </>
+      )}
       {first.length > 0 && (
         <>
           <Text style={styles.group}>Drives {car ? carShort(car) : 'this car'}</Text>
@@ -137,7 +160,7 @@ function DriverList({ run, garage, onPick, onClose }: {
       )}
       {rest.length > 0 && (
         <>
-          {first.length > 0 && <Text style={styles.group}>Other drivers</Text>}
+          {(first.length > 0 || ofEvent.length > 0) && <Text style={styles.group}>Other drivers</Text>}
           <View style={styles.options}>{rest.map(option)}</View>
         </>
       )}
@@ -350,14 +373,16 @@ export function RunNameEditor({ id, name, kind, logSession, onSaved, onCancel, s
 }
 
 /** The session page's top: the run's name (tap it to rename) and kind, its driver and car chips, and their lists. */
-export function RunHeader({ run, kind, logSession, onChanged }: {
+export function RunHeader({ run, kind, logSession, onChanged, eventId }: {
   run: RunRef;
   kind: SessionKind;
   logSession?: string | null;
   onChanged: () => void;
+  eventId?: number | null; // its event: the event's drivers 1 to 4 are offered first
 }) {
   const styles = useStyles();
   const { garage, reload } = useGarage();
+  const eventDrivers = useEventDrivers(eventId);
   const [open, setOpen] = useState<PickerKind | null>(null);
   const [editing, setEditing] = useState(false);
   const [local, setLocal] = useState<Partial<RunRef>>({});
@@ -402,7 +427,8 @@ export function RunHeader({ run, kind, logSession, onChanged }: {
       )}
       <RunChips run={shown} garage={garage} open={open} onOpen={setOpen} />
       {open && garage && (
-        <RunPicker what={open} run={shown} garage={garage} onPick={pick} onClose={() => setOpen(null)} />
+        <RunPicker what={open} run={shown} garage={garage} onPick={pick} onClose={() => setOpen(null)}
+          eventDrivers={eventDrivers} />
       )}
       {note && (
         <Pressable onPress={() => setNote(null)}>

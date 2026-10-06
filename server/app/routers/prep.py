@@ -10,7 +10,8 @@ results say there (our places, strong or weak track, the makes, the prediction f
 
 The work runs in one background thread, one report at a time. It reads no log itself: it asks for each past event's
 report and technique check and waits for their own jobs, and the tyre prep and run balance it needs read one log at
-a time under the server's heavy-work lock (app/heavy.py). The finished report is kept in the database (prep_cache)
+a time under the server's heavy-work lock (app/heavy.py), as does each past event's track grip (from the traces
+its report kept; app/prep/track_grip.py). The finished report is kept in the database (prep_cache)
 with a signature of everything it was made from; when any of that changes, the next request works it out again.
 """
 from __future__ import annotations
@@ -31,16 +32,18 @@ from app.db import SessionLocal, get_db
 from app.prep import brief, gather
 from app.prep import official as prep_official
 from app.prep import plan as prep_plan
+from app.prep import track_grip as prep_track_grip
 from app.prep import weather as prep_weather
 from app.prep.models import PrepCache
 from app.routers import reports, technique
+from app.routers import track_grip as track_grip_router
 from app.setup import results
 from app.setup.models import SessionSetup
 
 router = APIRouter(prefix="/prep")
 log = logging.getLogger(__name__)
 
-PREP_VERSION = 1  # raise when the report changes, so every kept one is worked out again
+PREP_VERSION = 2  # raise when the report changes, so every kept one is worked out again
 STEPS_PER_EVENT = 4  # report, technique check, tyre prep, setups and balance
 
 _jobs: queue.Queue[str] = queue.Queue()
@@ -76,7 +79,8 @@ def signature(db: Session, p: prep_plan.Plan) -> str:
                           .where(models.Debrief.session_id.in_(ids)).group_by(models.Debrief.id)).all() if ids else []
     tyres = db.execute(select(func.count(models.TyreData.id), func.max(models.TyreData.updated_at))
                        .where(models.TyreData.session_id.in_(ids))).one() if ids else None
-    return reports._hash([PREP_VERSION, technique.TECHNIQUE_VERSION, results.VERSION, p.scope, p.target.start,
+    return reports._hash([PREP_VERSION, technique.TECHNIQUE_VERSION, track_grip_router.TRACK_GRIP_VERSION,
+                          results.VERSION, p.scope, p.target.start,
                           p.target.end, events, sorted((a, str(b)) for a, b in sheets),
                           sorted((a, str(b), c, d) for a, b, c, d in debriefs), [str(x) for x in tyres or ()]])
 
@@ -303,6 +307,9 @@ def compute(db: Session, p: prep_plan.Plan, progress, step) -> dict:
     progress("The pooled tyre model")
     tracks = list(dict.fromkeys(pe.info.track.name for pe in reversed(p.past) if pe.info.track))
     tyre_model = gather.pooled_tyre_model(db, p, tracks)
+    grip = prep_track_grip.summarise(prep_track_grip.gather(db, p, progress))
     progress("Writing the report")
     setup = gather.recommend_setup(p, events, observations, summaries)
-    return brief.build(_target(p), {"key": p.car, "label": p.car_label}, events, tyre_model, setup)
+    out = brief.build(_target(p), {"key": p.car, "label": p.car_label}, events, tyre_model, setup)
+    out["track_grip"] = grip
+    return out

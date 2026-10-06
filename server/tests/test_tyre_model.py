@@ -287,12 +287,15 @@ def test_tyre_model_api(client):
     assert len(cars) == 1
     car = cars[0]
     assert car["key"] == "logger:12345" and car["label"] == "BMW M4 GT4 EVO (G82), logger 12345"
-    assert car["sessions"] == 1 and car["tyres"] == [{"name": "Pirelli P Zero DHG", "sessions": 1}]
+    # its event (named in the log) doesn't say which tyre: it is pooled as "Tyre not set", with where to set it
+    a_event = client.get(f"/sessions/{a['id']}").json()["event_id"]
+    assert car["sessions"] == 1 and car["tyres"] == [{"id": None, "name": "Tyre not set", "sessions": 1}]
+    assert car["not_set"] == {"sessions": 1, "events": [{"event_id": a_event, "name": "TEST EVENT", "sessions": 1}]}
 
     model = client.get("/tyre-model", params={"car": car["key"]})
     assert model.status_code == 200, model.text
     m = model.json()
-    assert m["tyre"] == "Pirelli P Zero DHG" and m["basis"]["sessions"] == 1
+    assert m["tyre"] == "Tyre not set" and m["tyre_kind"] is None and m["basis"]["sessions"] == 1
     assert m["sessions"][0]["name"] == "Run A" and m["basis"]["with_tpms"] == m["basis"]["laps"]
     assert m["advice"][0].startswith("Front: ")
     # no lap timing in this log: one lap, too few to group by a condition
@@ -301,17 +304,31 @@ def test_tyre_model_api(client):
     r = client.get("/tyre-model", params={"car": car["key"], "ambient_min": 30}).json()
     assert "matches" in r["empty"] and "axles" not in r and r["filters"]["ambient_min"] == 30
 
-    # another tyre on the same car is kept apart
-    r = client.patch(f"/tyre-model/sessions/{a['id']}", json={"tyre": "Pirelli P Zero DHH"})
-    assert r.status_code == 200 and r.json()["tyre"] == "Pirelli P Zero DHH"
-    m = client.get("/tyre-model", params={"car": car["key"]}).json()
-    assert m["tyre"] == "Pirelli P Zero DHH" and m["sessions"][0]["tyre"] == "Pirelli P Zero DHH"
-    r = client.get("/tyre-model", params={"car": car["key"], "tyre": "Pirelli P Zero DHG"}).json()
-    assert r["empty"] and r["choices"]["tyres"] == [{"name": "Pirelli P Zero DHH", "sessions": 1}]
-    assert client.patch(f"/tyre-model/sessions/{a['id']}", json={"tyre": ""}).json()["tyre"] == "Pirelli P Zero DHG"
-    assert client.patch(f"/tyre-model/sessions/{b['id']}", json={"tyre": "X"}).status_code == 200  # no cornering
-    c = client.post("/sessions", json={}).json()
-    assert client.patch(f"/tyre-model/sessions/{c['id']}", json={"tyre": "X"}).status_code == 409
+    # the tyre set on an event: one model per car and tyre, the sessions with no tyre set kept apart
+    dhg = client.post("/catalog/tyres", json={"brand": "Pirelli", "compound": "P Zero DHG"}).json()
+    dhh = client.post("/catalog/tyres", json={"brand": "Pirelli", "compound": "P Zero DHH"}).json()
+    ev = client.post("/events", json={"name": "Test day"}).json()
+    e = client.post("/sessions", json={"name": "Run E", "event_id": ev["id"]}).json()
+    client.post(f"/sessions/{e['id']}/files", files={"file": ("e.ld", _bicycle_ld())})
+    _summarise_now()
+    car = client.get("/tyre-model/cars").json()["cars"][0]
+    assert car["tyres"] == [{"id": None, "name": "Tyre not set", "sessions": 2}]
+    assert car["not_set"]["events"] == [{"event_id": ev["id"], "name": "Test day", "sessions": 1},
+                                        {"event_id": a_event, "name": "TEST EVENT", "sessions": 1}]
+    assert client.put(f"/events/{ev['id']}/info", json={"tyre_kind_id": dhh["id"]}).status_code == 200
+    car = client.get("/tyre-model/cars").json()["cars"][0]
+    assert car["tyres"] == [{"id": dhh["id"], "name": "Pirelli P Zero DHH", "sessions": 1},
+                            {"id": None, "name": "Tyre not set", "sessions": 1}]
+    m = client.get("/tyre-model", params={"car": car["key"]}).json()  # the tyre with most sessions
+    assert m["tyre"] == "Pirelli P Zero DHH" and m["tyre_kind"] == {"id": dhh["id"], "label": "Pirelli P Zero DHH"}
+    assert [(s["name"], s["tyre"], s["event_id"]) for s in m["sessions"]] == [("Run E", "Pirelli P Zero DHH", ev["id"])]
+    assert m["not_set"]["sessions"] == 1
+    m = client.get("/tyre-model", params={"car": car["key"], "tyre_kind": "none"}).json()
+    assert m["tyre"] == "Tyre not set" and [s["name"] for s in m["sessions"]] == ["Run A"]
+    r = client.get("/tyre-model", params={"car": car["key"], "tyre_kind": dhg["id"]}).json()
+    assert r["empty"] and r["tyre"] == "Pirelli P Zero DHG" and len(r["choices"]["tyres"]) == 2
+    assert client.get("/tyre-model", params={"car": car["key"], "tyre_kind": "dhg"}).status_code == 422
+    assert client.get("/tyre-model", params={"car": car["key"], "tyre_kind": 9999}).status_code == 404
 
     # a session of a named car counts for that car, not its logger
     new_car = client.post("/cars", json={"name": "GT4 #7"}).json()

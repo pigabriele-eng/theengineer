@@ -6,10 +6,11 @@
 import * as DocumentPicker from 'expo-document-picker';
 import { Link } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 
 import { DropZone } from '@/components/DropZone';
 import { EventForm } from '@/components/EventForm';
+import { AskEventInfo } from '@/components/EventInfoForm';
 import { NameNewEvent, Settled, SettledLine } from '@/components/NameNewEvent';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { api, ImportJob } from '@/lib/api';
@@ -34,12 +35,14 @@ const list = (names: string[]) =>
 
 type Target = { id: number; name: string } | null; // null: a new event per zip, named after it
 
-export function ImportLogs({ onProgress, events, into }: {
+export function ImportLogs({ onProgress, events, into, big = false }: {
   onProgress: () => void;
   events?: FolderSummary[] | null; // the events to offer; without them (and without into) no choice is shown
   into?: { id: number; name: string }; // upload into this event, no choice
+  big?: boolean; // the drop box fills most of the screen (the Upload page)
 }) {
   const styles = useStyles();
+  const { height } = useWindowDimensions();
   const [uploading, setUploading] = useState<number | null>(null); // how many files are being sent
   const [job, setJob] = useState<ImportJob | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -180,10 +183,11 @@ export function ImportLogs({ onProgress, events, into }: {
       )}
       {WEB ? (
         <DropZone accept={ACCEPT} busy={busy} onPick={pick} title="Drop logs, zips or folders here, or click to pick"
+          minHeight={big ? Math.max(252, Math.round(height * 0.6)) : undefined}
           hint={into ? 'Into this event' : target ? `Into ${target.name}` : 'A new event per zip or folder'}
           onFiles={(files) => send(files.map((f) => ({ uri: '', name: f.path, file: f.file, mimeType: f.file.type })))} />
       ) : (
-        <Pressable style={[styles.button, { borderColor: tint }]} onPress={pick} disabled={busy}>
+        <Pressable style={[styles.button, { borderColor: tint }, big && styles.bigButton]} onPress={pick} disabled={busy}>
           {busy ? (
             <ActivityIndicator color={tint} />
           ) : (
@@ -201,6 +205,9 @@ export function ImportLogs({ onProgress, events, into }: {
         const ev = made.events.find((e) => e.id === id);
         return ev ? <NameNewEvent key={id} ev={ev} onSettled={(s) => settle(id, s)} /> : null;
       })}
+      {job && !running && job.session_ids.length > 0 && (
+        <AskEventInfo runIds={job.session_ids} refresh={settled} onSaved={onProgress} />
+      )}
       {job && !running && landed && !into && (
         // Link asChild hands its child's style to a web anchor, which can't take a style array: one object
         <Link href={{ pathname: '/event/[id]', params: { id: landed.id } }} asChild>
@@ -278,6 +285,7 @@ const useStyles = themed((c) => ({
   chipSub: { fontSize: 11, opacity: 0.6 },
   form: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 12, backgroundColor: c.surface },
   button: { borderWidth: 1, borderRadius: Radius.control, paddingVertical: 10, paddingHorizontal: 12, alignItems: 'center' },
+  bigButton: { minHeight: 252, justifyContent: 'center' },
   buttonText: { fontWeight: '600', fontSize: 16, textAlign: 'center' },
   summary: { gap: 4 },
   headline: { fontWeight: '600' },

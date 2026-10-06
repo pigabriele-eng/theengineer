@@ -307,6 +307,9 @@ def test_prep_report_over_two_past_events(client, fixtures):
     assert rep["performance"][0]["drivers"][0]["name"] == "Anna"
     assert rep["briefing"][0]["key"] == "target"
     assert rep["corners"]["comparable"] and {r["code"] for r in rep["corners"]["rows"]} <= {"T1", "T2"}
+    grip = rep["track_grip"]  # the test ring is too short at the grip limit to compare laps on: each event says so
+    assert [e["year"] for e in grip["events"]] == ["2025", "2026"] and grip["guidance"] == []
+    assert all("grip limit" in n for n in grip["notes"])
 
     again = client.get(f"/prep/events/{upcoming['id']}").json()
     assert again["status"] == "ready" and again["report"] == rep  # kept

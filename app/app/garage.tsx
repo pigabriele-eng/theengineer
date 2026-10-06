@@ -5,18 +5,23 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, useWin
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { dayLabel } from '@/lib/events';
 import { carLong, Garage, garageApi, GarageCar, GarageDriver, GarageTeam, Logger } from '@/lib/garage';
+import { Axle, catalogApi, Tyre, TyreSpecs, Vehicle } from '@/lib/seasons';
 import { Radius, themed, useTheme } from '@/constants/Theme';
 
 const WIDE = 900;
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-type Editing = { kind: 'car' | 'driver' | 'team'; id: number | null } | null; // id null: a new one
+type Kind = 'car' | 'driver' | 'team' | 'vehicle' | 'tyre';
+type Editing = { kind: Kind; id: number | null } | null; // id null: a new one
+type CatalogLists = { vehicles: Vehicle[]; tyres: Tyre[] };
 
-/** Cars (number, model, team, logger, drivers), drivers (team, cars) and teams: add, change and remove them here.
- * Runs are tagged on the event page and the session page, with the driver and car chips. */
+/** Cars (number, model, vehicle, team, logger, drivers), drivers (team, cars), teams, and the vehicles and tyres the
+ * cars and events pick from: add, change and remove them here. Runs are tagged on the event page and the session page,
+ * with the driver and car chips. */
 export default function GarageScreen() {
   const styles = useStyles();
   const [garage, setGarage] = useState<Garage | null>(null);
+  const [catalog, setCatalog] = useState<CatalogLists>({ vehicles: [], tyres: [] });
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -31,6 +36,10 @@ export default function GarageScreen() {
       },
       (e) => setError((e as Error).message),
     );
+    Promise.all([catalogApi.vehicles(), catalogApi.tyres()]).then(
+      ([vehicles, tyres]) => setCatalog({ vehicles, tyres }),
+      () => {}, // an older server: no lists
+    );
   }, []);
   useFocusEffect(load);
 
@@ -39,21 +48,23 @@ export default function GarageScreen() {
     setNotice(message ?? null);
     load();
   };
-  const isEditing = (kind: 'car' | 'driver' | 'team', id: number | null) => editing?.kind === kind && editing.id === id;
-  const edit = (kind: 'car' | 'driver' | 'team', id: number | null) => {
+  const isEditing = (kind: Kind, id: number | null) => editing?.kind === kind && editing.id === id;
+  const edit = (kind: Kind, id: number | null) => {
     setNotice(null);
     setEditing(isEditing(kind, id) ? null : { kind, id });
   };
 
   const cars = garage && (
     <Section title="Cars" add="Add car" onAdd={() => edit('car', null)}>
-      {isEditing('car', null) && <CarForm garage={garage} onDone={done} onCancel={() => setEditing(null)} />}
+      {isEditing('car', null) && (
+        <CarForm garage={garage} vehicles={catalog.vehicles} onDone={done} onCancel={() => setEditing(null)} />
+      )}
       {garage.cars.map((c) => (
         <Item key={c.id} title={carLong(c)}
           sub={[c.team, c.loggers.length ? `logger ${c.loggers.join(', ')}` : 'no logger linked',
             names(garage.drivers, c.driver_ids), plural(c.runs, 'run')].filter(Boolean).join(' · ')}
           open={isEditing('car', c.id)} onPress={() => edit('car', c.id)}>
-          <CarForm car={c} garage={garage} onDone={done} onCancel={() => setEditing(null)} />
+          <CarForm car={c} garage={garage} vehicles={catalog.vehicles} onDone={done} onCancel={() => setEditing(null)} />
         </Item>
       ))}
       {garage.cars.length === 0 && !isEditing('car', null) && (
@@ -88,6 +99,38 @@ export default function GarageScreen() {
       {garage.teams.length === 0 && !isEditing('team', null) && <Text style={styles.note}>No teams yet.</Text>}
     </Section>
   );
+  const vehicles = garage && (
+    <Section title="Vehicles" add="Add vehicle" onAdd={() => edit('vehicle', null)}>
+      {isEditing('vehicle', null) && <VehicleForm onDone={done} onCancel={() => setEditing(null)} />}
+      {catalog.vehicles.map((v) => (
+        <Item key={v.id} title={v.name}
+          sub={[v.maker, v.car_class, (v.car_ids ?? []).map((id) => carName(garage, id)).filter(Boolean).join(', ')]
+            .filter(Boolean).join(' · ')}
+          open={isEditing('vehicle', v.id)} onPress={() => edit('vehicle', v.id)}>
+          <VehicleForm vehicle={v} onDone={done} onCancel={() => setEditing(null)} />
+        </Item>
+      ))}
+      {catalog.vehicles.length === 0 && !isEditing('vehicle', null) && (
+        <Text style={styles.note}>No vehicles yet. Add the car models you run, e.g. BMW M4 GT4 Evo (G82); each car picks one.</Text>
+      )}
+    </Section>
+  );
+  const tyres = garage && (
+    <Section title="Tyres" add="Add tyre" onAdd={() => edit('tyre', null)}>
+      {isEditing('tyre', null) && <TyreForm onDone={done} onCancel={() => setEditing(null)} />}
+      {catalog.tyres.map((t) => (
+        <Item key={t.id} title={t.label} sub={tyreWords(t)} open={isEditing('tyre', t.id)} onPress={() => edit('tyre', t.id)}>
+          <TyreForm tyre={t} onDone={done} onCancel={() => setEditing(null)} />
+        </Item>
+      ))}
+      {catalog.tyres.length === 0 && !isEditing('tyre', null) && (
+        <Text style={styles.note}>
+          No tyres yet. Add each tyre you run (brand and compound) with its P-Book pressures: different tyres are kept
+          apart.
+        </Text>
+      )}
+    </Section>
+  );
   const loggers = garage && garage.loggers.length > 0 && (
     <Section title="Loggers in the logs">
       <Text style={styles.note}>
@@ -110,7 +153,8 @@ export default function GarageScreen() {
       <Stack.Screen options={{ title: 'Cars, drivers and teams' }} />
       <View style={styles.page}>
         <Text style={styles.intro}>
-          Your cars, drivers and teams. Tag a run&apos;s driver and car on the event page: tap the chips under the run.
+          Your cars, drivers and teams, and the vehicles and tyres they run on. Tag a run&apos;s driver and car on the
+          event page: tap the chips under the run.
         </Text>
         {!garage && !error && <ActivityIndicator />}
         {error && <Text style={styles.error}>{error}</Text>}
@@ -122,14 +166,16 @@ export default function GarageScreen() {
         {garage && (wide ? (
           <View style={styles.columns}>
             <View style={styles.column}>{cars}{loggers}</View>
-            <View style={styles.column}>{drivers}</View>
-            <View style={styles.column}>{teams}</View>
+            <View style={styles.column}>{drivers}{teams}</View>
+            <View style={styles.column}>{vehicles}{tyres}</View>
           </View>
         ) : (
           <>
             {cars}
             {drivers}
             {teams}
+            {vehicles}
+            {tyres}
             {loggers}
           </>
         ))}
@@ -289,9 +335,10 @@ function useSaver(onDone: (message?: string) => void) {
   return { busy, error, setError, run };
 }
 
-function CarForm({ car, garage, onDone, onCancel }: {
+function CarForm({ car, garage, vehicles, onDone, onCancel }: {
   car?: GarageCar;
   garage: Garage;
+  vehicles: Vehicle[];
   onDone: (message?: string) => void;
   onCancel: () => void;
 }) {
@@ -303,6 +350,8 @@ function CarForm({ car, garage, onDone, onCancel }: {
   const [loggers, setLoggers] = useState<number[]>(car?.loggers ?? []);
   const [serial, setSerial] = useState('');
   const [driverIds, setDriverIds] = useState<number[]>(car?.driver_ids ?? []);
+  const linked = car ? vehicles.find((v) => v.car_ids?.includes(car.id))?.id ?? null : null;
+  const [vehicleId, setVehicleId] = useState<number | null>(linked);
   const { busy, error, setError, run } = useSaver(onDone);
   const text = useThemeColor({}, 'text');
   const tint = useThemeColor({}, 'tint');
@@ -320,6 +369,7 @@ function CarForm({ car, garage, onDone, onCancel }: {
     const body = { number: number.trim() || null, model: model.trim() || null, ...teamFields(team), loggers,
       driver_ids: driverIds };
     const r = car ? await garageApi.updateCar(car.id, body) : await garageApi.addCar(body);
+    if (vehicleId !== linked) await catalogApi.setCarVehicle(r.car.id, vehicleId);
     return r.filled.length
       ? `${carLong(r.car)} is now set on ${plural(r.filled.length, 'run')} from its logger.` : undefined;
   });
@@ -337,7 +387,19 @@ function CarForm({ car, garage, onDone, onCancel }: {
           </Field>
         </View>
       </View>
-      {garage.models.length > 0 && (
+      {vehicles.length > 0 ? (
+        <Field label="Vehicle">
+          <View style={styles.chips}>
+            {vehicles.map((v) => (
+              <Chip key={v.id} label={v.name} on={vehicleId === v.id} onPress={() => {
+                setVehicleId(vehicleId === v.id ? null : v.id);
+                if (vehicleId !== v.id) setModel(v.name);
+              }} />
+            ))}
+            <Chip label="No vehicle" on={vehicleId == null} onPress={() => setVehicleId(null)} dashed />
+          </View>
+        </Field>
+      ) : garage.models.length > 0 && (
         <View style={styles.chips}>
           {garage.models.map((m) => <Chip key={m} label={m} on={m === model} onPress={() => setModel(m)} />)}
         </View>
@@ -467,7 +529,186 @@ function TeamForm({ team, onDone, onCancel }: { team?: GarageTeam; onDone: (mess
   );
 }
 
+// ---------- vehicles and tyres ----------
+
+const bar = (a?: Axle) => (a && (a.front != null || a.rear != null)
+  ? `${a.front != null ? a.front.toFixed(2) : '–'}/${a.rear != null ? a.rear.toFixed(2) : '–'}` : null);
+
+/** "30/68-18 · cold min 1.30/1.20 · hot target 1.95/1.85 bar · P-Book 2026 p.12" */
+const tyreWords = (t: Tyre) => {
+  const s = t.specs ?? {};
+  const p = [bar(s.cold_min_bar) && `cold min ${bar(s.cold_min_bar)}`, bar(s.hot_min_bar) && `hot min ${bar(s.hot_min_bar)}`,
+    bar(s.hot_target_bar) && `hot target ${bar(s.hot_target_bar)}`].filter(Boolean).join(', ');
+  return [t.size, p ? `${p} bar (front/rear)` : 'no pressures yet', s.source].filter(Boolean).join(' · ');
+};
+
+function VehicleForm({ vehicle, onDone, onCancel }: { vehicle?: Vehicle; onDone: (message?: string) => void; onCancel: () => void }) {
+  const styles = useStyles();
+  const theme = useTheme();
+  const [name, setName] = useState(vehicle?.name ?? '');
+  const [maker, setMaker] = useState(vehicle?.maker ?? '');
+  const [carClass, setCarClass] = useState(vehicle?.car_class ?? '');
+  const [notes, setNotes] = useState(vehicle?.notes ?? '');
+  const { busy, error, run } = useSaver(onDone);
+  const text = useThemeColor({}, 'text');
+  const input = StyleSheet.flatten([styles.input, { color: text }]);
+  const save = () => run(async () => {
+    if (!name.trim()) throw new Error('Give the vehicle a name, e.g. BMW M4 GT4 Evo (G82).');
+    const body = { name: name.trim(), maker: maker.trim() || null, car_class: carClass.trim() || null,
+      notes: notes.trim() || null };
+    if (vehicle) await catalogApi.updateVehicle(vehicle.id, body);
+    else await catalogApi.addVehicle(body);
+  });
+  return (
+    <View style={styles.form}>
+      <Field label="Name">
+        <TextInput value={name} onChangeText={setName} placeholder="BMW M4 GT4 Evo (G82)" placeholderTextColor={theme.textMuted}
+          maxLength={120} autoFocus={!vehicle} accessibilityLabel="Vehicle name" style={input} />
+      </Field>
+      <View style={styles.formRow}>
+        <View style={styles.grow}>
+          <Field label="Maker">
+            <TextInput value={maker} onChangeText={setMaker} placeholder="BMW" placeholderTextColor={theme.textMuted} maxLength={80}
+              accessibilityLabel="Maker" style={input} />
+          </Field>
+        </View>
+        <View style={styles.grow}>
+          <Field label="Class">
+            <TextInput value={carClass} onChangeText={setCarClass} placeholder="GT4" placeholderTextColor={theme.textMuted}
+              maxLength={40} accessibilityLabel="Class" style={input} />
+          </Field>
+        </View>
+      </View>
+      <Field label="Notes">
+        <TextInput value={notes} onChangeText={setNotes} placeholder="Optional" placeholderTextColor={theme.textMuted} maxLength={4000}
+          multiline accessibilityLabel="Notes" style={input} />
+      </Field>
+      {error && <Text style={styles.error}>{error}</Text>}
+      <FormButtons busy={busy} onSave={save} onCancel={onCancel}
+        removeLabel={vehicle ? 'Remove vehicle' : undefined}
+        removeQuestion={vehicle ? `Remove ${vehicle.name}? Its cars stay, without a vehicle.` : undefined}
+        onRemove={vehicle ? () => run(async () => {
+          await catalogApi.removeVehicle(vehicle.id);
+          return `${vehicle.name} removed.`;
+        }) : undefined} />
+    </View>
+  );
+}
+
+const typed = (v: number | null | undefined) => (v != null ? String(v) : '');
+
+/** A pressure as typed ("1.3" or "1,3"), in bar; null when empty. */
+function pressure(text: string, what: string): number | null {
+  const t = text.trim().replace(',', '.');
+  if (!t) return null;
+  const n = Number(t);
+  if (!Number.isFinite(n) || n < 0 || n > 10) throw new Error(`${what}: a pressure in bar, e.g. 1.85.`);
+  return n;
+}
+
+const ROWS: [keyof Omit<TyreSpecs, 'source'>, string][] = [
+  ['cold_min_bar', 'Minimum cold'],
+  ['hot_min_bar', 'Minimum hot'],
+  ['hot_target_bar', 'Target hot'],
+];
+
+function TyreForm({ tyre, onDone, onCancel }: { tyre?: Tyre; onDone: (message?: string) => void; onCancel: () => void }) {
+  const styles = useStyles();
+  const theme = useTheme();
+  const [brand, setBrand] = useState(tyre?.brand ?? '');
+  const [compound, setCompound] = useState(tyre?.compound ?? '');
+  const [size, setSize] = useState(tyre?.size ?? '');
+  const [source, setSource] = useState(tyre?.specs.source ?? '');
+  const [notes, setNotes] = useState(tyre?.notes ?? '');
+  const [p, setP] = useState<Record<string, string>>(() => {
+    const out: Record<string, string> = {};
+    for (const [k] of ROWS) {
+      out[`${k}.front`] = typed(tyre?.specs[k]?.front);
+      out[`${k}.rear`] = typed(tyre?.specs[k]?.rear);
+    }
+    return out;
+  });
+  const { busy, error, run } = useSaver(onDone);
+  const text = useThemeColor({}, 'text');
+  const input = StyleSheet.flatten([styles.input, { color: text }]);
+  const save = () => run(async () => {
+    if (!brand.trim() || !compound.trim()) throw new Error('Give the tyre its brand and compound.');
+    const specs: TyreSpecs = { source: source.trim() || null };
+    for (const [k, label] of ROWS) {
+      const front = pressure(p[`${k}.front`], `${label} front`);
+      const rear = pressure(p[`${k}.rear`], `${label} rear`);
+      if (front != null || rear != null) specs[k] = { front, rear };
+    }
+    const body = { brand: brand.trim(), compound: compound.trim(), size: size.trim() || null, specs,
+      notes: notes.trim() || null };
+    if (tyre) await catalogApi.updateTyre(tyre.id, body);
+    else await catalogApi.addTyre(body);
+  });
+  return (
+    <View style={styles.form}>
+      <View style={styles.formRow}>
+        <View style={styles.grow}>
+          <Field label="Brand">
+            <TextInput value={brand} onChangeText={setBrand} placeholder="Pirelli" placeholderTextColor={theme.textMuted} maxLength={80}
+              autoFocus={!tyre} accessibilityLabel="Tyre brand" style={input} />
+          </Field>
+        </View>
+        <View style={styles.grow}>
+          <Field label="Compound">
+            <TextInput value={compound} onChangeText={setCompound} placeholder="P Zero DHG" placeholderTextColor={theme.textMuted}
+              maxLength={80} accessibilityLabel="Compound" style={input} />
+          </Field>
+        </View>
+      </View>
+      <Field label="Size">
+        <TextInput value={size} onChangeText={setSize} placeholder="Optional, e.g. 265/645 R18" placeholderTextColor={theme.textMuted}
+          maxLength={40} accessibilityLabel="Tyre size" style={input} />
+      </Field>
+      <Field label="P-Book pressures (bar)">
+        <View style={styles.pressures}>
+          <View style={styles.pressureRow}>
+            <Text style={styles.pressureLabel} />
+            <Text style={styles.pressureHead}>Front</Text>
+            <Text style={styles.pressureHead}>Rear</Text>
+          </View>
+          {ROWS.map(([k, label]) => (
+            <View key={k} style={styles.pressureRow}>
+              <Text style={styles.pressureLabel}>{label}</Text>
+              {(['front', 'rear'] as const).map((axle) => (
+                <TextInput key={axle} value={p[`${k}.${axle}`]} onChangeText={(v) => setP((x) => ({ ...x, [`${k}.${axle}`]: v }))}
+                  placeholder="–" placeholderTextColor={theme.textMuted} inputMode="decimal" maxLength={5}
+                  accessibilityLabel={`${label} ${axle}`} style={StyleSheet.flatten([input, styles.pressureInput])} />
+              ))}
+            </View>
+          ))}
+        </View>
+      </Field>
+      <Field label="Source">
+        <TextInput value={source} onChangeText={setSource} placeholder="e.g. P-Book 2026 p.12" placeholderTextColor={theme.textMuted}
+          maxLength={200} accessibilityLabel="Where the pressures come from" style={input} />
+      </Field>
+      <Field label="Notes">
+        <TextInput value={notes} onChangeText={setNotes} placeholder="Optional" placeholderTextColor={theme.textMuted} maxLength={4000}
+          multiline accessibilityLabel="Notes" style={input} />
+      </Field>
+      {error && <Text style={styles.error}>{error}</Text>}
+      <FormButtons busy={busy} onSave={save} onCancel={onCancel}
+        removeLabel={tyre ? 'Remove tyre' : undefined}
+        removeQuestion={tyre ? `Remove ${tyre.label}? Events that named it are left without a tyre.` : undefined}
+        onRemove={tyre ? () => run(async () => {
+          await catalogApi.removeTyre(tyre.id);
+          return `${tyre.label} removed.`;
+        }) : undefined} />
+    </View>
+  );
+}
+
 const useStyles = themed((c) => ({
+  pressures: { gap: 6 },
+  pressureRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  pressureLabel: { width: 110, fontSize: 13, opacity: 0.8 },
+  pressureHead: { width: 76, fontSize: 11, fontWeight: '700', opacity: 0.6, textTransform: 'uppercase' },
+  pressureInput: { width: 76, paddingVertical: 6, textAlign: 'center' },
   outer: { padding: 16, paddingBottom: 32 },
   page: { width: '100%', maxWidth: 1180, alignSelf: 'center', gap: 20 },
   intro: { opacity: 0.7, lineHeight: 20 },
@@ -502,7 +743,7 @@ const useStyles = themed((c) => ({
   dashed: { borderStyle: 'dashed' },
   chipText: { fontSize: 14 },
   buttons: { flexDirection: 'row', alignItems: 'center', gap: 16, flexWrap: 'wrap' },
-  save: { borderRadius: 8, paddingHorizontal: 18, paddingVertical: 9, minWidth: 80, alignItems: 'center' },
+  save: { borderRadius: Radius.control, paddingHorizontal: 18, paddingVertical: 9, minWidth: 80, alignItems: 'center' },
   saveText: { fontWeight: '600' },
   remove: { marginLeft: 'auto', flexShrink: 1 },
   danger: { color: c.error },

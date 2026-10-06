@@ -47,7 +47,7 @@ const GROUPS: { name: string; tools: Tool[] }[] = [
       {
         href: '/garage',
         title: 'Cars, drivers and teams',
-        blurb: 'Car numbers, models and teams, who drives which car, and the logger in each car: runs from a linked logger get their car by themselves.',
+        blurb: 'Car numbers, vehicles and teams, who drives which car, the logger in each car (runs from a linked logger get their car by themselves), and your tyres with their P-Book pressures.',
       },
       {
         href: '/tools/vehicle',
@@ -63,6 +63,13 @@ const GROUPS: { name: string; tools: Tool[] }[] = [
         href: '/tools/calendar',
         title: 'Racing calendar',
         blurb: 'Bring in your tests and race weekends from Google Calendar as planned events, and pick which ones.',
+      },
+      {
+        href: '/seasons',
+        title: 'Seasons',
+        blurb:
+          'Make a season for the year: series, our car number and entry (tyre, car, team, drivers 1 to 4). Its ' +
+          'rounds come in as planned events, with dates and entry lists from the series’ site when it has them.',
       },
     ],
   },

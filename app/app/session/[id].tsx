@@ -13,7 +13,7 @@ import { TrackMap } from '@/components/TrackMap';
 import { UntimedNote } from '@/components/UntimedNote';
 import { Analysis, api, Debrief, DETECTED_CORNERS_NOTE, formatLap, SessionDetail } from '@/lib/api';
 import { Tagged } from '@/lib/drivers';
-import { themed, useTheme } from '@/constants/Theme';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 export default function SessionScreen() {
   const styles = useStyles();
@@ -92,7 +92,7 @@ export default function SessionScreen() {
           <RunHeader key={session.id}
             run={{ id: session.id, name: session.name ?? `Session ${session.id}`, driver_id: (session as Tagged).driver_id,
               car_id: (session as Tagged).car_id }}
-            kind={session.kind}
+            kind={session.kind} eventId={(session as Tagged).event_id}
             logSession={session.files.map((f) => (f.meta as { event_session?: string }).event_session).find(Boolean)}
             onChanged={() => api.session(sessionId).then(setSession, (e) => setError(e.message))} />
         )}
@@ -269,7 +269,7 @@ const useStyles = themed((c) => ({
   fact: { gap: 2 },
   factLabel: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
   factValue: { fontSize: 24, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  button: { borderRadius: 8, padding: 14, alignItems: 'center' },
+  button: { borderRadius: Radius.control, padding: 14, alignItems: 'center' },
   outline: { borderWidth: 1, backgroundColor: 'transparent' },
   buttonText: { color: c.onTint, fontWeight: '600', fontSize: 16 },
   error: { color: c.error },

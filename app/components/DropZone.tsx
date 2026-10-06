@@ -14,13 +14,14 @@ export type Dropped = { file: File; path: string };
 const TAKES = 'MoTeC .ld logs with their .ldx, CSV exports (.csv, .txt), zips of them, or folders holding them';
 const hidden = (name: string) => name.startsWith('.') || name === '__MACOSX'; // .DS_Store, Mac resource forks
 
-export function DropZone({ accept, onFiles, onPick, busy, title, hint }: {
+export function DropZone({ accept, onFiles, onPick, busy, title, hint, minHeight }: {
   accept: string[]; // file name endings taken, lower case with the dot: ['.ld', '.zip', ...]
   onFiles: (files: Dropped[]) => void;
   onPick: () => void; // a click: the file picker
   busy?: boolean; // an upload is under way: a spinner, and drops wait for it
   title: string;
   hint?: string;
+  minHeight?: number; // taller than the usual box (the Upload page fills the screen with it)
 }) {
   const styles = useStyles();
   const box = useRef<RNView>(null);
@@ -105,7 +106,7 @@ export function DropZone({ accept, onFiles, onPick, busy, title, hint }: {
     <RNView ref={box} style={styles.wrap}>
       <Pressable onPress={() => { setNote(null); onPick(); }} disabled={busy} accessibilityRole="button"
         accessibilityLabel={title}
-        style={StyleSheet.flatten([styles.zone, { borderColor: tint }, over && styles.over])}>
+        style={StyleSheet.flatten([styles.zone, { borderColor: tint }, minHeight != null && { minHeight }, over && styles.over])}>
         {busy ? (
           <ActivityIndicator color={tint} />
         ) : (
@@ -169,11 +170,12 @@ async function walk(entry: FileSystemEntry): Promise<Dropped[]> {
 
 const useStyles = themed((c) => ({
   wrap: { gap: 6 },
-  zone: { borderWidth: 2, borderStyle: 'dashed', borderRadius: Radius.card, paddingVertical: 22, paddingHorizontal: 16,
-    alignItems: 'center', justifyContent: 'center', gap: 4, minHeight: 84 },
+  // three times the first box's height (Gabriele asked for a bigger target)
+  zone: { borderWidth: 2, borderStyle: 'dashed', borderRadius: Radius.card, paddingVertical: 48, paddingHorizontal: 16,
+    alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 252 },
   over: { borderStyle: 'solid', backgroundColor: c.fill },
-  title: { fontWeight: '600', fontSize: 16, textAlign: 'center' },
-  hint: { fontSize: 13, opacity: 0.65, textAlign: 'center' },
+  title: { fontWeight: '600', fontSize: 20, textAlign: 'center' },
+  hint: { fontSize: 14, opacity: 0.65, textAlign: 'center' },
   note: { opacity: 0.7 },
   warn: { color: c.warning },
 }));
