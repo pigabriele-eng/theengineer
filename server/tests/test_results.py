@@ -170,3 +170,11 @@ def test_our_car_is_found_from_logged_laps(client):
     assert summary.infer_car(rnd, [102.440, 104.48]) == ("12", 1)
     assert summary.infer_car(rnd, [110.0]) == (None, 0)
     assert summary.match_session(rnd, "12", ["Q"], "test", 102.44) is s
+
+
+def test_predictions_and_backtest_answer(client, fake_site):
+    assert client.get("/results/predict", params={"venue": "Test Track", "year": 2027}).status_code == 409
+    fake_site.sync(years=[2026])
+    p = client.get("/results/predict", params={"venue": "Test Track", "year": 2027, "car_number": "911"})
+    assert p.status_code == 200 and set(p.json()["sessions"]) >= {"Q1", "R1"}
+    assert client.get("/results/backtest", params={"car_number": "911"}).status_code == 200

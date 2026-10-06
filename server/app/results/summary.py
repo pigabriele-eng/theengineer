@@ -302,3 +302,16 @@ def circuit_trend(per: list[dict]) -> list[dict]:
                                          "gap_pct": round(statistics.mean(v["gap_pct"]), 3) if v["gap_pct"]
                                          else None} for y, v in sorted(c["years"].items())}})
     return sorted(out, key=lambda c: (c["quali_offset_pct"] is None, c["quali_offset_pct"] or 0))
+
+
+def model_sessions(db: Session, series: str = "gt4-europe") -> list[dict]:
+    """Every loaded classification in the shape the predictions read (results/predict.py)."""
+    out = []
+    for rnd in _rounds(db, series):
+        for s in rnd.sessions:
+            out.append({"year": rnd.year, "round_id": rnd.round_id, "round_name": rnd.name, "venue": rnd.venue,
+                        "order": rnd.order, "code": s.code, "title": s.title, "kind": s.kind,
+                        "number": int(s.code[1:]) if s.code[1:].isdigit() else None, "date": s.starts_at,
+                        "track": s.track, "length_m": s.length_m, "weather": s.weather or {},
+                        "fastest": s.fastest, "rows": [row_dict(r) for r in s.rows]})
+    return out

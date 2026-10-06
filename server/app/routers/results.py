@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session, selectinload
 from app import models
 from app.db import get_db
 from app.results import models as rm
-from app.results import summary, sync
+from app.results import predict, summary, sync
 from app.results.venues import venue_key
 
 router = APIRouter(prefix="/results")
@@ -222,3 +222,28 @@ def history(venue: str | None = None, car_number: str | None = None, year: int |
     """Past official results for the prep report: by year at one circuit (venue: a circuit name or key such as
     "Zandvoort"), our strong and weak circuits over all years, and the makes compared in each session."""
     return summary.history(db, venue_key(venue) if venue else None, _series(series), car_number, year, team)
+
+
+@router.get("/predict")
+def prediction(venue: str, year: int, car_number: str | None = None, team: str | None = None,
+               logged_best_s: float | None = None, series: str = sync.DEFAULT_SERIES, db: Session = Depends(get_db)):
+    """Qualifying times and places and race finishes predicted for a round (venue: a circuit name or key) from
+    earlier official results only, with a likely range from how far recent predictions missed."""
+    sessions = summary.model_sessions(db, _series(series))
+    if not sessions:
+        raise HTTPException(409, "No official results loaded yet")
+    return predict.predict_round(sessions, venue_key(venue), year, car_number=car_number, team=team,
+                                 logged_best_s=logged_best_s)
+
+
+@router.get("/backtest")
+def backtest(car_number: str = "12", team: str | None = None, series: str = sync.DEFAULT_SERIES,
+             db: Session = Depends(get_db)):
+    """Each round of 2023 on predicted from what was known before it, against what happened and a naive guess."""
+    sessions = summary.model_sessions(db, _series(series))
+    if not sessions:
+        raise HTTPException(409, "No official results loaded yet")
+    if team is None:
+        rounds = summary._rounds(db, series)
+        team, _ = summary.team_of(rounds, car_number, None)
+    return predict.backtest(sessions, car_number=car_number, team=team)
