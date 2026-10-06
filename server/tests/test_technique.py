@@ -89,6 +89,41 @@ def test_a_perfect_lap_has_no_mistakes(env, k, lim):
     assert b["other_gains"] < 0 and b["mistakes"] == 0
 
 
+def test_the_trace_carries_the_drivers_inputs_and_perfect_drivings_phases(env, k, lim):
+    v = env.P * 3.6
+    v[200:320] = np.minimum(v[200:320], 0.9 * v[200:320].max())  # a little slow into T1, so it has a mistake
+    tr = lap(v, k)
+    tr["gear"] = np.asarray(np.clip(v // 40, 1, 6), np.int8)
+    out = check(tr, lim)
+    t = out["trace"]
+    n = len(t["driven"])
+    assert n == N // t["step_m"] + 1
+    ins = t["inputs"]
+    assert set(ins) == {"throttle", "brake", "steer", "gear"}
+    for role in ins:
+        # every channel at the speed trace's own points: the same metres, so they line up with it point for point
+        assert len(ins[role]) == n
+        assert ins[role] == pytest.approx(np.asarray(tr[role][::t["step_m"]], float), abs=0.06)
+    assert ins["throttle"][0] == 100 and max(ins["brake"]) > 0 and set(ins["gear"]) <= set(range(1, 7))
+    # perfect driving's own phases: braking into both corners, full throttle on the straights, never coasting
+    ph = np.array(t["model_phases"])
+    assert len(ph) == n and set(ph.tolist()) <= {0, 1, 2}
+    m = np.arange(n) * t["step_m"]
+    for apex in (300, 700):
+        assert np.any(ph[(m > apex - 150) & (m < apex)] == 0)
+        assert ph[m == apex][0] != 0
+    assert np.all(ph[(m > 400) & (m < 450)] == 2)
+    perfect = np.array(t["perfect"])
+    assert np.all(np.diff(perfect)[ph[:-1] == 0] < 0)  # braking, perfect driving slows down
+
+    # a log with no steering channel: the inputs say so; the check still works
+    del tr["steer"]
+    out2 = check(tr, lim)
+    assert out2["trace"]["inputs"]["steer"] is None
+    assert out2["trace"]["inputs"]["throttle"] == ins["throttle"]
+    assert [x["key"] for x in out2["mistakes"]] == [x["key"] for x in out["mistakes"] if x["kind"] != "steering"]
+
+
 def _costs_add_up(out: dict) -> None:
     b = out["budget"]
     assert b["mistakes"] + b["at_limit"] + b["optimism"] + b["pit_lane"] + b["other"] == pytest.approx(out["gap"],
@@ -219,6 +254,15 @@ def test_technique_check_api(client):
         pytest.approx(lap_["gap"], abs=2e-3)
     tr = lap_["trace"]
     assert len(tr["driven"]) == len(tr["perfect"]) == len(tr["realistic"]) == body["length_m"] // tr["step_m"] + 1
+    # the driver's inputs at the same points; the synthetic log has no gear channel
+    ins = tr["inputs"]
+    assert {r: v is not None for r, v in ins.items()} == {"throttle": True, "brake": True, "steer": True, "gear": False}
+    assert all(len(ins[r]) == len(tr["driven"]) for r in ("throttle", "brake", "steer"))
+    assert len(tr["model_phases"]) == len(tr["driven"])
+    assert body["inputs"]["throttle"] == {"channel": "rThrottlePedal", "unit": "%"}
+    assert body["inputs"]["brake"]["channel"] == "Brake Torque" and body["inputs"]["gear"]["channel"] is None
+    # the session's quickest lap is the event's fastest: nothing to lay over it
+    assert lap_["fastest"]["this_lap"] and lap_["fastest"]["inputs"] is None
     for x in lap_["mistakes"]:
         assert x["code"] in {"T1", "T2"} and x["phase"] in {"braking", "entry", "mid-corner", "exit", "full throttle"}
         assert x["what"] and x["do"] and x["cost_s"] >= 0.02
@@ -229,6 +273,10 @@ def test_technique_check_api(client):
 
     other = client.get(f"/technique/sessions/{ids[1]}", params={"lap": 3}).json()
     assert other["lap"]["number"] == 3
+    fastest = other["lap"]["fastest"]
+    assert not fastest["this_lap"] and (fastest["session_id"], fastest["number"]) == (ids[1], best["number"])
+    assert len(fastest["inputs"]["throttle"]) == len(other["lap"]["trace"]["driven"])
+    assert fastest["inputs"]["throttle"] == tr["inputs"]["throttle"]  # the fastest lap's own, as checked
     out_lap = client.get(f"/technique/sessions/{ids[1]}", params={"lap": 0}).json()
     assert out_lap["lap"] is None and "clean" in out_lap["lap_note"]
 

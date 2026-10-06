@@ -36,6 +36,14 @@ export type Budget = {
   other_gains: number;
 };
 
+export type InputRole = 'throttle' | 'brake' | 'steer' | 'gear';
+/** The driver's inputs at the speed trace's points (every step_m metres): throttle %, brake pressure, steering and
+ * gear as the log's channels for those roles have them; null where the log has no such channel. */
+export type Inputs = Record<InputRole, number[] | null>;
+/** Perfect driving's own phases (trace.model_phases indexes these). Its model has no pedal positions and never
+ * coasts: it brakes, drives at the grip limit (part throttle) or at full throttle. */
+export const MODEL_PHASES = ['braking', 'at the grip limit', 'full throttle'] as const;
+
 export type LapCheck = {
   key: string;
   session_id: number;
@@ -49,7 +57,12 @@ export type LapCheck = {
   pit_from_m: number | null;
   budget: Budget;
   mistakes: Mistake[];
-  trace: { step_m: number; driven: number[]; perfect: number[]; realistic: number[] } | null;
+  trace: { step_m: number; driven: number[]; perfect: number[]; realistic: number[]; inputs?: Inputs;
+    model_phases?: number[] } | null;
+  // the event's fastest lap (the one the report measures from), its inputs to lay under this lap's; none when this
+  // lap is that one
+  fastest?: { session_id: number; run: string; number: number; time: number; this_lap: boolean;
+    inputs: Inputs | null } | null;
 };
 
 export type LapRow = {
@@ -103,6 +116,7 @@ export type SessionTechnique = Head & {
   corners?: { code: string; at_m: number }[];
   length_m?: number;
   numbering?: 'official' | 'detected';
+  inputs?: Record<InputRole, { channel: string | null; unit: string | null }>; // the log's channel for each input
 };
 
 export type EventTechnique = Head & {
