@@ -1,4 +1,5 @@
-"""Why a lap was slow, as the user tagged it: safety car, FCY or traffic (or "none": looked at, the lap counts).
+"""Why a lap was slow, as the user tagged it: safety car, FCY or traffic; or "none" (looked at: no reason to leave it
+out), or "count" (the user wants the lap in the stint's trends although the analysis would leave it out).
 
 A new table (create_all adds it; nothing on the existing tables changes), keyed by session, logger file and lap
 number so any screen can read it. Lap numbers come from the lap timing, which can change when a track's
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 from app import models
 from app.db import Base
 
-TAGS = ("sc", "fcy", "traffic", "none")
+TAGS = ("sc", "fcy", "traffic", "none", "count")
 MATCH_S = 3.0  # a tag follows its lap when the lap numbers change: the lap starting within this many seconds
 
 

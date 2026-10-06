@@ -34,6 +34,7 @@ export type StintLap = {
   kind: LapKind;
   tag: Tag | null; // the user's tag: the lap stays out of the trends
   checked: boolean; // the user looked and said the lap counts
+  counted: boolean; // the user counted a lap the analysis leaves out (never a pit lap): it is in every figure
   suggestion: Suggestion | null;
   in_fit: boolean;
   outlier: boolean;
@@ -170,8 +171,9 @@ export async function fetchStintView(files: number[]): Promise<StintView> {
   return ok<StintView>(await apiFetch(`/stint?files=${files.join(',')}`));
 }
 
-/** Tag a lap (sc, fcy, traffic), or 'none': the user looked and the lap counts. */
-export async function putLapTag(fileId: number, lap: number, tag: Tag | 'none'): Promise<void> {
+/** Tag a lap (sc, fcy, traffic); 'none': the user looked and the lap counts; 'count': a lap the analysis leaves
+ * out (an out-lap, in-lap, slow lap or outlier; not a pit lap) joins the trends. */
+export async function putLapTag(fileId: number, lap: number, tag: Tag | 'none' | 'count'): Promise<void> {
   await ok(await apiFetch('/lap-tags', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
