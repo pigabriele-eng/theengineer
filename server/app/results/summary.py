@@ -17,6 +17,7 @@ from app.results import models as rm
 from app.results.venues import plain
 
 MATCH_S = 0.10  # a logged best lap within this of an official best lap is the same lap
+MIN_MATCHES = 2  # sessions whose best lap must match before a car is taken as ours
 
 
 def _num(n: str | None) -> str | None:

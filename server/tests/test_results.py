@@ -178,3 +178,10 @@ def test_predictions_and_backtest_answer(client, fake_site):
     p = client.get("/results/predict", params={"venue": "Test Track", "year": 2027, "car_number": "911"})
     assert p.status_code == 200 and set(p.json()["sessions"]) >= {"Q1", "R1"}
     assert client.get("/results/backtest", params={"car_number": "911"}).status_code == 200
+
+
+def test_a_car_set_by_hand_shows_before_any_results(client):
+    ev = client.post("/events/folders", json={"name": "Next round"}).json()
+    body = client.put(f"/results/events/{ev['id']}/link", json={"car_number": "12", "year": 2027}).json()
+    assert body["round"] is None and body["note"]
+    assert (body["car_number"], body["car_number_from"]) == ("12", "set")

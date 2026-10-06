@@ -115,6 +115,8 @@ def event_overview(db: Session, ev: models.Event) -> dict:
     out: dict = {"event_id": ev.id, "series": series, "year": year, "venue": facts["venue"], "track": facts["track"],
                  "round": None, "car_number": None, "car_number_from": None, "sessions": [],
                  "sync": sync.state.as_dict()}
+    if link is not None and link.by_hand and link.car_number:  # known before any round is loaded
+        out["car_number"], out["car_number_from"] = link.car_number, "set"
     if rnd is None:
         out["note"] = ("No official results for this circuit and year yet" if year and facts["venue"]
                        else "This event has no circuit or date to match official results to")
@@ -127,6 +129,8 @@ def event_overview(db: Session, ev: models.Event) -> dict:
         out["car_number_from"] = "set" if link.by_hand else "logged laps"
     else:
         number, matches = summary.infer_car(rnd, bests)
+        if matches < summary.MIN_MATCHES:  # one match can be another car on a busy day
+            number = None
         out["car_number_from"] = f"logged laps ({matches} matching)" if number else None
     out["car_number"] = number
     if link is None:
