@@ -19,6 +19,7 @@ export function FilterBar({ filter, counts, onPick, calendar, onSynced }: {
 }) {
   const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
+  const theme = useTheme();
   return (
     <View style={styles.bar}>
       <View style={styles.chips} accessibilityRole="tablist">
@@ -28,6 +29,7 @@ export function FilterBar({ filter, counts, onPick, calendar, onSynced }: {
             <Pressable key={key} onPress={() => onPick(key)} accessibilityRole="tab"
               accessibilityState={{ selected: on }} accessibilityLabel={`${label}: ${counts[key]}`}
               style={StyleSheet.flatten([styles.chip, on && { borderColor: tint, borderWidth: 1.5 }])}>
+              {key !== 'all' && <View style={[styles.whenDot, { backgroundColor: theme.event[key] }]} />}
               <Text style={StyleSheet.flatten([styles.chipText, on && { color: tint, fontWeight: '700' }])}>{label}</Text>
               <Text style={StyleSheet.flatten([styles.count, on && { color: tint, opacity: 1 }])}>{counts[key]}</Text>
             </Pressable>
@@ -167,6 +169,7 @@ const useStyles = themed((c) => ({
   chip: { flexGrow: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'baseline', gap: 5,
     borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 8, paddingVertical: 7, backgroundColor: c.surface },
   chipText: { fontSize: 15 },
+  whenDot: { width: 8, height: 8, borderRadius: 4, alignSelf: 'center' }, // the colour of the event cards' edge
   count: { fontSize: 12, opacity: 0.6, fontVariant: ['tabular-nums'] },
   calRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 4 },
   calText: { fontSize: 13, opacity: 0.75, flexShrink: 1 },

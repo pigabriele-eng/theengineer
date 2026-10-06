@@ -14,7 +14,7 @@ import {
   Opportunity,
   TraceRole,
 } from '@/lib/compare';
-import { Radius, themed, useTheme } from '@/constants/Theme';
+import { deltaColor, deltaMark, deltaWash, phaseColor, Radius, themed, useTheme } from '@/constants/Theme';
 
 // Colours of the laps in a result, by the slot each lap was given when it was picked.
 export function useLapColors(slots: number[]) {
@@ -55,6 +55,8 @@ export const WhereTheTimeIs = memo(function WhereTheTimeIs({ data, colors, focus
   const lap = data.laps[focus];
   const opp = data.opportunities[focus];
   const tint = useThemeColor({}, 'tint');
+  const theme = useTheme();
+  const top = Math.max(0.01, ...opp.sections.map((o) => o.loss_s));
   return (
     <View style={styles.section}>
       <Text style={styles.h2}>Where the time is</Text>
@@ -75,11 +77,15 @@ export const WhereTheTimeIs = memo(function WhereTheTimeIs({ data, colors, focus
       {opp.sections.slice(0, 3).map((o) => {
         const vs = data.laps[o.versus];
         return (
-          <Pressable key={o.code} onPress={() => onShow(o.code, (o.where_m[0] + o.where_m[1]) / 2)} style={styles.card}>
+          <Pressable key={o.code} onPress={() => onShow(o.code, (o.where_m[0] + o.where_m[1]) / 2)}
+            style={StyleSheet.flatten([styles.card, { borderLeftColor: deltaMark(theme, o.loss_s, top) }])}>
             <View style={styles.cardHead}>
               <Text style={styles.code}>{o.code}</Text>
-              <Text style={styles.loss}>{o.loss_s.toFixed(2)} s</Text>
-              <View style={styles.phase}>
+              <Text style={StyleSheet.flatten([styles.loss, { color: deltaColor(theme, o.loss_s) }])}>
+                {o.loss_s.toFixed(2)} s
+              </Text>
+              <View style={StyleSheet.flatten([styles.phase, { borderColor: phaseColor(theme, o.phase) }])}>
+                <View style={[styles.phaseDot, { backgroundColor: phaseColor(theme, o.phase) }]} />
                 <Text style={styles.phaseText}>{o.phase}</Text>
               </View>
             </View>
@@ -116,7 +122,8 @@ const CELL = 74;
 export const SectionTable = memo(function SectionTable({ data, colors, ideal, onPick }: TableProps) {
   const theme = useTheme();
   const styles = useStyles();
-  const wash = theme.fill;
+  const wash = theme.delta.gainSteps[0];
+  const biggest = Math.max(0.05, ...data.sections.flatMap((s) => s.times.map((t) => t - s.times[s.best])));
   return (
     <View style={styles.section}>
       <Text style={styles.h2}>Section times</Text>
@@ -150,8 +157,11 @@ export const SectionTable = memo(function SectionTable({ data, colors, ideal, on
               <Text style={[styles.cell, styles.first, styles.rowName]}>{s.code}</Text>
               {s.times.map((t, i) => {
                 const best = i === s.best;
+                const gap = t - s.times[s.best];
                 return (
-                  <Text key={i} style={[styles.cell, { width: CELL }, best && styles.best, best && { backgroundColor: wash }]}>
+                  <Text key={i} style={[styles.cell, { width: CELL }, best && styles.best,
+                    // the wash carries the colour; the figure stays in the text colour so it reads on it
+                    { backgroundColor: best ? wash : deltaWash(theme, gap, biggest) }]}>
                     {best ? t.toFixed(2) : `+${(t - s.times[s.best]).toFixed(2)}`}
                   </Text>
                 );
@@ -171,7 +181,7 @@ export const SectionTable = memo(function SectionTable({ data, colors, ideal, on
           <View style={styles.row}>
             <Text style={[styles.cell, styles.first, styles.rowName]}>To ideal</Text>
             {data.laps.map((l, i) => (
-              <Text key={i} style={[styles.cell, { width: CELL }]}>
+              <Text key={i} style={[styles.cell, { width: CELL }, { color: deltaColor(theme, l.to_ideal) }]}>
                 +{l.to_ideal.toFixed(2)}
               </Text>
             ))}
@@ -180,8 +190,8 @@ export const SectionTable = memo(function SectionTable({ data, colors, ideal, on
         </View>
       </ScrollView>
       <Text style={styles.note}>
-        Bold: the quickest lap in that section. The others show how much slower they were there. Tap a section to
-        zoom the traces to it.
+        Bold on green: the quickest lap in that section. The others show in red how much slower they were there, the
+        deeper the more. Tap a section to zoom the traces to it.
       </Text>
     </View>
   );
@@ -307,11 +317,14 @@ const useStyles = themed((c) => ({
   },
   key: { width: 14, height: 3, borderRadius: 2 },
   lead: { lineHeight: 20 },
-  card: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 12, gap: 6, backgroundColor: c.surface },
+  card: { borderWidth: 1, borderLeftWidth: 4, borderColor: c.border, borderRadius: Radius.card, padding: 12, gap: 6,
+    backgroundColor: c.surface },
   cardHead: { flexDirection: 'row', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' },
   code: { fontSize: 20, fontWeight: '700' },
   loss: { fontSize: 20, fontWeight: '600' },
-  phase: { borderWidth: 1, borderColor: c.borderStrong, borderRadius: Radius.card, paddingHorizontal: 8, paddingVertical: 1, backgroundColor: c.surface },
+  phase: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: c.borderStrong,
+    borderRadius: Radius.card, paddingHorizontal: 8, paddingVertical: 1, backgroundColor: c.surface },
+  phaseDot: { width: 8, height: 8, borderRadius: 4 }, // the phase's colour
   phaseText: { fontSize: 13 },
   versus: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   why: { lineHeight: 20 },

@@ -219,6 +219,7 @@ export default function PressuresScreen() {
 
 function Results({ plan }: { plan: PressurePlan }) {
   const styles = useStyles();
+  const theme = useTheme();
   const by = Object.fromEntries(plan.corners.map((c) => [c.corner, c]));
   return (
     <View style={styles.section}>
@@ -229,7 +230,9 @@ function Results({ plan }: { plan: PressurePlan }) {
           if (!p) return <Text style={styles.dim}>–</Text>;
           return (
             <View style={styles.result}>
-              <Text style={styles.big}>{fmt(p.data.cold_bar ?? p.gas_law.cold_bar)}</Text>
+              <Text style={StyleSheet.flatten([styles.big, { color: theme.tyre.cold }])}>
+                {fmt(p.data.cold_bar ?? p.gas_law.cold_bar)}
+              </Text>
               <Text style={styles.small}>Gas law {fmt(p.gas_law.cold_bar)}</Text>
               <Text style={styles.small}>
                 Your data {fmt(p.data.cold_bar)}
@@ -249,7 +252,7 @@ function Results({ plan }: { plan: PressurePlan }) {
       {plan.corners.map((p) => (
         <View key={p.corner} style={styles.card}>
           <Text style={styles.cardTitle}>
-            {p.corner} · target {p.target_hot_bar.toFixed(2)} bar hot
+            {p.corner} · target <Text style={{ color: theme.tyre.hot }}>{p.target_hot_bar.toFixed(2)} bar hot</Text>
           </Text>
           {p.flags.map((f) => (
             <Text key={f} style={styles.error}>
@@ -348,6 +351,7 @@ function MinimumsEditor({ series }: { series: string }) {
 }
 
 function LoggedRuns({ runs, onChanged }: { runs: LoggedRun[]; onChanged: () => void }) {
+  const theme = useTheme();
   const styles = useStyles();
   const [tracks, setTracks] = useState<Record<number, string>>({});
   const saveTrack = async (sessionId: number) => {
@@ -388,7 +392,8 @@ function LoggedRuns({ runs, onChanged }: { runs: LoggedRun[]; onChanged: () => v
             if (!x) return null;
             return (
               <Text key={c} style={[styles.small, !x.used && styles.dim]}>
-                {c} {fmt(x.cold_bar)} → {fmt(x.hot_bar)} bar
+                {c} <Text style={{ color: theme.tyre.cold }}>{fmt(x.cold_bar)}</Text> →{' '}
+                <Text style={{ color: theme.tyre.hot }}>{fmt(x.hot_bar)}</Text> bar
                 {x.rise_bar != null ? ` (+${fmt(x.rise_bar)})` : ''} · {fmt(x.cold_c, 0)} → {fmt(x.hot_c, 0)} °C
                 {x.note ? ` · ${x.note}` : ''}
               </Text>

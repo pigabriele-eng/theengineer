@@ -289,6 +289,7 @@ export default function EventScreen() {
           <Text style={styles.dayTitle}>{dayTitle(folder.days, i)}</Text>
           {d.sessions.map((s) => (
             <SessionRow key={s.id} s={s} color={colorOf(s.id)} picked={picks.some((p) => p.id === s.id)}
+              fastest={s.best_lap_s != null && s.best_lap_s === folder.best_lap_s}
               full={picks.length >= MAX_LAPS} onToggle={() => toggle(s)} editing={editing === s.id}
               onEdit={() => setEditing(editing === s.id ? null : s.id)}
               onSaved={() => {
@@ -385,10 +386,11 @@ export default function EventScreen() {
 
 /** One run: tick it for side by side, tap its name to rename it in place, tap its driver or car chip to set them,
  * tap its laps or time to open it. */
-function SessionRow({ s, color, picked, full, onToggle, editing, onEdit, onSaved, garage, open, onOpen, onPick, note,
-  onNoteClose }: {
+function SessionRow({ s, color, fastest, picked, full, onToggle, editing, onEdit, onSaved, garage, open, onOpen, onPick,
+  note, onNoteClose }: {
   s: Run;
   color: string | null;
+  fastest: boolean; // the event's quickest session
   picked: boolean;
   full: boolean;
   onToggle: () => void;
@@ -449,7 +451,8 @@ function SessionRow({ s, color, picked, full, onToggle, editing, onEdit, onSaved
         {!editing && (
           <Link href={href} asChild>
             <Pressable style={styles.open} accessibilityLabel={`Open ${s.name}`}>
-              <Text style={StyleSheet.flatten([styles.time, s.best_lap_s == null && styles.dim])}>
+              <Text style={StyleSheet.flatten([styles.time, s.best_lap_s == null && styles.dim,
+                fastest && styles.fastest])}>
                 {formatLap(s.best_lap_s)}
               </Text>
               <Text style={styles.chevron}>›</Text>
@@ -558,6 +561,7 @@ const useStyles = themed((c) => ({
   kindText: { fontSize: 11, fontWeight: '600', opacity: 0.8 },
   open: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'stretch', paddingLeft: 6 },
   time: { fontSize: 16, fontVariant: ['tabular-nums'] },
+  fastest: { color: c.lap.fastest, fontWeight: '700' }, // the event's best lap
   chevron: { fontSize: 22, opacity: 0.4 },
   dim: { opacity: 0.4 },
   picker: { paddingLeft: 32 },

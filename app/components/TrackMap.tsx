@@ -143,6 +143,7 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
   const c = PALETTE[useColorScheme()];
   const sc = useShapeColors();
   const surface = useThemeColor({}, 'surface');
+  const tint = useThemeColor({}, 'tint');
 
   useEffect(() => {
     let live = true;
@@ -262,8 +263,8 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
               accessibilityRole="button"
               accessibilityState={{ selected: mode === m }}
               onPress={() => setMode(m)}
-              style={StyleSheet.flatten([styles.toggleItem, { borderColor: mode === m ? c.ink : c.casing }])}>
-              <Text style={[styles.toggleText, { opacity: mode === m ? 1 : 0.6 }]}>
+              style={StyleSheet.flatten([styles.toggleItem, { borderColor: mode === m ? tint : c.casing }])}>
+              <Text style={[styles.toggleText, mode === m ? { color: tint } : { opacity: 0.6 }]}>
                 {m === 'sections' ? 'Sections' : 'Speed'}
               </Text>
             </Pressable>
@@ -431,7 +432,7 @@ function Chequer({ x, y, size, ink, paper }: { x: number; y: number; size: numbe
 }
 
 const useStyles = themed((c) => ({
-  wrap: { gap: 6 },
+  wrap: { gap: 6, backgroundColor: c.surface, borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 12 },
   head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
   title: { fontSize: 13, fontWeight: '600', opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 },
   toggle: { flexDirection: 'row', gap: 6 },

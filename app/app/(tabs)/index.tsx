@@ -9,11 +9,11 @@ import { PrepButton, usePrepAvailability } from '@/components/PrepButton';
 import { RenameEvent } from '@/components/RenameEvent';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
-import { CalendarState, calendarApi, countByWhen, defaultFilter, Filter, filtered, Plan, todayIso, whenOf } from '@/lib/calendar';
+import { CalendarState, calendarApi, countByWhen, defaultFilter, Filter, filtered, Plan, todayIso, When, whenOf } from '@/lib/calendar';
 import { dateRange, eventsApi, FolderSummary } from '@/lib/events';
 import { launchEvent } from '@/lib/openCurrent';
 import { PrepAvailability } from '@/lib/prep';
-import { Radius, themed } from '@/constants/Theme';
+import { Radius, themed, useTheme } from '@/constants/Theme';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -120,7 +120,8 @@ export default function SessionsScreen() {
           <Text style={styles.empty}>{EMPTY[active]}</Text>
         )}
         {shown?.map((f) => (
-          <FolderCard key={f.key} f={f} plan={f.id != null ? plans.get(f.id) : undefined} onChanged={load}
+          <FolderCard key={f.key} f={f} when={whenOf(f, today)} plan={f.id != null ? plans.get(f.id) : undefined}
+            onChanged={load}
             prep={f.id != null ? prep[String(f.id)] : undefined}
             onRenamed={(name) => {
               setFolders((all) => all?.map((x) => (x.key === f.key ? { ...x, name } : x)) ?? all);
@@ -139,8 +140,9 @@ const EMPTY: Record<Filter, string> = {
   all: 'No events yet.',
 };
 
-function FolderCard({ f, plan, prep, onRenamed, onChanged }: {
+function FolderCard({ f, when, plan, prep, onRenamed, onChanged }: {
   f: FolderSummary;
+  when: When; // past, on now or upcoming: the colour of the card's edge
   plan?: Plan;
   prep: PrepAvailability[string] | undefined; // past data at its track: the Prep report button
   onRenamed: (name: string) => void;
@@ -149,6 +151,7 @@ function FolderCard({ f, plan, prep, onRenamed, onChanged }: {
   const styles = useStyles();
   const [renaming, setRenaming] = useState(false);
   const tint = useThemeColor({}, 'tint');
+  const theme = useTheme();
   const range = dateRange(f.start, f.end);
   const loose = f.id == null;
   const planned = !loose && f.sessions === 0; // no data yet
@@ -168,7 +171,7 @@ function FolderCard({ f, plan, prep, onRenamed, onChanged }: {
     );
   }
   return (
-    <View style={StyleSheet.flatten([styles.card, loose && styles.loose])}>
+    <View style={StyleSheet.flatten([styles.card, { borderLeftColor: theme.event[when] }, loose && styles.loose])}>
       {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
       <Link href={{ pathname: '/event/[id]', params: { id: f.key } }} asChild>
         <Pressable style={styles.cardLink} accessibilityRole="link">
@@ -212,7 +215,8 @@ const useStyles = themed((c) => ({
   panelTitle: { fontSize: 16, fontWeight: '700' },
   error: { color: c.error },
   empty: { opacity: 0.6, marginTop: 24, textAlign: 'center', lineHeight: 20 },
-  card: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, paddingHorizontal: 14, paddingVertical: 12, gap: 6, backgroundColor: c.surface },
+  card: { borderWidth: 1, borderLeftWidth: 4, borderColor: c.border, borderRadius: Radius.card, paddingHorizontal: 14,
+    paddingVertical: 12, gap: 6, backgroundColor: c.surface },
   cardLink: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   loose: { borderStyle: 'dashed' },
   editing: { gap: 8 },

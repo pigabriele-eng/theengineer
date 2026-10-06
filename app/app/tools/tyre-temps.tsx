@@ -24,7 +24,7 @@ import {
   TempAnalysis,
   tyres,
 } from '@/lib/tyres';
-import { Radius, themed, useTheme } from '@/constants/Theme';
+import { Palette, Radius, themed, useTheme } from '@/constants/Theme';
 
 type Mode = 'pyrometer' | 'paste' | 'log';
 const MODES: [Mode, string][] = [
@@ -294,7 +294,12 @@ const VERDICT: Record<string, string> = {
   raise: 'Raise',
 };
 
+/** The tyre colour of a pressure verdict: raise it (running cold), lower it (running hot), or right. */
+const pressureTone = (theme: Palette, verdict: string) =>
+  verdict === 'raise' ? theme.tyre.cold : verdict === 'lower' ? theme.tyre.hot : verdict === 'ok' ? theme.tyre.ok : undefined;
+
 function Results({ result }: { result: TempAnalysis }) {
+  const theme = useTheme();
   const styles = useStyles();
   const by = Object.fromEntries(result.tyres.map((t) => [t.corner, t]));
   return (
@@ -311,7 +316,12 @@ function Results({ result }: { result: TempAnalysis }) {
                 Camber: {VERDICT[t.camber.verdict] ?? t.camber.verdict} ({t.camber.spread_c > 0 ? '+' : ''}
                 {t.camber.spread_c.toFixed(0)})
               </Text>
-              <Text style={styles.small}>Pressure: {VERDICT[t.pressure.verdict] ?? t.pressure.verdict}</Text>
+              <Text style={styles.small}>
+                Pressure:{' '}
+                <Text style={StyleSheet.flatten([styles.verdict, { color: pressureTone(theme, t.pressure.verdict) }])}>
+                  {VERDICT[t.pressure.verdict] ?? t.pressure.verdict}
+                </Text>
+              </Text>
             </View>
           );
         }}
@@ -334,7 +344,9 @@ function Results({ result }: { result: TempAnalysis }) {
           {t.camber.references.map((r) => (
             <Ref key={r.text} r={r} />
           ))}
-          <Text style={styles.label}>Pressure</Text>
+          <Text style={StyleSheet.flatten([styles.label, { color: pressureTone(theme, t.pressure.verdict), opacity: 1 }])}>
+            Pressure
+          </Text>
           <Text style={t.pressure.below_minimum ? styles.error : undefined}>{t.pressure.text}</Text>
         </View>
       ))}
@@ -376,6 +388,7 @@ const useStyles = themed((c) => ({
   across: { flexDirection: 'row', gap: 4 },
   big: { fontSize: 22, fontWeight: '600', fontVariant: ['tabular-nums'] },
   small: { fontSize: 13, fontVariant: ['tabular-nums'] },
+  verdict: { fontWeight: '700' },
   button: { borderRadius: 8, padding: 14, alignItems: 'center' },
   buttonText: { color: c.onTint, fontWeight: '600', fontSize: 16 },
   outline: { borderRadius: Radius.control, padding: 12, alignItems: 'center', borderWidth: 1 },

@@ -11,7 +11,7 @@ import { Text, View, useThemeColor } from '@/components/Themed';
 import { DETECTED_CORNERS_NOTE, formatLap } from '@/lib/api';
 import { encodePicks } from '@/lib/compare';
 import { ComparedSession, dayLabel, eventsApi, KIND_NAMES, SideBySide } from '@/lib/events';
-import { Radius, themed, useTheme } from '@/constants/Theme';
+import { deltaColor, deltaMark, Radius, themed, useTheme } from '@/constants/Theme';
 
 const POLL_MS = 3000;
 const LABEL_W = 112;
@@ -25,7 +25,7 @@ type Row = {
   label: string;
   values: (string | null)[];
   best?: number | null; // index in bold
-  gaps?: (number | null)[]; // seconds behind the best, drawn as a bar in the session's colour
+  gaps?: (number | null)[]; // the share of the biggest gap behind the best, drawn as a red bar
   subs?: (string | null)[]; // a smaller line under the value
   hint?: string;
 };
@@ -206,7 +206,7 @@ function Table({ data, colors }: { data: SideBySide; colors: string[] }) {
   const theme = useTheme();
   const styles = useStyles();
   const groups = rowsOf(data);
-  const wash = theme.fill;
+  const wash = theme.delta.gainSteps[0];
   const [width, setWidth] = useState(0);
   const colW = Math.round(Math.min(COL_MAX, Math.max(COL_MIN, (width - LABEL_W) / data.sessions.length)));
   const col = { width: colW };
@@ -244,12 +244,13 @@ function Table({ data, colors }: { data: SideBySide; colors: string[] }) {
                     return (
                       <View key={i} style={StyleSheet.flatten([styles.col, col, styles.cell,
                         best && { backgroundColor: wash }])}>
-                        <Text style={StyleSheet.flatten([styles.value, best && styles.best, v == null && styles.dim])}>
+                        <Text style={StyleSheet.flatten([styles.value, best && styles.best, v == null && styles.dim,
+                          !best && r.gaps?.[i] != null && { color: deltaColor(theme, r.gaps[i]) }])}>
                           {v ?? '–'}
                         </Text>
-                        {r.subs?.[i] && <Text style={styles.sub}>{r.subs[i]}</Text>}
+                        {r.subs?.[i] && <Text style={StyleSheet.flatten([styles.sub, styles.lost])}>{r.subs[i]}</Text>}
                         {r.gaps && r.gaps[i] != null && r.gaps[i]! > 0 && (
-                          <GapBar share={r.gaps[i]!} color={colors[i]} width={colW - 16} />
+                          <GapBar share={r.gaps[i]!} color={deltaMark(theme, r.gaps[i]!, 1)} width={colW - 16} />
                         )}
                       </View>
                     );
@@ -265,7 +266,8 @@ function Table({ data, colors }: { data: SideBySide; colors: string[] }) {
       ))}
       {data.reference && (
         <Text style={styles.note}>
-          Bold: the quickest. In a section the others show the gap to it, and their bars scale with that gap. Sections are
+          Bold on green: the quickest. The others show their gap to it in red; in a section their bars grow and deepen
+          with that gap. Sections are
           the report&apos;s, on the official corner numbers, placed on the line of the event&apos;s quickest lap.
         </Text>
       )}
@@ -303,6 +305,7 @@ const useStyles = themed((c) => ({
   colName: { fontSize: 14, fontWeight: '700', flexShrink: 1 },
   colSub: { fontSize: 11, opacity: 0.6 },
   sub: { fontSize: 12, opacity: 0.6, fontVariant: ['tabular-nums'] },
+  lost: { color: c.delta.loss, opacity: 1 }, // a gap to the quickest
   group: { fontSize: 12, fontWeight: '700', opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5,
     paddingTop: 14, paddingBottom: 4 },
   groupNote: { paddingBottom: 4 },

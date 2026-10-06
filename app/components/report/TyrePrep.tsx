@@ -17,7 +17,7 @@ import { Text, useThemeColor } from '@/components/Themed';
 import { useSeriesColors } from '@/components/TraceChart';
 import { formatLap } from '@/lib/api';
 import { Advice, fetchTyrePrep, fixed, signed, Sim, SimPoint, TyrePrep as Report, WHEELS } from '@/lib/tyreprep';
-import { Fonts, Radius, themed, useTheme } from '@/constants/Theme';
+import { Fonts, Palette, Radius, themed, useTheme } from '@/constants/Theme';
 
 const PEAK_LAPS = 6; // flying laps shown lap by lap in the comparison
 // SVG text takes the browser's default (serif) face on web: give it the system sans the rest of the app uses
@@ -75,7 +75,8 @@ function Body({ report }: { report: Report }) {
 
       {sims.length > 0 && (
         <Section title="Warm-up and build laps">
-          <BuildTable sims={sims} fastest={report.fastest?.best.label ?? null} holdS={report.peak_hold_s} />
+          <BuildTable sims={sims} fastest={report.fastest?.best.label ?? null} holdS={report.peak_hold_s}
+            push={report.push} />
           {advice.build && <Para a={advice.build} />}
           {advice.brakes && <Para a={advice.brakes} />}
         </Section>
@@ -196,14 +197,20 @@ function Tiles({ report }: { report: Report }) {
 const LABEL_W = 128;
 const RUN_W = 136;
 
-type Row = { label: string; lines?: 2; cell: (s: Sim) => ReactNode };
+type Push = Report['push'];
+type Row = { label: string; lines?: 2; cell: (s: Sim, theme: Palette, push: Push) => ReactNode };
 
-function atLine(s: Sim, axle: 'front' | 'rear') {
+/** A tyre temperature's colour: below push temperature cold, at or above it ready; none without a push temperature. */
+const tempTone = (theme: Palette, push: Push, axle: 'front' | 'rear', v: number | null | undefined) =>
+  push && v != null ? (v < push[`${axle}_c`] ? theme.tyre.cold : theme.tyre.ok) : undefined;
+
+function atLine(s: Sim, axle: 'front' | 'rear', theme: Palette, push: Push) {
   const pts = s.points.slice(0, Math.max(PEAK_LAPS, s.peak_flying));
   return (
     <Text style={cells.cellText} numberOfLines={1}>
       {pts.map((p, i) => (
-        <Text key={p.lap} style={p.peak ? cells.peakValue : undefined}>
+        <Text key={p.lap} style={StyleSheet.flatten([p.peak && cells.peakValue,
+          { color: tempTone(theme, push, axle, p[axle]) }])}>
           {i ? ' ' : ''}
           {fixed(p[axle])}
         </Text>
@@ -231,8 +238,8 @@ const ROWS: Row[] = [
       <Text style={cells.cellSub}>{signed(s.warm_gain_per_lap.front_bar, 2)} bar</Text>
     </>
   ) },
-  { label: 'Fronts at the line, °C', lines: 2, cell: (s) => atLine(s, 'front') },
-  { label: 'Rears at the line, °C', lines: 2, cell: (s) => atLine(s, 'rear') },
+  { label: 'Fronts at the line, °C', lines: 2, cell: (s, theme, push) => atLine(s, 'front', theme, push) },
+  { label: 'Rears at the line, °C', lines: 2, cell: (s, theme, push) => atLine(s, 'rear', theme, push) },
   { label: 'Up to push temperature', lines: 2, cell: (s) => (
     <Text style={cells.cellText}>{s.cold_start ? `${fixed(s.ready_min, 1)} min` : 'warm start'}</Text>
   ) },
@@ -249,8 +256,9 @@ const ROWS: Row[] = [
 
 const rowHeight = (r: Row) => (r.lines === 2 ? 40 : 28);
 
-function BuildTable({ sims, fastest, holdS }: { sims: Sim[]; fastest: string | null; holdS: number }) {
+function BuildTable({ sims, fastest, holdS, push }: { sims: Sim[]; fastest: string | null; holdS: number; push: Push }) {
   const styles = useStyles();
+  const theme = useTheme();
   const wash = useSeriesColors().reference + '1a'; // the accent at 10 %
   // Cold starts first, quickest to temperature first; then the runs on tyres still warm from earlier.
   const ordered = [...sims].sort((a, b) =>
@@ -275,18 +283,37 @@ function BuildTable({ sims, fastest, holdS }: { sims: Sim[]; fastest: string | n
               </View>
               {ROWS.map((r) => (
                 <View key={r.label} style={StyleSheet.flatten([styles.cell, { height: rowHeight(r) }])}>
-                  {r.cell(s)}
+                  {r.cell(s, theme, push)}
                 </View>
               ))}
             </View>
           ))}
         </ScrollView>
       </View>
+      {push && <TempKey />}
       <Text style={styles.legend}>
         At the line: the TPMS axle average at the start of each flying lap; bold is the run&apos;s best lap. Pace
         held: laps within {holdS} s of that best. Brake dragging, hard stops and weaving count the warm-up above 60
         km/h; swings a normal flying lap also has are left out.
       </Text>
+    </View>
+  );
+}
+
+/** The key to the tyre temperature colours. */
+function TempKey() {
+  const styles = useStyles();
+  const theme = useTheme();
+  return (
+    <View style={styles.legendRow}>
+      <View style={styles.legendItem}>
+        <View style={StyleSheet.flatten([styles.swatch, { backgroundColor: theme.tyre.ok }])} />
+        <Text style={styles.legendText}>fronts and rears at push temperature</Text>
+      </View>
+      <View style={styles.legendItem}>
+        <View style={StyleSheet.flatten([styles.swatch, { backgroundColor: theme.tyre.cold }])} />
+        <Text style={styles.legendText}>colder</Text>
+      </View>
     </View>
   );
 }
@@ -304,7 +331,8 @@ function ReadyChart({ sims, push }: { sims: Sim[]; push: NonNullable<Report['pus
   const [asTable, setAsTable] = useState(false);
   const ink = useThemeColor({}, 'text');
   const surface = useThemeColor({}, 'surface');
-  const accent = useSeriesColors().reference;
+  const ready = theme.tyre.ok; // at push temperature
+  const cold = theme.tyre.cold;
   const pts = sims.flatMap((s) => s.points).filter((p) => p.front != null);
   if (!pts.length) return null;
   const isReady = (p: SimPoint) => p.front != null && p.rear != null && p.front >= push.front_c && p.rear >= push.rear_c;
@@ -336,21 +364,12 @@ function ReadyChart({ sims, push }: { sims: Sim[]; push: NonNullable<Report['pus
         onMouseLeave: () => setPicked(null),
       }
     : {};
-  const ordered = [...pts].sort((a, b) => Number(isReady(a)) - Number(isReady(b))); // accent dots on top
+  const ordered = [...pts].sort((a, b) => Number(isReady(a)) - Number(isReady(b))); // ready dots on top
 
   return (
     <View style={styles.chart}>
       <Text style={styles.chartTitle}>Each flying lap: time off the day&apos;s best against the fronts at the line</Text>
-      <View style={styles.legendRow}>
-        <View style={styles.legendItem}>
-          <View style={StyleSheet.flatten([styles.swatch, { backgroundColor: accent }])} />
-          <Text style={styles.legendText}>fronts and rears at push temperature</Text>
-        </View>
-        <View style={styles.legendItem}>
-          <View style={StyleSheet.flatten([styles.swatch, { backgroundColor: theme.chart.muted }])} />
-          <Text style={styles.legendText}>colder</Text>
-        </View>
-      </View>
+      <TempKey />
       <Text style={styles.readout} numberOfLines={2}>
         {picked
           ? `${picked.sim}, lap ${picked.lap}: ${picked.gap.toFixed(2)} s off · fronts ${fixed(picked.front)} °C, rears ` +
@@ -365,7 +384,7 @@ function ReadyChart({ sims, push }: { sims: Sim[]; push: NonNullable<Report['pus
         {...hover}>
         {width > 0 && (
           <Svg width={width} height={C.height} pointerEvents="none">
-            <Rect x={C.left} y={y(push.gap_s)} width={w} height={y(0) - y(push.gap_s)} fill={accent} fillOpacity={0.1} />
+            <Rect x={C.left} y={y(push.gap_s)} width={w} height={y(0) - y(push.gap_s)} fill={ready} fillOpacity={0.1} />
             {[0, 1, 2, 3].map((g) => (
               <Line key={g} x1={C.left} x2={C.left + w} y1={y(g)} y2={y(g)} stroke={ink} strokeOpacity={g ? 0.08 : 0.25} />
             ))}
@@ -395,7 +414,7 @@ function ReadyChart({ sims, push }: { sims: Sim[]; push: NonNullable<Report['pus
             </SvgText>
             {ordered.map((p) => (
               <Circle key={`${p.sim}-${p.lap}`} cx={x(p.front as number)} cy={y(p.gap)} r={picked === p ? 6 : 4}
-                fill={isReady(p) ? accent : theme.chart.muted} stroke={surface} strokeWidth={2} />
+                fill={isReady(p) ? ready : cold} stroke={surface} strokeWidth={2} />
             ))}
           </Svg>
         )}
@@ -403,13 +422,14 @@ function ReadyChart({ sims, push }: { sims: Sim[]; push: NonNullable<Report['pus
       <Pressable onPress={() => setAsTable(!asTable)} accessibilityRole="button">
         <Text style={styles.toggle}>{asTable ? 'Hide the table' : 'Show these laps as a table'}</Text>
       </Pressable>
-      {asTable && <PointsTable sims={sims} />}
+      {asTable && <PointsTable sims={sims} push={push} />}
     </View>
   );
 }
 
-function PointsTable({ sims }: { sims: Sim[] }) {
+function PointsTable({ sims, push }: { sims: Sim[]; push: Push }) {
   const styles = useStyles();
+  const theme = useTheme();
   const cols: [string, number][] = [['Run, lap', 150], ['Fronts °C', 70], ['Rears °C', 70], ['Bar', 50], ['Off best', 64]];
   return (
     <ScrollView horizontal>
@@ -422,8 +442,12 @@ function PointsTable({ sims }: { sims: Sim[] }) {
             <Text style={StyleSheet.flatten([styles.tCell, styles.tLeft, { width: cols[0][1] }])} numberOfLines={1}>
               {s.label}, lap {p.lap}
             </Text>
-            <Text style={StyleSheet.flatten([styles.tCell, { width: cols[1][1] }])}>{fixed(p.front)}</Text>
-            <Text style={StyleSheet.flatten([styles.tCell, { width: cols[2][1] }])}>{fixed(p.rear)}</Text>
+            <Text style={StyleSheet.flatten([styles.tCell, { width: cols[1][1], color: tempTone(theme, push, 'front', p.front) }])}>
+              {fixed(p.front)}
+            </Text>
+            <Text style={StyleSheet.flatten([styles.tCell, { width: cols[2][1], color: tempTone(theme, push, 'rear', p.rear) }])}>
+              {fixed(p.rear)}
+            </Text>
             <Text style={StyleSheet.flatten([styles.tCell, { width: cols[3][1] }])}>{fixed(p.pf, 2)}</Text>
             <Text style={StyleSheet.flatten([styles.tCell, { width: cols[4][1] }])}>{p.gap.toFixed(2)}</Text>
           </View>

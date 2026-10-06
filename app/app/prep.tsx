@@ -19,7 +19,7 @@ import {
   refreshPrep,
   SetupRun,
 } from '@/lib/prep';
-import { Radius, themed } from '@/constants/Theme';
+import { deltaColor, Radius, themed, useTheme } from '@/constants/Theme';
 
 const POLL_MS = 2000;
 const WIDE = 900;
@@ -319,6 +319,7 @@ function Briefing({ report, weather, official }: { report: PrepReport; weather: 
 function Performance({ rows, weather, official, wide, openEvent }: { rows: PerfRow[]; weather: PrepWeather | null;
   official: PrepOfficial | null; wide: boolean; openEvent: (id: number) => void }) {
   const styles = useStyles();
+  const theme = useTheme();
   const sky = (id: number) => weather?.past.find((p) => p.event_id === id)?.summary?.text ?? null;
   // the official sessions held during the event: their conditions and temperatures at the start
   const sheets = (id: number) => (official?.weather[String(id)] ?? []).map((w) =>
@@ -363,7 +364,9 @@ function Performance({ rows, weather, official, wide, openEvent }: { rows: PerfR
               <Text style={StyleSheet.flatten([styles.cell, styles.cNum])}>{formatLap(r.theoretical)}</Text>
               <Text style={StyleSheet.flatten([styles.cell, styles.cNum])}>{race(r)}</Text>
               <Text style={StyleSheet.flatten([styles.cell, styles.cNum])}>{quali(r)}</Text>
-              <Text style={StyleSheet.flatten([styles.cell, styles.cNum])}>{r.change?.best != null ? signed(r.change.best) : '–'}</Text>
+              <Text style={StyleSheet.flatten([styles.cell, styles.cNum, { color: deltaColor(theme, r.change?.best) }])}>
+                {r.change?.best != null ? signed(r.change.best) : '–'}
+              </Text>
             </View>
             <Text style={styles.note}>{conditions(r) || 'No conditions recorded'}
               {r.drivers.length > 1 ? ` · ${r.drivers.map((d) => `${d.name} ${formatLap(d.best)}`).join(', ')}` : ''}</Text>
@@ -380,7 +383,11 @@ function Performance({ rows, weather, official, wide, openEvent }: { rows: PerfR
           <View style={styles.cardHead}>
             <Text style={styles.cellStrong}>{r.year}</Text>
             <Text style={styles.note} numberOfLines={1}>{r.name}</Text>
-            {r.change?.best != null && <Text style={styles.delta}>{signed(r.change.best)}</Text>}
+            {r.change?.best != null && (
+              <Text style={StyleSheet.flatten([styles.delta, { color: deltaColor(theme, r.change.best) }])}>
+                {signed(r.change.best)}
+              </Text>
+            )}
           </View>
           <View style={styles.grid}>
             <Stat label="Best" value={formatLap(r.best.time)} sub={r.best.driver ?? r.best.session} />
@@ -431,13 +438,21 @@ function Corners({ corners }: { corners: PrepReport['corners'] }) {
 
 function Corner({ r }: { r: CornerRow }) {
   const styles = useStyles();
+  const theme = useTheme();
   const years = Object.values(r.per_event);
   return (
     <View style={styles.corner}>
       <View style={styles.cornerHead}>
         <Text style={styles.code}>{r.code}</Text>
-        <Text style={styles.cornerGain}>{r.gain_s != null ? `${r.gain_s.toFixed(2)} s a lap to find` : ''}</Text>
-        {r.change && <Text style={styles.delta}>{signed(r.change.typical)} typical vs {r.change.from}</Text>}
+        <Text style={StyleSheet.flatten([styles.cornerGain, { color: deltaColor(theme, r.gain_s) }])}>
+          {r.gain_s != null ? `${r.gain_s.toFixed(2)} s a lap to find` : ''}
+        </Text>
+        {r.change && (
+          <Text style={styles.delta}>
+            <Text style={{ color: deltaColor(theme, r.change.typical) }}>{signed(r.change.typical)}</Text> typical vs{' '}
+            {r.change.from}
+          </Text>
+        )}
       </View>
       <Text style={styles.note}>
         {years.map((y) => `${y.year}: best ${y.best?.toFixed(2) ?? '–'} s, typical ${y.typical?.toFixed(2) ?? '–'} s`)
@@ -568,11 +583,16 @@ function Runs({ report }: { report: PrepReport }) {
 
 function Run({ r }: { r: SetupRun }) {
   const styles = useStyles();
+  const theme = useTheme();
   return (
     <View style={styles.run}>
       <Text style={styles.cellStrong}>
         {r.year} · {r.name}{r.driver ? ` · ${r.driver}` : ''} · {formatLap(r.best)}
-        {r.delta_best != null ? ` (${signed(r.delta_best)} vs ${r.compared_with})` : ''}
+        {r.delta_best != null && (
+          <Text>
+            {' ('}<Text style={{ color: deltaColor(theme, r.delta_best) }}>{signed(r.delta_best)}</Text> vs {r.compared_with})
+          </Text>
+        )}
       </Text>
       {r.changes.length > 0 && <Text style={styles.note}>Changed: {r.changes.join(', ')}</Text>}
       {r.setup && r.changes.length === 0 && <Text style={styles.note}>Setup sheet saved</Text>}
