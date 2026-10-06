@@ -284,3 +284,14 @@ class TechniqueCache(Base):
     details: Mapped[str | None] = mapped_column(String(512))  # storage key of every lap's full check
     result_signature: Mapped[str | None] = mapped_column(String(64))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class EventDates(Base):
+    """An event's first and last day when they were set by hand (routers/events.py). An event without a row runs
+    from its sessions' first log date to their last."""
+    __tablename__ = "event_dates"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), unique=True, index=True)
+    start: Mapped[date | None] = mapped_column(Date)
+    end: Mapped[date | None] = mapped_column(Date)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
