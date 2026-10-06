@@ -245,3 +245,12 @@ def test_the_endpoint_waits_for_the_report_then_answers_and_keeps_it(client):
     assert client.get("/track-grip/events/9999").status_code == 404
     empty = client.post("/events", json={"name": "Nothing yet"}).json()
     assert client.get(f"/track-grip/events/{empty['id']}").json()["status"] == "empty"
+
+
+def test_the_pooled_tyre_model_call_matches_the_tyre_model_endpoint(client):
+    """The pooled model is asked for with the tyre model endpoint's own arguments: a car with nothing summarised
+    gives no model rather than an error."""
+    from app.db import SessionLocal
+    from app.routers import track_grip as router
+    with SessionLocal() as db:
+        assert router._tyre_model(db, "logger:none") == (None, None)
