@@ -39,12 +39,13 @@ const MAX_LOGS = 12; // the server reads at most this many logs in one view
 
 // Stint analysis: tick one or more logs, then each stint lap by lap: how the car fades (fuel burn and tyres apart,
 // by phase and corner), grip and balance per phase, and how the driver adapts. Tag laps lost to a safety car, FCY or
-// traffic and they leave the trends. Open with ?session=<id> to start with that session's log ticked.
+// traffic and they leave the trends. Open with ?session=<id> to start with that session's log ticked, or ?event=<id>
+// with every run of the event.
 export default function StintScreen() {
-  const params = useLocalSearchParams<{ session?: string }>();
+  const params = useLocalSearchParams<{ session?: string; event?: string }>();
   const [events, setEvents] = useState<LogEvent[] | null>(null);
   const [ticked, setTicked] = useState<number[]>([]);
-  const [pickerOpen, setPickerOpen] = useState(!params.session);
+  const [pickerOpen, setPickerOpen] = useState(!params.session && !params.event);
   const [view, setView] = useState<StintView | null>(null);
   const [scope, setScope] = useState<string>(ALL);
   const [busy, setBusy] = useState(false);
@@ -62,10 +63,18 @@ export default function StintScreen() {
       setEvents(evs);
       const sid = params.session ? Number(params.session) : null;
       const main = evs.flatMap((e) => e.sessions).find((s) => s.id === sid)?.files.find((f) => f.main && f.laps > 0);
-      if (main) setTicked([main.id]);
+      if (main) {
+        setTicked([main.id]);
+        return;
+      }
+      // ?event=<id>: every run of the event, each by its main log with laps (as "Whole event" ticks them)
+      const ev = params.event ? evs.find((e) => e.id === Number(params.event)) : undefined;
+      const mains = (ev?.sessions ?? []).flatMap((s) => s.files.filter((f) => f.main && f.laps > 0).slice(-1))
+        .map((f) => f.id);
+      if (mains.length > 0) setTicked(mains.slice(0, MAX_LOGS));
       else setPickerOpen(true);
     }, (e) => setError((e as Error).message));
-  }, [params.session]);
+  }, [params.session, params.event]);
 
   const load = useCallback((files: number[], keepScope: boolean) => {
     const n = ++request.current;
