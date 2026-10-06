@@ -21,6 +21,9 @@ from app import results
 results.bind_models()  # before the results modules below use its tables
 from app.results import sync as results_sync  # noqa: E402
 from app.routers import results as series_results  # noqa: E402
+from app import catalog as vehicle_lists, seasons  # noqa: E402
+
+seasons.bind_models()  # their tables on the current database's metadata (the tests load a fresh one each time)
 
 
 @asynccontextmanager
@@ -66,6 +69,8 @@ app.include_router(stint_tool.router, dependencies=signed_in)
 app.include_router(prep_report.router, dependencies=signed_in)
 app.include_router(series_results.router, dependencies=signed_in)
 app.include_router(garage.router, dependencies=signed_in)
+app.include_router(vehicle_lists.router, dependencies=signed_in)
+app.include_router(seasons.router, dependencies=signed_in)
 app.include_router(debriefs.media_router, dependencies=[Depends(require_user_or_query_token)])
 
 
