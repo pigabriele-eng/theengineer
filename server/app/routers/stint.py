@@ -19,7 +19,7 @@ from app.analysis.balance import car_geometry
 from app.analysis.fuel import FUEL_DENSITY
 from app.analysis.insights import RunInput
 from app.analysis.laps import load_session
-from app.analysis.stint import ROLES, VERSION, LogSummary, assemble, reduce_run
+from app.analysis.stint import COUNT_TAG, PIT_NOT_COUNTED, ROLES, VERSION, LogSummary, assemble, reduce_run
 from app.db import get_db
 from app.laptags import TAGS, LapTag, set_tag, tag_row, tags_for_files, to_dict
 from app.routers.balance import preset_for
@@ -209,7 +209,8 @@ def list_tags(session_id: int | None = None, file_id: int | None = None, db: Ses
 
 @router.put("/lap-tags")
 def put_tag(body: TagIn, db: Session = Depends(get_db)):
-    """Tag a lap: sc (safety car), fcy, traffic, or none (looked at: the lap counts)."""
+    """Tag a lap: sc (safety car), fcy, traffic, none (looked at: no reason to leave it out), or count (the lap joins
+    the stint's trends although the analysis leaves it out: an out-lap, in-lap, slow lap or outlier; not a pit lap)."""
     if body.tag not in TAGS:
         raise HTTPException(422, f"tag: one of {', '.join(TAGS)}")
     f = db.get(models.LoggerFile, body.file_id)
@@ -218,6 +219,11 @@ def put_tag(body: TagIn, db: Session = Depends(get_db)):
     lap = db.scalar(select(models.Lap).where(models.Lap.file_id == f.id, models.Lap.number == body.lap))
     if lap is None:
         raise HTTPException(404, f"No lap {body.lap} in this log")
+    if body.tag == COUNT_TAG:
+        # where the stops are comes from the log's reduction (in memory once the stint view has read the log)
+        log, _ = reduced(db, f)
+        if any(l.number == lap.number and l.kind == "pit" for l in log.laps):
+            raise HTTPException(422, PIT_NOT_COUNTED)
     row = set_tag(db, f.id, f.session_id, lap, body.tag)
     db.commit()
     return to_dict(row)

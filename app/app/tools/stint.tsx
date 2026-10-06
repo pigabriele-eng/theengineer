@@ -39,8 +39,8 @@ const MAX_LOGS = 12; // the server reads at most this many logs in one view
 
 // Stint analysis: tick one or more logs, then each stint lap by lap: how the car fades (fuel burn and tyres apart,
 // by phase and corner), grip and balance per phase, and how the driver adapts. Tag laps lost to a safety car, FCY or
-// traffic and they leave the trends. Open with ?session=<id> to start with that session's log ticked, or ?event=<id>
-// with every run of the event.
+// traffic and they leave the trends; count a lap the analysis leaves out (not a pit lap) and it joins them. Open with
+// ?session=<id> to start with that session's log ticked, or ?event=<id> with every run of the event.
 export default function StintScreen() {
   const params = useLocalSearchParams<{ session?: string; event?: string }>();
   const [events, setEvents] = useState<LogEvent[] | null>(null);
@@ -134,7 +134,7 @@ export default function StintScreen() {
     && eventMains.every((f) => ticked.includes(f));
   const current = tickedSessions.length === 1 ? tickedSessions[0] ?? -1 : wholeEvent ? null : -1;
 
-  const tag = async (stint: Stint, lap: StintLap, to: Tag | 'none' | null) => {
+  const tag = async (stint: Stint, lap: StintLap, to: Tag | 'none' | 'count' | null) => {
     if (stint.file_id == null) return;
     setTagging(`${stint.key}:${lap.lap}`);
     try {
@@ -184,7 +184,7 @@ export default function StintScreen() {
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
               {view.stints.length > 1 && (
                 <ScopeChip on={scope === ALL} onPress={() => setScope(ALL)} title="All stints"
-                  sub={`${view.overall.fitted_laps} flying laps`} />
+                  sub={`${view.overall.fitted_laps} laps in the trend`} />
               )}
               {view.stints.map((s) => (
                 <ScopeChip key={s.key} on={scope === s.key} onPress={() => setScope(s.key)}
@@ -629,7 +629,7 @@ function LapTimes({ stint }: { stint: Stint }) {
 }
 
 function LapList({ stint, onTag, tagging }: {
-  stint: Stint; onTag: (s: Stint, l: StintLap, to: Tag | 'none' | null) => void; tagging: string | null;
+  stint: Stint; onTag: (s: Stint, l: StintLap, to: Tag | 'none' | 'count' | null) => void; tagging: string | null;
 }) {
   const tint = useThemeColor({}, 'tint');
   const background = useThemeColor({}, 'background');
@@ -637,15 +637,19 @@ function LapList({ stint, onTag, tagging }: {
     <View style={styles.block}>
       <Text style={styles.small}>
         Tag a lap lost to a safety car, an FCY or traffic: it stays in the list, marked, and leaves the trends, the
-        fade and the averages. Tap the tag again to clear it.
+        fade and the averages. Tap the tag again to clear it. A lap left out (an out-lap, in-lap, slow lap or one far
+        off the trend) can be counted: it then goes into every figure like any other lap.
       </Text>
       {stint.laps.map((l) => {
         const taggable = l.kind === 'flying' || l.kind === 'slow';
         const busy = tagging === `${stint.key}:${l.lap}`;
-        const status = l.tag ? `${TAG_LABEL[l.tag]} · left out`
-          : l.kind !== 'flying' ? `${KIND_LABEL[l.kind]} · left out`
-            : l.outlier ? `${signed(l.off_trend_s, 1)} s off the trend · left out`
-              : l.in_fit ? (l.off_trend_s != null ? `${signed(l.off_trend_s)} s to the trend` : 'in the trend') : 'left out';
+        const countable = !l.in_fit && l.kind !== 'pit';
+        const trendWords = l.off_trend_s != null ? `${signed(l.off_trend_s)} s to the trend` : 'in the trend';
+        const status = l.counted ? (l.kind !== 'flying' ? `${KIND_LABEL[l.kind]} · in the trend` : trendWords)
+          : l.tag ? `${TAG_LABEL[l.tag]} · left out`
+            : l.kind !== 'flying' ? `${KIND_LABEL[l.kind]} · left out`
+              : l.outlier ? `${signed(l.off_trend_s, 1)} s off the trend · left out`
+                : l.in_fit ? trendWords : 'left out';
         return (
           <View key={l.lap} style={StyleSheet.flatten([styles.lapRow, l.tag && styles.lapTagged])}>
             <View style={styles.lapMain}>
@@ -683,17 +687,43 @@ function LapList({ stint, onTag, tagging }: {
                     ? `Looks like ${l.suggestion.options.map((t) => TAG_WORDS[t]).join(' or ')}: ${l.suggestion.why}.`
                     : `${l.suggestion.why.charAt(0).toUpperCase()}${l.suggestion.why.slice(1)}`}
                 </Text>
-                <Pressable onPress={() => onTag(stint, l, 'none')} disabled={busy} hitSlop={6} accessibilityRole="button">
-                  <Text style={{ color: tint, fontSize: 13 }}>No, it counts</Text>
-                </Pressable>
+                {/* a lap left out is counted with the button below; one in the trend only needs the hint dismissed */}
+                {l.in_fit && (
+                  <Pressable onPress={() => onTag(stint, l, 'none')} disabled={busy} hitSlop={6} accessibilityRole="button">
+                    <Text style={{ color: tint, fontSize: 13 }}>No, it counts</Text>
+                  </Pressable>
+                )}
               </View>
             )}
-            {l.checked && !l.tag && (
+            {l.checked && l.in_fit && (
               <View style={styles.suggest}>
                 <Text style={styles.small}>You checked this lap: it counts.</Text>
                 <Pressable onPress={() => onTag(stint, l, null)} disabled={busy} hitSlop={6} accessibilityRole="button">
                   <Text style={{ color: tint, fontSize: 13 }}>Undo</Text>
                 </Pressable>
+              </View>
+            )}
+            {l.counted && (
+              <View style={styles.suggest}>
+                <Text style={StyleSheet.flatten([styles.countedText, { color: tint }])}>✓ Counted by you</Text>
+                <Pressable onPress={() => onTag(stint, l, null)} disabled={busy} hitSlop={8} accessibilityRole="button"
+                  accessibilityLabel={`Undo: stop counting lap ${l.lap}`}>
+                  <Text style={{ color: tint, fontSize: 13, textDecorationLine: 'underline' }}>Undo</Text>
+                </Pressable>
+              </View>
+            )}
+            {countable && (
+              <View style={styles.suggest}>
+                <Pressable onPress={() => onTag(stint, l, 'count')} disabled={busy} hitSlop={6}
+                  accessibilityRole="button" accessibilityLabel={`Count lap ${l.lap} in the trends`}
+                  style={StyleSheet.flatten([styles.countButton, { borderColor: tint }])}>
+                  <Text style={StyleSheet.flatten([styles.countText, { color: tint }])}>Count this lap</Text>
+                </Pressable>
+              </View>
+            )}
+            {l.kind === 'pit' && (
+              <View style={styles.suggest}>
+                <Text style={styles.small}>Can&apos;t be counted: the time standing in the pits swamps the lap.</Text>
               </View>
             )}
           </View>
@@ -841,6 +871,9 @@ const styles = StyleSheet.create({
     minWidth: 44, alignItems: 'center' },
   tagText: { fontSize: 13 },
   suggest: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 12, rowGap: 2, marginLeft: 44 },
+  countButton: { borderWidth: 1, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 6 },
+  countText: { fontSize: 13, fontWeight: '600' },
+  countedText: { fontSize: 13, fontWeight: '600' },
   row: { flexDirection: 'row', borderBottomWidth: 1, borderColor: '#8882', paddingVertical: 4 },
   cell: { fontVariant: ['tabular-nums'], fontSize: 13, paddingRight: 6, textAlign: 'right' },
 });

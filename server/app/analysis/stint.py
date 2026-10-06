@@ -4,7 +4,8 @@ A stint is the laps between two stops (the car standing in the pit box or the ga
 so the screen stays quick and a small server copes:
 
 - reduce_run reads one log (the heavy part: the caller runs it under app.heavy.lock, one log at a time, and keeps
-  the result) and keeps, per lap, a few numbers per corner and phase and three small arrays per flying lap;
+  the result) and keeps, per lap, a few numbers per corner and phase and three small arrays per lap (every lap but
+  a pit lap, so a lap the user counts can join the trends);
 - assemble works out the stints of any set of reduced logs with the user's lap tags, in a fraction of a second.
 
 Per lap: the grip the car pulled in each phase, in g (the 90th percentile over the lap's metres in the phase):
@@ -16,7 +17,8 @@ peak brake pressure, braking done while turning, minimum speed and where it fall
 pick-up and full throttle, traction control, the line at the apex (GPS) and upshift revs. Fuel used and what its
 mass costs on the lap come from analysis/fuel.py.
 
-Per stint: trends through the flying laps (laps tagged safety car, FCY or traffic, and clear outliers, stay out),
+Per stint: trends through the flying laps (laps tagged safety car, FCY or traffic, and clear outliers, stay out; an
+out-lap, in-lap, slow lap or outlier the user counts comes in, a pit lap never does),
 the lap time trend split into fuel burn and tyre fade, the tyre fade split by phase (the seconds a lap lost where
 the car brakes, turns in, corners, exits and accelerates, as the stint goes on), and the balance shift per corner
 from the stint's early laps to its late laps.
@@ -36,7 +38,7 @@ from app.analysis.insights import RunInput
 from app.analysis.laps import MASTER_HZ, CornerSpec, Lap, SessionData, Section, lap_length, make_sections
 from app.vehicle.tyre_fit import NotEnoughData
 
-VERSION = "stint-2"  # bump when what reduce_run keeps changes, so cached reductions are made again
+VERSION = "stint-3"  # bump when what reduce_run keeps changes, so cached reductions are made again
 STOP_KMH = 5.0  # slower than this is standing still
 STOP_S = 5.0  # standing still this long is a stop in the pits, and ends the stint
 SUSTAINED_S = 1.0  # sustained lateral g is the best average over this long
@@ -60,6 +62,8 @@ COMPONENTS = (("braking", BRAKE, "Straight-line braking", "braking"), ("trail", 
               ("mid", MID, "Mid-corner", "mid"), ("exit", EXIT, "Traction on exit", "exit"),
               ("power", POWER, "Full-throttle acceleration", "power"))
 EXCLUDING_TAGS = ("sc", "fcy", "traffic")  # "none": the user looked and the lap counts
+COUNT_TAG = "count"  # the user counts a lap the analysis leaves out (not a pit lap): it joins the trends
+PIT_NOT_COUNTED = "A pit lap can't be counted: the time standing in the pits swamps everything measured on it."
 TAG_LABEL = {"sc": "Safety car", "fcy": "FCY", "traffic": "Traffic"}
 # the driver's inputs, per corner: label, unit, how the change reads (word when it rises, word when it falls)
 DRIVER = {
@@ -266,8 +270,8 @@ class LapSummary:
     kind: str
     values: dict[str, float] = field(default_factory=dict)  # whole-lap numbers (nan where there is none)
     sections: dict[str, np.ndarray] | None = None  # SECTION_KEYS -> one value per section
-    # flying laps only: seconds per metre, the phase on each metre, seconds per metre per kg of mass, and the
-    # balance samples (metre, understeer angle, |lateral g|, phase) where the car corners
+    # every lap but a pit lap: seconds per metre, the phase on each metre, seconds per metre per kg of mass, and
+    # the balance samples (metre, understeer angle, |lateral g|, phase) where the car corners
     dt: np.ndarray | None = None
     phase: np.ndarray | None = None
     sens: np.ndarray | None = None
@@ -538,8 +542,7 @@ def reduce_run(run: RunInput, corners: list[CornerSpec] | None = None, geo: Geom
             row.sections = _section_values(tr, dt, log.sections, geom, steer)
             sens = mass_cost(tr["speed"], tr.get("throttle", np.zeros(length + 1)), tr["braking"], mass_kg)
             row.values["sens_kg"] = float(sens.sum())
-            if kind != "flying":
-                continue
+            # kept for out-laps, in-laps and slow laps too: they stay out of the trends unless the user counts them
             row.dt, row.sens = dt.astype(np.float32), sens
             row.phase = np.rint(tr["phase"][:-1]).astype(np.int8)
             if has_balance and "understeer" in tr:
@@ -720,11 +723,15 @@ def _stint(log: LogSummary, number: int, laps: list[LapSummary], tags: dict, k: 
     for lap in laps:
         tag = _tag_of(tags, log, lap)
         rows.append({"lap": lap.number, "tyre_lap": lap.tyre_lap, "kind": lap.kind,
-                     "tag": tag if tag in EXCLUDING_TAGS else None, "checked": tag == "none", "suggestion": None,
+                     "tag": tag if tag in EXCLUDING_TAGS else None, "checked": tag == "none",
+                     "counted": tag == COUNT_TAG and lap.kind != "pit" and lap.dt is not None, "suggestion": None,
                      "in_fit": False, "outlier": False, "off_trend_s": None, "time": round(lap.time, 3),
                      "fuel_kg": None})
+    # the outlier test runs over the flying laps as it always does (a lap the user counts doesn't move the others),
+    # then the counted laps join the fit whatever the test says
     candidates = [i for i, (lap, row) in enumerate(zip(laps, rows, strict=True))
                   if lap.kind == "flying" and row["tag"] is None and lap.dt is not None]
+    counted = [i for i, row in enumerate(rows) if row["counted"]]
     x = np.array([laps[i].tyre_lap for i in candidates], float)
     times = np.array([laps[i].time for i in candidates])
     bad = outliers(x, times)
@@ -732,9 +739,11 @@ def _stint(log: LogSummary, number: int, laps: list[LapSummary], tags: dict, k: 
         keep = ~bad
         line = np.polyfit(x[keep], times[keep], 1) if np.count_nonzero(keep) >= 2 else [0.0, np.median(times)]
         for i, b, xi, t in zip(candidates, bad, x, times, strict=True):
-            rows[i]["outlier"] = bool(b)
+            rows[i]["outlier"] = bool(b) and not rows[i]["counted"]
             rows[i]["off_trend_s"] = round(float(t - np.polyval(line, xi)), 2)
-    fitted = [i for i, b in zip(candidates, bad, strict=True) if not b]
+        for i in counted:
+            rows[i]["off_trend_s"] = round(float(laps[i].time - np.polyval(line, laps[i].tyre_lap)), 2)
+    fitted = sorted({i for i, b in zip(candidates, bad, strict=True) if not b} | set(counted))
     for i in fitted:
         rows[i]["in_fit"] = True
     fl = [laps[i] for i in fitted]
@@ -801,7 +810,7 @@ def _stint(log: LogSummary, number: int, laps: list[LapSummary], tags: dict, k: 
                "g_p90": float(np.median([l.values["g_p90"] for l in fl])) if fl else np.nan,
                "lifts": typical_sec["lifts"], "coast_s": typical_sec["coast_s"], "full_m": typical_sec["full_m"]}
     for lap, row in zip(laps, rows, strict=True):
-        if row["tag"] is None and not row["checked"]:
+        if row["tag"] is None and not row["checked"] and not row["counted"]:  # the user's word stands
             row["suggestion"] = _suggest(lap, row, typical, typical_sec["time"], codes)
 
     # per fitted lap series for the trends

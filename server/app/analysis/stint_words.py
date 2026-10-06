@@ -308,18 +308,32 @@ def _advice(fade: list[dict], fits: dict) -> str | None:
     return ADVICE[top["key"]].format(at=at)
 
 
+KIND_WORDS = {"out": "out-lap", "in": "in-lap", "pit": "pit stop", "slow": "slow lap"}
+
+
 def _left_out(rows: list[dict]) -> str | None:
-    left = []
+    """The laps left out of the trends and why, and the laps the user counted in."""
+    left, counted = [], []
     for r in rows:
+        if r.get("counted"):
+            why = KIND_WORDS.get(r["kind"]) or (f"{r['off_trend_s']:+.1f} s off the trend"
+                                                if r.get("off_trend_s") is not None else None)
+            counted.append(f"lap {r['lap']}" + (f" ({why})" if why else ""))
+            continue
         if r["in_fit"]:
             continue
-        why = {"out": "out-lap", "in": "in-lap", "pit": "pit stop", "slow": "slow lap"}.get(r["kind"])
+        why = KIND_WORDS.get(r["kind"])
         if r.get("tag"):
             why = {"sc": "safety car", "fcy": "FCY", "traffic": "traffic"}[r["tag"]]
         elif r["outlier"]:
             why = f"{r['off_trend_s']:+.1f} s off the trend"
         left.append(f"lap {r['lap']} ({why})")
-    return ("Left out of the trends: " + ", ".join(left) + ".") if left else None
+    out = []
+    if left:
+        out.append("Left out of the trends: " + ", ".join(left) + ".")
+    if counted:
+        out.append("Counted in by you: " + ", ".join(counted) + ".")
+    return " ".join(out) or None
 
 
 def stint_words(st: dict, units: dict) -> dict:
@@ -338,7 +352,7 @@ def overall_words(overall: dict, stints: list[dict], units: dict) -> dict:
         one = next((s for s in stints if s["fitted_laps"] >= 2), None)
         scope = f"{one['run']} stint {one['number']}" if one else "these logs"
     else:
-        scope = f"the {n} stints in view ({overall['fitted_laps']} flying laps)"
+        scope = f"the {n} stints in view ({overall['fitted_laps']} laps in the trend)"
     sections = overall["sections"]
     return {"scope": scope, "headline": _headline(overall["fits"], overall["fade"], scope),
             "advice": _advice(overall["fade"], overall["fits"]), "fuel": _fuel(overall["fits"], overall["fuel"]),
