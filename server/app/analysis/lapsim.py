@@ -4,8 +4,14 @@ A quasi-steady-state lap simulation. The line's curvature and the cornering the 
 speed through every corner; the car then accelerates out of each one and brakes into the next as hard as it has
 shown it can at that place while cornering that hard, and at full throttle as its power curve and the place allow.
 
-One model serves the report's theoretical lap and realistic target, the scores, and the technique check's perfect
-driving from any point of a lap (technique.Envelope), so they always agree.
+A model is only a model: fed only the fastest lap's own limits, it still drives that lap's own line about a second
+quicker than the lap itself (the limits are each place's best over a few metres either side, and no lap is driven
+at the limit everywhere). So every target is calibrated on the fastest lap (Calibration): its real time and speed
+at every metre, plus what perfect driving at the target's limits gains over perfect driving at that lap's own limits
+there. The model's own error cancels, and each place gains only what other laps really showed beyond the fastest lap.
+
+One model and one calibration serve the report's theoretical lap and realistic target, the scores, and the technique
+check's perfect driving from any point of a lap (technique.Envelope), so they always agree.
 """
 from __future__ import annotations
 
@@ -111,5 +117,75 @@ class LapModel:
 
 
 def theoretical_lap(curvature: np.ndarray, lim: PlaceLimits) -> SimLap:
-    """Fastest lap on a closed line with the given curvature (1/m per metre, the timing line at both ends)."""
+    """Fastest lap on a closed line with the given curvature (1/m per metre, the timing line at both ends), as the
+    model drives it (not calibrated)."""
     return LapModel(np.asarray(curvature, float)[:-1], lim).sim()
+
+
+@dataclass
+class Calibration:
+    """The model's own error along the fastest lap, metre by metre: the lap's real time and speed against perfect
+    driving at its own limits on its line (local_limits.place_limits own=True). Every point of the line's distance
+    grid, the timing line at both ends. For the theoretical lap, also what it takes from the best pass of a section
+    that is quicker than it (to_best)."""
+    t: np.ndarray  # s to each metre: the fastest lap's real time
+    speed: np.ndarray  # km/h: its real speed
+    own: SimLap  # perfect driving at its own limits on its line
+    best_t: np.ndarray | None = None  # s to each metre (none above zero): where a section's best pass is quicker
+    best_v: np.ndarray | None = None  # km/h at each metre: the same for its speed
+
+    @classmethod
+    def of(cls, reference: dict[str, np.ndarray], lap_time: float, own: SimLap) -> Calibration:
+        """From the fastest lap's trace (its "t" if it has one, else its speed) and its lap time, which its time to
+        each metre is scaled to (the trace's own timing is a hair off the lap's)."""
+        v = np.asarray(reference["speed"], float)
+        if "t" in reference:
+            t = np.asarray(reference["t"], float) - float(reference["t"][0])
+        else:
+            ms = np.maximum(v, 1.0) / 3.6
+            t = np.concatenate([[0.0], np.cumsum(2 / (ms[:-1] + ms[1:]))])
+        return cls(t * (lap_time / t[-1]), v, own)
+
+    def target(self, sim: SimLap) -> SimLap:
+        """A target on the fastest lap's line at limits never below its own: its real lap, gaining at every metre
+        what perfect driving at the target's limits gains there over perfect driving at its own. Never slower than
+        the fastest lap anywhere."""
+        gain = np.minimum(np.diff(sim.t) - np.diff(self.own.t), 0.0)
+        t = np.concatenate([[0.0], np.cumsum(np.diff(self.t) + gain)])
+        speed = self.speed + np.maximum(sim.speed - self.own.speed, 0.0)
+        if self.best_t is not None:
+            t, speed = t + self.best_t, speed + self.best_v
+        return SimLap(speed, t, float(t[-1]), sim.limited_by)
+
+    def to_best(self, sim: SimLap, best: list[tuple[int, int, float]]) -> Calibration:
+        """This calibration for a target that is never slower than the best pass through any section (start metre,
+        end metre, the best pass's time): where the target would be, its time through the section is scaled to the
+        best pass's, its speed with it."""
+        lap = self.target(sim)
+        dt = np.diff(lap.t)
+        extra, dv = np.zeros_like(dt), np.zeros_like(lap.speed)
+        for a, b, quickest in best:
+            took = float(lap.t[b] - lap.t[a])
+            if quickest < took:
+                f = quickest / took
+                extra[a:b] = dt[a:b] * (f - 1)
+                dv[a + 1:b] = lap.speed[a + 1:b] * (1 / f - 1)
+        return Calibration(self.t, self.speed, self.own, np.concatenate([[0.0], np.cumsum(extra)]), dv)
+
+    @property
+    def dt(self) -> np.ndarray:
+        """s to each metre: what to add to perfect driving's time, on any line of the same track."""
+        out = self.t - self.own.t
+        return out + self.best_t if self.best_t is not None else out
+
+    @property
+    def dv(self) -> np.ndarray:
+        """km/h at each metre: what to add to perfect driving's speed."""
+        out = self.speed - self.own.speed
+        return out + self.best_v if self.best_v is not None else out
+
+    def lap(self, sim: SimLap) -> SimLap:
+        """Perfect driving on any lap's line (the same distance grid), with the model's error at every metre taken
+        out as measured on the fastest lap."""
+        dt = self.dt
+        return SimLap(sim.speed + self.dv, sim.t + dt, sim.time + float(dt[-1]), sim.limited_by)

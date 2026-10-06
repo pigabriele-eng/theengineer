@@ -2,7 +2,9 @@
 
 No reference lap is needed. The car's own quick laps give its limits at every place of the track
 (local_limits.py); the fastest lap's line driven at those limits everywhere gives the theoretical lap (lapsim.py),
-and at the limits a quick lap usually shows there, the realistic target. Every lap is then measured against the
+and at the limits a quick lap usually shows there, the realistic target. Both are calibrated on the fastest lap
+(lapsim.Calibration): its real time at every metre, less what perfect driving at the target's limits gains there over
+perfect driving at that lap's own limits, so the model's own error cancels. Every lap is then measured against the
 theoretical lap, corner by corner and phase by phase, and the laps are compared with each other to find what the
 quick ones do. The car's grip envelope (limits.py) describes how much of its grip each lap used.
 """
@@ -16,7 +18,7 @@ import numpy as np
 from app.analysis.align import TrackLine, aligned_trace, track_line
 from app.analysis.channels import BRAKE, EXIT, MID, PHASES, POWER, TRAIL, math_channels
 from app.analysis.laps import CornerSpec, SessionData, Section, lap_length, make_sections
-from app.analysis.lapsim import LIMITED_BY, SimLap, theoretical_lap
+from app.analysis.lapsim import LIMITED_BY, Calibration, SimLap, theoretical_lap
 from app.analysis.limits import CarLimits, car_limits
 from app.analysis.local_limits import PlaceLimits, place_limits
 from app.analysis.scan import channel_scan
@@ -67,6 +69,8 @@ class Prepared:
     perfect: PlaceLimits | None = None  # the limits sim drives at
     held: PlaceLimits | None = None  # the limits a quick lap usually shows at every place
     realistic: SimLap | None = None  # the realistic target: the reference line at the held limits
+    calibration: Calibration | None = None  # sim's: the model's own error along the reference lap, taken out
+    held_calibration: Calibration | None = None  # the realistic target's
 
 
 # ---------- preparation ----------
@@ -99,12 +103,11 @@ def prepare(runs: list[RunInput], corners: list[CornerSpec] | None = None, *,
         if drop_channels:
             r.data.channels = {}
     reference = next(x for x in laps if x.run == ref_run.name and x.number == ref_lap.number)
-    t = targets(laps, reference.trace)
-    for x in laps:
-        x.own_sim = _closed_sim(x.trace["curvature"], t.perfect)
     sections, numbering = make_sections(reference.trace, corners)
-    return Prepared(line, len(reference.trace["distance"]), reference, laps, t.limits, t.sim, sections, numbering,
-                    t.perfect, t.held, t.realistic)
+    t = targets(laps, reference.trace, reference.time, sections)
+    for x in laps:
+        x.own_sim = t.calibration.lap(_closed_sim(x.trace["curvature"], t.perfect))
+    return t.prepared(line, reference, laps, sections, numbering)
 
 
 @dataclass
@@ -112,18 +115,46 @@ class Targets:
     limits: CarLimits
     perfect: PlaceLimits
     held: PlaceLimits
-    sim: SimLap
+    sim: SimLap  # calibrated, as realistic
     realistic: SimLap
+    calibration: Calibration  # sim's
+    held_calibration: Calibration  # realistic's
+
+    def prepared(self, line: TrackLine | None, reference: LapRecord, laps: list[LapRecord], sections: list[Section],
+                 numbering: str) -> Prepared:
+        return Prepared(line, len(reference.trace["t"]), reference, laps, self.limits, self.sim, sections, numbering,
+                        self.perfect, self.held, self.realistic, self.calibration, self.held_calibration)
 
 
-def targets(laps: list, reference: dict[str, np.ndarray]) -> Targets:
+def _times(x) -> np.ndarray:
+    """A lap's time to each metre of the line."""
+    if "t" in x.trace:
+        return np.asarray(x.trace["t"], float)
+    return np.concatenate([[0.0], np.cumsum(np.asarray(x.dt, float)[:-1])])
+
+
+def targets(laps: list, reference: dict[str, np.ndarray], lap_time: float,
+            sections: list[Section] | None = None) -> Targets:
     """The car's limits from its quick laps, the theoretical lap and the realistic target on the reference line.
 
-    laps: anything with .time and .trace (the clean laps on one distance grid); reference: the fastest lap's trace."""
+    laps: anything with .time and .trace (the clean laps on one distance grid; .dt, seconds per metre, where the
+    trace has no "t"); reference: the fastest lap's trace, lap_time its time. Each target is the fastest lap's real
+    time at every metre, less what perfect driving at the target's limits gains there over perfect driving at that
+    lap's own limits (lapsim.Calibration): the model's own error cancels, and neither target is slower than the
+    fastest lap anywhere, nor through any of the sections. The theoretical lap is also never slower than the best
+    pass through a section: that is what a lap has really shown there."""
     traces = [x.trace for x in _limit_laps(laps)]
-    perfect, held = place_limits(traces, reference)
+    perfect, held, own = place_limits(traces, reference, own=True)
     curvature = reference["curvature"]
-    return Targets(car_limits(traces), perfect, held, _closed_sim(curvature, perfect), _closed_sim(curvature, held))
+    cal = Calibration.of(reference, lap_time, _closed_sim(curvature, own))
+    raw, raw_held = _closed_sim(curvature, perfect), _closed_sim(curvature, held)
+    cal_p = cal_h = cal
+    if sections:
+        def best(ts: list[np.ndarray]) -> list[tuple[int, int, float]]:
+            return [(s.start, s.end, min(float(t[s.end] - t[s.start]) for t in ts)) for s in sections]
+        cal_p = cal.to_best(raw, best([_times(x) for x in laps]))
+        cal_h = cal.to_best(raw_held, best([np.asarray(reference["t"], float)]))  # the fastest lap's own, as timed
+    return Targets(car_limits(traces), perfect, held, cal_p.target(raw), cal_h.target(raw_held), cal_p, cal_h)
 
 
 def _limit_laps(laps: list[LapRecord]) -> list[LapRecord]:
@@ -137,7 +168,8 @@ def _limit_laps(laps: list[LapRecord]) -> list[LapRecord]:
 
 
 def _closed_sim(curvature: np.ndarray, limits: PlaceLimits) -> SimLap:
-    """Perfect driving on a lap's line (curvature per metre, the timing line at both ends) at the place limits."""
+    """Perfect driving on a lap's line (curvature per metre, the timing line at both ends) at the place limits, as
+    the model drives it (not calibrated)."""
     return theoretical_lap(np.asarray(curvature, float), limits)
 
 

@@ -737,6 +737,10 @@ METHOD = [
     "place (90th percentile of the laps; never less than the fastest lap itself showed there).",
     "The realistic target is the same at what a quick lap usually shows at each place (the median, and again never "
     "less than the fastest lap): no lap puts the best of every place together, but this is within reach.",
+    "Both are measured from the fastest lap itself: its real time at every metre, less only what the simulation "
+    "gains there at those limits over the same simulation at the fastest lap's own limits. So the simulation's own "
+    "error cancels, a section gains only what other laps really showed there, and neither target is slower than the "
+    "fastest lap anywhere. The theoretical lap is also never slower than the best pass of a section.",
     "Sections run from the fast point before a corner to the same point before the next one, so each holds the "
     "braking, the corner and the straight after it. They carry the track's official corner numbers.",
     "Quick passes are the quickest tenth of all passes of a section (at least three). Typical is the median pass. "

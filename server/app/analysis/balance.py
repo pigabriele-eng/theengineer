@@ -214,10 +214,9 @@ def prepared(col: Collected, corners: list[CornerSpec] | None) -> Prepared | Non
     if not laps:
         return None
     reference = min(laps, key=lambda x: x.time)
-    t = targets(laps, reference.trace)
     sections, numbering = make_sections(reference.trace, corners)
-    return Prepared(col.line, len(reference.trace["t"]), reference, laps, t.limits, t.sim, sections, numbering,
-                    t.perfect, t.held, t.realistic)
+    t = targets(laps, reference.trace, reference.time, sections)
+    return t.prepared(col.line, reference, laps, sections, numbering)
 
 
 # ---------- the analysis ----------
