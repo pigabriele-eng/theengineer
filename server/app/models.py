@@ -295,3 +295,14 @@ class EventDates(Base):
     start: Mapped[date | None] = mapped_column(Date)
     end: Mapped[date | None] = mapped_column(Date)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class ImportEvent(Base):
+    """An event an import made for an uploaded zip (routers/imports.py), so the app can offer to name it, or to put its
+    sessions into an event that already holds the same race weekend, when the upload ends (routers/event_naming.py)."""
+    __tablename__ = "import_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # no foreign keys: the row of an import or event that no longer exists is simply never read
+    job_id: Mapped[int] = mapped_column(Integer, index=True)
+    event_id: Mapped[int] = mapped_column(Integer)
+    archive: Mapped[str | None] = mapped_column(String(255))  # the zip it was made for, as uploaded

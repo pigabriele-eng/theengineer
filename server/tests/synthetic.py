@@ -1,4 +1,6 @@
 """Build small but realistic MoTeC .ld files for tests: a 1 km track with two corners."""
+from functools import cache
+
 import numpy as np
 
 from app.importers.motec import CHANNEL, EVENT, HEADER, LD_MARKER
@@ -25,6 +27,16 @@ def curvature_at(d: np.ndarray) -> np.ndarray:
     return CORNER_G * 9.81 * w / (speed_at(d, 1.0) / 3.6) ** 2
 
 
+_SPEED_AT = speed_at
+
+
+def _speed(d: float, pace: float) -> float:
+    """speed_at at one distance: the same numpy arithmetic on a scalar, bit for bit, and far quicker than on a
+    one-element array (a lap is driven one sample at a time)."""
+    a, b = (d - CORNERS_M[0]) / 45.0, (d - CORNERS_M[1]) / 45.0
+    return float((150.0 - 100.0 * np.exp(-(a * a)) - 80.0 * np.exp(-(b * b))) * pace)
+
+
 def simulate(
     paces=(0.9, 1.0, 0.97, 0.99), hz: int = 100, stops: dict[int, float] | None = None
 ) -> tuple[dict[str, tuple[int, str, np.ndarray]], list[float]]:
@@ -33,19 +45,30 @@ def simulate(
     stops: seconds standing at the line at the end of lap i of [out-lap, *paces, in-lap] (a pit stop).
     Returns (name -> (freq, unit, data), lap times).
     """
+    # the tests ask for the same few runs again and again: each is driven once and handed out as a fresh copy
+    # (a test may swap in a speed profile of its own for speed_at: that one is driven, and kept apart)
+    channels, lap_times = _simulate(tuple(paces), hz, tuple(sorted((stops or {}).items())), speed_at)
+    return {k: (freq, unit, data.copy()) for k, (freq, unit, data) in channels.items()}, list(lap_times)
+
+
+@cache
+def _simulate(paces: tuple, hz: int, stops: tuple, speed) -> tuple[dict[str, tuple[int, str, np.ndarray]],
+                                                                    list[float]]:
+    step = _speed if speed is _SPEED_AT else (lambda d, pace: float(speed(np.array([d]), pace)[0]))
+    stops = dict(stops)
     laps = [0.6, *paces, 0.6]
     dt = 1.0 / hz
     v_out, lap_idx, lap_times, dist = [], [], [], []
     for i, pace in enumerate(laps):
         d, elapsed = 0.0, 0.0
         while d < TRACK_M:
-            v = float(speed_at(np.array([d]), pace)[0])
+            v = step(d, pace)
             v_out.append(v)
             lap_idx.append(i)
             dist.append(d)
             d += v / 3.6 * dt
             elapsed += dt
-        for _ in range(round((stops or {}).get(i, 0.0) * hz)):
+        for _ in range(round(stops.get(i, 0.0) * hz)):
             v_out.append(0.0)
             lap_idx.append(i)
             dist.append(TRACK_M)

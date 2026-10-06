@@ -1,16 +1,19 @@
 // Upload many logger files at once (MoTeC .ld with their .ldx, CSV exports, zips of whole tests) and follow the
 // import: the server makes a session per log in the background. Before picking the files, choose the event they go
-// into: an existing one, a new one (name and dates), or by default a new event per zip named after it.
+// into: an existing one, a new one (name and dates), or by default a new event per zip named after it. When the
+// upload has made events, each gets a prompt: name it from its logs, or put it into the same race weekend's event.
 import * as DocumentPicker from 'expo-document-picker';
 import { Link } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet } from 'react-native';
 
 import { EventForm } from '@/components/EventForm';
+import { NameNewEvent, Settled, SettledLine } from '@/components/NameNewEvent';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { api, ImportJob } from '@/lib/api';
 import { dateRange, eventsApi, FolderSummary } from '@/lib/events';
 import { untimedRuns } from '@/lib/emptyRuns';
+import { namingApi, NewEvent } from '@/lib/eventNaming';
 
 // The browser's file dialog filters by extension. iOS and Android filter by MIME type only, and a .ld log has
 // none, so there every file can be picked and the server skips what isn't a log.
@@ -37,7 +40,9 @@ export function ImportLogs({ onProgress, events, into }: {
   const [error, setError] = useState<string | null>(null);
   const [target, setTarget] = useState<Target>(into ?? null);
   const [making, setMaking] = useState(false);
-  const [landed, setLanded] = useState<Target>(null); // where the imported sessions went
+  const [landed, setLanded] = useState<Target>(null); // the event picked for the upload, once it is done
+  const [made, setMade] = useState<{ order: number[]; events: NewEvent[] } | null>(null); // events the upload made
+  const [settled, setSettled] = useState<Record<number, Settled>>({}); // named, skipped or put into another event
   const failures = useRef(0);
   const tint = useThemeColor({}, 'tint');
   const running = job != null && (job.status === 'queued' || job.status === 'running');
@@ -53,7 +58,7 @@ export function ImportLogs({ onProgress, events, into }: {
         setError(null);
         if (next.done !== job.done || next.status !== job.status) onProgress();
         setJob(next);
-        if (next.status === 'done' && next.session_ids.length) findEvent(next.session_ids[0]);
+        if (next.status === 'done' && next.session_ids.length) afterImport(next.id);
       } catch (e) {
         failures.current += 1;
         setError(`Can't reach the server: ${(e as Error).message}`);
@@ -68,13 +73,20 @@ export function ImportLogs({ onProgress, events, into }: {
     return () => clearTimeout(timer);
   }, [job, running, onProgress]);
 
-  // where a zip's sessions went when no event was picked: the event the server made for it
-  const findEvent = (sessionId: number) => {
+  // the event picked for the upload; or, when none was, the events the upload made, to be named
+  const afterImport = (jobId: number) => {
     if (sentTo.current) return setLanded(sentTo.current);
-    api.session(sessionId).then((s) => {
-      const id = (s as { event_id?: number | null }).event_id;
-      if (id != null) eventsApi.folder(String(id)).then((f) => setLanded({ id, name: f.name }), () => {});
-    }, () => {});
+    loadMade(jobId);
+  };
+  const loadMade = (jobId: number) =>
+    namingApi.newEvents(jobId).then(
+      (r) => setMade((m) => ({ order: m?.order ?? r.events.map((e) => e.id), events: r.events })),
+      () => {},
+    );
+  const settle = (eventId: number, s: Settled) => {
+    setSettled((all) => ({ ...all, [eventId]: s }));
+    onProgress();
+    if (job) loadMade(job.id); // the other new events' offers follow: a new name, an event that has gone
   };
 
   const pick = async () => {
@@ -88,6 +100,8 @@ export function ImportLogs({ onProgress, events, into }: {
     setError(null);
     setJob(null);
     setLanded(null);
+    setMade(null);
+    setSettled({});
     setUploading(picked.assets.length);
     try {
       failures.current = 0;
@@ -167,6 +181,11 @@ export function ImportLogs({ onProgress, events, into }: {
       {uploading != null && <Text style={styles.sub}>Uploading {plural(uploading, 'file')}…</Text>}
       {job && running && <Progress job={job} />}
       {job && !running && <Summary job={job} onHide={() => setJob(null)} tint={tint} />}
+      {job && !running && made?.order.map((id) => {
+        if (settled[id]) return <SettledLine key={id} s={settled[id]} />;
+        const ev = made.events.find((e) => e.id === id);
+        return ev ? <NameNewEvent key={id} ev={ev} onSettled={(s) => settle(id, s)} /> : null;
+      })}
       {job && !running && landed && !into && (
         // Link asChild hands its child's style to a web anchor, which can't take a style array: one object
         <Link href={{ pathname: '/event/[id]', params: { id: landed.id } }} asChild>

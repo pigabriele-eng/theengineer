@@ -5,6 +5,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-nati
 import { DriverLinks } from '@/components/DriverPicker';
 import { EventForm } from '@/components/EventForm';
 import { ImportLogs } from '@/components/ImportLogs';
+import { RenameEvent } from '@/components/RenameEvent';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
 import { dateRange, eventsApi, FolderSummary } from '@/lib/events';
@@ -74,36 +75,62 @@ export default function SessionsScreen() {
           </Text>
         )}
         {folders && folders.length > 0 && <Text style={styles.h2}>Events</Text>}
-        {folders?.map((f) => <FolderCard key={f.key} f={f} />)}
+        {folders?.map((f) => (
+          <FolderCard key={f.key} f={f} onRenamed={(name) => {
+            setFolders((all) => all?.map((x) => (x.key === f.key ? { ...x, name } : x)) ?? all);
+            load();
+          }} />
+        ))}
       </View>
     </ScrollView>
   );
 }
 
-function FolderCard({ f }: { f: FolderSummary }) {
+function FolderCard({ f, onRenamed }: { f: FolderSummary; onRenamed: (name: string) => void }) {
+  const [renaming, setRenaming] = useState(false);
+  const tint = useThemeColor({}, 'tint');
   const range = dateRange(f.start, f.end);
   const loose = f.id == null;
+  const sub = [loose ? null : f.track, plural(f.sessions, 'session'), f.clean_laps ? plural(f.clean_laps, 'clean lap') : null]
+    .filter(Boolean).join(' · ');
+  if (renaming && f.id != null) {
+    return (
+      <View style={StyleSheet.flatten([styles.card, styles.editing])}>
+        <RenameEvent id={f.id} initial={f.name} onCancel={() => setRenaming(false)}
+          onSaved={(saved) => {
+            setRenaming(false);
+            onRenamed(saved.name);
+          }} />
+        <Text style={styles.sub} numberOfLines={1}>{[range, sub].filter(Boolean).join(' · ')}</Text>
+      </View>
+    );
+  }
   return (
-    // Link asChild hands its child's style to a web anchor, which can't take a style array: one object
-    <Link href={{ pathname: '/event/[id]', params: { id: f.key } }} asChild>
-      <Pressable style={StyleSheet.flatten([styles.card, loose && styles.loose])} accessibilityRole="link">
-        <View style={styles.cardText}>
-          <Text style={styles.title} numberOfLines={2}>{f.name}</Text>
-          <Text style={styles.date} numberOfLines={1}>
-            {loose ? 'Open to move them into an event' : range ?? 'No dates yet'}
-          </Text>
-          <Text style={styles.sub} numberOfLines={2}>
-            {[loose ? null : f.track, plural(f.sessions, 'session'), f.clean_laps ? plural(f.clean_laps, 'clean lap') : null]
-              .filter(Boolean).join(' · ')}
-          </Text>
-        </View>
-        <View style={styles.right}>
-          <Text style={styles.time}>{formatLap(f.best_lap_s)}</Text>
-          {f.best_session && <Text style={styles.sub} numberOfLines={1}>{f.best_session}</Text>}
-        </View>
-        <Text style={styles.chevron}>›</Text>
-      </Pressable>
-    </Link>
+    <View style={StyleSheet.flatten([styles.card, loose && styles.loose])}>
+      {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
+      <Link href={{ pathname: '/event/[id]', params: { id: f.key } }} asChild>
+        <Pressable style={styles.cardLink} accessibilityRole="link">
+          <View style={styles.cardText}>
+            <Text style={styles.title} numberOfLines={2}>{f.name}</Text>
+            <Text style={styles.date} numberOfLines={1}>
+              {loose ? 'Open to move them into an event' : range ?? 'No dates yet'}
+            </Text>
+            <Text style={styles.sub} numberOfLines={2}>{sub}</Text>
+          </View>
+          <View style={styles.right}>
+            <Text style={styles.time}>{formatLap(f.best_lap_s)}</Text>
+            {f.best_session && <Text style={styles.sub} numberOfLines={1}>{f.best_session}</Text>}
+          </View>
+          <Text style={styles.chevron}>›</Text>
+        </Pressable>
+      </Link>
+      {!loose && (
+        <Pressable onPress={() => setRenaming(true)} accessibilityRole="button" accessibilityLabel={`Rename ${f.name}`}
+          hitSlop={8} style={styles.rename}>
+          <Text style={StyleSheet.flatten([styles.renameText, { color: tint }])}>✎ Rename</Text>
+        </Pressable>
+      )}
+    </View>
   );
 }
 
@@ -118,9 +145,12 @@ const styles = StyleSheet.create({
   error: { color: '#c8372d' },
   empty: { opacity: 0.6, marginTop: 24, textAlign: 'center', lineHeight: 20 },
   h2: { fontSize: 13, fontWeight: '700', opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 8 },
-  card: { flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderColor: '#8884', borderRadius: 10,
-    paddingHorizontal: 14, paddingVertical: 12 },
+  card: { borderWidth: 1, borderColor: '#8884', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, gap: 6 },
+  cardLink: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   loose: { borderStyle: 'dashed' },
+  editing: { gap: 8 },
+  rename: { alignSelf: 'flex-start', paddingVertical: 2 },
+  renameText: { fontWeight: '600', fontSize: 14 },
   cardText: { flex: 1, gap: 2, backgroundColor: 'transparent' },
   title: { fontSize: 17, fontWeight: '700' },
   date: { fontSize: 14, opacity: 0.85 },

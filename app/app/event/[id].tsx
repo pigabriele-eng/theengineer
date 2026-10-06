@@ -7,6 +7,8 @@ import { EventCompare, Pick } from '@/components/EventCompare';
 import { EventForm } from '@/components/EventForm';
 import { ImportLogs } from '@/components/ImportLogs';
 import { MoveSessions } from '@/components/MoveSessions';
+import { RenameEvent } from '@/components/RenameEvent';
+import { ResultsPanel } from '@/components/ResultsPanel';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { formatLap, SessionKind } from '@/lib/api';
 import { MAX_LAPS } from '@/lib/compare';
@@ -41,6 +43,7 @@ export default function EventScreen() {
       .filter((n, i, all) => all.indexOf(n) === i).slice(0, MAX_LAPS).map((id, slot) => ({ id, slot })));
   const [panel, setPanel] = useState<'edit' | 'move' | 'delete' | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
+  const [renaming, setRenaming] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const scroll = useRef<ScrollView>(null);
   const compareY = useRef(0);
@@ -112,7 +115,24 @@ export default function EventScreen() {
 
   const head = (
     <View style={styles.head}>
-      <Text style={styles.h1}>{title}</Text>
+      {renaming && folder && eventId != null ? (
+        <RenameEvent id={eventId} initial={folder.name} large onCancel={() => setRenaming(false)}
+          onSaved={(f) => {
+            setFolder(f);
+            setRenaming(false);
+          }} />
+      ) : (
+        <View style={styles.titleRow}>
+          <Text style={styles.h1}>{title}</Text>
+          {folder && eventId != null && (
+            <Pressable onPress={() => setRenaming(true)} accessibilityRole="button" hitSlop={6}
+              accessibilityLabel={`Rename ${folder.name}`}
+              style={StyleSheet.flatten([styles.renameButton, { borderColor: tint }])}>
+              <Text style={StyleSheet.flatten([styles.renameText, { color: tint }])}>✎ Rename</Text>
+            </Pressable>
+          )}
+        </View>
+      )}
       {folder && (
         <Text style={styles.sub}>
           {[folder.track, range, plural(folder.sessions, 'session'),
@@ -155,7 +175,7 @@ export default function EventScreen() {
           )}
           <Pressable onPress={() => setPanel(panel === 'edit' ? null : 'edit')} accessibilityRole="button"
             style={StyleSheet.flatten([styles.action, styles.quiet])}>
-            <Text style={styles.actionText}>Rename or re-date</Text>
+            <Text style={styles.actionText}>Change dates</Text>
           </Pressable>
           <Pressable onPress={() => setPanel(panel === 'delete' ? null : 'delete')} accessibilityRole="button"
             style={StyleSheet.flatten([styles.action, styles.quiet])}>
@@ -278,6 +298,7 @@ export default function EventScreen() {
               <Text style={styles.notice}>{notice}</Text>
             </Pressable>
           )}
+          {eventId != null && <ResultsPanel eventId={eventId} />}
           {panel === 'move' && picks.length > 0 && (
             <MoveSessions fromKey={key} count={picks.length} onMove={moveTo} onCancel={() => setPanel(null)} />
           )}
@@ -466,7 +487,10 @@ const styles = StyleSheet.create({
   outer: { padding: 16, paddingBottom: 32 },
   page: { width: '100%', maxWidth: 1180, alignSelf: 'center', gap: 16 },
   head: { gap: 6 },
-  h1: { fontSize: 24, fontWeight: '700' },
+  h1: { fontSize: 24, fontWeight: '700', flexShrink: 1 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' },
+  renameButton: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 },
+  renameText: { fontWeight: '600', fontSize: 14 },
   h2: { fontSize: 18, fontWeight: '700' },
   sub: { opacity: 0.65, fontSize: 13 },
   note: { fontSize: 12, opacity: 0.6 },
