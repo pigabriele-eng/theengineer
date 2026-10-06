@@ -56,7 +56,7 @@ def start_import(files: list[UploadFile], event_id: int | None = Form(None), db:
     event_id when it is given (otherwise a zip's logs make an event named after the zip)."""
     if event_id is not None and db.get(models.Event, event_id) is None:
         raise HTTPException(404, "Event not found")
-    names = [PurePosixPath((f.filename or "").replace("\\", "/")).name or f"file{i}" for i, f in enumerate(files)]
+    names = [_upload_name(f.filename, i) for i, f in enumerate(files)]
     if not any(archive.suffix(n) in archive.ACCEPTED for n in names):
         raise HTTPException(415, "Nothing to import: upload MoTeC .ld logs (with their .ldx), CSV exports "
                                  "(.csv, .txt) or a .zip of them")
@@ -73,7 +73,8 @@ def start_import(files: list[UploadFile], event_id: int | None = Form(None), db:
                                                  "GB; send it in parts")
                     out.write(chunk)
             uploads.append((name, dest))
-        job = models.ImportJob(filename=", ".join(names)[:255], status=models.ImportStatus.queued,
+        shown = dict.fromkeys(n.split("/")[0] for n in names)  # a dropped folder once, by its name
+        job = models.ImportJob(filename=", ".join(shown)[:255], status=models.ImportStatus.queued,
                                session_ids=[], errors=[], skipped=[])
         db.add(job)
         db.commit()
@@ -83,6 +84,15 @@ def start_import(files: list[UploadFile], event_id: int | None = Form(None), db:
     _jobs.put((job.id, folder, uploads, event_id))
     _start_worker()
     return job
+
+
+def _upload_name(filename: str | None, i: int) -> str:
+    """The name a file was sent with. A file from a dropped folder keeps the folders above it ("Test/01_D1S1/a.ld"),
+    so the folder's logs are grouped as a zip of it would be (archive.Upload); an absolute path or one with '..'
+    keeps only the file name."""
+    name = (filename or "").replace("\\", "/")
+    parts = archive._parts(name) or [PurePosixPath(name).name]
+    return "/".join(p for p in parts if p) or f"file{i}"
 
 
 @router.get("/{job_id}", response_model=schemas.ImportJobOut)
