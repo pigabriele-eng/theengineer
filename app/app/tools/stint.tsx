@@ -1,12 +1,13 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 
 import { LineChart, useChartColors } from '@/components/ReportCharts';
 import { SessionSwitcher, useEventFolder } from '@/components/SessionSwitcher';
-import { BalanceDumbbell, ChangeBar, FadeBars, MIN_SHIFT, ShiftRow, shiftColor, useBalanceColors }
-  from '@/components/StintCharts';
+import { BalanceDumbbell, ChangeBar, CornerText, FadeBars, MIN_SHIFT, OnCorner, ShiftRow, shiftColor,
+  useBalanceColors } from '@/components/StintCharts';
 import { Text, View, useThemeColor } from '@/components/Themed';
+import { TrackMap } from '@/components/TrackMap';
 import { formatLap } from '@/lib/api';
 import {
   average,
@@ -36,11 +37,14 @@ import {
 
 const ALL = 'all';
 const MAX_LOGS = 12; // the server reads at most this many logs in one view
+const SIDE_MAP = 900; // from this wide the track map has a column of its own on the right; narrower, it's pinned on top
 
 // Stint analysis: tick one or more logs, then each stint lap by lap: how the car fades (fuel burn and tyres apart,
 // by phase and corner), grip and balance per phase, and how the driver adapts. Tag laps lost to a safety car, FCY or
 // traffic and they leave the trends; count a lap the analysis leaves out (not a pit lap) and it joins them. Open with
-// ?session=<id> to start with that session's log ticked, or ?event=<id> with every run of the event.
+// ?session=<id> to start with that session's log ticked, or ?event=<id> with every run of the event. The track map
+// stays in view beside the report (on a phone, pinned on top, one tap to hide it); a corner the report names lights
+// up on it when hovered or tapped.
 export default function StintScreen() {
   const params = useLocalSearchParams<{ session?: string; event?: string }>();
   const [events, setEvents] = useState<LogEvent[] | null>(null);
@@ -55,8 +59,13 @@ export default function StintScreen() {
   const scroll = useRef<ScrollView>(null);
   const lapsY = useRef(0);
   const background = useThemeColor({}, 'background');
-  const { width } = useWindowDimensions();
-  const wide = width >= 760;
+  const tint = useThemeColor({}, 'tint');
+  const { width, height } = useWindowDimensions();
+  const side = width >= SIDE_MAP;
+  const sideWidth = Math.round(Math.min(440, Math.max(340, width * 0.3)));
+  const [corner, setCorner] = useState<string | null>(null); // the corner pointed at in the report, on the map
+  const [mapShown, setMapShown] = useState(true); // the map pinned on a phone
+  const [noMap, setNoMap] = useState<string | null>(null); // the map target with nothing to draw (no GPS...)
 
   useEffect(() => {
     fetchStintLogs().then((evs) => {
@@ -152,101 +161,152 @@ export default function StintScreen() {
   const many = new Set(view?.stints.map((s) => s.file_key)).size > 1;
   const words = stint ? stint.words : view?.overall.words;
   const pending = (stint ? [stint] : view?.stints ?? []).flatMap((s) => s.laps.filter((l) => l.suggestion)).length;
+  const sections = stint ? stint.sections : view?.overall.sections ?? [];
+  const codes = sections.map((s) => s.code);
+
+  // the map of what the view shows: its session's, or with runs of several sessions their event's fastest lap
+  const target = useMemo(() => {
+    const sessions = [...new Set((view?.logs ?? []).map((l) => l.session_id).filter((s): s is number => s != null))];
+    if (sessions.length === 0) return null;
+    const ev = sessions.length > 1 ? where.event.get(view!.file_ids[0]) : null;
+    return ev != null ? { event: ev } : { session: sessions[0] };
+  }, [view, where]);
+  const targetKey = target ? JSON.stringify(target) : null;
+  const showMap = target != null && noMap !== targetKey;
+  const wide = width - (side && showMap ? sideWidth : 0) >= 760; // the report's own width: phase panels two a row
+  const pointAt = showMap ? setCorner : undefined;
+  // on a phone the pinned map keeps to about a third of the screen with its bar; beside the report it fits the window
+  // with its title, switch and legend
+  const map = target && (
+    <TrackMap {...target} highlight={corner ?? undefined} compact={!side}
+      onNone={() => setNoMap(targetKey)}
+      maxHeight={side ? Math.max(160, height - 280) : Math.max(110, Math.min(220, Math.round(height / 3) - 64))} />
+  );
+  // on the web the mouse wheel over the map column scrolls the report
+  const wheel = Platform.OS === 'web' ? {
+    onWheel: (e: any) => (scroll.current as any)?.getScrollableNode?.()?.scrollBy?.(0,
+      e.deltaY * (e.deltaMode === 1 ? 16 : 1)),
+  } : {};
 
   return (
-    <ScrollView ref={scroll} style={{ backgroundColor: background }} contentContainerStyle={styles.container}>
-      <Stack.Screen options={{ title: 'Stint analysis' }} />
-      <View style={styles.page}>
-        {folder && folder.id != null && (
-          <SessionSwitcher folder={folder} current={current} onlyTimed
-            onWhole={eventMains.length > 1 ? () => setTicked(eventMains.slice(0, MAX_LOGS)) : undefined}
-            onPick={(s) => {
-              const main = where.mains.get(folder.id)?.get(s.id);
-              if (main != null) setTicked([main]);
-            }} />
-        )}
-        <Picker events={events} ticked={ticked} open={pickerOpen} setOpen={setPickerOpen} toggle={toggle}
-          track={view?.track ?? null} />
-
-        {error && <Text style={styles.error}>{error}</Text>}
-        {busy && (
-          <View style={styles.busy}>
-            <ActivityIndicator />
-            <Text style={styles.dim}>{view ? 'Updating…' : 'Reading the logs…'}</Text>
+    <View style={StyleSheet.flatten([styles.screen, { backgroundColor: background }, side && styles.split])}>
+      {showMap && !side && (
+        <View style={StyleSheet.flatten([styles.pinned, { backgroundColor: background }])}>
+          <View style={styles.pinnedBar}>
+            <Text style={styles.pinnedTitle}>Track map</Text>
+            <Text style={StyleSheet.flatten([styles.small, styles.flex])} numberOfLines={1}>
+              {mapShown ? (corner && codes.includes(corner) ? corner : 'Tap a corner in the report') : ''}
+            </Text>
+            <Pressable onPress={() => setMapShown(!mapShown)} accessibilityRole="button" hitSlop={8}
+              style={styles.pinnedButton}>
+              <Text style={{ color: tint, fontWeight: '600' }}>{mapShown ? 'Hide map' : 'Show map'}</Text>
+            </Pressable>
           </View>
-        )}
-        {!busy && ticked.length === 0 && events && events.length > 0 && (
-          <Text style={styles.dim}>Tick one or more logs to see their stints.</Text>
-        )}
+          {/* hidden, not removed: showing it again doesn't ask the server again */}
+          <View style={mapShown ? undefined : styles.gone}>{map}</View>
+        </View>
+      )}
+      <ScrollView ref={scroll} style={styles.flex} contentContainerStyle={styles.container}>
+        <Stack.Screen options={{ title: 'Stint analysis' }} />
+        <View style={styles.page}>
+          {folder && folder.id != null && (
+            <SessionSwitcher folder={folder} current={current} onlyTimed
+              onWhole={eventMains.length > 1 ? () => setTicked(eventMains.slice(0, MAX_LOGS)) : undefined}
+              onPick={(s) => {
+                const main = where.mains.get(folder.id)?.get(s.id);
+                if (main != null) setTicked([main]);
+              }} />
+          )}
+          <Picker events={events} ticked={ticked} open={pickerOpen} setOpen={setPickerOpen} toggle={toggle}
+            track={view?.track ?? null} />
 
-        {view && words && (
-          <>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
-              {view.stints.length > 1 && (
-                <ScopeChip on={scope === ALL} onPress={() => setScope(ALL)} title="All stints"
-                  sub={`${view.overall.fitted_laps} laps in the trend`} />
-              )}
-              {view.stints.map((s) => (
-                <ScopeChip key={s.key} on={scope === s.key} onPress={() => setScope(s.key)}
-                  title={`${many ? `${s.run} · ` : ''}Stint ${s.number}`}
-                  sub={`laps ${s.first_lap}–${s.last_lap} · ${s.fitted_laps} in the trend`} />
-              ))}
-            </ScrollView>
+          {error && <Text style={styles.error}>{error}</Text>}
+          {busy && (
+            <View style={styles.busy}>
+              <ActivityIndicator />
+              <Text style={styles.dim}>{view ? 'Updating…' : 'Reading the logs…'}</Text>
+            </View>
+          )}
+          {!busy && ticked.length === 0 && events && events.length > 0 && (
+            <Text style={styles.dim}>Tick one or more logs to see their stints.</Text>
+          )}
 
-            <Summary words={words} fits={stint ? stint.fits : view.overall.fits}
-              fuel={stint ? stint.fuel : view.overall.fuel} top={(stint ? stint.fade : view.overall.fade)[0]}
-              pending={pending} onPending={() => scroll.current?.scrollTo({ y: lapsY.current, animated: true })} />
-
-            {(stint ? stint.fade : view.overall.fade).length > 0 && (
-              <Section title="Where the fade comes from"
-                intro="Each lap's time against the stint's typical lap, fuel burn taken out, charged to the phase where it was lost: speed lost on an exit counts against the exit all the way down the straight that follows.">
-                <View style={styles.narrow}>
-                  <FadeBars rows={stint ? stint.fade : view.overall.fade} />
-                </View>
-              </Section>
-            )}
-
-            <Section title="Grip and balance by phase"
-              intro={`Grip: the g the car pulls in each phase (90th percentile of the lap). Balance: the understeer angle against the car's normal at the same cornering g (${view.understeer_per_g ?? '–'}° per g), + understeer, − oversteer.`}>
-              <PhaseTable fits={stint ? stint.fits : view.overall.fits} fade={stint ? stint.fade : view.overall.fade}
-                stint={stint} wide={wide} />
-            </Section>
-
-            <Section title="Balance shift per corner"
-              intro="How the balance moves from the stint's early laps to its late laps, corner by corner.">
-              <CornerShift sections={stint ? stint.sections : view.overall.sections}
-                stints={stint ? [stint] : view.stints} />
-            </Section>
-
-            {stint ? (
-              <View onLayout={(e) => (lapsY.current = e.nativeEvent.layout.y)} style={styles.section}>
-                <Text style={styles.h2}>Laps</Text>
-                <LapTimes stint={stint} />
-                <LapList stint={stint} onTag={tag} tagging={tagging} />
-                <LapTable stint={stint} unit={view.units.steer} />
-              </View>
-            ) : (
-              <View onLayout={(e) => (lapsY.current = e.nativeEvent.layout.y)} style={styles.section}>
-                <Text style={styles.h2}>Stints</Text>
-                <Text style={styles.small}>Open a stint to see it lap by lap and tag its slow laps.</Text>
+          {view && words && (
+            <>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
+                {view.stints.length > 1 && (
+                  <ScopeChip on={scope === ALL} onPress={() => setScope(ALL)} title="All stints"
+                    sub={`${view.overall.fitted_laps} laps in the trend`} />
+                )}
                 {view.stints.map((s) => (
-                  <StintCard key={s.key} stint={s} many={many} onPress={() => {
-                    setScope(s.key);
-                    scroll.current?.scrollTo({ y: 0, animated: true });
-                  }} />
+                  <ScopeChip key={s.key} on={scope === s.key} onPress={() => setScope(s.key)}
+                    title={`${many ? `${s.run} · ` : ''}Stint ${s.number}`}
+                    sub={`laps ${s.first_lap}–${s.last_lap} · ${s.fitted_laps} in the trend`} />
                 ))}
-              </View>
-            )}
+              </ScrollView>
 
-            {view.notes.map((n) => (
-              <Text key={n} style={styles.small}>
-                {n}
-              </Text>
-            ))}
-          </>
-        )}
-      </View>
-    </ScrollView>
+              <Summary words={words} fits={stint ? stint.fits : view.overall.fits}
+                fuel={stint ? stint.fuel : view.overall.fuel} top={(stint ? stint.fade : view.overall.fade)[0]}
+                pending={pending} onPending={() => scroll.current?.scrollTo({ y: lapsY.current, animated: true })}
+                at={{ codes, focus: corner, onCorner: pointAt }} />
+
+              {(stint ? stint.fade : view.overall.fade).length > 0 && (
+                <Section title="Where the fade comes from"
+                  intro="Each lap's time against the stint's typical lap, fuel burn taken out, charged to the phase where it was lost: speed lost on an exit counts against the exit all the way down the straight that follows.">
+                  <View style={styles.narrow}>
+                    <FadeBars rows={stint ? stint.fade : view.overall.fade} focus={corner} onCorner={pointAt} />
+                  </View>
+                </Section>
+              )}
+
+              <Section title="Grip and balance by phase"
+                intro={`Grip: the g the car pulls in each phase (90th percentile of the lap). Balance: the understeer angle against the car's normal at the same cornering g (${view.understeer_per_g ?? '–'}° per g), + understeer, − oversteer.`}>
+                <PhaseTable fits={stint ? stint.fits : view.overall.fits} fade={stint ? stint.fade : view.overall.fade}
+                  stint={stint} wide={wide} />
+              </Section>
+
+              <Section title="Balance shift per corner"
+                intro="How the balance moves from the stint's early laps to its late laps, corner by corner.">
+                <CornerShift sections={sections} stints={stint ? [stint] : view.stints} onCorner={pointAt} />
+              </Section>
+
+              {stint ? (
+                <View onLayout={(e) => (lapsY.current = e.nativeEvent.layout.y)} style={styles.section}>
+                  <Text style={styles.h2}>Laps</Text>
+                  <LapTimes stint={stint} />
+                  <LapList stint={stint} onTag={tag} tagging={tagging} />
+                  <LapTable stint={stint} unit={view.units.steer} />
+                </View>
+              ) : (
+                <View onLayout={(e) => (lapsY.current = e.nativeEvent.layout.y)} style={styles.section}>
+                  <Text style={styles.h2}>Stints</Text>
+                  <Text style={styles.small}>Open a stint to see it lap by lap and tag its slow laps.</Text>
+                  {view.stints.map((s) => (
+                    <StintCard key={s.key} stint={s} many={many} onPress={() => {
+                      setScope(s.key);
+                      scroll.current?.scrollTo({ y: 0, animated: true });
+                    }} />
+                  ))}
+                </View>
+              )}
+
+              {view.notes.map((n) => (
+                <Text key={n} style={styles.small}>
+                  {n}
+                </Text>
+              ))}
+            </>
+          )}
+        </View>
+      </ScrollView>
+      {showMap && side && (
+        <View {...wheel}
+          style={StyleSheet.flatten([styles.side, { width: sideWidth }])}>
+          {map}
+          <Text style={styles.small}>A corner you hover or tap in the report lights up here.</Text>
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -352,9 +412,12 @@ function ScopeChip({ on, onPress, title, sub }: { on: boolean; onPress: () => vo
 
 // ---------- the plain-words summary ----------
 
-function Summary({ words, fits, fuel, top, pending, onPending }: {
+// the corners a text may name, the one pointed at, and where to report a corner hovered or tapped
+type PointAt = { codes: string[]; focus: string | null; onCorner?: OnCorner };
+
+function Summary({ words, fits, fuel, top, pending, onPending, at }: {
   words: Words; fits: Partial<Record<string, Fit>>; fuel: StintView['overall']['fuel']; top?: StintView['overall']['fade'][number];
-  pending: number; onPending: () => void;
+  pending: number; onPending: () => void; at: PointAt;
 }) {
   const tint = useThemeColor({}, 'tint');
   const tyres = fits.corrected_time ?? fits.time;
@@ -369,10 +432,10 @@ function Summary({ words, fits, fuel, top, pending, onPending }: {
   ].filter(Boolean) as { label: string; value: string; sub: string }[];
   return (
     <View style={styles.card}>
-      <Text style={styles.headline}>{words.headline}</Text>
+      <CornerText style={styles.headline} text={words.headline} {...at} />
       {words.advice && (
         <View style={StyleSheet.flatten([styles.advice, { borderLeftColor: tint }])}>
-          <Text style={styles.body}>{words.advice}</Text>
+          <CornerText style={styles.body} text={words.advice} {...at} />
         </View>
       )}
       {tiles.length > 0 && (
@@ -397,13 +460,13 @@ function Summary({ words, fits, fuel, top, pending, onPending }: {
       {words.car.length > 0 && (
         <View style={styles.list}>
           <Text style={styles.h3}>The car</Text>
-          {words.car.map((s) => <Bullet key={s} text={s} />)}
+          {words.car.map((s) => <Bullet key={s} text={s} at={at} />)}
         </View>
       )}
       {words.driver.length > 0 && (
         <View style={styles.list}>
           <Text style={styles.h3}>Your driving</Text>
-          {words.driver.map((s) => <Bullet key={s} text={s} />)}
+          {words.driver.map((s) => <Bullet key={s} text={s} at={at} />)}
         </View>
       )}
       {words.fuel && <Text style={styles.small}>{words.fuel}</Text>}
@@ -412,11 +475,11 @@ function Summary({ words, fits, fuel, top, pending, onPending }: {
   );
 }
 
-function Bullet({ text }: { text: string }) {
+function Bullet({ text, at }: { text: string; at: PointAt }) {
   return (
     <View style={styles.bullet}>
       <Text style={styles.bulletDot}>•</Text>
-      <Text style={StyleSheet.flatten([styles.body, styles.flex])}>{text}</Text>
+      <CornerText style={StyleSheet.flatten([styles.body, styles.flex])} text={text} {...at} />
     </View>
   );
 }
@@ -542,7 +605,7 @@ function median(v: number[]) {
   return s.length === 0 ? null : s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
 }
 
-function CornerShift({ sections, stints }: { sections: SectionRow[]; stints: Stint[] }) {
+function CornerShift({ sections, stints, onCorner }: { sections: SectionRow[]; stints: Stint[]; onCorner?: OnCorner }) {
   const tint = useThemeColor({}, 'tint');
   const [phase, setPhase] = useState<BalancePhase>('entry');
   const grouped = stints.filter((s) => s.groups);
@@ -591,7 +654,7 @@ function CornerShift({ sections, stints }: { sections: SectionRow[]; stints: Sti
             {moved === 0 ? 'Every corner holds within ±0.15°.' : `${moved} of ${rows.length - (rows[0]?.strong ? 1 : 0)
             } corners move more than ${MIN_SHIFT}°.`}
           </Text>
-          <BalanceDumbbell rows={rows} early={earlyLaps} late={lateLaps} />
+          <BalanceDumbbell rows={rows} early={earlyLaps} late={lateLaps} onCorner={onCorner} />
         </>
       )}
     </View>
@@ -807,6 +870,14 @@ function StintCard({ stint, many, onPress }: { stint: Stint; many: boolean; onPr
 }
 
 const styles = StyleSheet.create({
+  screen: { flex: 1 },
+  split: { flexDirection: 'row' },
+  pinned: { borderBottomWidth: 1, borderColor: '#8883', paddingHorizontal: 16, paddingBottom: 6 },
+  pinnedBar: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 40, backgroundColor: 'transparent' },
+  pinnedTitle: { fontSize: 13, fontWeight: '600', opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 },
+  pinnedButton: { paddingVertical: 8, paddingLeft: 8 },
+  gone: { display: 'none' },
+  side: { borderLeftWidth: 1, borderColor: '#8883', padding: 16, gap: 8 },
   container: { padding: 16, alignItems: 'center' },
   page: { width: '100%', maxWidth: 1040, gap: 16 },
   flex: { flex: 1, backgroundColor: 'transparent' },

@@ -8,6 +8,7 @@ import { glyph, ShapeLegend, ShapePanel, useShapeColors, useTrackShape } from '@
 import { formatLap } from '@/lib/api';
 import {
   Box,
+  cornersOf,
   fetchTrackMap,
   fitTrack,
   leaderEnd,
@@ -27,6 +28,9 @@ type Props = {
   marksLengthM?: number; // the lap length the marks' metres are measured on, when it isn't the map's own
   withShape?: boolean; // also the track's shape: banking, crests and compressions on the map, the height below it
   onShape?: (shape: TrackShapeData | null) => void; // the shape once it has loaded (null until then, or when none)
+  maxHeight?: number; // the most the drawing may take, px (it never grows past its usual size)
+  compact?: boolean; // the drawing alone: no title, switch, legend or caption (a map pinned on a phone)
+  onNone?: () => void; // there's no map to draw (no log, no clean lap, no GPS): the map shows nothing
 };
 
 export type MapMark = { n: number; at_m: number; from_m: number; to_m: number };
@@ -68,9 +72,10 @@ const unit = (x: number, y: number) => {
 };
 const line = (pts: MapPoint[]) => pts.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join('');
 
-function layout(map: TrackMapData, width: number) {
+function layout(map: TrackMapData, width: number, maxHeight?: number) {
   const z = sizes(width);
-  const fit = fitTrack(map, width, Math.min(460, Math.max(280, width * 0.72)), PAD);
+  const usual = Math.min(460, Math.max(280, width * 0.72));
+  const fit = fitTrack(map, width, maxHeight == null ? usual : Math.min(usual, maxHeight), PAD);
   const { pts } = fit;
   const n = pts.length;
   const at = (m: number) => Math.min(Math.round(m / map.step_m), n);
@@ -130,7 +135,8 @@ function layout(map: TrackMapData, width: number) {
 /** The track drawn from a session's or an event's reference lap, with its corners and sections numbered as
  * the analysis numbers them, the start/finish line and the direction of travel. Tap or hover a section for
  * its distances; switch to speed to colour the lap by speed. */
-export function TrackMap({ session, event, highlight, marks, selectedMark, marksLengthM, withShape, onShape }: Props) {
+export function TrackMap({ session, event, highlight, marks, selectedMark, marksLengthM, withShape, onShape, maxHeight,
+  compact, onNone }: Props) {
   const shape = useTrackShape(withShape ? { session, event } : {});
   const [map, setMap] = useState<TrackMapData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -153,15 +159,18 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
       .then((m) => live && setMap(m))
       .catch((e: Error) => {
         if (!live) return;
-        if (e instanceof NoTrackMap) setNone(true);
-        else setError(e.message);
+        if (e instanceof NoTrackMap) {
+          setNone(true);
+          onNone?.();
+        } else setError(e.message);
       });
     return () => {
       live = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, event]);
 
-  const g = useMemo(() => (map && width > 0 ? layout(map, width) : null), [map, width]);
+  const g = useMemo(() => (map && width > 0 ? layout(map, width, maxHeight) : null), [map, width, maxHeight]);
   const pins = useMemo(() => {
     if (!g || !map || !marks?.length) return [];
     const n = g.pts.length;
@@ -199,10 +208,13 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
   if (none) return null;
   if (error) return <Text style={styles.note}>The track map didn&apos;t load: {error}</Text>;
 
-  // the section to emphasise: named as the analysis names it, or by one of the official corners inside it
-  const emphasised = (highlight && (map?.sections.find((s) => s.code === highlight) ??
-    map?.sections.find((s) => s.corners.includes(highlight)))?.code) || null;
-  const focus = active ?? emphasised;
+  // the sections to emphasise: the one named as the analysis names it, else those holding the official corners it
+  // names ("T3" is in "T2-T5"; a log may group its corners otherwise than the map's lap: "T8-T10" is "T8/T9" and "T10")
+  const emphasis = !highlight || !map ? []
+    : map.sections.some((s) => s.code === highlight) ? [highlight]
+      : map.sections.filter((s) => s.corners.some((k) => cornersOf(highlight).includes(k))).map((s) => s.code);
+  const emphasised = (code: string) => emphasis.includes(code);
+  const focus = active ? [active] : emphasis;
   const sectionAt = (x: number, y: number) => {
     if (!g || !map) return null;
     let best = -1, dist = 22;
@@ -223,16 +235,17 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
     : {};
 
   const detail = (() => {
-    const s = map?.sections.find((x) => x.code === focus);
-    if (!s) return null;
-    const parts = [s.code, `${Math.round(s.start_m)}–${Math.round(s.end_m)} m`];
-    if (s.time != null) parts.push(`${s.time.toFixed(2)} s`);
-    if (s.min_speed != null) parts.push(`min ${s.min_speed.toFixed(1)} km/h`);
+    const ss = map?.sections.filter((x) => focus.includes(x.code)) ?? [];
+    if (ss.length === 0) return null;
+    const parts = [ss.map((s) => s.code).join(' + '), `${Math.round(ss[0].start_m)}–${Math.round(ss[ss.length - 1].end_m)} m`];
+    if (ss.every((s) => s.time != null)) parts.push(`${ss.reduce((t, s) => t + s.time!, 0).toFixed(2)} s`);
+    const slowest = ss.flatMap((s) => (s.min_speed == null ? [] : [s.min_speed]));
+    if (slowest.length > 0) parts.push(`min ${Math.min(...slowest).toFixed(1)} km/h`);
     return parts.join(' · ');
   })();
 
   const tone = (k: number, code: string) => {
-    if (code === emphasised) return c.accent;
+    if (emphasised(code)) return c.accent;
     return k % 2 ? c.muted : c.secondary;
   };
   const caption = map
@@ -244,7 +257,7 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
 
   return (
     <View style={styles.wrap}>
-      <View style={styles.head}>
+      <View style={compact ? styles.gone : styles.head}>
         <Text style={styles.title}>Track map</Text>
         <View style={styles.toggle}>
           {(['sections', 'speed'] as Mode[]).map((m) => (
@@ -279,9 +292,9 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
               {mode === 'speed' ? (
                 <>
                   <Path d={g.loop} stroke={c.casing} strokeWidth={g.z.track + 3} fill="none" strokeLinejoin="round" />
-                  {g.sections.filter((s) => s.code === emphasised || s.code === active).map((s) => (
+                  {g.sections.filter((s) => emphasised(s.code) || s.code === active).map((s) => (
                     // an ink edge: the blue of the speed ramp would hide a blue one
-                    <Path key={s.code} d={s.d} stroke={s.code === emphasised ? c.ink : c.muted} fill="none"
+                    <Path key={s.code} d={s.d} stroke={emphasised(s.code) ? c.ink : c.muted} fill="none"
                       strokeWidth={g.z.track + 6} strokeLinejoin="round" />
                   ))}
                   {g.runs.map((r, i) => (
@@ -298,8 +311,8 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
                   {g.sections.map((s, k) => (
                     <Path key={s.code} d={s.d} fill="none" strokeLinejoin="round"
                       stroke={tone(k, s.code)}
-                      strokeOpacity={emphasised && s.code !== emphasised ? 0.55 : 1}
-                      strokeWidth={s.code === emphasised || s.code === active ? g.z.strong : g.z.track} />
+                      strokeOpacity={emphasis.length > 0 && !emphasised(s.code) ? 0.55 : 1}
+                      strokeWidth={emphasised(s.code) || s.code === active ? g.z.strong : g.z.track} />
                   ))}
                   {g.boundaries.map((b, i) => (
                     <Line key={i} x1={b.p.x - b.t.y * 6} y1={b.p.y + b.t.x * 6} x2={b.p.x + b.t.y * 6}
@@ -341,7 +354,7 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
                 </G>
               ))}
               {g.labels.map((l) => {
-                const strong = l.code === focus || !emphasised;
+                const strong = focus.includes(l.code) || emphasis.length === 0;
                 return (
                   <SvgText key={`t-${l.code}`} x={l.box.x + l.box.w / 2} y={l.box.y + g.z.font} fontSize={g.z.font}
                     fontFamily={SANS} fontWeight="700" textAnchor="middle" fill={strong ? c.ink : c.secondary}>
@@ -359,7 +372,7 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
           </Pressable>
         )}
       </View>
-      {g && map && (
+      {g && map && !compact && (
         <>
           {mode === 'speed' ? (
             <View style={styles.legend}>
@@ -434,4 +447,5 @@ const styles = StyleSheet.create({
   small: { fontSize: 12, opacity: 0.6, fontVariant: ['tabular-nums'] },
   note: { fontSize: 12, opacity: 0.6 },
   strip: { marginTop: 8 },
+  gone: { display: 'none' },
 });
