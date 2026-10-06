@@ -19,7 +19,8 @@ shows there). The fastest lap's own limits (own=True: the same limits from that 
 place itself as its line reads them) are a floor: neither asks the car for less than the fastest lap showed there, so
 perfect driving at either is nowhere slower than at the fastest lap's own (lapsim.Calibration). Where most laps were
 flat out the grip was not the limit, so the corner speed there may use the cornering the car shows in its other
-corners.
+corners, per unit of the road's vertical load (track_shape.py): learned on the corners away from banked corners,
+crests and compressions, and lent at the load of the place it is lent to.
 
 Accelerations are the accelerometer's less the slope of the road at the place (the slope shows as a steady offset
 between the accelerometer and the change in speed), so braking and drive are the car's, not gravity's. Cornering
@@ -185,12 +186,15 @@ def _power_fit(v: np.ndarray, a: np.ndarray) -> tuple[float, float, float] | Non
 
 
 def place_limits(traces: list[dict[str, np.ndarray]], reference: dict[str, np.ndarray] | None = None,
-                 percentiles: tuple[Percentiles, ...] = (PERFECT, REALISTIC), own: bool = False) -> list[PlaceLimits]:
+                 percentiles: tuple[Percentiles, ...] = (PERFECT, REALISTIC), own: bool = False, *,
+                 load: np.ndarray | None = None, shaped: np.ndarray | None = None) -> list[PlaceLimits]:
     """The limits at every place, one set per percentiles, from the quick laps' traces (on the line's distance grid,
     timing line at both ends, with math channels). reference: the fastest lap, whose own limits are the floor of
     every set. own: also its own limits, last: what that lap alone shows at every place, read as the laps' are, and
     at the place itself its cornering as perfect driving on its line reads it (the line's curvature smoothed,
-    lapsim.py), so that at no more than its speed, perfect driving has at least its grip at every metre."""
+    lapsim.py), so that at no more than its speed, perfect driving has at least its grip at every metre.
+    load: the road's vertical load (g) at every metre (track_shape.py), shaped: the metres of its banked corners,
+    crests and compressions; both for the cornering lent to places taken flat out."""
     if own and reference is None:
         raise ValueError("own limits need the reference lap")
     n = len(traces[0]["speed"]) - 1
@@ -296,11 +300,20 @@ def place_limits(traces: list[dict[str, np.ndarray]], reference: dict[str, np.nd
                 out_brk[p, sl, j], out_acc[p, sl, j] = b, a
         del lw, aw
 
+    # the car's cornering for the places taken flat out is compared per unit of the road's load: learned on the
+    # corners whose grip is the car's own (no banked corner, crest or compression within the place's window), and
+    # lent at each place's own load
+    lift = np.ones(places) if load is None else np.asarray(load, float)[centres]
+    learn = ~flat
+    if shaped is not None:
+        apart = _moving(np.asarray(shaped[:n], float)[None, :], PLACE_WINDOW_M)[0][centres] > 0
+        if (learn & ~apart).any():
+            learn &= ~apart
     out = []
     for p, pc in enumerate(sets):
         lv = out_lat[p]
-        corners = lv[~flat] if (~flat).any() else lv
-        car = float(np.percentile(corners, CORNER_PERCENTILE))
+        per_load = lv / lift
+        car = float(np.percentile(per_load[learn] if learn.any() else per_load, CORNER_PERCENTILE))
         if pc is None:
             drive = r_drive
         else:
@@ -310,7 +323,7 @@ def place_limits(traces: list[dict[str, np.ndarray]], reference: dict[str, np.nd
             if reference is not None:
                 drive = np.maximum(drive, r_drive)
         out.append(PlaceLimits(
-            step=PLACE_STEP_M, lateral=lv, corner=np.where(flat, np.maximum(lv, car), lv),
+            step=PLACE_STEP_M, lateral=lv, corner=np.where(flat, np.maximum(lv, car * lift), lv),
             brake=np.minimum.accumulate(out_brk[p], axis=1), accel=np.minimum.accumulate(out_acc[p], axis=1),
             power=power, drive=drive, grade=grade, top_speed=r_top if pc is None else top))
     if reference is not None:  # the fastest lap's own, as perfect driving reads them, are every set's floor

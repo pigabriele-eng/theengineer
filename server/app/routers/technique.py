@@ -37,7 +37,7 @@ from app.routers.sessions import official_corners
 router = APIRouter(prefix="/technique")
 log = logging.getLogger(__name__)
 
-TECHNIQUE_VERSION = 3  # raise when the check changes, so every kept one is worked out again
+TECHNIQUE_VERSION = 4  # raise when the check changes, so every kept one is worked out again
 TRACES_WAIT_S = 3600  # longest the check waits for the logs to be read into lap traces
 HABITS_SHOWN = 12
 DETAILS_KEPT = 16  # laps' full checks kept in memory

@@ -2,10 +2,12 @@
 traction control costs on the corner exits.
 
 The car's grip limit is the engine's own (limits.py): the 98th percentile of combined g in each 10° direction and
-speed band, from the laps within 2 % of the quickest. Grip use is combined g over that limit, averaged over the time
-spent braking, turning in, mid-corner and on the exit; full-throttle straights are left out, because there the
-engine is the limit. The quick laps (within 1 % of the best) are split into their quickest and slowest third to see
-what the quick ones do differently, corner by corner and phase by phase.
+speed band, from the laps within 2 % of the quickest, per unit of the road's vertical load where the logs tell the
+road's shape (track_shape.py): banked corners, crests and compressions don't set it. Grip use is combined g over that
+limit times the load where the car was, averaged over the time spent braking, turning in, mid-corner and on the exit;
+full-throttle straights are left out, because there the engine is the limit. The quick laps (within 1 % of the best)
+are split into their quickest and slowest third to see what the quick ones do differently, corner by corner and
+phase by phase.
 
 Traction control is the logger's TC intervention flag with the throttle open. A zone is a stretch where TC works on
 at least one quick lap in twelve. In each zone, passes with more TC are compared with passes with less at the same
@@ -25,9 +27,9 @@ import numpy as np
 
 from app.analysis.align import TrackLine, aligned_trace, track_line
 from app.analysis.channels import BRAKE, EXIT, MID, POWER, TRAIL, math_channels
-from app.analysis.insights import LapRecord, _limit_laps, _within, corr
+from app.analysis.insights import LapRecord, _within, corr, grip_limits
 from app.analysis.laps import CornerSpec, Lap, SessionData, Section, lap_length, make_sections
-from app.analysis.limits import CarLimits, car_limits
+from app.analysis.limits import CarLimits
 from app.importers.motec import LdFile
 
 QUICK_WITHIN = 0.01  # quick laps: within 1 % of the best
@@ -56,7 +58,7 @@ EXTRA = (
 )
 # What a lap keeps once it is on the track line
 KEEP = ("speed", "ax", "ay", "throttle", "brake", "tc_on", "rear_slip", "steer_wheel", "steer", "rpm",
-        "engine_torque", "g_vert", "tc_switch")
+        "engine_torque", "g_vert", "tc_switch", "turn_g", "az", "altitude")  # the last three: the road's shape
 STATE = ("tyre_t_rl", "tyre_t_rr", "tc_switch")  # kept per lap as the lap's median
 # The standard roles the math channels need; everything else is dropped before they are worked out
 MATH_IN = ("speed", "g_long", "g_lat", "yaw", "steer", "throttle", "brake", "lat", "lon", "tc",
@@ -224,11 +226,11 @@ class Report:
         self.s = study
         self.laps = study.laps
         self.ref = min(self.laps, key=lambda x: x.time)
-        self.limits: CarLimits = car_limits([x.trace for x in _limit_laps(self.laps)])
+        self.limits: CarLimits = grip_limits(self.laps)
         self.sections, self.numbering = make_sections(self.ref.trace, study.corners)
         self.n = len(self.ref.trace["speed"])
-        self.use = {x.key: self.limits.use(x.trace["speed"], x.trace["ax"], x.trace["ay"]).astype(np.float32)
-                    for x in self.laps}
+        self.use = {x.key: self.limits.use(x.trace["speed"], x.trace["ax"], x.trace["ay"], at=slice(None))
+                    .astype(np.float32) for x in self.laps}
         self.dt = {x.key: _dt(x.trace["t"]) for x in self.laps}
         best = self.ref.time
         ranked = sorted(self.laps, key=lambda x: x.time)
