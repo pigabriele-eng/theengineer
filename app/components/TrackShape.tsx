@@ -117,11 +117,13 @@ export function ElevationStrip({ shape, onCursor }: { shape: TrackShapeData; onC
   const px = (m: number) => PAD.left + (m / shape.length_m) * w;
 
   // corner names under the axis at their slowest point, on a second row where they would touch another; the banked
-  // corners are placed first, and a name with no room on either row is left out (the tooltip still names it)
+  // corners are placed first, then those with a crest or a compression, and a name with no room on either row is
+  // left out (the tooltip still names it)
   const marks: { code: string; x: number; row: number }[] = [];
   const half = (code: string) => code.length * 3.4 + 2; // half a name's width at 11 px
-  const isBanked = (code: string) => shape.features.some((f) => f.kind === 'banked' && f.corner === code);
-  const order = [...shape.corners].sort((a, b) => Number(isBanked(b.code)) - Number(isBanked(a.code)));
+  const rank = (code: string) => Math.max(0, ...shape.features.filter((f) => f.corner === code)
+    .map((f) => (f.kind === 'banked' ? 2 : 1)));
+  const order = [...shape.corners].sort((a, b) => rank(b.code) - rank(a.code));
   for (const k of order) {
     const x = px(k.apex_m);
     const row = [0, 1].find((r) => marks.every((m) => m.row !== r || Math.abs(m.x - x) >= half(m.code) + half(k.code)));
