@@ -4,7 +4,6 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-nati
 
 import { DriverLinks } from '@/components/DriverPicker';
 import { FilterBar, PlanForm, plannedLine, RemovePlanned } from '@/components/EventFilter';
-import { ImportLogs } from '@/components/ImportLogs';
 import { PrepButton, usePrepAvailability } from '@/components/PrepButton';
 import { RenameEvent } from '@/components/RenameEvent';
 import { Text, View, useThemeColor } from '@/components/Themed';
@@ -69,7 +68,12 @@ export default function SessionsScreen() {
   return (
     <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.outer}>
       <View style={styles.page}>
-        <ImportLogs onProgress={load} events={folders} />
+        {/* uploads have a page of their own (the Upload tab): one big drop box */}
+        <Link href="/upload" asChild>
+          <Pressable style={StyleSheet.flatten([styles.linkButton, styles.upload, { borderColor: tint }])}>
+            <Text style={StyleSheet.flatten([styles.linkText, { color: tint }])}>Upload runs and files</Text>
+          </Pressable>
+        </Link>
         {making ? (
           <View style={styles.panel}>
             <Text style={styles.panelTitle}>New event</Text>
@@ -205,6 +209,7 @@ const styles = StyleSheet.create({
   page: { width: '100%', maxWidth: 820, alignSelf: 'center', gap: 12 },
   links: { flexDirection: 'row', gap: 8 },
   linkButton: { flex: 1, borderWidth: 1, borderRadius: 8, paddingVertical: 10, alignItems: 'center' },
+  upload: { flex: 0, paddingVertical: 14 },
   linkText: { fontWeight: '600', fontSize: 15 },
   panel: { borderWidth: 1, borderColor: '#8884', borderRadius: 10, padding: 12, gap: 8 },
   panelTitle: { fontSize: 16, fontWeight: '700' },
