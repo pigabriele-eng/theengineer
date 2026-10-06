@@ -1,4 +1,4 @@
-import { Link, Stack, useLocalSearchParams } from 'expo-router';
+import { Link, Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, LayoutChangeEvent, Pressable, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 
@@ -6,6 +6,7 @@ import { Bars, LineChart, LineSeries, useChartColors } from '@/components/Report
 import { Balance } from '@/components/report/Balance';
 import { GripReport } from '@/components/report/GripReport';
 import { TyrePrep } from '@/components/report/TyrePrep';
+import { SessionSwitcher, useEventFolder, useSessionEvent } from '@/components/SessionSwitcher';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
 import { formatLap } from '@/lib/api';
@@ -55,6 +56,11 @@ export default function ReportScreen() {
   const background = useThemeColor({}, 'background');
   const { width } = useWindowDimensions();
   const wide = width >= WIDE;
+  const router = useRouter();
+  // the event's sessions, to switch between the whole event's report and one session's without going back; the page
+  // keeps its place and the section picked on the map
+  const sessionEvent = useSessionEvent(scope && 'session' in scope ? scope.session : null);
+  const folder = useEventFolder(scope && 'event' in scope ? scope.event : sessionEvent);
 
   // ask for the report; while the server works it out, ask again every couple of seconds
   useEffect(() => {
@@ -110,6 +116,8 @@ export default function ReportScreen() {
     return <Text style={styles.pad}>Open a report from an event on the Sessions tab, or from a session.</Text>;
   }
   const working = answer?.status === 'queued' || answer?.status === 'running';
+  const switching = answer != null && key !== JSON.stringify(answer.scope === 'event' ? { event: answer.id }
+    : { session: answer.id });
   // the sessions have clean laps (the report is ready or being worked out), so the other sections have data too
   const hasLaps = report != null || working || answer?.sessions.some((s) => s.included) === true;
   const highlight = focus ?? report?.gains[0]?.code ?? undefined;
@@ -131,6 +139,12 @@ export default function ReportScreen() {
             </Text>
           )}
         </View>
+        {folder && folder.id != null && (
+          <SessionSwitcher folder={folder} current={'session' in scope ? scope.session : null} onlyTimed
+            onWhole={() => router.setParams({ event: String(folder.id), session: undefined })}
+            onPick={(s) => router.setParams({ session: String(s.id), event: undefined })} />
+        )}
+        {switching && <ActivityIndicator />}
 
         {!answer && !error && <ActivityIndicator />}
         {error && <Text style={styles.error}>Can&apos;t reach the server: {error}</Text>}

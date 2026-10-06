@@ -56,6 +56,7 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
       <Stack>
         <Stack.Protected guard={signedIn}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="event/[id]" options={{ title: 'Event' }} />
           <Stack.Screen name="session/[id]" options={{ title: 'Session' }} />
           <Stack.Screen name="report" options={{ title: 'Report' }} />
           <Stack.Screen name="technique" options={{ title: 'Technique check' }} />
