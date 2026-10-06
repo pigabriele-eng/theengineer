@@ -34,7 +34,8 @@ STEP_M = 5  # resolution of the traces sent for charts
 
 # Logger roles the comparison needs; tyre, engine and suspension channels are dropped before the laps are aligned
 ROLES = ("speed", "throttle", "brake", "steer", "lat", "lon", "g_lat", "g_long", "yaw", "tc", "abs",
-         "wheel_fl", "wheel_fr", "wheel_rl", "wheel_rr")
+         "wheel_fl", "wheel_fr", "wheel_rl", "wheel_rr", "g_vert", "altitude")
+SHAPE_ROLES = ("turn_g", "az", "altitude")  # what the road's shape is read from (track_shape.py)
 
 # metric -> (label, unit, better when higher); None when either is a matter of style rather than time
 TECHNIQUE: dict[str, tuple[str, str, bool | None]] = {
@@ -99,10 +100,11 @@ class LapSummary:
     phase: np.ndarray  # int8, see channels.PHASES
     throttle: np.ndarray | None
     style: dict = field(default_factory=dict)  # lap-wide totals
+    shape: dict[str, np.ndarray] = field(default_factory=dict)  # SHAPE_ROLES the log has (float32)
 
     @property
-    def trace(self) -> dict[str, np.ndarray]:  # what top_speeds and the car's limits read
-        out = {"speed": self.speed, "ax": self.ax, "ay": self.ay, "phase": self.phase}
+    def trace(self) -> dict[str, np.ndarray]:  # what top_speeds, the road's shape and the car's limits read
+        out = {"speed": self.speed, "ax": self.ax, "ay": self.ay, "phase": self.phase, **self.shape}
         if self.throttle is not None:
             out["throttle"] = self.throttle
         return out
@@ -232,12 +234,13 @@ def _summarise(tr: dict[str, np.ndarray], src: RunSource, lap: Lap, index: int, 
     f32 = np.float32
     return LapSummary(src.side, src.name, lap.number, lap.time, index, secs, dt.astype(f32), tr["speed"].astype(f32),
                       tr["ax"].astype(f32), tr["ay"].astype(f32), np.rint(tr["phase"]).astype(np.int8),
-                      tr["throttle"].astype(f32) if "throttle" in tr else None, style)
+                      tr["throttle"].astype(f32) if "throttle" in tr else None, style,
+                      {k: tr[k].astype(f32) for k in SHAPE_ROLES if k in tr})
 
 
 def _grip(x: LapSummary, sections: list, limits: CarLimits) -> None:
     """Share of the car's grip in use, per section and phase: only known once every run's quick laps are in."""
-    use = limits.use(x.speed.astype(float), x.ax.astype(float), x.ay.astype(float))
+    use = limits.use(x.speed.astype(float), x.ax.astype(float), x.ay.astype(float), at=slice(None))
     dt = x.dt.astype(float)
     for s, m in zip(sections, x.sections, strict=True):
         sl = slice(s.start, s.end)

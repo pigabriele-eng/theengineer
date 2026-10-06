@@ -8,6 +8,11 @@ acceleration is the upper quartile, gear changes included: the driver cannot add
 This envelope measures how much of its grip a lap used. The theoretical lap and the realistic target drive at the
 limits the car has shown at each place instead (local_limits.py): one envelope for the whole track would lend one
 corner's grip (a banked one, say) to every other.
+
+Where the road's shape is known (track_shape.py), grip is compared per unit of its vertical load: a banked corner or
+a dip presses the car into the road and lets it pull more g, a crest takes load away. The envelope is then the grip
+on a level road, learned away from banked corners, crests and compressions so none of them lends its grip to the
+rest of the lap, and a lap's grip use is its g over the envelope times the load where it was.
 """
 from __future__ import annotations
 
@@ -35,6 +40,13 @@ class CarLimits:
     accel: np.ndarray  # g, power or traction limited, along a straight
     brake: np.ndarray  # g (positive), along a straight
     top_speed: float  # km/h
+    load: np.ndarray | None = None  # g at every metre of the laps' line: the road's vertical load (None: level)
+
+    def load_at(self, at: slice | np.ndarray | None) -> np.ndarray | float:
+        """The road's vertical load (g) at these metres of the line (a slice or indices); 1 when it isn't known."""
+        if self.load is None or at is None:
+            return 1.0
+        return self.load[at]
 
     def grip(self, v: np.ndarray, direction: np.ndarray) -> np.ndarray:
         """Combined g the car can pull at this speed in this direction (bilinear in speed and direction)."""
@@ -48,12 +60,15 @@ class CarLimits:
         e = self.envelope
         return ((e[i0, j0] * (1 - fj) + e[i0, j1] * fj) * (1 - fi) + (e[i1, j0] * (1 - fj) + e[i1, j1] * fj) * fi)
 
-    def use(self, v: np.ndarray, ax: np.ndarray, ay: np.ndarray) -> np.ndarray:
-        """Share of the available grip in use (1 = at the car's demonstrated limit)."""
+    def use(self, v: np.ndarray, ax: np.ndarray, ay: np.ndarray, at: slice | np.ndarray | None = None
+            ) -> np.ndarray:
+        """Share of the available grip in use (1 = at the car's demonstrated limit). at: the metres of the line the
+        samples are at (a slice or indices), to compare them per unit of the road's load there."""
         direction = np.degrees(np.arctan2(ax, np.abs(ay)))
-        return np.clip(np.hypot(ax, ay) / np.maximum(self.grip(v, direction), 0.1), 0, 1.25)
+        return np.clip(np.hypot(ax, ay) / self.load_at(at) / np.maximum(self.grip(v, direction), 0.1), 0, 1.25)
 
     def max_lateral(self, v: np.ndarray) -> np.ndarray:
+        """Cornering g at this speed, on a level road."""
         return self.grip(v, np.zeros_like(np.asarray(v, float)))
 
     def to_dict(self) -> dict:
@@ -73,12 +88,20 @@ def _fill(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     return np.interp(x, x[ok], y[ok])
 
 
-def car_limits(traces: list[dict[str, np.ndarray]]) -> CarLimits:
-    """Limits from the clean laps' traces (on a distance grid, with math channels)."""
+def car_limits(traces: list[dict[str, np.ndarray]], load: np.ndarray | None = None,
+               shaped: np.ndarray | None = None) -> CarLimits:
+    """Limits from the clean laps' traces (on a distance grid, with math channels). load: the road's vertical load
+    (g) at every metre of that grid and shaped: its banked corners, crests and compressions (TrackShape.load_on and
+    shaped_on), to learn the envelope per unit of load and away from those places."""
     pool = {k: np.concatenate([tr[k] for tr in traces]) for k in ("speed", "ax", "ay", "phase")}
     v, ax, ay, phase = pool["speed"], pool["ax"], pool["ay"], np.rint(pool["phase"])
     full = np.concatenate([tr["throttle"] for tr in traces]) >= 95 if all("throttle" in tr for tr in traces) else None
-    cg = np.hypot(ax, ay)
+    if load is not None and any(len(tr["speed"]) != len(load) for tr in traces):
+        load = shaped = None  # not on the laps' grid
+    cg = np.hypot(ax, ay) / (np.tile(load, len(traces)) if load is not None else 1.0)
+    own = np.ones(len(v), bool)  # the samples that may set the car's limits for the whole lap
+    if shaped is not None and np.mean(shaped) < 0.5:
+        own = np.tile(~np.asarray(shaped, bool), len(traces))
     direction = np.degrees(np.arctan2(ax, np.abs(ay)))
 
     moving = v > 40
@@ -89,7 +112,7 @@ def car_limits(traces: list[dict[str, np.ndarray]]) -> CarLimits:
     for i, (a, b) in enumerate(pairwise(edges)):
         band = (v >= a) & (v < b)
         for j, d in enumerate(DIRECTIONS):
-            m = band & (np.abs(direction - d) <= 5)
+            m = band & own & (np.abs(direction - d) <= 5)
             if np.count_nonzero(m) >= MIN_SAMPLES:
                 env[i, j] = np.percentile(cg[m], LIMIT_PERCENTILE)
     for i in range(len(speeds)):
@@ -104,7 +127,7 @@ def car_limits(traces: list[dict[str, np.ndarray]]) -> CarLimits:
     line_speeds = np.arange(0, top + STRAIGHT_STEP_KMH, STRAIGHT_STEP_KMH, dtype=float)
     acc = np.full(len(line_speeds), np.nan)
     brk = np.full(len(line_speeds), np.nan)
-    straight = np.abs(ay) < 0.3
+    straight = (np.abs(ay) < 0.3) & own
     for k, s in enumerate(line_speeds):
         near = straight & (np.abs(v - s) <= STRAIGHT_STEP_KMH / 2)
         a = near & (full if full is not None else (phase == POWER) & (ax > 0))
@@ -113,7 +136,7 @@ def car_limits(traces: list[dict[str, np.ndarray]]) -> CarLimits:
             acc[k] = np.percentile(ax[a], ACCEL_PERCENTILE if full is not None else 75)
         if np.count_nonzero(b) >= MIN_SAMPLES:
             brk[k] = np.percentile(-ax[b], LIMIT_PERCENTILE)
-    lim = CarLimits(speeds, env, line_speeds, acc, brk, top)
+    lim = CarLimits(speeds, env, line_speeds, acc, brk, top, load)
     lim.accel = _power_curve(line_speeds, acc, lim)
     # where braking never happened at a speed, fall back on the envelope's pure braking
     brk = np.where(np.isnan(brk), lim.grip(line_speeds, np.full(len(line_speeds), -90.0)), brk)

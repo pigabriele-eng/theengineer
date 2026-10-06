@@ -21,14 +21,16 @@ from app.analysis.insights import LapRecord, _dt, section_metrics
 from app.analysis.laps import CornerSpec, Lap, Section, SessionData, corner_sections, lap_length, make_sections
 from app.analysis.lapsim import SimLap
 from app.analysis.limits import car_limits
+from app.analysis.track_shape import on_line, track_shape
 
 MIN_LAPS, MAX_LAPS = 2, 6
 MIN_LOSS_S = 0.01  # a section time this close to the quickest is not an opportunity
 TOP_OPPORTUNITIES = 5
 WHERE_M = 100  # the stretch of a section where most of the time goes, for the charts
-# what section_metrics and the charts need; every other channel is dropped as soon as a lap is traced
+# what section_metrics, the charts and the road's shape (grip per unit of its load) need; every other channel is
+# dropped as soon as a lap is traced
 KEEP = ("distance", "t", "speed", "throttle", "brake", "steer", "gear", "phase", "braking", "ax", "ay", "coasting",
-        "overlap")
+        "overlap", "turn_g", "az", "altitude")
 CHART_ROLES = {"speed": 1, "throttle": 0, "brake": 1, "steer": 1, "gear": 0}  # role -> decimals sent
 PHASE_NAMES = {"braking": "braking", "trail": "entry", "mid": "mid-corner", "exit": "exit", "power": "full throttle"}
 
@@ -114,7 +116,8 @@ def compare_picks(picks: list[Pick], load: Callable[[str], SessionData], corners
 def _summarise(laps: list[Traced], corners: list[CornerSpec] | None, step: float) -> dict:
     ref = min(laps, key=lambda x: x.lap.time)
     n = len(ref.trace["distance"])
-    limits = car_limits([x.trace for x in laps])
+    traces = [x.trace for x in laps]
+    limits = car_limits(traces, *on_line(track_shape(traces), n))
     no_sim = SimLap(np.zeros(n), np.zeros(n), 0.0, np.zeros(n, int))  # section_metrics' theoretical time: unused
     sections, numbering = make_sections(ref.trace, corners)
     marks, _ = corner_sections(ref.trace, corners)

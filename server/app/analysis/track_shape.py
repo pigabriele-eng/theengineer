@@ -50,6 +50,10 @@ ALT_CLOSE_M = 2.0  # ... and the median profile meets itself at the timing line 
 ALT_MAX_RANGE_M = 400.0
 ELEVATION_SMOOTH_M = 10
 VERTICAL_CURVE_M = 30  # the elevation's curve, for the load where no vertical accelerometer was logged
+LOAD_RANGE = (0.5, 2.0)  # g: the load grip is compared per unit of is kept within this
+# g: the vertical accelerometer reads a level corner no closer to 1 g than this (the body rolls, tilting it), so grip
+# is compared per unit of load only beyond it
+LEVEL_G = 0.05
 
 
 @dataclass
@@ -68,6 +72,36 @@ class TrackShape:
                 "bank_deg": _rounded(self.bank_deg, 1), "load_g": _rounded(self.load_g, 2),
                 "features": [{**f, "value": round(float(f["value"]), 1 if f["kind"] == "banked" else 2)}
                              for f in self.features]}
+
+    def load_on(self, points: int) -> np.ndarray:
+        """The vertical load (g) to compare grip by at every metre of a lap of points metres on the same line (timing
+        line to timing line, both ends included, as the traces): within LEVEL_G of 1 g it is the level road's, and
+        beyond that it counts from there, so the accelerometer's own error in a corner doesn't become grip; within
+        LOAD_RANGE."""
+        n = points - 1
+        load = np.nan_to_num(self.load_g, nan=1.0) - 1
+        load = 1 + np.sign(load) * np.maximum(np.abs(load) - LEVEL_G, 0)
+        return np.clip(np.interp(np.arange(points), np.arange(len(load)) * self.step_m, load, period=n),
+                       *LOAD_RANGE)
+
+    def shaped_on(self, points: int, margin: int = 0) -> np.ndarray:
+        """True at every metre (of points, as load_on) within margin of a banked corner, a crest or a compression:
+        the places whose grip is their own, never to be lent to the rest of the lap."""
+        n = points - 1
+        out = np.zeros(points, bool)
+        for f in self.features:
+            a, b = f["start_m"] - margin, f["end_m"] + margin + (n if f["start_m"] > f["end_m"] else 0)
+            out[np.arange(a, b + 1) % n] = True
+        out[n] = out[0]
+        return out
+
+
+def on_line(shape: TrackShape | None, points: int) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """The load and the shaped places (TrackShape.load_on and shaped_on) at every metre of a lap of points metres;
+    None, None without a shape."""
+    if shape is None:
+        return None, None
+    return shape.load_on(points), shape.shaped_on(points)
 
 
 def _rounded(x: np.ndarray, nd: int) -> list:
@@ -170,7 +204,7 @@ def _vertical(az: np.ndarray, ax: np.ndarray | None, ay: np.ndarray) -> np.ndarr
     else:  # too few laps to compare: what goes with the braking overall
         p = float(np.polyfit(ax.ravel(), az.ravel(), 1)[0])
     out = az - p * ax
-    level = (np.abs(ax) < 0.1) & (np.abs(ay) < 0.1)
+    level = np.abs(ay) < 0.1  # the straights, whatever the car does on them now that the braking is out
     ref = float(np.median(out[level])) if np.count_nonzero(level) > 100 else float(np.median(out))
     return out / ref if ref > 0.5 else out
 
