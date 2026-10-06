@@ -1,3 +1,4 @@
+import gc
 import os
 import shutil
 import tempfile
@@ -110,6 +111,11 @@ def client(tmp_path, monkeypatch):
     importlib.reload(app.main)
     if TEST_DATABASE_URL:
         app.db.Base.metadata.drop_all(app.db.engine)
+    # The app runs gc.collect() after every log it reads (heavy.release_memory and the like), and each one went
+    # through the whole app and its libraries (about 250,000 objects): close to half the tests' CPU time. What is
+    # alive now is set aside where the collector doesn't look, and handed back to it when the test ends.
+    gc.collect()
+    gc.freeze()
     with TestClient(app.main.app) as c:
         yield c
         # imports and reports run in background threads: let them finish here, not in the next test's database
@@ -119,3 +125,4 @@ def client(tmp_path, monkeypatch):
         app.routers.technique.wait_idle()  # first: it asks for reports
         app.routers.reports.wait_idle()
     app.db.engine.dispose()
+    gc.unfreeze()
