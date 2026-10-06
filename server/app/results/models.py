@@ -1,9 +1,9 @@
 """Official series results: new tables only (create_all adds them); nothing on the existing tables changes."""
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import JSON, Date, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -86,3 +86,36 @@ class EventResultLink(Base):
     car_number: Mapped[str | None] = mapped_column(String(8))
     by_hand: Mapped[int] = mapped_column(Integer, default=0)  # 1 when the user set it, so matching leaves it alone
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class ResultCalendarRound(Base):
+    """A round on a series' published calendar, before or after it is run, with its first and last day."""
+    __tablename__ = "result_calendar"
+    __table_args__ = (UniqueConstraint("series", "year", "round_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    series: Mapped[str] = mapped_column(String(40))
+    year: Mapped[int] = mapped_column(Integer, index=True)
+    round_id: Mapped[str] = mapped_column(String(40))  # the site's meeting id, the same as ResultRound.round_id
+    name: Mapped[str] = mapped_column(String(120))
+    venue: Mapped[str | None] = mapped_column(String(60))  # venues.venue_key
+    order: Mapped[int] = mapped_column(Integer, default=0)
+    start: Mapped[date | None] = mapped_column(Date)
+    end: Mapped[date | None] = mapped_column(Date)
+    entry_list_url: Mapped[str | None] = mapped_column(String(512))  # once the series publishes one
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    entries: Mapped[list[ResultEntry]] = relationship(back_populates="round", cascade="all, delete-orphan",
+                                                        order_by="ResultEntry.id")
+
+
+class ResultEntry(Base):
+    """One car on a round's published entry list."""
+    __tablename__ = "result_entries"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    calendar_pk: Mapped[int] = mapped_column(ForeignKey("result_calendar.id", ondelete="CASCADE"), index=True)
+    car_number: Mapped[str] = mapped_column(String(8))
+    drivers: Mapped[list] = mapped_column(JSON, default=list)
+    team: Mapped[str | None] = mapped_column(String(160))
+    car_model: Mapped[str | None] = mapped_column(String(80))
+    brand: Mapped[str | None] = mapped_column(String(40))
+    car_class: Mapped[str | None] = mapped_column(String(20))
+    round: Mapped[ResultCalendarRound] = relationship(back_populates="entries")
