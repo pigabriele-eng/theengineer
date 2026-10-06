@@ -1,4 +1,4 @@
-"""Engine views over one or more sessions: opportunities, trends, setup, scores, stints, driver comparison,
+"""Engine views over one or more sessions: opportunities, trends, setup, scores, driver comparison,
 debrief check."""
 from dataclasses import replace
 from functools import partial
@@ -13,7 +13,6 @@ from app.analysis.compare import ROLES as COMPARE_ROLES
 from app.analysis.compare import RunSource, compare_groups
 from app.analysis.insights import RunInput, analyze_runs
 from app.analysis.laps import load_session
-from app.analysis.stint import stint_analysis
 from app.db import get_db
 from app.debrief.check import check_debrief
 from app.vehicle.presets import preset_detail
@@ -59,15 +58,6 @@ def session_insights(session_id: int, db: Session = Depends(get_db)):
     """Lap time opportunities, driving trends, setup checks and driver scores for one session."""
     runs, track = _runs(db, [session_id])
     return analyze_runs(runs, official_corners(track), drop_channels=True)
-
-
-@router.get("/sessions/{session_id}/stint")
-@one_at_a_time
-def session_stint(session_id: int, db: Session = Depends(get_db)):
-    """Each stint (split at pit stops) lap by lap: grip in use, lateral g, balance by corner phase, TC and ABS,
-    tyres; and how the car fades through it (seconds and grip per lap) with the understeer gradient."""
-    run, _ = _run(db, _get(db, session_id))
-    return stint_analysis(run)
 
 
 class InsightsIn(BaseModel):
