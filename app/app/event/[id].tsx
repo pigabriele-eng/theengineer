@@ -7,6 +7,7 @@ import { EventCompare, Pick } from '@/components/EventCompare';
 import { EventForm } from '@/components/EventForm';
 import { ImportLogs } from '@/components/ImportLogs';
 import { MoveSessions } from '@/components/MoveSessions';
+import { PrepButton, usePrepAvailability } from '@/components/PrepButton';
 import { RenameEvent } from '@/components/RenameEvent';
 import { ResultsPanel } from '@/components/ResultsPanel';
 import { filledNote, localPick, PickerKind, RunChips, RunNameEditor, RunPicker, useGarage } from '@/components/RunChips';
@@ -58,6 +59,7 @@ export default function EventScreen() {
   const background = useThemeColor({}, 'background');
   const { width } = useWindowDimensions();
   const wide = width >= WIDE;
+  const prep = usePrepAvailability(); // events whose track has past data: the Prep report button
 
   const load = useCallback(() => {
     eventsApi.folder(key).then(
@@ -173,6 +175,7 @@ export default function EventScreen() {
       )}
       {isEvent && eventId != null && (
         <View style={styles.actions}>
+          <PrepButton eventId={eventId} info={prep[String(eventId)]} />
           {timed && (
             // Link asChild hands its child's style to a web anchor, which can't take a style array: one object
             <Link href={{ pathname: '/report', params: { event: eventId } }} asChild>
