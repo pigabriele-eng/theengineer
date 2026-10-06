@@ -6,6 +6,7 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import { authEnabled, useAuthSession } from '@/lib/auth';
+import { NoteLaunch } from '@/lib/openCurrent';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -53,6 +54,8 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
   // Every route other than sign-in must be listed in the first group: a route left out stays reachable when signed out.
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+      {/* where the app was opened: on the event list while an event is on, it goes on to that event's page */}
+      <NoteLaunch />
       <Stack>
         <Stack.Protected guard={signedIn}>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
