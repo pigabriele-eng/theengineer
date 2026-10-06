@@ -15,6 +15,16 @@ KNOWN: dict[str, dict] = {
                     ("T13", 3791, None), ("T14", 3960, None), ("T15", 4085, None), ("T16", 4189, None),
                     ("T17", 4269, None)],
     },
+    # numbers from the FIA circuit map (2021 Dutch Grand Prix, Doc 1); the circuit numbers 6 & 7 and 11 & 12
+    # as one corner each (circuitzandvoort.nl/en/corners/). Measured on a 4219 m logged lap.
+    "Circuit Zandvoort": {
+        "aliases": ("zandvoort", "circuit park zandvoort", "cm.com circuit zandvoort"),
+        "length_m": 4259,
+        "corners": [("T1", 373, None), ("T2", 710, None), ("T3", 821, None), ("T4", 1065, None),
+                    ("T5", 1267, None), ("T6", 1435, "T6-T7"), ("T7", 1673, "T6-T7"), ("T8", 2025, None),
+                    ("T9", 2263, None), ("T10", 2500, None), ("T11", 3095, "T11-T12"), ("T12", 3153, "T11-T12"),
+                    ("T13", 3469, None), ("T14", 3745, None)],
+    },
 }
 
 
