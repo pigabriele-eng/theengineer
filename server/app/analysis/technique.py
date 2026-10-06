@@ -1,15 +1,16 @@
 """Technique check: one lap's driving mistakes against perfect driving, each with the time it costs.
 
-Perfect driving is the theoretical lap (lapsim.py): the lap's own line taken at the car's demonstrated limits
-everywhere. The lap is cut where the driver's actions change (the lift, the brake point, the release, the slowest
-point, the throttle pick-up, full throttle, any lift on a straight) and every piece is costed the same way: the
-driver's lap up to its start and perfect driving from there, against the driver's lap up to its end and perfect
-driving from there. That difference is the time the piece costs, including what it carries down the road (a slow
-exit costs time all the way down the next straight). The pieces add up to the whole gap to the perfect lap.
+Perfect driving is the theoretical lap (lapsim.py): the lap's own line taken at the limits the car has shown at every
+place of the track (local_limits.py). The lap is cut where the driver's actions change (the lift, the brake point,
+the release, the slowest point, the throttle pick-up, full throttle, any lift on a straight) and every piece is
+costed the same way: the driver's lap up to its start and perfect driving from there, against the driver's lap up to
+its end and perfect driving from there. That difference is the time the piece costs, including what it carries down
+the road (a slow exit costs time all the way down the next straight). The pieces add up to the whole gap to the
+perfect lap.
 
-No car holds its peak grip all the way through a long corner, which the perfect lap assumes. So every piece is also
-costed against the realistic target (the same lap with the car at 95 % of its grip, as in the report): that is the
-time a driver can find. The difference, the perfect lap's optimism, is shown on its own.
+Perfect driving takes the best the car has shown at every place, which no single lap puts together. So every piece
+is also costed against the realistic target (the same lap at the grip a quick lap usually shows at each place, as in
+the report): that is the time a driver can find. The difference, the perfect lap's optimism, is shown on its own.
 
 Each piece that costs time is then named from what the driver did there against what perfect driving does (brake
 point, deceleration, coasting, minimum speed, throttle pick-up and full throttle, lifts, traction control,
@@ -23,16 +24,15 @@ Corners are named only by their official numbers (or C1, C2... where the track h
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 
 import numpy as np
 
-from app.analysis.channels import EXIT, POWER, G
-from app.analysis.lapsim import AY_STEP, CURVE_SMOOTH_M, V_STEP, SimLap, _tables
+from app.analysis.channels import EXIT, POWER
+from app.analysis.lapsim import LapModel
 from app.analysis.laps import Section
-from app.analysis.limits import CarLimits
+from app.analysis.local_limits import PlaceLimits
 
-REALISTIC_GRIP = 0.95  # as the report's realistic target (advice.REALISTIC_GRIP)
 MIN_COST_S = 0.02  # a piece that costs less than this (against the realistic target) is not named
 CORNER_WINDOW_M = 100  # a corner's slowest point is looked for this far either side of the section's
 BRAKE_EARLY_M = 5  # braking this much before perfect driving would counts as early
@@ -52,64 +52,14 @@ PHASE_WORDS = ("braking", "entry", "mid-corner", "exit", "full throttle")
 
 # ---------- perfect driving from any point ----------
 
-class Envelope:
-    """The theoretical lap's limits along one lap's line (as lapsim.theoretical_lap sets them up), able to drive the
-    rest of the lap perfectly from any metre at any speed.
+class Envelope(LapModel):
+    """Perfect driving along one lap's line (the theoretical lap's own model, lapsim.LapModel), able to drive the rest
+    of the lap perfectly from any metre at any speed.
 
-    speeds are m/s per metre of the line, 0..n (the timing line at both ends)."""
+    curvature and speeds are per metre of the line, 0..n (the timing line at both ends)."""
 
-    def __init__(self, curvature: np.ndarray, lim: CarLimits):
-        k = np.abs(np.asarray(curvature[:-1], float))
-        n = len(k)
-        w = max(1, round(CURVE_SMOOTH_M)) | 1
-        k = np.maximum(np.convolve(np.pad(k, w // 2, mode="wrap"), np.ones(w) / w, "valid"), 1e-5)
-        v_top = lim.top_speed * 1.02
-        vg, acc, brk = _tables(lim, v_top)
-        vc = np.full(n, v_top / 3.6)
-        for _ in range(8):
-            vc = np.minimum(np.sqrt(lim.max_lateral(vc * 3.6) * G / k), v_top / 3.6)
-        self.n = n
-        self.lim = lim
-        self.k = np.append(k, k[0]).tolist()
-        self.vc = np.append(vc, vc[0])
-        self._vc = self.vc.tolist()
-        self.acc, self.brk = acc.tolist(), brk.tolist()
-        self.nv, self.na = len(vg) - 1, acc.shape[1] - 1
-        self.a_line = np.interp(vg, lim.line_speeds, lim.accel, right=0.0).tolist()
-
-        # the closed lap: two laps forward from the first metre, and braking back from every corner
-        kk, vcc = self.k[:-1] * 2 + [self.k[0]], self._vc[:-1] * 2 + [self._vc[0]]
-        fwd = [0.0] * (2 * n + 1)
-        fwd[0] = vcc[0]
-        for i in range(2 * n):
-            fwd[i + 1] = self._step_up(fwd[i], kk[i], vcc[i + 1])
-        bwd = vcc[:]
-        for i in range(2 * n - 1, -1, -1):
-            v = bwd[i + 1]
-            b = self._look(self.brk, v, v * v * kk[i + 1] / G)
-            bwd[i] = min(bwd[i], (v * v + 2 * b * G) ** 0.5)
-        self.F = fwd[n:]
-        self.B = bwd[n:]
-        self.P = np.minimum(np.array(self.F), np.array(self.B))
-        self._P = self.P.tolist()
-        seg = 2 / (self.P[:-1] + self.P[1:])
-        self.cum = np.concatenate([[0.0], np.cumsum(seg)])  # perfect driving's time to each metre
-
-    def _look(self, table, v: float, ay: float) -> float:
-        return table[min(int(v * 3.6 / V_STEP + 0.5), self.nv)][min(int(ay / AY_STEP + 0.5), self.na)]
-
-    def _step_up(self, v: float, k: float, cap: float) -> float:
-        a = self._look(self.acc, v, v * v * k / G)
-        return min((v * v + 2 * a * G) ** 0.5, cap)
-
-    def brake_limit(self, v: float, ay: float) -> float:
-        """Deceleration (g) the car can pull at v (m/s) while cornering at ay (g)."""
-        return self._look(self.brk, v, ay)
-
-    def power_limited(self, v: float, i: int) -> bool:
-        """True where the car could be at full throttle: the engine, not the grip, limits the acceleration."""
-        iv = min(int(v * 3.6 / V_STEP + 0.5), self.nv)
-        return self._look(self.acc, v, v * v * self.k[i] / G) >= self.a_line[iv] - 1e-4
+    def __init__(self, curvature: np.ndarray, lim: PlaceLimits):
+        super().__init__(np.asarray(curvature, float)[:-1], lim)
 
     def restart(self, i0: int, v0: float) -> Restart:
         """Perfect driving from metre i0 at v0 (m/s) until it rejoins the perfect lap."""
@@ -118,7 +68,7 @@ class Envelope:
         out = [min(fw, B[i0])]
         i = i0
         while i < n:
-            fw = self._step_up(fw, self.k[i], self._vc[i + 1])
+            fw = self.step_up(i, fw)
             i += 1
             if abs(fw - F[i]) < 1e-7:
                 break
@@ -407,15 +357,16 @@ def _corner_limit(env: Envelope, m: int) -> float:
 
 
 def _braking(tr: dict[str, np.ndarray], a: int, b: int, env: Envelope, units: dict[str, str]) -> dict:
-    """The driver's braking from a to b against what the car can do at each moment (its best straight-line braking
-    at that speed, less what the cornering at that moment takes): the peak, and the deceleration given away while
-    the pressure built and after the peak. Also the peak pressure, how long it took to build, ABS and front lock."""
+    """The driver's braking from a to b against what the car has shown it can do at each moment (the hardest braking
+    at that place while cornering as hard as the driver was): the peak, and the deceleration given away while the
+    pressure built and after the peak. Also the peak pressure, how long it took to build, ABS and front lock.
+    Decelerations are the accelerometer's less the slope of the road, as the car's limits are."""
     out: dict = {}
     if b - a < 3:
         return out
-    v, dec = tr["speed"][a:b], -tr["ax"][a:b]
+    dec = -(np.asarray(tr["ax"][a:b], float) - env.grade[a:b])
     ay, dt = np.abs(tr["ay"][a:b]), _dt(tr)[a:b]
-    avail = np.array([env.brake_limit(x / 3.6, y) for x, y in zip(v, ay, strict=True)])
+    avail = np.array([env.brake_limit(a + j, float(y)) for j, y in enumerate(ay)])
     pk = int(np.argmax(dec))
     out.update(peak=float(dec[pk]), peak_avail=float(avail[pk]), peak_at=a + pk,
                mean=float((dec * dt).sum() / dt.sum()), mean_avail=float((avail * dt).sum() / dt.sum()))
@@ -442,8 +393,8 @@ def _pressure(nb: dict) -> str:
     return f", peak pressure {nb['pressure']:.0f} {nb['pressure_unit']}".rstrip() if "pressure" in nb else ""
 
 
-def name_piece(p: Piece, tr: dict[str, np.ndarray], env: Envelope, env_r: Envelope, lim: CarLimits,
-               units: dict[str, str], section_of: Callable[[int], str]) -> Mistake | None:
+def name_piece(p: Piece, tr: dict[str, np.ndarray], env: Envelope, env_r: Envelope, units: dict[str, str],
+               section_of: Callable[[int], str]) -> Mistake | None:
     """What the driver did wrong in this piece, in plain words, or None when nothing stands out."""
     v = tr["speed"]
     dt = _dt(tr)
@@ -483,8 +434,9 @@ def name_piece(p: Piece, tr: dict[str, np.ndarray], env: Envelope, env_r: Envelo
         limit_p = _corner_limit(env, c.m)
         if p.carried >= 0.5 * p.cost and over >= 2.0 and c.release is not None:
             what = (f"You came off the brake at {b} m at {end_v:.0f} km/h; perfect driving still carries "
-                    f"{perfect_v:.0f} km/h there ({real_v:.0f} km/h at 95% of the grip). Your slowest point was "
-                    f"{v[c.m]:.0f} km/h; the grip allows {limit_p:.0f} km/h ({limit_r:.0f} km/h at 95%).")
+                    f"{perfect_v:.0f} km/h there ({real_v:.0f} km/h at the realistic target). Your slowest point was "
+                    f"{v[c.m]:.0f} km/h; the grip allows {limit_p:.0f} km/h ({limit_r:.0f} km/h at the realistic "
+                    "target).")
             return Mistake("over_slowed", "entry", "Slowed the car too much on the brakes", what,
                            f"Brake less into {code}: let the brake go at about {real_v:.0f} km/h and carry the "
                            "speed to the slowest point.", b, over, "km/h")
@@ -528,20 +480,20 @@ def name_piece(p: Piece, tr: dict[str, np.ndarray], env: Envelope, env_r: Envelo
             low = float(thr[a:c.m + 1].min()) if thr is not None else None
             what = (f"You lifted from {a} m" + (f" down to {low:.0f}% throttle" if low is not None else "") +
                     f"; slowest {vm:.0f} km/h at {c.m} m, where the grip allows {limit_p:.0f} km/h "
-                    f"({limit_r:.0f} km/h at 95%).")
+                    f"({limit_r:.0f} km/h at the realistic target).")
             return Mistake("lift_corner", "mid-corner", f"Lifted more than needed through {code}", what,
                            f"Lift less: carry about {limit_r:.0f} km/h through {code}.", a, limit_r - vm, "km/h")
         if coast >= 0.12:
             what = (f"From {a} m, off the brake, to the slowest point at {c.m} m you coasted {coast:.2f} s with "
                     f"neither pedal; slowest {vm:.0f} km/h, where the grip allows {limit_p:.0f} km/h "
-                    f"({limit_r:.0f} km/h at 95%). Perfect driving keeps the car at its limit: braking into the "
-                    "turn, then straight to the throttle.")
+                    f"({limit_r:.0f} km/h at the realistic target). Perfect driving keeps the car at its limit: "
+                    "braking into the turn, then straight to the throttle.")
             return Mistake("coasting", "mid-corner", f"Coasted {coast:.1f} s into the corner", what,
                            "Trail the brake further into the turn and go from brake to throttle with no gap.",
                            a, coast, "s")
         if limit_r - vm >= 1.5:
             what = (f"Slowest {vm:.0f} km/h at {c.m} m; the grip allows {limit_p:.0f} km/h there "
-                    f"({limit_r:.0f} km/h at 95%).")
+                    f"({limit_r:.0f} km/h at the realistic target).")
             return Mistake("min_speed", "mid-corner", "Too slow at the slowest point", what,
                            f"Carry about {limit_r:.0f} km/h through the slowest point of {code}.", c.m,
                            limit_r - vm, "km/h")
@@ -659,22 +611,18 @@ def pit_entry(tr: dict[str, np.ndarray], env_r: Envelope) -> int | None:
     return int(on[-1]) + 1 if len(on) else 0
 
 
-def check_lap(tr: dict[str, np.ndarray], lim: CarLimits, sections: list[Section], *, lap_time: float,
-              units: dict[str, str] | None = None, sim: SimLap | None = None, realistic: SimLap | None = None,
-              detail: bool = True) -> dict:
+def check_lap(tr: dict[str, np.ndarray], perfect: PlaceLimits, held: PlaceLimits, sections: list[Section], *,
+              lap_time: float, units: dict[str, str] | None = None, detail: bool = True) -> dict:
     """The lap's mistakes against perfect driving, most costly first, and how the gap to the perfect lap splits:
     named mistakes, losses with the pedals at the limit, the perfect lap's optimism, the pit lane and what no single
     mistake explains.
 
-    tr: the lap's trace on the line (every metre, timing line at both ends). sim and realistic: the lap's theoretical
-    lap at the car's limits and at 95 % of its grip, when already worked out."""
-    from app.analysis.insights import _closed_sim
-
+    tr: the lap's trace on the line (every metre, timing line at both ends). perfect and held: the limits the car has
+    shown at every place, at their best and as a quick lap usually shows them (the report's theoretical lap and
+    realistic target)."""
     units = units or {}
-    held = replace(lim, envelope=lim.envelope * REALISTIC_GRIP)
-    sim = sim or _closed_sim(tr["curvature"], lim)
-    realistic = realistic or _closed_sim(tr["curvature"], held)
-    env, env_r = Envelope(tr["curvature"], lim), Envelope(tr["curvature"], held)
+    env, env_r = Envelope(tr["curvature"], perfect), Envelope(tr["curvature"], held)
+    sim, realistic = env.sim(), env_r.sim()
     corners = corner_events(tr, sections)
     lifts = straight_lifts(tr, corners)
     pit_from = pit_entry(tr, env_r)
@@ -687,7 +635,7 @@ def check_lap(tr: dict[str, np.ndarray], lim: CarLimits, sections: list[Section]
     for p in pieces:
         if p.cost < MIN_COST_S or p.role == "pit":
             continue
-        mk = name_piece(p, tr, env, env_r, lim, units, section_of)
+        mk = name_piece(p, tr, env, env_r, units, section_of)
         if mk is None:
             continue
         code = p.corner.code if p.corner else section_of((p.start + p.end) // 2)
@@ -717,8 +665,8 @@ def check_lap(tr: dict[str, np.ndarray], lim: CarLimits, sections: list[Section]
         "pit_from_m": pit_from,  # the lap ends in the pit lane from here
         # the gap to the perfect lap, split: the named mistakes; at the limit (flat out, or braking with the ABS or
         # driving out with the traction control working, yet the car below its best); the perfect lap's optimism
-        # (the car at 95 % of its grip); the pit lane, when the lap ends in it; and the rest: small losses no single
-        # mistake explains, less the places the lap beat the realistic target
+        # (the best of every place against a quick lap's usual); the pit lane, when the lap ends in it; and the rest:
+        # small losses no single mistake explains, less the places the lap beat the realistic target
         "budget": {
             "mistakes": round(named, 3),
             "at_limit": round(at_limit, 3),

@@ -29,7 +29,7 @@ from app.routers.sessions import load_main_file, official_corners
 from app.setup.models import SetupRunSummary
 from app.vehicle.presets import preset_detail
 
-VERSION = "2"  # change it when the summary changes, and every cached one is computed again
+VERSION = "3"  # change it when the summary changes, and every cached one is computed again
 MIN_SAMPLES = 200  # metres of a phase while cornering, across the clean laps, before its balance counts
 
 

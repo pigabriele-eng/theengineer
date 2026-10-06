@@ -77,7 +77,10 @@ def test_report_from_compact_traces_matches_the_engine(runs, reduced):
     h = rep["headline"]
     assert h["fastest"]["run"] == "Run 2" and h["fastest"]["session_id"] == 2
     assert abs(h["fastest"]["time"] - min(min(s.times) for s in reduced)) < 1e-6
-    assert h["theoretical"] <= h["realistic"] <= h["ideal"] <= h["fastest"]["time"] <= h["typical"]
+    assert h["theoretical"] <= h["ideal"] <= h["fastest"]["time"] <= h["typical"]
+    # the realistic target lies between the theoretical lap and the fastest lap (here, whose laps are the same lap
+    # at different paces, the fastest lap is a quick lap's usual everywhere)
+    assert h["theoretical"] <= h["realistic"] <= h["fastest"]["time"] + 0.01
     assert abs(h["ideal"] - full["ideal_lap"]) < 0.05
     assert abs(h["theoretical"] - full["theoretical_lap"]) < 0.05
     assert 0 < h["score"]["extraction"] <= 100 and h["score"]["medal"]

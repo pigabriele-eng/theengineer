@@ -216,7 +216,7 @@ def test_car_limits_split_the_lap():
     assert [s["where"] for s in out["sections"]] == ["braking", None, None]  # too small to say where
     assert out["total_car"] == 0.21
     assert "2.00 s off the theoretical lap: 0.60 s is driving" in out["text"]
-    assert "In T2 the quickest passes already beat the 95 % target." in out["text"]
+    assert "In T2 the quickest passes already beat the realistic target." in out["text"]
 
 
 def test_where_the_car_loses_groups_the_phases():
