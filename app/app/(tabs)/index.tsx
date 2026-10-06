@@ -6,6 +6,7 @@ import { DriverLinks } from '@/components/DriverPicker';
 import { FilterBar, PlanForm, plannedLine, RemovePlanned } from '@/components/EventFilter';
 import { PrepButton, usePrepAvailability } from '@/components/PrepButton';
 import { RenameEvent } from '@/components/RenameEvent';
+import { SeasonsLink } from '@/components/SeasonsLink';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
 import { CalendarState, calendarApi, countByWhen, defaultFilter, Filter, filtered, Plan, todayIso, whenOf } from '@/lib/calendar';
@@ -119,6 +120,7 @@ export default function SessionsScreen() {
               load();
             }} />
         )}
+        {folders && <SeasonsLink />}
         {shown && shown.length === 0 && folders && folders.length > 0 && (
           <Text style={styles.empty}>{EMPTY[active]}</Text>
         )}

@@ -5,6 +5,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, useWin
 import { LineKey, useLapColors } from '@/components/CompareViews';
 import { EventCompare, Pick } from '@/components/EventCompare';
 import { EventForm } from '@/components/EventForm';
+import { EventInfoCard } from '@/components/EventInfoCard';
 import { ImportLogs } from '@/components/ImportLogs';
 import { MoveSessions } from '@/components/MoveSessions';
 import { PrepButton, usePrepAvailability } from '@/components/PrepButton';
@@ -53,6 +54,7 @@ export default function EventScreen() {
   const [open, setOpen] = useState<{ id: number; what: PickerKind } | null>(null);
   const [runNote, setRunNote] = useState<{ id: number; text: string } | null>(null);
   const { garage, reload: reloadGarage } = useGarage();
+  const [eventDrivers, setEventDrivers] = useState<number[]>([]); // the event's drivers 1 to 4, offered first
   const scroll = useRef<ScrollView>(null);
   const compareY = useRef(0);
   const tint = useThemeColor({}, 'tint');
@@ -294,7 +296,7 @@ export default function EventScreen() {
                 setEditing(null);
                 load();
               }}
-              garage={garage} open={open?.id === s.id ? open.what : null}
+              garage={garage} eventDrivers={eventDrivers} open={open?.id === s.id ? open.what : null}
               onOpen={(what) => setOpen(what ? { id: s.id, what } : null)} onPick={(fields) => pickFor(s, fields)}
               note={runNote?.id === s.id ? runNote.text : null} onNoteClose={() => setRunNote(null)} />
           ))}
@@ -341,6 +343,10 @@ export default function EventScreen() {
               <Text style={styles.notice}>{notice}</Text>
             </Pressable>
           )}
+          {eventId != null && (
+            <EventInfoCard eventId={eventId} onInfo={(i) => setEventDrivers(i?.resolved.drivers.map((d) => d.id) ?? [])}
+              version={folder} />
+          )}
           {eventId != null && <ResultsPanel eventId={eventId} />}
           {panel === 'move' && picks.length > 0 && (
             <MoveSessions fromKey={key} count={picks.length} onMove={moveTo} onCancel={() => setPanel(null)} />
@@ -384,8 +390,8 @@ export default function EventScreen() {
 
 /** One run: tick it for side by side, tap its name to rename it in place, tap its driver or car chip to set them,
  * tap its laps or time to open it. */
-function SessionRow({ s, color, picked, full, onToggle, editing, onEdit, onSaved, garage, open, onOpen, onPick, note,
-  onNoteClose }: {
+function SessionRow({ s, color, picked, full, onToggle, editing, onEdit, onSaved, garage, eventDrivers, open, onOpen,
+  onPick, note, onNoteClose }: {
   s: Run;
   color: string | null;
   picked: boolean;
@@ -395,6 +401,7 @@ function SessionRow({ s, color, picked, full, onToggle, editing, onEdit, onSaved
   onEdit: () => void;
   onSaved: () => void;
   garage: Garage | null;
+  eventDrivers: number[];
   open: PickerKind | null;
   onOpen: (what: PickerKind | null) => void;
   onPick: (fields: RunFields) => void;
@@ -457,7 +464,8 @@ function SessionRow({ s, color, picked, full, onToggle, editing, onEdit, onSaved
       </View>
       {open && garage && (
         <View style={styles.picker}>
-          <RunPicker what={open} run={s} garage={garage} onPick={onPick} onClose={() => onOpen(null)} />
+          <RunPicker what={open} run={s} garage={garage} onPick={onPick} onClose={() => onOpen(null)}
+            eventDrivers={eventDrivers} />
         </View>
       )}
       {note && (
