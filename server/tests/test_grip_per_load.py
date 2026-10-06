@@ -2,12 +2,14 @@
 neither the car's grip envelope nor the cornering lent to places taken flat out, and its grip use reads like any
 other corner's; the balance and the tyre fit read it the same way."""
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 from app.analysis.channels import BRAKE, MID, POWER
-from app.analysis.insights import lateral, targets
+from app.analysis.grip import Report
+from app.analysis.insights import LapRecord, lateral, targets
 from app.analysis.limits import CarLimits, car_limits
 from app.analysis.local_limits import PERFECT, place_limits
 from app.analysis.track_shape import LEVEL_G, TrackShape, on_line, track_shape
@@ -125,6 +127,25 @@ def test_the_balance_reads_cornering_per_unit_of_load(laps, shape):
     assert lateral(tr, lim, slice(690, 710)) == pytest.approx(per_load[690:710])
     plain = CarLimits(lim.speeds, lim.envelope, lim.line_speeds, lim.accel, lim.brake, lim.top_speed)
     assert lateral(tr, plain)[700] == pytest.approx(abs(tr["ay"][700]))  # no shape: the g itself
+
+
+def test_the_gg_diagram_reads_against_the_level_road_edge(laps):
+    """The grip report's g-g points are per unit of the road's load, as its edge is: the banked corner's sit on the
+    edge like the level corners', not outside it, and are flagged."""
+    study = SimpleNamespace(laps=[LapRecord("R", i + 1, float(tr["t"][-1]), None, tr, i) for i, tr in enumerate(laps)],
+                            corners=None)
+    rep = Report(study)
+    gg = rep._gg(rep.ref)
+    m, ay, load, shaped = (np.asarray(gg[k]) for k in ("m", "ay", "load", "shaped"))
+    assert len(m) == len(ay) == len(load) == len(shaped)
+    bank, flat = (m > 680) & (m < 720), (m > 280) & (m < 320)
+    assert shaped[bank].all() and not shaped[flat].any()
+    assert load[bank].min() > 1.2 and np.all(load[flat] == 1.0)
+    raw = np.abs(rep.ref.trace["ay"][m[bank]])
+    assert raw.max() > 1.25 * MU  # the g the bank lets the car pull
+    assert np.abs(ay[bank]).max() == pytest.approx(np.abs(ay[flat]).max(), rel=0.08)  # per unit of load, the same
+    edge = rep.limits.max_lateral(np.asarray(gg["speed"], float))
+    assert np.max(np.abs(ay[bank]) / edge[bank]) < 1.1
 
 
 def test_the_tyre_fit_reads_level_road_only():

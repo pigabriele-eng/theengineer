@@ -288,8 +288,15 @@ function GgBlock({ data, c, sectionAt }: { data: GripResult; c: ChartColors; sec
   const [band, setBand] = useState(busiest);
   const describe = (name: string, lap: typeof gg.fastest) => (i: number) => {
     const ax = lap.ax[i];
-    return `${name} · ${sectionAt(lap.m[i])} · ${lap.m[i]} m · ${lap.speed[i]} km/h · ${Math.abs(lap.ay[i]).toFixed(2)} g lateral, ${Math.abs(ax).toFixed(2)} g ${ax < 0 ? 'braking' : 'accelerating'} · grip use ${lap.use[i]} %`;
+    const load = lap.load?.[i] ?? 1;
+    const per = load !== 1 ? ` per unit of the road's ${load.toFixed(2)} g load` : '';
+    return `${name} · ${sectionAt(lap.m[i])} · ${lap.m[i]} m · ${lap.speed[i]} km/h · ${Math.abs(lap.ay[i]).toFixed(2)} g lateral, ${Math.abs(ax).toFixed(2)} g ${ax < 0 ? 'braking' : 'accelerating'}${per} · grip use ${lap.use[i]} %`;
   };
+  // the road's shape: g is per unit of its load, as the limit is, and the banked corners', crests' and
+  // compressions' dots are rings
+  const laps = [gg.fastest, gg.typical];
+  const shaped = laps.some((l) => l.shaped?.some(Boolean));
+  const loaded = laps.some((l) => l.load?.some((v) => v !== 1));
   const label = ([lo, hi]: [number, number | null]) => (hi == null ? `${lo}+ km/h` : `${lo}–${hi} km/h`);
   return (
     <View style={styles.block}>
@@ -314,10 +321,14 @@ function GgBlock({ data, c, sectionAt }: { data: GripResult; c: ChartColors; sec
         <LegendItem color={c.s1} label={`Fastest lap, ${formatLap(gg.fastest.time)}`} />
         <LegendItem color={c.s2} label={`Typical quick lap, ${formatLap(gg.typical.time)}`} />
         <LegendItem color={c.ink2} label="Grip limit at this speed" kind="dash" />
+        {shaped && <LegendItem color={c.ink2} label="On a banked corner, a crest or a compression" kind="ring" />}
       </View>
       <Text style={styles.caption}>
         Each dot is the car's lateral and longitudinal g at one point of the lap, every 5 m, braking and cornering only.
         Dots on the outline use all the grip the car has shown at this speed; dots inside it leave some unused.
+        {loaded
+          ? ' Where the road presses the car down or lifts it, g is per unit of that load, as on a level road, so every dot reads against the same outline.'
+          : ''}
       </Text>
     </View>
   );

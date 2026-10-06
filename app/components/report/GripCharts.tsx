@@ -109,11 +109,15 @@ export function Readout({ children, hint }: { children: ReactNode; hint: string 
   );
 }
 
-export function LegendItem({ color, label, kind = 'dot' }: { color: string; label: string; kind?: 'dot' | 'line' | 'dash' }) {
+export function LegendItem({ color, label, kind = 'dot' }: { color: string; label: string; kind?: 'dot' | 'ring' | 'line' | 'dash' }) {
   return (
     <View style={styles.legendItem}>
       {kind === 'dot' ? (
         <View style={[styles.legendDot, { backgroundColor: color }]} />
+      ) : kind === 'ring' ? (
+        <Svg width={10} height={10}>
+          <Circle cx={5} cy={5} r={3.6} fill="none" stroke={color} strokeWidth={1.5} />
+        </Svg>
       ) : (
         <Svg width={18} height={8}>
           <Line x1={1} x2={17} y1={4} y2={4} stroke={color} strokeWidth={2} strokeDasharray={kind === 'dash' ? '4 3' : undefined} />
@@ -200,7 +204,10 @@ export function Scatter({ points, xLabel, yLabel, fit, yFmt, height = 240, hint 
 
 // ---------- g-g diagram ----------
 
-export type GgSeries = { name: string; color: string; ax: number[]; ay: number[]; speed: number[]; label: (i: number) => string };
+export type GgSeries = {
+  name: string; color: string; ax: number[]; ay: number[]; speed: number[]; label: (i: number) => string;
+  shaped?: boolean[]; // drawn as rings: on a banked corner, a crest or a compression
+};
 
 export function GgDiagram({ limit, series, band, hint }: {
   limit: { directions: number[]; radius: number[] };
@@ -257,9 +264,12 @@ export function GgDiagram({ limit, series, band, hint }: {
               Braking
             </T>
             <Path d={ringPath} fill={c.wash} stroke={c.ink2} strokeWidth={2} strokeDasharray="6 4" />
-            {pts.map((p) => (
+            {pts.map((p) => (series[p.k].shaped?.[p.i] ? (
+              <Circle key={`${p.k}-${p.i}`} cx={X(p.x)} cy={Y(p.y)} r={3.4} fill="none" stroke={series[p.k].color}
+                strokeWidth={1.5} />
+            ) : (
               <Circle key={`${p.k}-${p.i}`} cx={X(p.x)} cy={Y(p.y)} r={2.6} fill={series[p.k].color} fillOpacity={0.8} />
-            ))}
+            )))}
             {hit >= 0 && <Circle cx={X(pts[hit].x)} cy={Y(pts[hit].y)} r={6} fill="none" stroke={c.ink} strokeWidth={1.5} />}
           </Svg>
         )}

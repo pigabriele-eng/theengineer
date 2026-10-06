@@ -96,7 +96,11 @@ export type GripTc = {
   notes: string[];
 };
 
-export type GgLap = LapId & { m: number[]; speed: number[]; ax: number[]; ay: number[]; use: number[] };
+// g per unit of the road's vertical load there (load: 1 on a level road), as the grip limit is; shaped: the points
+// on a banked corner, a crest or a compression
+export type GgLap = LapId & {
+  m: number[]; speed: number[]; ax: number[]; ay: number[]; use: number[]; load?: number[]; shaped?: boolean[];
+};
 
 export type Headline = { key: string; label: string; value: string; detail: string; action: string };
 

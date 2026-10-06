@@ -187,10 +187,11 @@ def road_shape(laps: list) -> TrackShape | None:
     return track_shape([x.trace for x in sorted(laps, key=lambda x: x.time)[:SHAPE_LAPS]])
 
 
-def grip_limits(laps: list) -> CarLimits:
-    """The car's grip envelope from its quick laps, per unit of the road's load where its shape is known."""
+def grip_limits(laps: list, shape: TrackShape | None) -> CarLimits:
+    """The car's grip envelope from its quick laps, per unit of the road's load where its shape (road_shape) is
+    known."""
     traces = [x.trace for x in _limit_laps(laps)]
-    return car_limits(traces, *on_line(road_shape(laps), len(traces[0]["speed"])))
+    return car_limits(traces, *on_line(shape, len(traces[0]["speed"])))
 
 
 def _closed_sim(curvature: np.ndarray, limits: PlaceLimits) -> SimLap:
