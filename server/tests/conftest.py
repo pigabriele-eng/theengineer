@@ -52,6 +52,8 @@ def client(tmp_path, monkeypatch):
     importlib.reload(app.routers.balance)
     import app.routers.technique
     importlib.reload(app.routers.technique)
+    import app.routers.events
+    importlib.reload(app.routers.events)
     import app.setup.data
     import app.setup.models
     import app.setup.results

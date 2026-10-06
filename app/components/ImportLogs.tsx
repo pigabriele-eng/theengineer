@@ -1,11 +1,16 @@
 // Upload many logger files at once (MoTeC .ld with their .ldx, CSV exports, zips of whole tests) and follow the
-// import: the server makes a session per log in the background.
+// import: the server makes a session per log in the background. Before picking the files, choose the event they go
+// into: an existing one, a new one (name and dates), or by default a new event per zip named after it.
 import * as DocumentPicker from 'expo-document-picker';
+import { Link } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleSheet } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet } from 'react-native';
 
+import { EventForm } from '@/components/EventForm';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { api, ImportJob } from '@/lib/api';
+import { dateRange, eventsApi, FolderSummary } from '@/lib/events';
+import { untimedRuns } from '@/lib/emptyRuns';
 
 // The browser's file dialog filters by extension. iOS and Android filter by MIME type only, and a .ld log has
 // none, so there every file can be picked and the server skips what isn't a log.
@@ -20,13 +25,23 @@ const shortName = (path: string) => path.split('/').filter(Boolean).slice(-2).jo
 const list = (names: string[]) =>
   names.slice(0, LISTED).join(', ') + (names.length > LISTED ? ` and ${names.length - LISTED} more` : '');
 
-export function ImportLogs({ onProgress }: { onProgress: () => void }) {
+type Target = { id: number; name: string } | null; // null: a new event per zip, named after it
+
+export function ImportLogs({ onProgress, events, into }: {
+  onProgress: () => void;
+  events?: FolderSummary[] | null; // the events to offer; without them (and without into) no choice is shown
+  into?: { id: number; name: string }; // upload into this event, no choice
+}) {
   const [uploading, setUploading] = useState<number | null>(null); // how many files are being sent
   const [job, setJob] = useState<ImportJob | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [target, setTarget] = useState<Target>(into ?? null);
+  const [making, setMaking] = useState(false);
+  const [landed, setLanded] = useState<Target>(null); // where the imported sessions went
   const failures = useRef(0);
   const tint = useThemeColor({}, 'tint');
   const running = job != null && (job.status === 'queued' || job.status === 'running');
+  const sentTo = useRef<Target>(null);
 
   // Follow the import until it ends; the session list is refreshed as runs come in.
   useEffect(() => {
@@ -38,6 +53,7 @@ export function ImportLogs({ onProgress }: { onProgress: () => void }) {
         setError(null);
         if (next.done !== job.done || next.status !== job.status) onProgress();
         setJob(next);
+        if (next.status === 'done' && next.session_ids.length) findEvent(next.session_ids[0]);
       } catch (e) {
         failures.current += 1;
         setError(`Can't reach the server: ${(e as Error).message}`);
@@ -52,6 +68,15 @@ export function ImportLogs({ onProgress }: { onProgress: () => void }) {
     return () => clearTimeout(timer);
   }, [job, running, onProgress]);
 
+  // where a zip's sessions went when no event was picked: the event the server made for it
+  const findEvent = (sessionId: number) => {
+    if (sentTo.current) return setLanded(sentTo.current);
+    api.session(sessionId).then((s) => {
+      const id = (s as { event_id?: number | null }).event_id;
+      if (id != null) eventsApi.folder(String(id)).then((f) => setLanded({ id, name: f.name }), () => {});
+    }, () => {});
+  };
+
   const pick = async () => {
     const picked = await DocumentPicker.getDocumentAsync({
       type: ACCEPT,
@@ -62,12 +87,15 @@ export function ImportLogs({ onProgress }: { onProgress: () => void }) {
     if (picked.canceled || !picked.assets?.length) return;
     setError(null);
     setJob(null);
+    setLanded(null);
     setUploading(picked.assets.length);
     try {
       failures.current = 0;
+      sentTo.current = target;
       setJob(
-        await api.importFiles(
+        await eventsApi.importInto(
           picked.assets.map((a) => ({ uri: a.uri, name: a.name, file: a.file, mimeType: a.mimeType })),
+          target?.id ?? null,
         ),
       );
     } catch (e) {
@@ -78,18 +106,75 @@ export function ImportLogs({ onProgress }: { onProgress: () => void }) {
   };
 
   const busy = uploading != null || running;
+  const chip = (on: boolean) => StyleSheet.flatten([styles.chip, on && { borderColor: tint }]);
+  const choices = (events ?? []).filter((e) => e.id != null);
   return (
     <View style={styles.box}>
+      {!into && events && (
+        <View style={styles.into}>
+          <Text style={styles.intoLabel}>Upload into</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
+            <Pressable onPress={() => setTarget(null)} style={chip(target == null)} accessibilityRole="radio"
+              accessibilityState={{ selected: target == null }} disabled={busy}>
+              <Text style={target == null ? { color: tint } : undefined}>A new event per zip</Text>
+            </Pressable>
+            {target != null && !choices.some((e) => e.id === target.id) && (
+              <Pressable style={chip(true)} accessibilityRole="radio" accessibilityState={{ selected: true }}>
+                <Text style={{ color: tint }} numberOfLines={1}>{target.name}</Text>
+              </Pressable>
+            )}
+            {choices.map((e) => {
+              const on = target?.id === e.id;
+              return (
+                <Pressable key={e.key} onPress={() => setTarget({ id: e.id!, name: e.name })} style={chip(on)}
+                  accessibilityRole="radio" accessibilityState={{ selected: on }} disabled={busy}>
+                  <Text style={on ? { color: tint } : undefined} numberOfLines={1}>{e.name}</Text>
+                  {dateRange(e.start, e.end) && <Text style={styles.chipSub}>{dateRange(e.start, e.end)}</Text>}
+                </Pressable>
+              );
+            })}
+            <Pressable onPress={() => setMaking(true)} style={chip(false)} accessibilityRole="button" disabled={busy}>
+              <Text style={{ color: tint }}>＋ New event…</Text>
+            </Pressable>
+          </ScrollView>
+          <Text style={styles.sub}>
+            {target == null
+              ? 'A zip of a test becomes an event named after the zip; loose logs go to Not in an event.'
+              : `Every log in the upload becomes a session of ${target.name}.`}
+          </Text>
+          {making && (
+            <View style={styles.form}>
+              <EventForm submitLabel="Make the event" onCancel={() => setMaking(false)}
+                onSubmit={async (v) => {
+                  const ev = await eventsApi.create(v);
+                  setTarget({ id: ev.id!, name: ev.name });
+                  setMaking(false);
+                  onProgress();
+                }} />
+            </View>
+          )}
+        </View>
+      )}
       <Pressable style={[styles.button, { borderColor: tint }]} onPress={pick} disabled={busy}>
         {busy ? (
           <ActivityIndicator color={tint} />
         ) : (
-          <Text style={[styles.buttonText, { color: tint }]}>Upload logs or a zip</Text>
+          <Text style={[styles.buttonText, { color: tint }]}>
+            {into ? 'Upload logs into this event' : target ? `Upload logs or a zip into ${target.name}` : 'Upload logs or a zip'}
+          </Text>
         )}
       </Pressable>
       {uploading != null && <Text style={styles.sub}>Uploading {plural(uploading, 'file')}…</Text>}
       {job && running && <Progress job={job} />}
       {job && !running && <Summary job={job} onHide={() => setJob(null)} tint={tint} />}
+      {job && !running && landed && !into && (
+        // Link asChild hands its child's style to a web anchor, which can't take a style array: one object
+        <Link href={{ pathname: '/event/[id]', params: { id: landed.id } }} asChild>
+          <Pressable hitSlop={6}>
+            <Text style={StyleSheet.flatten([styles.headline, { color: tint }])}>Open {landed.name} ›</Text>
+          </Pressable>
+        </Link>
+      )}
       {error && <Text style={styles.error}>{error}</Text>}
     </View>
   );
@@ -134,6 +219,12 @@ function Summary({ job, onHide, tint }: { job: ImportJob; onHide: () => void; ti
           Skipped {plural(names.length, 'file')} ({reason}): {list(names)}
         </Text>
       ))}
+      {untimedRuns(job).length > 0 && (
+        <Text style={styles.warn}>
+          Laps not timed, the lap beacon is missing: {list(untimedRuns(job).map((u) => u.name ?? u.file))}. Open the
+          run to see how to time them.
+        </Text>
+      )}
       <Pressable onPress={onHide} hitSlop={8}>
         <Text style={{ color: tint }}>Hide</Text>
       </Pressable>
@@ -143,10 +234,18 @@ function Summary({ job, onHide, tint }: { job: ImportJob; onHide: () => void; ti
 
 const styles = StyleSheet.create({
   box: { gap: 6 },
-  button: { borderWidth: 1, borderRadius: 8, paddingVertical: 10, alignItems: 'center' },
-  buttonText: { fontWeight: '600', fontSize: 16 },
+  into: { gap: 6 },
+  intoLabel: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
+  chips: { flexDirection: 'row', gap: 6 },
+  chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5,
+    maxWidth: 220, justifyContent: 'center' },
+  chipSub: { fontSize: 11, opacity: 0.6 },
+  form: { borderWidth: 1, borderColor: '#8884', borderRadius: 10, padding: 12 },
+  button: { borderWidth: 1, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, alignItems: 'center' },
+  buttonText: { fontWeight: '600', fontSize: 16, textAlign: 'center' },
   summary: { gap: 4 },
   headline: { fontWeight: '600' },
   sub: { opacity: 0.7 },
   error: { color: '#c8372d' },
+  warn: { color: '#b26b00' },
 });

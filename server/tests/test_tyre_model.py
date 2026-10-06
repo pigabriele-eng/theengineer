@@ -248,6 +248,10 @@ def _bicycle_ld() -> bytes:
     for w in ("FL", "FR", "RL", "RR"):
         channels[f"TPMS Temp {w}"] = (1, "C", 60 + 0.3 * t1)
         channels[f"TPMS Press {w}"] = (1, "bar", 1.7 + 0.001 * t1)
+    # the line crossed at the start and the end: one lap (a log with no laps isn't kept)
+    marker = np.zeros(len(t1) * 10)
+    marker[[5, -5]] = 1.0
+    channels["S/F Marker"] = (10, "", marker)
     return write_ld(channels)
 
 

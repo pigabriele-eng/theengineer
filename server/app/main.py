@@ -5,13 +5,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import DataError, IntegrityError
 
-from app import storage, timing
+from app import empty_runs, storage, timing
 from app.auth import check_settings, require_user, require_user_or_query_token
 from app.db import create_tables
 from app.routers import catalog, debriefs, imports, insights, sessions, trackmap, tyres, vehicle
 from app.routers import balance as report_balance
 from app.routers import comparisons, drivers, lapcompare, report_grip, reports, setups, tyre_model, tyreprep
-from app.routers import technique
+from app.routers import events, technique
 from app.routers import stint as stint_tool
 from app.vehicle import tyre_store
 
@@ -23,6 +23,7 @@ async def lifespan(_: FastAPI):
     imports.fail_interrupted()
     storage.backend().setup()
     timing.check_all_tracks()  # in the background: logs timed from an older start/finish line are re-timed
+    empty_runs.start()  # in the background: imported runs with no laps (pit-lane logs) are removed
     tyre_store.start()  # summarises logs for the tyre model in the background, older ones first
     yield
     tyre_store.stop()
@@ -47,6 +48,7 @@ app.include_router(lapcompare.router, dependencies=signed_in)
 app.include_router(reports.router, dependencies=signed_in)
 app.include_router(tyre_model.router, dependencies=signed_in)
 app.include_router(technique.router, dependencies=signed_in)
+app.include_router(events.router, dependencies=signed_in)
 app.include_router(stint_tool.router, dependencies=signed_in)
 app.include_router(debriefs.media_router, dependencies=[Depends(require_user_or_query_token)])
 
