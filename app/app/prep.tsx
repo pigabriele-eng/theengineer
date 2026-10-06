@@ -3,6 +3,7 @@ import { ReactNode, useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 
 import { OfficialResults, Prediction } from '@/components/PrepOfficial';
+import { GripChart } from '@/components/report/TrackGrip';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
 import { dateRange } from '@/lib/events';
@@ -19,6 +20,7 @@ import {
   refreshPrep,
   SetupRun,
 } from '@/lib/prep';
+import { pct } from '@/lib/trackGrip';
 
 const POLL_MS = 2000;
 const WIDE = 900;
@@ -231,6 +233,7 @@ function Body({ report, weather, wide, official, officialPart, openEvent }: { re
       {officialPart}
       <Corners corners={report.corners} />
       <Quali report={report} />
+      <TrackGripSection report={report} />
       <Pressures report={report} weather={weather} />
       <Setup report={report} />
       <Runs report={report} />
@@ -468,6 +471,49 @@ function Quali({ report }: { report: PrepReport }) {
             e.warm_up ? `quickest warm-up ${e.warm_up.label}` : null].filter(Boolean).join(' · ')}
         </Text>
       ))}
+    </Section>
+  );
+}
+
+/** How the track's grip came in at each past event here (against its own first session) and what to expect from it,
+ * with how sure that is, and the latest event's sessions as a chart. */
+function TrackGripSection({ report }: { report: PrepReport }) {
+  const g = report.track_grip;
+  if (!g || (!g.guidance.length && !g.notes.length)) return null;
+  const known = g.events.filter((e) => e.available);
+  const latest = [...known].reverse().find((e) => e.sessions?.length);
+  const withPm = (p: { pct: number | null; pm: number | null } | null | undefined) =>
+    p?.pct == null ? '–' : `${pct(p.pct)}${p.pm != null ? ` ± ${pct(p.pm, false)}` : ''}`;
+  return (
+    <Section title="Track grip" sub="How the grip came in at past events here, each against its own first session.">
+      {g.guidance.map((t) => <Text key={t} style={styles.para}>{t}</Text>)}
+      {known.length > 0 && (
+        <View style={styles.cards}>
+          {known.map((e) => (
+            <View key={e.id} style={styles.card}>
+              <View style={styles.cardHead}>
+                <Text style={styles.cellStrong}>{e.year}</Text>
+                <Text style={styles.note} numberOfLines={1}>{e.name} · against {e.base}</Text>
+              </View>
+              <View style={styles.grid}>
+                <Stat label="Best it got to" value={withPm(e.peak)} sub={e.peak?.session ?? 'no rise'} />
+                <Stat label="Qualifying" value={e.quali ? withPm(e.quali) : e.base_kind === 'qualifying' ? '0 %' : '–'}
+                  sub={e.quali?.session ?? (e.base_kind === 'qualifying' ? 'the first session' : 'none logged')} />
+                <Stat label="Races vs quali" value={(e.races_vs_quali ?? []).filter(Boolean)
+                  .map((r) => pct(r!.pct)).join(', ') || '–'}
+                  sub={(e.races_vs_quali ?? []).filter(Boolean).map((r) => r!.session).join(', ') || null} />
+                <Stat label="Most of it by" value={e.by_lap ? `lap ${e.by_lap}` : '–'} sub="of the car's weekend" />
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+      {g.sureness && <Text style={styles.note}>{g.sureness}</Text>}
+      {latest && (
+        <GripChart sessions={latest.sessions!} base={latest.base ?? ''}
+          title={`${latest.name} ${latest.year}: track grip by session, % against ${latest.base}`} />
+      )}
+      {g.notes.map((n) => <Text key={n} style={styles.note}>{n}</Text>)}
     </Section>
   );
 }
