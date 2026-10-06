@@ -70,6 +70,16 @@ def _g_scale(logged: np.ndarray, expected: np.ndarray, where: np.ndarray) -> flo
     return None
 
 
+def _vertical_g(logged: np.ndarray, level: np.ndarray) -> np.ndarray | None:
+    """The vertical accelerometer in g, reading 1 when cruising on the level, whatever its unit (g, m/s², or g
+    divided once more under an m/s² label) and sign; None when it can't be told (a channel with gravity taken out
+    reads about 0 there)."""
+    ref = float(np.median(logged[level] if np.count_nonzero(level) >= MASTER_HZ else logged))
+    if any(unit / 2 < abs(ref) < 2 * unit for unit in (1.0, G, 1 / G)):
+        return logged / ref
+    return None
+
+
 def _wheel_scale(wheels: np.ndarray, v: np.ndarray, cruising: np.ndarray) -> float | None:
     """Factor turning a wheel-speed channel (rad/s, rpm or km/h) into km/h, from steady cruising."""
     ok = cruising & (wheels > 1)
@@ -124,6 +134,14 @@ def math_channels(data: SessionData) -> dict[str, np.ndarray]:
         turn = -yaw if np.corrcoef(yaw, ay)[0, 1] < 0 else yaw
     curv = ay * G / vm**2 if "g_lat" in c or turn is None else smooth(turn / vm, 0.3)
     out["curvature"] = np.where(v > 20, curv, 0.0)
+    # the road's shape (track_shape.py): the turning the gyro shows, in g like the lateral accelerometer (on a banked
+    # road the two differ by the bank), and the vertical load
+    if turn is not None:
+        out["turn_g"] = smooth(turn * vm / G)
+    if "g_vert" in c:
+        az = _vertical_g(c["g_vert"], (v > 60) & (np.abs(ay) < 0.1) & (np.abs(ax) < 0.1))
+        if az is not None:
+            out["az"] = smooth(az)
 
     throttle = c.get("throttle")
     braking = (c["brake"] > _brake_threshold(c["brake"])) if "brake" in c else (ax < -0.25)
