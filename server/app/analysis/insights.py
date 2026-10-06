@@ -24,7 +24,7 @@ from app.analysis.channels import BRAKE, EXIT, MID, PHASES, POWER, TRAIL, math_c
 from app.analysis.laps import CornerSpec, SessionData, Section, lap_length, make_sections
 from app.analysis.lapsim import LIMITED_BY, Calibration, SimLap, theoretical_lap
 from app.analysis.limits import CarLimits, car_limits
-from app.analysis.local_limits import PlaceLimits, place_limits
+from app.analysis.local_limits import PlaceLimits, on_own_line, place_limits
 from app.analysis.scan import channel_scan
 from app.analysis.track_shape import TrackShape, on_line, track_shape
 from app.importers.motec import LdFile
@@ -112,8 +112,8 @@ def prepare(runs: list[RunInput], corners: list[CornerSpec] | None = None, *,
     reference = next(x for x in laps if x.run == ref_run.name and x.number == ref_lap.number)
     sections, numbering = make_sections(reference.trace, corners)
     t = targets(laps, reference.trace, reference.time, sections)
-    for x in laps:
-        x.own_sim = t.calibration.lap(_closed_sim(x.trace["curvature"], t.perfect))
+    for x in laps:  # each lap's own line, at limits never below what it showed itself
+        x.own_sim = t.calibration.lap(_closed_sim(x.trace["curvature"], on_own_line(t.perfect, x.trace)))
     return t.prepared(line, reference, laps, sections, numbering)
 
 
@@ -497,16 +497,60 @@ def understeer_fit(tr: dict[str, np.ndarray]) -> tuple[float, float]:
     return float(k), float(b)
 
 
+# What the setup reads beyond speed, g and the driving phase (which every lap has): in words, what it needs from the
+# log, and the channels that come from it. Logs differ: one may have no wheel speeds or tyre sensors, or too little
+# steady running on a straight to scale its wheel speeds (channels.math_channels), so each part is read from the
+# laps whose logs give it.
+SETUP_PARTS = {
+    "balance": ("The balance (understeer and oversteer)", "a steering angle and a yaw rate", ("understeer",)),
+    "traction_control": ("Traction control", "the traction control channel", ("tc_on",)),
+    "abs": ("ABS", "the ABS channel", ("abs_on",)),
+    "rear_rotation": ("Rear rotation under braking", "a yaw rate and a lateral accelerometer", ("slide_rate",)),
+    "rear_slip": ("Rear wheel slip", "the four wheel speeds and some steady running on a straight to scale them",
+                  ("rear_slip",)),
+    "tyre_pressure": ("Tyre pressures", "the four tyre pressure sensors",
+                      tuple(f"tyre_p_{w}" for w in ("fl", "fr", "rl", "rr"))),
+    "tyre_temperature": ("Tyre temperatures", "the four tyre temperature sensors",
+                         tuple(f"tyre_t_{w}" for w in ("fl", "fr", "rl", "rr"))),
+}
+
+
+def with_channels(laps: list[LapRecord], keys: tuple[str, ...]) -> list[LapRecord]:
+    """The laps whose traces have every one of these channels."""
+    return [x for x in laps if all(k in x.trace for k in keys)]
+
+
+def channel_coverage(laps: list[LapRecord], parts: tuple[str, ...] = tuple(SETUP_PARTS)) -> dict[str, dict]:
+    """Those of these SETUP_PARTS that not every run gives: their words, what they need, the runs that give them and
+    the runs that don't."""
+    runs = list(dict.fromkeys(x.run for x in laps))
+    out = {}
+    for part in parts:
+        words, needs, keys = SETUP_PARTS[part]
+        have = list(dict.fromkeys(x.run for x in with_channels(laps, keys)))
+        if len(have) < len(runs):
+            out[part] = {"words": words, "needs": needs, "runs": have, "missing": [r for r in runs if r not in have]}
+    return out
+
+
+def _joined(laps: list[LapRecord], keys: tuple[str, ...]) -> dict[str, np.ndarray]:
+    """These channels and the driving phase, speed and lateral g of the laps, end to end."""
+    return {k: np.concatenate([x.trace[k] for x in laps]) for k in dict.fromkeys(("phase", "speed", "ay", *keys))}
+
+
 def setup_diagnostics(prep: Prepared) -> dict:
-    tr = {k: np.concatenate([x.trace[k] for x in prep.laps]) for k in prep.reference.trace if k != "distance"}
-    tr["ay"] = np.concatenate([lateral(x.trace, prep.limits) for x in prep.laps])  # per unit of the road's load
-    dt = np.concatenate([_dt(x.trace) for x in prep.laps])
-    phase = np.rint(tr["phase"]).astype(int)
-    v, ay = tr["speed"], tr["ay"]
+    """The car's balance by corner speed and phase, its traction control, ABS and rear rotation, and its tyres.
+    Each part is read from the laps whose logs give its channels (SETUP_PARTS); a part no lap gives is left out."""
+    laps = prep.laps
     out: dict = {"lateral_grip_by_speed": [
         {"speed_kmh": round(float(s), 0), "g": round(float(g), 2)}
         for s, g in zip(prep.limits.speeds, prep.limits.max_lateral(prep.limits.speeds), strict=True)]}
-    if "understeer" in tr:
+    have = with_channels(laps, ("understeer",))
+    if have:
+        tr = _joined(have, ("understeer",))
+        tr["ay"] = np.concatenate([lateral(x.trace, prep.limits) for x in have])  # per unit of the road's load
+        phase = np.rint(tr["phase"]).astype(int)
+        v, ay = tr["speed"], tr["ay"]
         us = tr["understeer"]
         corner = cornering(tr)
         k, _ = understeer_fit(tr)
@@ -522,20 +566,29 @@ def setup_diagnostics(prep: Prepared) -> dict:
         spread = float(np.percentile(np.abs(rel[corner] - np.median(rel[corner])), 75)) if corner.any() else 0.0
         out["balance"] = {"understeer_per_g": round(k, 2), "table": table, "typical_spread": round(spread, 2),
                           "notes": _balance_notes(table, spread)}
-    if "tc_on" in tr:
-        out["traction_control_s_per_lap"] = round(float((dt * (tr["tc_on"] > 0.5)).sum()) / len(prep.laps), 2)
-    if "abs_on" in tr:
+    have = with_channels(laps, ("tc_on",))
+    if have:
+        tc = sum(float((_dt(x.trace) * (x.trace["tc_on"] > 0.5)).sum()) for x in have)
+        out["traction_control_s_per_lap"] = round(tc / len(have), 2)
+    have = with_channels(laps, ("abs_on", "braking"))
+    if have:
+        dt = np.concatenate([_dt(x.trace) for x in have])
+        tr = _joined(have, ("abs_on", "braking"))
         braking = tr["braking"] > 0.5
         out["abs_share_of_braking"] = round(float((dt * braking * (tr["abs_on"] > 0.5)).sum()
                                                   / max((dt * braking).sum(), 1e-9)), 3)
-    if "slide_rate" in tr:
-        trail = phase == TRAIL
+    have = with_channels(laps, ("slide_rate",))
+    if have:
+        tr = _joined(have, ("slide_rate",))
+        trail = np.rint(tr["phase"]).astype(int) == TRAIL
         out["rear_rotation_under_braking"] = round(float(np.percentile(tr["slide_rate"][trail], 95)), 1) \
             if trail.sum() > 100 else None
     tyres = {}
     for kind, unit in (("p", "bar"), ("t", "°C")):
-        vals = {w: float(np.median(tr[f"tyre_{kind}_{w}"])) for w in ("fl", "fr", "rl", "rr")
-                if f"tyre_{kind}_{w}" in tr}
+        keys = tuple(f"tyre_{kind}_{w}" for w in ("fl", "fr", "rl", "rr"))
+        have = with_channels(laps, keys)
+        vals = {w: float(np.median(np.concatenate([x.trace[k] for x in have])))
+                for w, k in zip(("fl", "fr", "rl", "rr"), keys, strict=True)} if have else {}
         if len(vals) == 4:
             tyres["pressure" if kind == "p" else "temperature"] = {
                 "unit": unit, **{w: round(x, 2 if kind == "p" else 1) for w, x in vals.items()},

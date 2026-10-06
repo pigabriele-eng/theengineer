@@ -32,7 +32,7 @@ import numpy as np
 from app.analysis.channels import EXIT, POWER
 from app.analysis.lapsim import Calibration, LapModel, SimLap
 from app.analysis.laps import Section
-from app.analysis.local_limits import PlaceLimits
+from app.analysis.local_limits import PlaceLimits, on_own_line
 
 MIN_COST_S = 0.02  # a piece that costs less than this (against the realistic target) is not named
 CORNER_WINDOW_M = 100  # a corner's slowest point is looked for this far either side of the section's
@@ -639,9 +639,11 @@ def check_lap(tr: dict[str, np.ndarray], perfect: PlaceLimits, held: PlaceLimits
     tr: the lap's trace on the line (every metre, timing line at both ends). perfect and held: the limits the car has
     shown at every place, at their best and as a quick lap usually shows them (the report's theoretical lap and
     realistic target); calibrations: the model's own error at every metre at each, as the report's targets have it
-    (Prepared.calibration and held_calibration)."""
+    (Prepared.calibration and held_calibration). Both are driven on the lap's own line at limits never below what
+    the lap itself showed there (local_limits.on_own_line)."""
     units = units or {}
-    env, env_r = (Envelope(tr["curvature"], lim, cal) for lim, cal in zip((perfect, held), calibrations, strict=True))
+    env, env_r = (Envelope(tr["curvature"], on_own_line(lim, tr), cal)
+                  for lim, cal in zip((perfect, held), calibrations, strict=True))
     sim, realistic = env.sim(), env_r.sim()
     corners = corner_events(tr, sections)
     lifts = straight_lifts(tr, corners)

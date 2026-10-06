@@ -303,6 +303,42 @@ def test_an_unreadable_log_is_left_out_of_an_event(client, monkeypatch):
         client.get(f"/report/balance?session={broken}")
 
 
+def test_runs_whose_logs_give_different_channels(client):
+    """Like the Zandvoort event: the qualifying log has too little steady running on a straight to scale its wheel
+    speeds, so it gives no rear wheel slip, while the race logs do. With the quickest lap from a log that has a
+    channel and another log without it, the section crashed (KeyError 'rear_slip'); each part is now read from the
+    logs that give it, and the section says what came from which."""
+    from tests.synthetic import simulate, write_ld
+
+    def upload(name: str, paces: tuple, wheels: bool) -> int:
+        channels = simulate(paces)[0]
+        if wheels:  # wheel speeds in rad/s: the rear and front wheels turning together, no slip
+            hz, _, v = channels["vCar"]
+            channels.update({f"nWheel{w}": (hz, "rad/s", v / 3.6 / 0.33) for w in ("FL", "FR", "RL", "RR")})
+        s = client.post("/sessions", json={"name": name, "event_id": event["id"]}).json()
+        r = client.post(f"/sessions/{s['id']}/files", files={"file": (f"{name}.ld", write_ld(channels))})
+        assert r.status_code == 201, r.text
+        return s["id"]
+
+    event = client.post("/events", json={"name": "Race weekend"}).json()
+    upload("Race", (0.98, 1.0, 0.99), wheels=True)  # the quickest lap, with wheel speeds
+    upload("Quali", (0.95, 0.96, 0.97), wheels=False)
+    r = client.get(f"/report/balance?event={event['id']}")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["reference"]["run"] == "Race" and body["laps"] == 6
+    note = next(n for n in body["method"]["notes"] if n.startswith("Rear wheel slip"))
+    assert note == ("Rear wheel slip: from 1 of the 2 runs. It needs the four wheel speeds and some steady running on "
+                    "a straight to scale them; Quali's log doesn't give that.")
+    slips = [s["rear_slip_exit"] for s in body["car_limits"]["sections"]]
+    assert any(s is not None for s in slips)  # read from the race laps
+    # a part no log gives is said so, not left to look like a measurement of nothing
+    assert "Tyre temperatures: not measured. It needs the four tyre temperature sensors, and no log here gives " \
+           "that." in body["method"]["notes"]
+    # and only of the parts the section reads: its laps keep no rear rotation, which these logs do give
+    assert not any(n.startswith(("Rear rotation", "Tyre pressures")) for n in body["method"]["notes"])
+
+
 def test_the_report_is_built_under_the_shared_log_lock_and_served_from_cache_without_it(client, monkeypatch):
     import threading
 

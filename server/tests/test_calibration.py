@@ -86,3 +86,55 @@ def test_a_lap_quicker_in_one_section_moves_only_that_section(fastest):
     # the realistic target (the median of two laps) gains less than the theoretical lap, and only in T1 too
     real = {s.code: _section(ref, s) - _section(t.realistic.t, s) for s in SECTIONS}
     assert 0 < real["T1"] <= gain["T1"] and 0 <= real["T2"] < 0.05 * gain["T1"]
+
+
+# ---------- a lap on a line of its own ----------
+
+def _swerving(pace: float, at: float = 200.0, g: float = 0.6) -> Lap:
+    """A lap at this pace that moves across the road around metre `at`, out and back at up to g of cornering, on
+    the run into T1 where the quick laps go straight and are already off the throttle: a race lap pulling out to
+    pass."""
+    lap = Lap(np.full(N + 1, pace))
+    d = np.arange(N + 1, dtype=float)
+    ms = lap.trace["speed"] / 3.6
+    swerve = g * G / ms ** 2 * (np.exp(-((d - at + 12) / 8) ** 2) - np.exp(-((d - at - 12) / 8) ** 2))
+    lap.trace["curvature"] = lap.trace["curvature"] + swerve
+    lap.trace["ay"] = ms ** 2 * lap.trace["curvature"] / G
+    return lap
+
+
+def test_perfect_driving_on_a_lap_that_moves_across_the_road(fastest, monkeypatch):
+    """Five Hockenheim laps and a Zandvoort race lap moved across the road on a straight. Perfect driving on their own
+    line was held to the cornering the quick laps showed there (next to none), so it braked for the swerve and, in a
+    braking zone where no lap accelerated, crawled to the corner: a perfect lap of 118 s against laps of 107 to 113 s.
+    Where a lap's line asks for more cornering than the quick laps showed, its own is the floor."""
+    import app.analysis.technique as technique
+    from app.analysis.insights import _closed_sim
+    from app.analysis.local_limits import on_own_line
+
+    quick = [fastest, *(Lap(np.full(N + 1, p)) for p in (0.995, 0.99, 0.985))]
+    racing = _swerving(0.95)  # 5 % off the pace: not one of the laps the limits come from
+    t = targets([*quick, racing], fastest.trace, fastest.time, SECTIONS)
+
+    def check() -> dict:
+        return check_lap(racing.trace, t.perfect, t.held, SECTIONS, lap_time=racing.time,
+                         calibrations=(t.calibration, t.held_calibration))
+
+    with monkeypatch.context() as mp:  # how it was: the quick laps' limits alone
+        mp.setattr(technique, "on_own_line", lambda lim, tr: lim)
+        before = check()
+    assert before["perfect"] > racing.time + 1.0 and before["gap"] < 0
+    out = check()
+    assert out["perfect"] <= out["realistic"] < racing.time - 0.5
+    # the swerve is taken no faster than the lap took it (nothing showed the car could), the rest at the limits:
+    # a little off the theoretical lap, not twice the lap time
+    assert t.sim.time < out["perfect"] < t.sim.time + 1.0, t.sim.time
+    # the limits change only where the lap's line asked for more than the quick laps showed: around the swerve
+    own = on_own_line(t.perfect, racing.trace)
+    places = np.flatnonzero(own.corner != t.perfect.corner) * own.step
+    assert len(places) and places.min() >= 160 and places.max() <= 240
+    # the fastest lap on its own line: the very limits it was checked against before
+    mine = on_own_line(t.perfect, fastest.trace)
+    assert np.array_equal(mine.corner, t.perfect.corner)
+    assert _closed_sim(fastest.trace["curvature"], mine).time == _closed_sim(fastest.trace["curvature"],
+                                                                              t.perfect).time

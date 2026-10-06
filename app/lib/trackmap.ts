@@ -31,6 +31,9 @@ export type TrackMapData = {
   start: MapPoint & { dx: number; dy: number; heading: number }; // the line and the direction of travel
   sections: MapSection[];
   corners: (MapPoint & { code: string; apex_m: number })[];
+  // an event's map only: false when the event's fastest lap is in a log that can't draw the track (no GPS), so the
+  // map is the next quickest session's
+  event_fastest?: boolean;
 };
 
 // Thrown when there is no map to draw for a known reason (no log, no clean lap, no GPS): not a failure.

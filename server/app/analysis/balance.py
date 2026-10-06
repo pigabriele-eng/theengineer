@@ -32,6 +32,7 @@ from app.analysis.insights import (
     LapRecord,
     Prepared,
     _balance_notes,
+    channel_coverage,
     cornering,
     lateral,
     setup_diagnostics,
@@ -57,6 +58,9 @@ PHASE_NAMES = ((TRAIL, "entry"), (MID, "mid"), (EXIT, "exit"))  # braking while 
 # Per section and pass, typical and quick: traction control and ABS time (s), peak brake pressure, rear wheel slip
 # on the exit (90th percentile, %) and minimum speed (km/h)
 AIDS = ("tc_s", "abs_s", "peak_brake", "rear_slip_exit", "min_speed")
+# The setup parts (insights.SETUP_PARTS) the advice reads, which some logs may not give; the balance itself is read
+# per run, and a run without it says why (collect)
+READS = ("traction_control", "abs", "rear_slip", "tyre_temperature")
 
 # Channels kept per lap on the distance grid; everything else is dropped as soon as the lap is traced
 KEEP = ("t", "speed", "ax", "ay", "phase", "braking", "brake", "throttle", "coasting", "overlap", "tc_on", "abs_on",
@@ -443,6 +447,7 @@ def analyse(prep: Prepared, corners: list[CornerSpec] | None = None) -> dict:
         "peak_lateral_g": round(float(prep.limits.max_lateral(prep.limits.speeds).max()), 2),
         "gradient": grad,
         "diagnostics": diag,
+        "coverage": channel_coverage(prep.laps, READS),  # what some runs' logs can't give
         "sections": rows,
         "focus": focus_section(prep, rows, held_sim, corners, k),
     }

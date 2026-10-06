@@ -15,7 +15,7 @@ from app.routers.sessions import _channel_map, _get, _line, _track_for, official
 router = APIRouter()
 
 CACHE_SIZE = 32  # maps are about 30 KB each
-_cache: OrderedDict[tuple, dict] = OrderedDict()
+_cache: OrderedDict[tuple, dict | tuple[int, str]] = OrderedDict()  # a map, or why the log can't draw one
 _cache_lock = threading.Lock()
 
 
@@ -59,23 +59,26 @@ def session_map(db: Session, s: models.RunSession, reference_lap: int | None = N
     with _cache_lock:
         if key in _cache:
             _cache.move_to_end(key)
-            return _cache[key]
+            hit = _cache[key]
+            if isinstance(hit, tuple):  # this log can't draw the map: known without reading it again
+                raise HTTPException(*hit)
+            return hit
     with heavy.lock:
         ld = read_file(f)
         track = _track_for(db, s, ld)
         data = load_session(ld, _map_channels(s), beacons=f.meta.get("beacons"), line=_line(track))
         del ld
         try:
-            out = {"session_id": s.id, "session_name": s.name, "file_id": f.id,
-                   **track_map(data, official_corners(track), reference_lap)}
-        except NoLapError as e:
-            raise HTTPException(404, str(e)) from e
-        except NoGpsError as e:
-            raise HTTPException(422, str(e)) from e
+            out: dict | tuple[int, str] = {"session_id": s.id, "session_name": s.name, "file_id": f.id,
+                                           **track_map(data, official_corners(track), reference_lap)}
+        except (NoLapError, NoGpsError) as e:
+            out = (404 if isinstance(e, NoLapError) else 422, str(e))
     with _cache_lock:
         _cache[_key(s, f, track, reference_lap)] = out
         while len(_cache) > CACHE_SIZE:
             _cache.popitem(last=False)
+    if isinstance(out, tuple):
+        raise HTTPException(*out)
     return out
 
 
@@ -89,15 +92,24 @@ def get_session_map(session_id: int, reference_lap: int | None = None, db: Sessi
 
 @router.get("/events/{event_id}/map")
 def get_event_map(event_id: int, db: Session = Depends(get_db)):
-    """The track drawn from the event's fastest clean lap, the reference lap the event's insights use."""
+    """The track drawn from the event's fastest clean lap, the reference lap the event's insights use. When that
+    session's log can't draw it (no GPS, or no clean lap in the log as it reads now), the next quickest session's
+    does: one log without GPS doesn't leave the whole event without its map. event_fastest says which."""
     if db.get(models.Event, event_id) is None:
         raise HTTPException(404, "Event not found")
-    best: tuple[float, models.RunSession] | None = None
+    ranked: list[tuple[float, int, models.RunSession]] = []
     for s in db.scalars(select(models.RunSession).where(models.RunSession.event_id == event_id)).all():
         f = _main_file(s)
         times = [l.time_s for l in s.laps if f is not None and l.file_id == f.id and l.clean]
-        if times and (best is None or min(times) < best[0]):
-            best = (min(times), s)
-    if best is None:
+        if times:
+            ranked.append((min(times), s.id, s))
+    if not ranked:
         raise HTTPException(404, "No clean lap in this event to draw the track from")
-    return session_map(db, best[1])
+    ranked.sort(key=lambda r: r[:2])
+    for i, (_, _, s) in enumerate(ranked):
+        try:
+            return {**session_map(db, s), "event_fastest": i == 0}  # a copy: the cached map is the session's too
+        except HTTPException as e:
+            if e.status_code not in (404, 422) or i == len(ranked) - 1:
+                raise
+    raise AssertionError("unreachable")

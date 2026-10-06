@@ -281,7 +281,9 @@ const METHOD = [
     'takes the most cornering the car has shown there across the event, and the hardest braking and drive it ' +
     'showed there while cornering that hard (the 90th percentile of the quick laps, never less than the fastest ' +
     'lap), braking at the last moment and back to full throttle as soon as the grip allows. A banked corner keeps ' +
-    'its own grip and lends it to no other. Like the report\'s targets it is measured from the fastest lap: the ' +
+    'its own grip and lends it to no other. Where this lap\'s line asks for more cornering than the quick laps ' +
+    'showed (moving across the road to pass or take a tow), it takes what this lap itself showed there. Like ' +
+    'the report\'s targets it is measured from the fastest lap: the ' +
     'simulation\'s own error, found by driving the fastest lap at its own limits, is taken out at every metre.',
   'The lap is cut where the driver\'s actions change (lift, brake point, release, slowest point, throttle ' +
     'pick-up, full throttle, any lift on a straight). Each piece costs the time lost from its start to its end, ' +

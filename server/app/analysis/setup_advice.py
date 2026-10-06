@@ -483,6 +483,21 @@ CONFIDENCE = {"published": "published", "measured": "measured in these logs", "e
               "unknown": "not known"}
 
 
+def coverage_notes(coverage: dict[str, dict]) -> list[str]:
+    """What some or all of the logs can't give (insights.channel_coverage), in words: read from the other runs, or
+    left out."""
+    notes = []
+    for c in coverage.values():
+        if not c["runs"]:
+            notes.append(f"{c['words']}: not measured. It needs {c['needs']}, and no log here gives that.")
+        else:
+            missing = c["missing"]
+            notes.append(f"{c['words']}: from {len(c['runs'])} of the {len(c['runs']) + len(missing)} runs. "
+                         f"It needs {c['needs']}; {listed(missing)}'s "
+                         f"{'log doesn' if len(missing) == 1 else 'logs don'}'t give that.")
+    return notes
+
+
 def method(a: dict, geometry: dict, sessions: list[dict], preset: str | None) -> dict:
     """The numbers the balance is built on, each with where it came from, and how to read the section."""
     read = [s for s in sessions if "yaw_scale" in s]
@@ -514,6 +529,7 @@ def method(a: dict, geometry: dict, sessions: list[dict], preset: str | None) ->
                  "(the grip a quick lap usually shows at each place, used without a mistake) is the car's share. The "
                  "rest, down to the theoretical lap (the best the car has shown at each place), is the theoretical "
                  "asking for the best of every place at once.")
+    notes += coverage_notes(a.get("coverage") or {})
     if preset in PRESETS:
         notes.append(f"Bar changes are run through the steady-state vehicle model on the {PRESETS[preset][0]} "
                      "preset. Its bar rates are estimates and it assumes the middle settings: enter the car's real "

@@ -74,6 +74,36 @@ def test_map_of_another_lap_and_missing_laps(data):
         track_map(load_session(read_ld(write_ld(no_gps))))
 
 
+def test_the_event_map_comes_from_the_quickest_session_that_can_draw_it(client, monkeypatch):
+    """The event map is drawn from the event's fastest clean lap. At Zandvoort that was a pit log's 3 s "lap" (two
+    marker pulses in the pit lane, fixed in the lap timing), which has no lap of GPS path: the whole event's map
+    answered 422. One session whose log can't draw the track no longer leaves the event without a map."""
+    import app.routers.trackmap as trackmap
+
+    event = client.post("/events", json={"name": "Race weekend"}).json()
+    sessions = {}
+    for name, paces, gps in (("Quickest, no GPS", (0.95, 1.0, 0.97), False), ("With GPS", (0.9, 0.95), True)):
+        channels = simulate(paces=paces)[0]
+        if not gps:
+            channels = {k: v for k, v in channels.items() if not k.startswith("GPS")}
+        s = client.post("/sessions", json={"event_id": event["id"], "name": name}).json()
+        assert client.post(f"/sessions/{s['id']}/files", files={"file": ("run.ld", write_ld(channels))}).status_code \
+            == 201
+        sessions[name] = s["id"]
+
+    assert client.get(f"/sessions/{sessions['Quickest, no GPS']}/map").status_code == 422
+    r = client.get(f"/events/{event['id']}/map")
+    assert r.status_code == 200, r.text
+    m = r.json()
+    assert m["session_id"] == sessions["With GPS"] and len(m["x"]) > 100
+    assert m["event_fastest"] is False  # so the map doesn't call its lap the event's fastest
+    # asked again: neither log is read, the one without GPS included
+    with monkeypatch.context() as mp:
+        mp.setattr(trackmap, "read_file", lambda f: pytest.fail("a log was read again"))
+        assert client.get(f"/events/{event['id']}/map").json() == m
+        assert client.get(f"/sessions/{sessions['Quickest, no GPS']}/map").status_code == 422
+
+
 def test_session_and_event_map_endpoints(client, monkeypatch):
     import app.routers.trackmap as trackmap
 
@@ -102,7 +132,8 @@ def test_session_and_event_map_endpoints(client, monkeypatch):
         assert client.get(f"/sessions/{fast['id']}/map").json() == m
 
     ev = client.get(f"/events/{event['id']}/map").json()
-    assert ev["session_id"] == fast["id"] and ev["reference_lap"] == m["reference_lap"]
+    assert ev["session_id"] == fast["id"] and ev["reference_lap"] == m["reference_lap"] and ev["event_fastest"]
+    assert "event_fastest" not in client.get(f"/sessions/{fast['id']}/map").json()
     assert client.get(f"/sessions/{slow['id']}/map", params={"reference_lap": 2}).json()["reference_lap"] == 2
 
     assert client.get(f"/sessions/{empty['id']}/map").status_code == 404
