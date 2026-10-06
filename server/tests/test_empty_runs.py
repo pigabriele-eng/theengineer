@@ -165,9 +165,12 @@ def _old_import(client, monkeypatch, entries: dict[str, bytes]) -> dict[str, int
     import app.routers.sessions
     import app.timing
 
+    import app.routers.imports
+
     with monkeypatch.context() as m:
         m.setattr(app.routers.sessions, "judge", lambda *a: emptyrun.Verdict(True, "kept"))
         job = upload(client, ("T01.zip", make_zip(entries)))
+    app.routers.imports._jobs.join()  # the import asks for its reports just after it shows done
     app.timing.wait_idle()
     app.routers.reports.wait_idle()
     with app.db.SessionLocal() as db:
