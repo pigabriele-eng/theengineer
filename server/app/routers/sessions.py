@@ -14,6 +14,7 @@ from app.db import get_db
 from app.heavy import one_at_a_time
 from app.importers.csvlog import CsvLog, read_csv_log
 from app.importers.motec import LdFile, LdFormatError, read_ld, read_ldx_beacons
+from app.importers.window import beacons_in
 from app.known_tracks import fill_corners
 from app.timing import read_file, store_laps, track_line
 
@@ -185,6 +186,8 @@ def _attach_ldx(db: Session, s: models.RunSession, name: str, raw: bytes) -> dic
     rec = next((f for f in logs if Path(f.filename).stem.lower() == stem), None) or (logs[-1] if logs else None)
     if rec is None:
         raise HTTPException(409, "Upload the .ld log first, then its .ldx")
+    if w := rec.meta.get("window"):  # a run split from a longer log (run_split.py): the crossings in its part
+        beacons = beacons_in(beacons, w[0], w[1])
     if len(beacons) >= 2:
         rec.meta = {**rec.meta, "beacons": beacons}
         ld = read_file(rec)
