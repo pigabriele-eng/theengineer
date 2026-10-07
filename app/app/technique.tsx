@@ -1,6 +1,6 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 
 import { Choice, FigRow, Meter, Notice, PageHead, Tabs, useText } from '@/components/Picks';
 import PrintButton from '@/components/PrintButton';
@@ -30,7 +30,8 @@ import {
 import { deltaColor, face, Fonts, phaseColor, themed, Type, useTheme } from '@/constants/Theme';
 
 const POLL_MS = 2000;
-const SIDE_BY_SIDE = 900; // from this wide the map and the close-up sit side by side
+const SIDE_BY_SIDE = 900; // from this wide the charts are taller
+const SIDE_MAP = 1000; // from this wide the track map has a column of its own on the right; narrower, it's pinned on top
 const CLOSE_UP_M = 150; // metres either side of a mistake in its close-up
 const s2 = (v: number) => `${v.toFixed(2)} s`;
 const m0 = (v: number) => `${Math.round(v)} m`;
@@ -57,8 +58,14 @@ export default function TechniqueScreen() {
   const [loading, setLoading] = useState(false);
   const [nonce, setNonce] = useState(0);
   const [selected, setSelected] = useState<number | null>(1);
-  const { width } = useWindowDimensions();
-  const sideBySide = width >= SIDE_BY_SIDE;
+  const [focus, setFocus] = useState<string | null>(null); // the corner last tapped, lit on the map
+  const [cursor, setCursor] = useState<number | null>(null); // the charts' shared cursor, a dot on the map
+  const [mapShown, setMapShown] = useState(true); // the map pinned on a phone
+  const scroll = useRef<ScrollView>(null);
+  const { width, height } = useWindowDimensions();
+  const side = width >= SIDE_MAP;
+  const sideWidth = Math.round(Math.min(440, Math.max(320, width * 0.28)));
+  const sideBySide = width - (side ? sideWidth : 0) >= SIDE_BY_SIDE;
 
   // the session's check of one lap; while the server works it out, ask again every couple of seconds
   useEffect(() => {
@@ -155,8 +162,42 @@ export default function TechniqueScreen() {
   let no = 0;
   const next = () => ++no;
 
+  // the map stays in view while the page scrolls: a column of its own on a computer, pinned on top on a phone. It
+  // lights the corner last tapped (or the picked mistake's) and follows the charts' cursor with a dot
+  const picked = check?.mistakes[(selected ?? 0) - 1] ?? null;
+  const pick = (n: number) => {
+    setSelected(n);
+    setFocus(check?.mistakes[n - 1]?.code ?? null);
+  };
+  const map = answer && check ? (
+    <TrackMap {...answer.map} highlight={focus ?? picked?.code} compact={!side}
+      marks={check.mistakes.map((m, i) => ({ n: i + 1, at_m: m.at_m, from_m: m.start_m, to_m: m.end_m }))}
+      selectedMark={selected} marksLengthM={answer.length_m}
+      cursorM={cursor != null && check.trace ? cursor * check.trace.step_m : null}
+      maxHeight={side ? Math.max(180, height - 220) : Math.max(110, Math.min(200, Math.round(height / 3) - 64))} />
+  ) : null;
+  // on the web the mouse wheel over the map column scrolls the page
+  const wheel = Platform.OS === 'web' ? {
+    onWheel: (e: any) => (scroll.current as any)?.getScrollableNode?.()?.scrollBy?.(0,
+      e.deltaY * (e.deltaMode === 1 ? 16 : 1)),
+  } : {};
+
   return (
-    <Page>
+    <View style={StyleSheet.flatten([styles.screen, side && styles.split])}>
+    {map && !side && (
+      <View style={styles.pinned}>
+        <View style={styles.pinnedBar}>
+          <Label small>Track map</Label>
+          <Text style={StyleSheet.flatten([t.small, styles.flex])} numberOfLines={1}>
+            {mapShown ? focus ?? picked?.code ?? 'Tap a mistake to find it' : ''}
+          </Text>
+          <TextLink small label={mapShown ? 'Hide map' : 'Show map'} onPress={() => setMapShown(!mapShown)} />
+        </View>
+        {/* hidden, not removed: showing it again doesn't ask the server again */}
+        <View style={mapShown ? undefined : styles.gone}>{map}</View>
+      </View>
+    )}
+    <Page scrollRef={scroll}>
       <Stack.Screen options={{ title: answer ? `Technique check · ${answer.session.name}` : 'Technique check' }} />
       <PageHead title="Technique check" dek={dek}>
         <PrintButton title={['Technique check', answer?.session.name].filter(Boolean).join(' · ')} />
@@ -230,7 +271,8 @@ export default function TechniqueScreen() {
         <Section no={next()} title="Obvious mistakes"
           dek="Wrong whatever the target: what happened in each corner, what to do instead and what it alone cost.">
           {check.obvious.map((m, i) => (
-            <ObviousRow key={`${m.key}-${m.start_m}`} m={m} first={i === 0} />
+            <ObviousRow key={`${m.key}-${m.start_m}`} m={m} first={i === 0} on={focus === m.code}
+              onPress={() => setFocus(m.code)} />
           ))}
         </Section>
       )}
@@ -245,7 +287,7 @@ export default function TechniqueScreen() {
           )}
           {check.mistakes.map((m, i) => (
             <MistakeRow key={`${m.key}-${m.start_m}`} n={i + 1} m={m} on={selected === i + 1} first={i === 0}
-              onPress={() => setSelected(i + 1)} />
+              onPress={() => pick(i + 1)} />
           ))}
         </Section>
       )}
@@ -260,8 +302,9 @@ export default function TechniqueScreen() {
 
       {check && answer && (
         <Section no={next()} title="On the track"
-          dek="The lap on the map and against perfect driving's speed, the picked mistake close up, then the driver's inputs.">
-          <OnTheTrack answer={answer} check={check} selected={selected} onSelect={setSelected} sideBySide={sideBySide} />
+          dek="The lap against perfect driving's speed, the picked mistake close up, then the driver's inputs.">
+          <OnTheTrack answer={answer} check={check} selected={selected} onSelect={pick} sideBySide={sideBySide}
+            cursor={cursor} onCursor={setCursor} />
         </Section>
       )}
 
@@ -278,6 +321,13 @@ export default function TechniqueScreen() {
       <Colophon left="The Engineer · Technique check"
         right={answer ? [answer.session.name, answer.track].filter(Boolean).join(' · ') : undefined} />
     </Page>
+    {map && side && (
+      <View {...wheel} style={StyleSheet.flatten([styles.side, { width: sideWidth }])}>
+        {map}
+        <Text style={t.small}>A mistake you tap lights its corner here; the dot follows the charts.</Text>
+      </View>
+    )}
+    </View>
   );
 }
 
@@ -319,39 +369,28 @@ const METHOD = [
 
 /** The lap on the map and against perfect driving's speed (a close-up of the picked mistake, then the whole lap), with
  * the driver's inputs under the whole lap's speed. One cursor runs through every chart. */
-function OnTheTrack({ answer, check, selected, onSelect, sideBySide }: { answer: SessionTechnique; check: LapCheck;
-  selected: number | null; onSelect: (n: number) => void; sideBySide: boolean }) {
+function OnTheTrack({ answer, check, selected, onSelect, sideBySide, cursor, onCursor: setCursor }: {
+  answer: SessionTechnique; check: LapCheck; selected: number | null; onSelect: (n: number) => void;
+  sideBySide: boolean; cursor: number | null; onCursor: (i: number | null) => void }) {
   const t = useText();
   const styles = useStyles();
-  const [cursor, setCursor] = useState<number | null>(null);
   const [picked, setOverlay] = useState<Overlay | null>(null);
   const overlay: Overlay = picked ?? (check.trace?.model?.best ? 'best' : 'perfect');
   const best = check.trace?.model?.best ?? null;
   const mistake = check.mistakes[(selected ?? 0) - 1] ?? null;
   const bands = useMemo(() => bandsOf(check), [check]);
-  // the map doesn't follow the cursor: kept as it is while the charts are scrubbed
-  const map = useMemo(() => (
-    <TrackMap {...answer.map} highlight={mistake?.code}
-      marks={check.mistakes.map((m, i) => ({ n: i + 1, at_m: m.at_m, from_m: m.start_m, to_m: m.end_m }))}
-      selectedMark={selected} marksLengthM={answer.length_m} />
-  ), [answer.map, answer.length_m, check, mistake?.code, selected]);
   const tr = check.trace;
   const corners = answer.corners ?? [];
   const fastest = check.fastest;
   const scope = answer.scope === 'event' ? 'event' : 'session';
   return (
     <View style={styles.track}>
-      <View style={sideBySide ? styles.row : styles.column}>
-        <View style={sideBySide ? styles.half : undefined}>{map}</View>
-        {tr && mistake && (
-          <View style={sideBySide ? styles.half : undefined}>
-            <TechniqueTrace stepM={tr.step_m} driven={tr.driven} perfect={tr.perfect} realistic={tr.realistic}
-              bands={bands} selected={selected} onSelect={onSelect} corners={corners}
-              from={mistake.start_m - CLOSE_UP_M} to={mistake.end_m + CLOSE_UP_M}
-              title={`Close-up of ${selected}. ${mistake.title} (${mistake.code})`} cursor={cursor} onCursor={setCursor} />
-          </View>
-        )}
-      </View>
+      {tr && mistake && (
+        <TechniqueTrace stepM={tr.step_m} driven={tr.driven} perfect={tr.perfect} realistic={tr.realistic}
+          bands={bands} selected={selected} onSelect={onSelect} corners={corners}
+          from={mistake.start_m - CLOSE_UP_M} to={mistake.end_m + CLOSE_UP_M}
+          title={`Close-up of ${selected}. ${mistake.title} (${mistake.code})`} cursor={cursor} onCursor={setCursor} />
+      )}
       {tr ? (
         <TechniqueTrace stepM={tr.step_m} driven={tr.driven} perfect={tr.perfect} realistic={tr.realistic}
           bands={bands} selected={selected} onSelect={onSelect} corners={corners} height={sideBySide ? 260 : 240}
@@ -533,13 +572,15 @@ function MistakeRow({ n, m, on, first, onPress }: { n: number; m: Mistake; on: b
 
 /** An obvious mistake, in the mistake rows' style: an exclamation in the ink block, what it is and where, its cost,
  * then what happened and what to do instead. */
-function ObviousRow({ m, first }: { m: ObviousMistake; first: boolean }) {
+function ObviousRow({ m, first, on, onPress }: { m: ObviousMistake; first: boolean; on: boolean;
+  onPress: () => void }) {
   const t = useText();
   const theme = useTheme();
   const wide = useWide();
   const styles = useStyles();
   return (
-    <View style={StyleSheet.flatten([styles.mistake, !first && styles.mistakeRule])}>
+    <Pressable accessibilityRole="button" accessibilityState={{ selected: on }} onPress={onPress}
+      style={StyleSheet.flatten([styles.mistake, !first && styles.mistakeRule, on && styles.mistakeOn])}>
       <View style={styles.mistakeHead}>
         <View style={StyleSheet.flatten([styles.no, styles.noOn])}>
           <Text style={styles.noText}>!</Text>
@@ -565,7 +606,7 @@ function ObviousRow({ m, first }: { m: ObviousMistake; first: boolean }) {
           {m.do}
         </Text>
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -719,6 +760,13 @@ const useStyles = themed((c) => ({
   habitCost: { ...Type.number, fontSize: 15, color: c.text },
   more: { marginTop: 12 },
   track: { gap: 22 },
+  screen: { flex: 1, backgroundColor: c.background },
+  split: { flexDirection: 'row' },
+  pinned: { borderBottomWidth: 1, borderColor: c.rule, paddingHorizontal: 16, paddingBottom: 6,
+    backgroundColor: c.background },
+  pinnedBar: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 40, backgroundColor: 'transparent' },
+  side: { borderLeftWidth: 1, borderColor: c.rule, padding: 16, gap: 8, backgroundColor: c.background },
+  gone: { display: 'none' },
   row: { flexDirection: 'row', gap: 28, alignItems: 'flex-start' },
   column: { gap: 18 },
   half: { flex: 1, minWidth: 0, gap: 12 },
