@@ -43,9 +43,10 @@ const today = () => {
   return `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 };
 
-type NavKey = 'sessions' | 'upload' | 'debrief' | 'tools';
+type NavKey = 'sessions' | 'seasons' | 'upload' | 'debrief' | 'tools';
 const NAV: { key: NavKey; label: string; href: Href }[] = [
   { key: 'sessions', label: 'Sessions', href: '/' },
+  { key: 'seasons', label: 'Seasons', href: '/seasons' },
   { key: 'upload', label: 'Upload', href: '/upload' },
   { key: 'debrief', label: 'Debrief', href: '/debrief' },
   { key: 'tools', label: 'Tools', href: '/tools' },
@@ -53,13 +54,14 @@ const NAV: { key: NavKey; label: string; href: Href }[] = [
 
 /** Which part of the app a page belongs to: its masthead link is underlined. */
 export function navOf(pathname: string): NavKey {
+  if (pathname.startsWith('/seasons')) return 'seasons';
   if (pathname.startsWith('/upload')) return 'upload';
   if (pathname.startsWith('/debrief')) return 'debrief';
   if (pathname.startsWith('/tools') || pathname.startsWith('/garage')) return 'tools';
   return 'sessions';
 }
 
-/** The paper masthead at the top of every page: the nameplate and today's date, the four parts of the app as text
+/** The paper masthead at the top of every page: the nameplate and today's date, the five parts of the app as text
  * links (the one you are in underlined in red), then a thick and a thin rule. On a phone the links take a row of their
  * own under the nameplate. */
 export function Masthead() {
