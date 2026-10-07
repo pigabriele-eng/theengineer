@@ -2,12 +2,13 @@
 // reason and expected effect), where the car rather than the driver limits the lap and by how much, then the
 // balance per section on entry, mid-corner and exit. For one session or a whole event.
 import { Link } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { TraceChart } from '@/components/TraceChart';
 import { useColorScheme } from '@/components/useColorScheme';
+import { ResetZoom, ZOOM_HINT, ZoomGroup } from '@/components/Zoom';
 import {
   BalanceCell,
   BalanceReport,
@@ -283,8 +284,20 @@ function FocusView({ focus }: { focus: Focus }) {
   const pal = usePalette();
   const [cursor, setCursor] = useState<number | null>(null);
   const t = focus.trace;
-  const distance = t.distance_m.map((d) => d - focus.start_m);
-  const markers = t.corners.map((c) => ({ at: c.at_m - focus.start_m, label: c.code }));
+  const distance = useMemo(() => t.distance_m.map((d) => d - focus.start_m), [t, focus.start_m]);
+  const markers = useMemo(() => t.corners.map((c) => ({ at: c.at_m - focus.start_m, label: c.code })),
+    [t, focus.start_m]);
+  // the lines, kept from one move of the cursor to the next (zooming redraws only the part shown)
+  const speed = useMemo(() => [
+    { values: t.reference_speed, color: pal.reference },
+    { values: t.best_speed, color: pal.compare },
+    { values: t.held_speed, color: pal.third },
+  ], [t, pal]);
+  const corneringG = useMemo(() => [
+    { values: t.reference_g, color: pal.reference },
+    { values: t.best_g, color: pal.compare },
+    { values: t.held_g, color: pal.third },
+  ], [t, pal]);
   const colors = { driving: pal.reference, car: pal.compare, theoretical: pal.third };
   const laps = [
     { label: `Fastest lap (${lapName(focus.reference.lap)})`, color: pal.reference },
@@ -314,45 +327,42 @@ function FocusView({ focus }: { focus: Focus }) {
           <Text style={styles.body}>{nb(e.text)}</Text>
         </View>
       ))}
-      <View style={styles.legend}>
-        {laps.map((l) => (
-          <Text key={l.label} style={styles.legendItem}>
-            <Text style={{ color: l.color }}>━</Text> {l.label}
-          </Text>
-        ))}
-      </View>
-      <TraceChart
-        title={`Speed through ${focus.code}`}
-        unit="km/h"
-        distance={distance}
-        series={[
-          { values: t.reference_speed, color: pal.reference },
-          { values: t.best_speed, color: pal.compare },
-          { values: t.held_speed, color: pal.third },
-        ]}
-        cursor={cursor}
-        onCursor={setCursor}
-        markers={markers}
-        height={160}
-      />
-      <TraceChart
-        title="Cornering g"
-        unit="g"
-        distance={distance}
-        series={[
-          { values: t.reference_g, color: pal.reference },
-          { values: t.best_g, color: pal.compare },
-          { values: t.held_g, color: pal.third },
-        ]}
-        cursor={cursor}
-        onCursor={setCursor}
-        markers={markers}
-        domain={[0, Math.ceil(gMax * 10) / 10]}
-        height={140}
-      />
+      <ZoomGroup reset={focus.code}>
+        <View style={styles.legendRow}>
+          <View style={styles.legend}>
+            {laps.map((l) => (
+              <Text key={l.label} style={styles.legendItem}>
+                <Text style={{ color: l.color }}>━</Text> {l.label}
+              </Text>
+            ))}
+          </View>
+          <ResetZoom reserve />
+        </View>
+        <TraceChart
+          title={`Speed through ${focus.code}`}
+          unit="km/h"
+          distance={distance}
+          series={speed}
+          cursor={cursor}
+          onCursor={setCursor}
+          markers={markers}
+          height={160}
+        />
+        <TraceChart
+          title="Cornering g"
+          unit="g"
+          distance={distance}
+          series={corneringG}
+          cursor={cursor}
+          onCursor={setCursor}
+          markers={markers}
+          domain={[0, Math.ceil(gMax * 10) / 10]}
+          height={140}
+        />
+      </ZoomGroup>
       <Text style={styles.small}>
-        Distance from the start of {focus.code}, {Math.round(focus.end_m - focus.start_m)} m in all. Drag across a
-        chart to read the values.
+        Distance from the start of {focus.code}, {Math.round(focus.end_m - focus.start_m)} m in all. Hover over or
+        touch a chart to read the values. {ZOOM_HINT}
       </Text>
     </View>
   );
@@ -567,7 +577,9 @@ const useStyles = themed((c) => ({
   model: { gap: 4, borderTopWidth: 1, borderColor: c.separator, paddingTop: 8 },
   link: { fontWeight: '600', marginTop: 2 },
   split: { flexDirection: 'row', height: 14, gap: 2, overflow: 'hidden' },
-  legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, rowGap: 4, marginTop: 6 },
+  legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, rowGap: 4, marginTop: 6, flexShrink: 1 },
+  legendRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-end',
+    gap: 8 },
   legendItem: { fontSize: 13, fontVariant: ['tabular-nums'] },
   barRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   barCode: { width: 64, fontWeight: '600', fontVariant: ['tabular-nums'] },

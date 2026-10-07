@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useId, useState } from 'react';
 import {
   ActivityIndicator,
-  GestureResponderEvent,
   LayoutChangeEvent,
   Platform,
   Pressable,
@@ -9,13 +8,15 @@ import {
   StyleSheet,
   View,
 } from 'react-native';
-import Svg, { Circle, Line, Polyline, Text as SvgText } from 'react-native-svg';
+import Svg, { Circle, ClipPath, Defs, G, Line, Polyline, Rect, Text as SvgText } from 'react-native-svg';
 
 import { Fig, useWide } from '@/components/Programme';
 import { Text, useThemeColor } from '@/components/Themed';
 import { useSeriesColors } from '@/components/TraceChart';
+import { ResetZoom, useZoom, ZoomArea } from '@/components/Zoom';
 import { formatLap } from '@/lib/api';
 import { fetchTrackGrip, GripSession, pct, TrackGripAnswer, TrackGripResult } from '@/lib/trackGrip';
+import { isZoomed, pixelOf, Range, shownRange, valueAt } from '@/lib/zoom';
 import { chartPlate, Fonts, themed, Type, useTheme } from '@/constants/Theme';
 
 const POLL_MS = 4000;
@@ -185,17 +186,24 @@ export function GripChart({ sessions, base, title }: { sessions: GripSession[]; 
   const surface = useThemeColor({}, 'surface');
   const MUTED = useTheme().chart.muted; // de-emphasis grey of the chart palette
   const accent = useSeriesColors().reference;
+  const zoom = useZoom();
+  const clip = `clip${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
   const n = sessions.length;
   if (!n) return null;
 
-  const vals = sessions.flatMap((s) => [s.track, ...(s.range ?? [])]).concat([0]);
+  // zoomed along the sessions (each a column a unit wide), the grip scale fits the sessions shown
+  const full: Range = [-0.5, n - 0.5];
+  const view = shownRange(zoom.view, full, 2);
+  const zoomed = isZoomed(view, full);
+  const shown = sessions.filter((_, i) => i >= view[0] && i <= view[1]);
+  const vals = (shown.length ? shown : sessions).flatMap((s) => [s.track, ...(s.range ?? [])]).concat([0]);
   const step = niceStep(Math.max(...vals) - Math.min(...vals) || 1);
   const lo = Math.floor((Math.min(...vals) - step / 4) / step) * step;
   const hi = Math.ceil((Math.max(...vals) + step / 4) / step) * step;
   const w = Math.max(width - C.left - C.right, 1);
   const h = C.height - C.top - C.bottom;
-  const col = w / n;
-  const x = (i: number) => C.left + (i + 0.5) * col;
+  const col = w / (view[1] - view[0]);
+  const x = (i: number) => pixelOf(i, view, C.left, w);
   const y = (v: number) => C.top + (1 - (v - lo) / (hi - lo)) * h;
   const ticks = Array.from({ length: Math.round((hi - lo) / step) + 1 }, (_, i) => lo + i * step);
   const longest = Math.max(...sessions.map((s) => s.name.length)) * CHAR_W + 6;
@@ -205,36 +213,35 @@ export function GripChart({ sessions, base, title }: { sessions: GripSession[]; 
   const withAir = sessions.some((s) => s.ambient_c != null);
 
   const nearest = (px: number) => {
-    const i = Math.floor((px - C.left) / col);
+    if (px < C.left || px > C.left + w) return null;
+    const i = Math.round(valueAt(px, view, C.left, w));
     return i >= 0 && i < n ? i : null;
   };
-  const touch = (e: GestureResponderEvent) => setPicked(nearest(e.nativeEvent.locationX));
-  const hover = Platform.OS === 'web'
-    ? {
-        onMouseMove: (e: any) => setPicked(nearest(e.nativeEvent.offsetX ?? e.nativeEvent.locationX)),
-        onMouseLeave: () => setPicked(null),
-      }
-    : {};
   const p = picked != null ? sessions[picked] : null;
   const summary = sessions.map((s) => `${s.name} ${pct(s.track)}`).join(', ');
 
   return (
     <View style={styles.chart}>
-      <Text style={styles.chartTitle}>{title ?? `Track grip by session, % against ${base}`}</Text>
+      <View style={styles.head}>
+        <Text style={styles.chartTitle}>{title ?? `Track grip by session, % against ${base}`}</Text>
+        <ResetZoom zoom={zoom} reserve />
+      </View>
       <Text style={styles.readout} numberOfLines={3}>
         {p ? readout(p, base)
           : Platform.OS === 'web' ? 'Point at a session for its numbers.' : 'Touch a session for its numbers.'}
       </Text>
-      <View
-        accessible
-        accessibilityLabel={`Track grip by session against ${base}: ${summary}.`}
-        onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}
-        onStartShouldSetResponder={() => true}
-        onResponderGrant={touch}
-        onResponderMove={touch}
-        {...hover}>
+      <ZoomArea zoom={zoom} full={full} left={C.left} width={w} minSpan={2} onCursor={(px) => setPicked(nearest(px))}
+        onLeave={() => setPicked(null)} onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}>
         {width > 0 && (
-          <Svg width={width} height={C.height} pointerEvents="none">
+          <Svg width={width} height={C.height} pointerEvents="none"
+            accessibilityLabel={`Track grip by session against ${base}: ${summary}.`}>
+            {zoomed && (
+              <Defs>
+                <ClipPath id={clip}>
+                  <Rect x={C.left} y={0} width={w} height={C.height} />
+                </ClipPath>
+              </Defs>
+            )}
             {ticks.map((v) => (
               <Line key={`g${v}`} x1={C.left} x2={C.left + w} y1={y(v)} y2={y(v)} stroke={ink}
                 strokeOpacity={v === 0 ? 0.35 : 0.08} strokeWidth={v === 0 ? 1.5 : 1} />
@@ -249,48 +256,50 @@ export function GripChart({ sessions, base, title }: { sessions: GripSession[]; 
               transform={`rotate(-90 12 ${C.top + h / 2})`}>
               % grip
             </SvgText>
-            {days > 1 && sessions.map((s, i) => newDay[i] && (
-              <SvgText fontFamily={SVG_FONT} key={`d${i}`} x={x(i) - col / 2 + 4} y={12} fontSize={10} fill={MUTED}>
-                {dayLabel(s.start)}
-              </SvgText>
-            ))}
-            {days > 1 && sessions.map((_, i) => i > 0 && newDay[i] && (
-              <Line key={`s${i}`} x1={x(i) - col / 2} x2={x(i) - col / 2} y1={2} y2={C.top + h} stroke={ink}
-                strokeOpacity={0.2} strokeDasharray="3 3" />
-            ))}
-            {picked != null && (
-              <Line x1={x(picked)} x2={x(picked)} y1={C.top} y2={C.top + h} stroke={ink} strokeOpacity={0.07}
-                strokeWidth={col} />
-            )}
-            <Polyline points={sessions.map((s, i) => `${x(i)},${y(s.track)}`).join(' ')} fill="none" stroke={accent}
-              strokeWidth={2} strokeOpacity={0.55} strokeLinejoin="round" />
-            {sessions.map((s, i) => s.range && (
-              <Line key={`r${i}`} x1={x(i)} x2={x(i)} y1={y(s.range[0])} y2={y(s.range[1])}
-                stroke={s.wet ? MUTED : accent} strokeWidth={2} strokeLinecap="round" />
-            ))}
-            {sessions.map((s, i) => (
-              <Circle key={`c${i}`} cx={x(i)} cy={y(s.track)} r={picked === i ? 6.5 : 5}
-                fill={s.pm == null ? surface : s.wet ? MUTED : accent} stroke={s.pm == null ? accent : surface}
-                strokeWidth={2} />
-            ))}
-            {sessions.map((s, i) => s.wet && (
-              <SvgText fontFamily={SVG_FONT} key={`w${i}`} x={x(i)} y={y(s.range ? s.range[1] : s.track) - 8}
-                fontSize={10} fill={ink} fillOpacity={0.7} textAnchor="middle">
-                wet
-              </SvgText>
-            ))}
-            {sessions.map((s, i) => i % every === 0 && (
-              <SvgText fontFamily={SVG_FONT} key={`n${i}`} x={x(i)} y={C.top + h + 14} fontSize={10} fill={ink}
-                fillOpacity={0.75} textAnchor="middle">
-                {s.name}
-              </SvgText>
-            ))}
-            {withAir && sessions.map((s, i) => i % every === 0 && s.ambient_c != null && (
-              <SvgText fontFamily={SVG_FONT} key={`a${i}`} x={x(i)} y={C.top + h + 28} fontSize={10} fill={MUTED}
-                textAnchor="middle">
-                {`${Math.round(s.ambient_c)}°`}
-              </SvgText>
-            ))}
+            <G clipPath={zoomed ? `url(#${clip})` : undefined}>
+              {days > 1 && sessions.map((s, i) => newDay[i] && (
+                <SvgText fontFamily={SVG_FONT} key={`d${i}`} x={x(i) - col / 2 + 4} y={12} fontSize={10} fill={MUTED}>
+                  {dayLabel(s.start)}
+                </SvgText>
+              ))}
+              {days > 1 && sessions.map((_, i) => i > 0 && newDay[i] && (
+                <Line key={`s${i}`} x1={x(i) - col / 2} x2={x(i) - col / 2} y1={2} y2={C.top + h} stroke={ink}
+                  strokeOpacity={0.2} strokeDasharray="3 3" />
+              ))}
+              {picked != null && (
+                <Line x1={x(picked)} x2={x(picked)} y1={C.top} y2={C.top + h} stroke={ink} strokeOpacity={0.07}
+                  strokeWidth={col} />
+              )}
+              <Polyline points={sessions.map((s, i) => `${x(i)},${y(s.track)}`).join(' ')} fill="none" stroke={accent}
+                strokeWidth={2} strokeOpacity={0.55} strokeLinejoin="round" />
+              {sessions.map((s, i) => s.range && (
+                <Line key={`r${i}`} x1={x(i)} x2={x(i)} y1={y(s.range[0])} y2={y(s.range[1])}
+                  stroke={s.wet ? MUTED : accent} strokeWidth={2} strokeLinecap="round" />
+              ))}
+              {sessions.map((s, i) => (
+                <Circle key={`c${i}`} cx={x(i)} cy={y(s.track)} r={picked === i ? 6.5 : 5}
+                  fill={s.pm == null ? surface : s.wet ? MUTED : accent} stroke={s.pm == null ? accent : surface}
+                  strokeWidth={2} />
+              ))}
+              {sessions.map((s, i) => s.wet && (
+                <SvgText fontFamily={SVG_FONT} key={`w${i}`} x={x(i)} y={y(s.range ? s.range[1] : s.track) - 8}
+                  fontSize={10} fill={ink} fillOpacity={0.7} textAnchor="middle">
+                  wet
+                </SvgText>
+              ))}
+              {sessions.map((s, i) => i % every === 0 && (
+                <SvgText fontFamily={SVG_FONT} key={`n${i}`} x={x(i)} y={C.top + h + 14} fontSize={10} fill={ink}
+                  fillOpacity={0.75} textAnchor="middle">
+                  {s.name}
+                </SvgText>
+              ))}
+              {withAir && sessions.map((s, i) => i % every === 0 && s.ambient_c != null && (
+                <SvgText fontFamily={SVG_FONT} key={`a${i}`} x={x(i)} y={C.top + h + 28} fontSize={10} fill={MUTED}
+                  textAnchor="middle">
+                  {`${Math.round(s.ambient_c)}°`}
+                </SvgText>
+              ))}
+            </G>
             {withAir && (
               <SvgText fontFamily={SVG_FONT} x={C.left - 6} y={C.top + h + 28} fontSize={10} fill={MUTED} textAnchor="end">
                 air
@@ -298,7 +307,7 @@ export function GripChart({ sessions, base, title }: { sessions: GripSession[]; 
             )}
           </Svg>
         )}
-      </View>
+      </ZoomArea>
       <Text style={styles.legend}>
         Dots: the median of each session&apos;s quick laps; bars: its 90 % range (a hollow dot had too few quick laps
         for one).
@@ -380,7 +389,8 @@ const useStyles = themed((c) => ({
   para: { lineHeight: 20 },
   method: { gap: 6 },
   chart: { gap: 4, maxWidth: 760, ...chartPlate(c) },
-  chartTitle: { ...Type.label, color: c.text },
+  head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
+  chartTitle: { ...Type.label, color: c.text, flexShrink: 1 },
   readout: { fontSize: 13, minHeight: 36, fontVariant: ['tabular-nums'] },
   legend: { fontSize: 12, opacity: 0.6, lineHeight: 17 },
   toggle: { fontSize: 13, fontWeight: '600', opacity: 0.75, paddingVertical: 4 },
