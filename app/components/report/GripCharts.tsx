@@ -8,6 +8,7 @@ import Svg, { Circle, G, Line, Path, Rect, Text as SvgText } from 'react-native-
 import { Text, View } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
 import { byScheme, chartPlate, Fonts, inkOn, ramp, themed, Type } from '@/constants/Theme';
+import { noPrint } from '@/lib/print';
 
 // Slots 1 and 2 of the validated chart palette, a grey for context, ink, and two one-hue ramps (grip in blue,
 // traction control in orange), each stepped for its own mode; status colours for the verdicts.
@@ -383,7 +384,8 @@ export function GripMap({ x, y, step, modes, labels, describe }: {
     <View style={styles.chart}>
       <View style={styles.tabs}>
         {modes.map((m, i) => (
-          <Pressable key={m.key} onPress={() => setMode(i)} style={i === mode ? [styles.tab, { borderColor: c.ink }] : styles.tab}>
+          <Pressable key={m.key} onPress={() => setMode(i)} {...(i === mode ? null : noPrint)}
+            style={i === mode ? [styles.tab, { borderColor: c.ink }] : styles.tab}>
             <Text style={i === mode ? styles.tabOn : styles.tabText}>{m.label}</Text>
           </Pressable>
         ))}

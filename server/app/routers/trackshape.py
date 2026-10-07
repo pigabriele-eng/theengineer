@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import heavy, models
+from app import heavy, models, page_cache
 from app.analysis.align import aligned_trace, track_line
 from app.analysis.channels import math_channels
 from app.analysis.insights import LIMIT_LAPS_WITHIN, MIN_LIMIT_LAPS
@@ -199,16 +199,27 @@ def shape_for(db: Session, kind: str, id_: int, sessions: list[models.RunSession
         if out is not None:
             _cache.move_to_end(key)
     if out is None:
-        # one log-reading job at a time; a request that waited its turn may find this one worked out meanwhile
-        with heavy.lock:
-            with _cache_lock:
-                out = _cache.get(key)
-            if out is None:
-                out = _work_out(db, uses)
-                with _cache_lock:
-                    _cache[key] = out
-                    while len(_cache) > CACHE_SIZE:
-                        _cache.popitem(last=False)
+        # kept in the database too (app/page_cache.py); else worked out under heavy.lock, one log-reading job at a
+        # time: a request that waited its turn may find this one worked out meanwhile
+        try:
+            out = page_cache.cached(db, f"{kind}:{id_}|shape",
+                                    lambda: page_cache.signature("shape", _key(db, kind, id_, uses)),
+                                    lambda: _shape_or_404(db, uses))
+        except HTTPException as e:
+            if e.status_code != 404:
+                raise
+            out = e.detail
+        with _cache_lock:
+            _cache[key] = out
+            while len(_cache) > CACHE_SIZE:
+                _cache.popitem(last=False)
+    if isinstance(out, str):
+        raise HTTPException(404, out)
+    return out
+
+
+def _shape_or_404(db: Session, uses: list[_Use]) -> dict:
+    out = _work_out(db, uses)
     if isinstance(out, str):
         raise HTTPException(404, out)
     return out

@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, StyleSheet, useWindowDimensions } from 'r
 
 import { OfficialResults, Prediction } from '@/components/PrepOfficial';
 import { Cells, DeltaBlock, Item, onFill, Pick, SubHead, usePrepType, ValueBlock } from '@/components/PrepParts';
+import PrintButton from '@/components/PrintButton';
 import {
   Block, Colophon, Fig, InsetPhoto, Label, Page, Section, SpecLine, TextLink, useGutter, useWide,
 } from '@/components/Programme';
@@ -201,6 +202,7 @@ function Head({ answer, onPick }: { answer: PrepAnswer | null; onPick: (key: str
           accessibilityRole="header">{title}</Text>
         {answer ? <Text style={styles.dek}>{learned}</Text> : null}
         {answer && <CarPicker answer={answer} onPick={onPick} />}
+        <PrintButton title={['Prep report', ev?.name, ev?.track].filter(Boolean).join(' · ')} style={styles.print} />
       </View>
       {ev?.track ? (
         <InsetPhoto photo={photoFor(ev.track)} height={wide ? 236 : 190}
@@ -836,6 +838,7 @@ const useStyles = themed((c) => ({
   kickerFacts: { flexShrink: 1 },
   title: { ...Type.title, color: c.text },
   dek: { ...Type.dek, color: c.textSecondary, marginTop: 8, maxWidth: 640 },
+  print: { marginTop: 14 },
   picks: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 18, rowGap: 8, marginTop: 16 },
 
   // states

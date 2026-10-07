@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 
 import { FigRow, PageHead, Tabs, TickBox, useText } from '@/components/Picks';
+import PrintButton from '@/components/PrintButton';
 import { Colophon, Fig, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { LineChart, useChartColors } from '@/components/ReportCharts';
 import { SessionSwitcher, useEventFolder } from '@/components/SessionSwitcher';
@@ -223,7 +224,9 @@ export default function StintScreen() {
         <Stack.Screen options={{ title: 'Stint analysis' }} />
         <PageHead title="Stint analysis"
           dek={'How the car fades over a stint, fuel burn and tyres apart; grip and balance by phase; how the ' +
-            `driver adapts.${view?.track ? ` ${view.track}.` : ''}`} />
+            `driver adapts.${view?.track ? ` ${view.track}.` : ''}`}>
+          <PrintButton title={['Stint analysis', view?.track].filter(Boolean).join(' · ')} />
+        </PageHead>
         <View style={styles.top}>
           {folder && folder.id != null && (
             <SessionSwitcher folder={folder} current={current} onlyTimed

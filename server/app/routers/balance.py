@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import heavy, models
+from app import models, page_cache
 from app.analysis.balance import Collected, analyse, car_geometry, collect, prepared
 from app.analysis.quickest import keep_quickest, lap_cap
 from app.analysis.setup_advice import report
@@ -79,12 +79,12 @@ def balance_report(session: int | None = None, event: int | None = None, db: Ses
         if key in _cache:
             _cache.move_to_end(key)
             return _cache[key]
-    with heavy.lock:  # one log-reading job at a time across the server: each holds a whole log while it reads it
-        with _cache_lock:  # a request that waited its turn may find its report already built
-            hit = _cache.get(key)
-        if hit is not None:
-            return hit
-        result = _build(db, kind, sid, name, usable)
+    # kept in the database too (app/page_cache.py); else built under heavy.lock, one log-reading job at a time across
+    # the server (each holds a whole log while it reads it): a request that waited its turn may find it built meanwhile
+    result = page_cache.cached(
+        db, f"{kind}:{sid}|balance",
+        lambda: page_cache.signature("balance", name, page_cache.sessions_part(db, usable)),
+        lambda: _build(db, kind, sid, name, usable))
     with _cache_lock:
         _cache[key] = result
         while len(_cache) > CACHE_SIZE:

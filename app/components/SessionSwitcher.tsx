@@ -7,6 +7,7 @@ import { Pressable, ScrollView, StyleSheet } from 'react-native';
 import { Text, View } from '@/components/Themed';
 import { api, formatLap } from '@/lib/api';
 import { dateRange, dayTitle, eventsApi, Folder, FolderSession } from '@/lib/events';
+import { noPrint } from '@/lib/print';
 import { Fonts, themed, Type } from '@/constants/Theme';
 
 /** An event with its sessions by day: null when there is none (eventId null) or until it is loaded. While eventId
@@ -67,7 +68,8 @@ export function SessionSwitcher({ folder, current, onPick, onWhole, onlyTimed = 
   const run = (on: boolean) => StyleSheet.flatten([styles.run, on && styles.runOn]);
 
   return (
-    <View style={styles.box} accessibilityRole="tablist">
+    // a picker: left off the printed page
+    <View style={styles.box} accessibilityRole="tablist" {...noPrint}>
       <View style={styles.head}>
         {link && folder.id != null ? (
           // Link asChild hands its child's style to a web anchor, which can't take a style array: one object

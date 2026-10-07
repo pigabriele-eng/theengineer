@@ -2,6 +2,7 @@ import { Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { StyleSheet } from 'react-native';
 
+import PrintButton from '@/components/PrintButton';
 import { Colophon, Fig, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { SetupLoader } from '@/components/SetupLoader';
 import { Text, View } from '@/components/Themed';
@@ -293,7 +294,9 @@ export default function VehicleScreen() {
     <Page keyboardShouldPersistTaps="handled">
       <Stack.Screen options={{ title: 'Vehicle model' }} />
       <Opening title="Vehicle model"
-        dek={`Weight transfer, roll stiffness and ride frequencies from springs, bars and motion ratios${preset ? `. Starting point: ${startingPoint(preset)}` : '.'}`} />
+        dek={`Weight transfer, roll stiffness and ride frequencies from springs, bars and motion ratios${preset ? `. Starting point: ${startingPoint(preset)}` : '.'}`}>
+        <PrintButton title="Vehicle model" />
+      </Opening>
 
       <Section no={1} title="Vehicle" dek="The car model is per vehicle: its stored specs fill the sheet below, and a run’s setup goes on top.">
         <VehiclePicker vehicles={vehicles} vehicleId={vehicleId} onPick={setVehicleId} />
