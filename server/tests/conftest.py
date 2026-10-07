@@ -117,6 +117,10 @@ def client(tmp_path, monkeypatch):
     import app.routers.stint
     for m in (app.laptags, app.routers.stint):
         importlib.reload(m)
+    import app.driver_prints
+    import app.routers.driver_style
+    for m in (app.driver_prints, app.routers.driver_style):
+        importlib.reload(m)
     import app.prep.models
     import app.prep.track_grip
     import app.prep.weather
@@ -144,5 +148,6 @@ def client(tmp_path, monkeypatch):
         app.routers.prep.wait_idle()  # then: it asks for reports and technique checks
         app.routers.technique.wait_idle()  # then: it asks for reports
         app.routers.reports.wait_idle()
+        app.driver_prints.wait_idle()
     app.db.engine.dispose()
     gc.unfreeze()

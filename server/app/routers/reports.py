@@ -398,6 +398,9 @@ def run_job(scope: str) -> None:
             row.status, row.current = "failed", None
             row.error = str(e) if isinstance(e, ReportError) else f"The report couldn't be worked out: {e}"
         db.commit()
+        if kind == "event" and row.status == "done":  # its lap traces are all made: the driver fingerprints follow
+            from app import driver_prints
+            driver_prints.refresh_in_background()
 
 
 class ReportError(Exception):
