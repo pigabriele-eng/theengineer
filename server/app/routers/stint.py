@@ -113,22 +113,24 @@ def reduced(db: Session, f: models.LoggerFile) -> tuple[LogSummary, models.Track
     return log, track
 
 
-def stint_view(db: Session, file_ids: list[int]) -> dict:
+def stint_view(db: Session, file_ids: list[int]) -> dict | page_cache.RawJSON:
     """The stints of the logs. Two views are kept once worked out (app/page_cache.py), with their lap tags in their
-    signature: one log's (the session page's) and an event's main logs together (the report's quick laps)."""
+    signature, and sent as the JSON they are kept as: one log's (the session page's) and an event's main logs together
+    (the report's quick laps)."""
     ids = list(dict.fromkeys(file_ids))
     files = [db.get(models.LoggerFile, i) for i in ids]
     if ids and None not in files:
         if len(files) == 1:
             f = files[0]
-            return page_cache.cached(db, f"session:{f.session_id}|stint|file:{f.id}",
-                                     lambda: _view_signature(db, f), lambda: _stint_view(db, ids), locked=False)
+            return page_cache.RawJSON(page_cache.cached(
+                db, f"session:{f.session_id}|stint|file:{f.id}", lambda: _view_signature(db, f),
+                lambda: _stint_view(db, ids), locked=False, raw=True))
         events = {f.session.event_id for f in files}
         if len(events) == 1 and None not in events and sorted(ids) == event_files(db, (eid := events.pop())):
-            return page_cache.cached(
+            return page_cache.RawJSON(page_cache.cached(
                 db, f"event:{eid}|stint",
                 lambda: page_cache.signature("stint", sorted(_view_signature(db, f) for f in files)),
-                lambda: _stint_view(db, ids), locked=False)
+                lambda: _stint_view(db, ids), locked=False, raw=True))
     return _stint_view(db, ids)
 
 

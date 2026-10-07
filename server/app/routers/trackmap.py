@@ -15,7 +15,7 @@ from app.routers.sessions import _channel_map, _get, _line, _track_for, official
 router = APIRouter()
 
 CACHE_SIZE = 32  # maps are about 30 KB each
-_cache: OrderedDict[tuple, dict | tuple[int, str]] = OrderedDict()  # a map, or why the log can't draw one
+_cache: OrderedDict[tuple, bytes | tuple[int, str]] = OrderedDict()  # a map's JSON text, or why the log can't draw one
 _cache_lock = threading.Lock()
 
 
@@ -64,7 +64,8 @@ def _draw(db: Session, s: models.RunSession, f: models.LoggerFile, reference_lap
         raise HTTPException(404 if isinstance(e, NoLapError) else 422, str(e)) from e
 
 
-def session_map(db: Session, s: models.RunSession, reference_lap: int | None = None) -> dict:
+def session_map(db: Session, s: models.RunSession, reference_lap: int | None = None) -> bytes:
+    """The map as the JSON text it is sent as (app/page_cache.py RawJSON)."""
     f = _main_file(s)
     if f is None:
         raise HTTPException(404, "No logger file uploaded for this session")
@@ -78,12 +79,12 @@ def session_map(db: Session, s: models.RunSession, reference_lap: int | None = N
             return hit
     try:
         if reference_lap is None:  # the map every page draws: kept in the database too (app/page_cache.py)
-            out: dict | tuple[int, str] = page_cache.cached(
+            out: bytes | tuple[int, str] = page_cache.cached(
                 db, f"session:{s.id}|map", lambda: page_cache.session_signature(db, "map", s, f),
-                lambda: _draw(db, s, f, None))
+                lambda: _draw(db, s, f, None), raw=True)
         else:
             with heavy.lock:
-                out = _draw(db, s, f, reference_lap)
+                out = page_cache.as_json(_draw(db, s, f, reference_lap))
     except HTTPException as e:
         if e.status_code not in (404, 422):
             raise
@@ -102,7 +103,7 @@ def get_session_map(session_id: int, reference_lap: int | None = None, db: Sessi
     """The track drawn from the session's reference lap (its best clean lap unless reference_lap is given), in
     metres east (x) and north (y), one point every 5 m from the start/finish line, with the lap's speed, the
     line and the direction of travel, and the corners and sections exactly as the analysis numbers them."""
-    return session_map(db, _get(db, session_id), reference_lap)
+    return page_cache.RawJSON(session_map(db, _get(db, session_id), reference_lap))
 
 
 @router.get("/events/{event_id}/map")
@@ -123,7 +124,7 @@ def get_event_map(event_id: int, db: Session = Depends(get_db)):
     ranked.sort(key=lambda r: r[:2])
     for i, (_, _, s) in enumerate(ranked):
         try:
-            return {**session_map(db, s), "event_fastest": i == 0}  # a copy: the cached map is the session's too
+            return page_cache.RawJSON(page_cache.with_fields(session_map(db, s), event_fastest=i == 0))
         except HTTPException as e:
             if e.status_code not in (404, 422) or i == len(ranked) - 1:
                 raise
