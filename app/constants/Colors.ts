@@ -238,7 +238,7 @@ const dark: Palette = {
     lossSteps: ['#2C1A16', '#3D211B', '#522A21'],
   },
   phase: { braking: '#CF3550', turnIn: '#CC7C18', mid: '#9085E9', traction: '#1A98AE', throttle: '#46A040' },
-  tyre: { cold: '#3F7FE0', ok: '#2FB06A', hot: '#E0652A',
+  tyre: { cold: '#3F7FE0', ok: '#2AA862', hot: '#E0652A',
     scale: ['#3F7FE0', '#28466E', '#2E2B26', '#6E3F22', '#E0652A'],
     onScale: ['#FFFFFF', '#EDE8DC', '#EDE8DC', '#EDE8DC', '#FFFFFF'] },
   balance: { under: '#5B86F2', over: '#EC4A92', neutral: '#56524A' },
