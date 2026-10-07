@@ -59,7 +59,7 @@ class Track(Base):
     # start/finish line for GPS lap timing, learned from the first log with a lap marker: {lat, lon, heading}
     timing_line: Mapped[dict | None] = mapped_column(JSON)
     corners: Mapped[list[Corner]] = relationship(back_populates="track", order_by="Corner.apex_m",
-                                                 cascade="all, delete-orphan")
+                                                 cascade="all, delete-orphan", lazy="selectin")
 
 
 class Corner(Base):
@@ -96,7 +96,7 @@ class Event(Base):
     series: Mapped[str | None] = mapped_column(String(80))  # GTWC, NLS, GT4 Germany, ...
     track_id: Mapped[int | None] = mapped_column(ForeignKey("tracks.id"))
     date: Mapped[date | None] = mapped_column(Date)
-    track: Mapped[Track | None] = relationship()
+    track: Mapped[Track | None] = relationship(lazy="joined")
 
 
 class RunSession(Base):
@@ -112,12 +112,13 @@ class RunSession(Base):
     tyre_set: Mapped[str | None] = mapped_column(String(60))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
-    event: Mapped[Event | None] = relationship()
-    car: Mapped[Car | None] = relationship()
-    driver: Mapped[Driver | None] = relationship()
-    files: Mapped[list[LoggerFile]] = relationship(back_populates="session", cascade="all, delete-orphan")
+    event: Mapped[Event | None] = relationship(lazy="joined")
+    car: Mapped[Car | None] = relationship(lazy="joined")
+    driver: Mapped[Driver | None] = relationship(lazy="joined")
+    files: Mapped[list[LoggerFile]] = relationship(back_populates="session", cascade="all, delete-orphan",
+                                                   lazy="selectin")
     laps: Mapped[list[Lap]] = relationship(back_populates="session", order_by="Lap.number",
-                                           cascade="all, delete-orphan")
+                                           cascade="all, delete-orphan", lazy="selectin")
     debriefs: Mapped[list[Debrief]] = relationship(back_populates="session", cascade="all, delete-orphan")
 
 
