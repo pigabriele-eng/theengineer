@@ -365,12 +365,18 @@ def _loop() -> None:
 def name_all_runs() -> None:
     """Every event's runs named after the official sessions they ran in (results/run_names.py), as the Results
     section does when it opens: runs already in the app and timetables that arrived after the upload."""
+    from app import run_dupes
     from app.routers import results  # the event's round, as the Results section finds it
 
     with app_db.SessionLocal() as db:
         ids = db.scalars(select(models.RunSession.event_id).where(models.RunSession.event_id.is_not(None))
                          .distinct()).all()
         for eid in ids:
+            try:
+                run_dupes.merge_event(db, eid)  # a run uploaded twice is kept once, before the runs are numbered
+            except Exception:
+                db.rollback()
+                log.exception("merging the duplicate runs of event %s failed", eid)
             try:
                 results.event_run_names(eid, db)
             except Exception:
