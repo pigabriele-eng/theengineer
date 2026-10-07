@@ -22,6 +22,7 @@ import {
 } from '@/lib/compare';
 import { face, Fonts, themed, Type, useTheme } from '@/constants/Theme';
 import { noPrint } from '@/lib/print';
+import { codeOf } from '@/lib/driverTag';
 
 // A picked lap keeps its colour slot for as long as it is picked.
 type Pick = { session_id: number; lap: number; slot: number };
@@ -51,7 +52,6 @@ export default function CompareScreen() {
   );
   const [ideal, setIdeal] = useState(params.ideal === '1');
   const [adding, setAdding] = useState(false);
-  const [editing, setEditing] = useState<string | null>(null);
   const [shown, setShown] = useState<Shown | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -134,7 +134,6 @@ export default function CompareScreen() {
   };
   const swap = (p: Pick, lap: number) => {
     setPicks((ps) => ps.map((q) => (q === p ? { ...q, lap } : q)));
-    setEditing(null);
   };
   const remove = (p: Pick) => setPicks((ps) => ps.filter((q) => q !== p));
 
@@ -184,20 +183,22 @@ export default function CompareScreen() {
         {picks.map((p, i) => {
           const s = sessions.get(p.session_id);
           const time = lapTime(p);
-          const open = editing === keyOf(p);
+          const code = codeOf(s?.driver);
+          // the run's quickest clean lap, marked among its laps
+          const bestLap = s ? [...s.laps].filter((l) => l.clean).sort((a, b) => a.time - b.time)[0]?.number : undefined;
+          const more = s ? s.laps.some((l) => l.clean && !picks.some((q) => q.session_id === s.id && q.lap === l.number)) : false;
           return (
             <View key={keyOf(p)} style={styles.pick}>
               <View style={styles.pickRow}>
-                <Pressable style={styles.pickMain} onPress={() => setEditing(open ? null : keyOf(p))}
-                  accessibilityRole="button" accessibilityState={{ expanded: open }}
-                  accessibilityLabel={`${s?.name ?? `Session ${p.session_id}`} lap ${p.lap}: change the lap`}>
+                <View style={styles.pickMain}>
                   <LineKey color={pickColors.laps[i]} />
                   <View style={styles.grow}>
                     <Text style={styles.pickTitle} numberOfLines={1}>
+                      {code ? <Text style={styles.driverCode}>{`${code}  `}</Text> : null}
                       {s?.name ?? `Session ${p.session_id}`} · L{p.lap}
                     </Text>
                     <Text style={t.labelMuted} numberOfLines={2}>
-                      {[s?.driver, s?.date, open ? 'pick a lap below' : 'tap to change the lap'].filter(Boolean).join(' · ')}
+                      {[s?.driver, s?.date, 'tap a lap below to switch'].filter(Boolean).join(' · ')}
                     </Text>
                   </View>
                   <View style={styles.right}>
@@ -208,22 +209,31 @@ export default function CompareScreen() {
                       </Text>
                     )}
                   </View>
-                </Pressable>
+                </View>
                 <Pressable onPress={() => remove(p)} style={styles.removeHit} accessibilityRole="button"
                   accessibilityLabel="Remove lap" {...noPrint}>
                   <Text style={styles.removeText}>✕</Text>
                 </Pressable>
               </View>
-              {open && s && (
-                <View style={styles.lapChoices}>
+              {/* every lap of the run, one tap to switch to it (its quickest clean lap on the purple block), and one
+                  tap to add another lap of the same run: laps of one run against each other */}
+              {s && (
+                <View style={styles.lapChoices} {...noPrint}>
                   {s.laps.map((l) => {
                     const used = l.number !== p.lap && picks.some((q) => q.session_id === s.id && q.lap === l.number);
                     return (
                       <Choice key={l.number} label={`${l.number}`} detail={formatLap(l.time)} on={l.number === p.lap}
                         disabled={used} dim={!l.clean} onPress={() => swap(p, l.number)}
-                        accessibilityLabel={`Lap ${l.number}, ${formatLap(l.time)}${l.clean ? '' : ', not clean'}`} />
+                        fill={l.number === bestLap ? theme.timing.best : undefined}
+                        ink={l.number === bestLap ? theme.timing.onBest : undefined}
+                        accessibilityLabel={`Lap ${l.number}, ${formatLap(l.time)}${l.number === bestLap ? ', the run’s best' : ''}${l.clean ? '' : ', not clean'}${used ? ', already picked' : ''}`} />
                     );
                   })}
+                  {more && picks.length < MAX_LAPS && (
+                    <View style={styles.addSame}>
+                      <TextLink label={`+ Another lap of ${s.name}`} onPress={() => add(s)} small />
+                    </View>
+                  )}
                 </View>
               )}
             </View>
@@ -258,7 +268,10 @@ export default function CompareScreen() {
                     <Pressable key={s.id} onPress={() => add(s)} style={StyleSheet.flatten([styles.sessionRow, full && styles.dim])}
                       disabled={full} accessibilityRole="button" accessibilityLabel={`Add ${s.name}'s best lap`}>
                       <View style={styles.grow}>
-                        <Text style={styles.pickTitle}>{s.name}</Text>
+                        <Text style={styles.pickTitle}>
+                          {s.driver ? <Text style={styles.driverCode}>{`${codeOf(s.driver)}  `}</Text> : null}
+                          {s.name}
+                        </Text>
                         <Text style={t.labelMuted}>
                           {[s.driver, s.date, `${s.laps.length} laps`, n ? `${n} picked` : null].filter(Boolean).join(' · ')}
                         </Text>
@@ -325,7 +338,9 @@ const useStyles = themed((c) => ({
   // the ✕: a 44 px tap target in its 28 px column, the row laid out as drawn
   removeHit: { width: 44, marginHorizontal: -8, paddingVertical: 12, marginVertical: -12, alignItems: 'center' },
   removeText: { fontFamily: Fonts.label, fontSize: 15, color: c.textMuted },
-  lapChoices: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 14, rowGap: 10, paddingLeft: 26 },
+  lapChoices: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 10, paddingLeft: 26 },
+  addSame: { paddingVertical: 6 },
+  driverCode: { fontFamily: Type.label.fontFamily, letterSpacing: 0.6, color: c.text },
   dim: { opacity: 0.45 },
   action: { marginTop: 16 },
   list: { gap: 12, marginTop: 16 },

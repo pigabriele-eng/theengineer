@@ -191,6 +191,9 @@ def _to_latlon(line: TrackLine) -> tuple[np.ndarray, np.ndarray]:
     return lat, lon
 
 
+REACH_M = MAX_OFFSET_M + 1  # m: the line's points _project compares each point with, around its stretch
+
+
 def _project(line: TrackLine, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Where each point sits on the line, in metres to a fraction of a metre, and how far off it is."""
     lx, ly = line.x.astype(np.float32), line.y.astype(np.float32)
@@ -199,9 +202,17 @@ def _project(line: TrackLine, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray,
     off = np.empty(len(x))
     for a in range(0, len(x), CHUNK):
         px, py = x[a:a + CHUNK].astype(np.float32), y[a:a + CHUNK].astype(np.float32)
-        d2 = (px[:, None] - lx) ** 2 + (py[:, None] - ly) ** 2
-        j = d2.argmin(1)
-        off[a:a + CHUNK] = np.sqrt(d2[np.arange(len(j)), j])
+        # only the line's points near this stretch: a point further than MAX_OFFSET_M from all of them is off the
+        # line whichever its nearest, and within it, its nearest is among them (in the same order, so ties go the same)
+        x0, x1, y0, y1 = np.fmin.reduce(px), np.fmax.reduce(px), np.fmin.reduce(py), np.fmax.reduce(py)  # NaN aside
+        near = np.flatnonzero((lx >= x0 - REACH_M) & (lx <= x1 + REACH_M) & (ly >= y0 - REACH_M) & (ly <= y1 + REACH_M))
+        if not len(near):
+            pos[a:a + CHUNK], off[a:a + CHUNK] = 0.0, np.inf
+            continue
+        d2 = (px[:, None] - lx[near]) ** 2 + (py[:, None] - ly[near]) ** 2
+        jn = d2.argmin(1)
+        off[a:a + CHUNK] = np.sqrt(d2[np.arange(len(jn)), jn])
+        j = near[jn]
         # along the line between the neighbouring points, for the fraction of a metre
         jm, jp = (j - 1) % n, (j + 1) % n
         ux, uy = lx[jp] - lx[jm], ly[jp] - ly[jm]

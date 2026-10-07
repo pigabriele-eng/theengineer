@@ -2,7 +2,19 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { debriefLines, duringSections, latestAgainstBest, latestByDriver, latestRun, latestTimedRun } from './weekendRuns.ts';
+import {
+  debriefLines, defaultStage, duringSections, latestAgainstBest, latestByDriver, latestRun, latestTimedRun,
+} from './weekendRuns.ts';
+
+test('the tab a weekend opens on', () => {
+  const runs = [run(1, 'Q', 102.44, { date: '2026-09-19' }), run(2, 'R2', 104.88, { date: '2026-09-20' })];
+  const f = { ...folder(runs), start: '2026-09-19', end: '2026-09-20' };
+  assert.equal(defaultStage({ ...f, days: [] }, '2026-09-18'), 'before'); // no runs yet
+  assert.equal(defaultStage(f, '2026-09-20'), 'during'); // on its last day
+  assert.equal(defaultStage(f, '2026-09-21'), 'during'); // the newest run is from yesterday
+  assert.equal(defaultStage(f, '2026-10-07'), 'after'); // past
+  assert.equal(defaultStage({ ...f, start: '2026-10-06', end: '2026-10-08' }, '2026-10-07'), 'during'); // on, old runs
+});
 
 const run = (id, name, best, extra = {}) => ({
   id, name, kind: 'race', event_id: 1, driver: null, date: '2026-09-19', time: '13:00', log_session: null, laps: 5,

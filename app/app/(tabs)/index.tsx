@@ -12,6 +12,7 @@ import {
   Colophon, Fig, Label, Page, SpecLine, Swatch, TextLink, useWide,
 } from '@/components/Programme';
 import { RenameEvent } from '@/components/RenameEvent';
+import { DriverTag } from '@/components/DriverTag';
 import { RunDriverLine } from '@/components/RunDriverLine';
 import { filledNote, localPick, RunPicker, useEventDrivers, useGarage } from '@/components/RunChips';
 import { SeasonMatchCount } from '@/components/SeasonMatch';
@@ -32,6 +33,8 @@ import {
 } from '@/lib/homeFolds';
 import { launchEvent } from '@/lib/openCurrent';
 import { weekendsOf } from '@/lib/weekendOpen';
+import { DriverTag as Tag, driverTag } from '@/lib/driverTag';
+import { driverState } from '@/lib/runDriver';
 import { PrepAvailability } from '@/lib/prep';
 import { fetchFinishes, Finishes } from '@/lib/finishes';
 import { fetchReport, Report } from '@/lib/report';
@@ -511,8 +514,10 @@ function Feature({ f, detail, garage, onGarage, onChanged }: {
                   {day.sessions.map((x) => {
                     no += 1;
                     const s = run(x);
+                    const g = guess?.sessions.find((x) => x.session_id === s.id);
                     return (
-                      <RunRow key={s.id} s={s} no={no} best={best} maxGap={maxGap} driver={(
+                      <RunRow key={s.id} s={s} no={no} best={best} maxGap={maxGap}
+                        tag={driverTag(driverState(s, g, garage))} driver={(
                         <RunDriverLine run={s} guess={guess?.sessions.find((g) => g.session_id === s.id)} garage={garage}
                           open={picking === s.id} onOpen={(o) => setPicking(o ? s.id : null)}
                           onPick={(fields) => pick(s, fields)} />
@@ -572,11 +577,12 @@ function Feature({ f, detail, garage, onGarage, onChanged }: {
 
 /** One run: its line opens it (number, name, time, laps, best lap and the gap to the event's best); under it, outside
  * the link, its driver line under its name, then (children) its driver list when open, the row's width. */
-function RunRow({ s, no, best, maxGap, driver, children }: {
+function RunRow({ s, no, best, maxGap, tag, driver, children }: {
   s: FolderSession;
   no: number;
   best: number | null;
   maxGap: number;
+  tag: Tag; // the driver on the name line, first thing the eye meets
   driver: ReactNode;
   children?: ReactNode;
 }) {
@@ -591,7 +597,10 @@ function RunRow({ s, no, best, maxGap, driver, children }: {
         <Pressable style={styles.runLine} accessibilityRole="link">
           <Text style={styles.runNo}>{pad2(no)}</Text>
           <View style={styles.runId}>
-            <Text style={styles.runCode} numberOfLines={1}>{s.name}</Text>
+            <View style={styles.runNameLine}>
+              <DriverTag tag={tag} run={s.name} size={15} />
+              <Text style={StyleSheet.flatten([styles.runCode, styles.runCodeShrink])} numberOfLines={1}>{s.name}</Text>
+            </View>
             <Text style={styles.runSub} numberOfLines={1}>
               {[s.time, `${plural(s.laps, 'lap')} (${s.clean_laps} clean)`].filter(Boolean).join(' · ')}
             </Text>
@@ -712,6 +721,8 @@ const useStyles = themed((c) => ({
   runNo: { fontFamily: Fonts.display, fontSize: 24, lineHeight: 26, width: RUN_NO_W, color: c.text },
   runId: { flex: 1, minWidth: 0 },
   runCode: { fontFamily: Type.label.fontFamily, fontSize: 17, letterSpacing: 0.3, color: c.text },
+  runNameLine: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
+  runCodeShrink: { flexShrink: 1 },
   runSub: { fontFamily: face('label', 400), fontSize: 13, color: c.textSecondary },
   runBest: { width: 96, alignItems: 'flex-end' },
   runTime: { fontFamily: Type.label.fontFamily, fontSize: 19, fontVariant: ['tabular-nums'], paddingHorizontal: 5,

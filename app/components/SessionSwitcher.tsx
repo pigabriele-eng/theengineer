@@ -9,6 +9,7 @@ import { api, formatLap } from '@/lib/api';
 import { dateRange, dayTitle, eventsApi, Folder, FolderSession } from '@/lib/events';
 import { noPrint } from '@/lib/print';
 import { Fonts, TAP, tapRoom, themed, Type } from '@/constants/Theme';
+import { codeOf } from '@/lib/driverTag';
 
 /** An event with its sessions by day: null when there is none (eventId null) or until it is loaded. While eventId
  * is not known yet (undefined) the last event is kept, so a screen switching between sessions doesn't flicker. */
@@ -102,9 +103,12 @@ export function SessionSwitcher({ folder, current, onPick, onWhole, onlyTimed = 
               const on = s.id === current;
               return (
                 <Pressable key={s.id} onPress={() => !on && onPick(s)} style={run(on)} accessibilityRole="tab"
-                  accessibilityState={{ selected: on }} accessibilityLabel={`${s.name}, best ${formatLap(s.best_lap_s)}`}>
+                  accessibilityState={{ selected: on }}
+                  accessibilityLabel={`${s.name}${s.driver ? `, ${s.driver}` : ''}, best ${formatLap(s.best_lap_s)}`}>
                   <Text style={StyleSheet.flatten([styles.name, on && styles.nameOn, s.best_lap_s == null && styles.dim])}
                     numberOfLines={1}>
+                    {/* the driver first, plainly: runs are picked by who drove them */}
+                    {s.driver ? <Text style={styles.driver}>{`${codeOf(s.driver)} `}</Text> : null}
                     {s.name}
                   </Text>
                   <Text style={StyleSheet.flatten([styles.detail, s.best_lap_s == null && styles.dim])}>
@@ -139,6 +143,7 @@ const useStyles = themed((c) => ({
   runOn: { borderColor: c.mark },
   name: { ...Type.label, fontSize: 13, letterSpacing: 0.8, color: c.textSecondary },
   nameOn: { color: c.text },
+  driver: { color: c.text },
   detail: { ...Type.number, fontSize: 13, color: c.textMuted },
   // a run without laps: in the caption grey, not faded (it must still read at 4.5:1)
   dim: { color: c.textMuted },
