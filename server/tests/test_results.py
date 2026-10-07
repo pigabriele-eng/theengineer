@@ -317,3 +317,38 @@ def test_setting_only_the_car_number_leaves_the_round_matched_automatically(clie
     client.put(f"/results/events/{ev['id']}/link", json={"car_number": "8"})
     with SessionLocal() as db:  # a round set by hand stays set
         assert db.query(rm.EventResultLink).filter_by(event_id=ev["id"]).one().round_id == "75"
+
+
+def test_one_round_the_site_fails_on_doesn_t_stop_the_others_and_long_text_is_cut(client, fake_site, monkeypatch):
+    import httpx
+
+    from app.db import SessionLocal
+    from app.results import models as rm
+    from app.results import resultlist
+
+    class TwoRounds(FakeSite):
+        @staticmethod
+        def rounds(client, season_id):
+            return [("74", "Broken"), ("75", "Test Track")]
+
+        @staticmethod
+        def round_sessions(client, season_id, round_id):
+            if round_id == "74":
+                raise httpx.ConnectError("timed out")
+            return FakeSite.round_sessions(client, season_id, round_id)
+
+    def parse(data, kind=None):
+        p = resultlist.parse_pages([data.decode()], kind)
+        p.title, p.fastest = "T" * 100, "F" * 100
+        p.rows[0].car_model, p.rows[0].status, p.rows[0].car_class = "M" * 100, "classified-x", "C" * 30
+        return p
+
+    monkeypatch.setitem(fake_site.ADAPTERS, "gt4-europe", TwoRounds)
+    monkeypatch.setattr(fake_site, "parse_pdf", parse)
+    fake_site.sync(years=[2026])
+    assert any("Broken" in e for e in fake_site.state.errors)
+    with SessionLocal() as db:
+        (s, _) = db.query(rm.ResultSession).order_by(rm.ResultSession.code).all()
+        assert (len(s.title), len(s.fastest)) == (60, 80)
+        row = s.rows[0]
+        assert (len(row.car_model), len(row.status), len(row.car_class)) == (80, 12, 20)

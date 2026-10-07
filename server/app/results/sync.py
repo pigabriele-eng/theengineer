@@ -158,6 +158,16 @@ def _with_weather(client: httpx.Client, adapter, link, parsed: ResultList) -> Re
     return parsed
 
 
+def _fit(model, values: dict) -> dict:
+    """Text cut to its column's length (Postgres refuses a longer one; a sheet can print anything)."""
+    cols = model.__table__.columns
+    out = {}
+    for k, v in values.items():
+        n = getattr(cols[k].type, "length", None) if k in cols else None
+        out[k] = v[:n] if n and isinstance(v, str) else v
+    return out
+
+
 def store_parsed(db: Session, rnd: rm.ResultRound, code: str, title: str, url: str,
                  parsed: ResultList) -> rm.ResultSession:
     """One classification into the round, replacing what was there for that session."""
@@ -165,10 +175,12 @@ def store_parsed(db: Session, rnd: rm.ResultRound, code: str, title: str, url: s
     if s is None:
         s = rm.ResultSession(code=code, title=title, kind=kind_of(code), source_url=url)
         rnd.sessions.append(s)
-    s.title, s.source_url, s.fetched_at = parsed.title or title, url, datetime.now(UTC)
-    s.starts_at, s.track, s.length_m = parsed.date, parsed.track, parsed.length_m
-    s.weather, s.fastest = parsed.weather, parsed.fastest
-    s.rows = [rm.ResultRow(**{k: v for k, v in vars(r).items()}) for r in parsed.rows]
+    for k, v in _fit(rm.ResultSession, {"title": parsed.title or title, "source_url": url, "starts_at": parsed.date,
+                                        "track": parsed.track, "length_m": parsed.length_m,
+                                        "weather": parsed.weather, "fastest": parsed.fastest}).items():
+        setattr(s, k, v)
+    s.fetched_at = datetime.now(UTC)
+    s.rows = [rm.ResultRow(**_fit(rm.ResultRow, vars(r))) for r in parsed.rows]
     return s
 
 
@@ -218,7 +230,12 @@ def sync(series: str = DEFAULT_SERIES, years: list[int] | None = None, round_id:
             state.total = len(plan)
             for y, rid, name, order in plan:
                 state.what = f"{y} {name}"
-                sync_round(db, client, series, y, ids[y], rid, name, order, force)
+                try:
+                    sync_round(db, client, series, y, ids[y], rid, name, order, force)
+                except Exception as e:  # one round the site won't list (a timeout) shouldn't stop the others
+                    db.rollback()
+                    log.exception("results: %s %s %s failed", series, y, name)
+                    state.errors.append(f"{y} {name}: {e}")
                 state.done += 1
     finally:
         if own:
