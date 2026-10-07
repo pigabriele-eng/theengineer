@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  boxView, clampView, dragView, extent, indexWindow, isDoubleTap, isZoomed, nearestIndex, panBy, pinchView,
-  pixelOf, shownRange, valueAt, wheelFactor, zoomAround,
+  boxPlane, boxView, clampPlane, clampView, dragPlane, dragView, extent, fromFrame, indexWindow, isDoubleTap, isZoomed,
+  nearestIndex, panBy, pinchPlane, pinchView, pixelOf, shownRange, toFrame, valueAt, wheelFactor, zoomAround,
+  zoomPlaneAt,
 } from './zoom.ts';
 
 const LAP = [0, 4500]; // a lap of 4.5 km
@@ -101,4 +102,52 @@ test('a double tap is two taps close in time and place', () => {
   assert.equal(isDoubleTap({ t: 1000, x: 50 }, 1200, 60), true);
   assert.equal(isDoubleTap({ t: 1000, x: 50 }, 1500, 60), false);
   assert.equal(isDoubleTap({ t: 1000, x: 50 }, 1200, 120), false);
+});
+
+test('the y axis fits the points shown, over the gaps in a series', () => {
+  near(extent([[1, null, 5, NaN, 3]], 0, 4), [1, 5], 'null and NaN are gaps');
+  assert.equal(extent([[null, null]], 0, 1), null, 'nothing to fit');
+});
+
+// a map drawn 300 by 200 px
+const W = 300, H = 200;
+const nearPt = (a, b, msg) => assert.ok(Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6,
+  `${msg}: ${JSON.stringify(a)} != ${JSON.stringify(b)}`);
+
+test('a map zooms both ways about the pointer and keeps its shape', () => {
+  const v = zoomPlaneAt(null, W, H, { x: 60, y: 50 }, 0.5);
+  assert.equal(v.k, 2, 'twice as close');
+  nearPt(toFrame(v, W, H, { x: 60, y: 50 }), { x: 60, y: 50 }, 'the point under the pointer stays there');
+  nearPt(fromFrame(v, W, H, toFrame(v, W, H, { x: 123, y: 45 })), { x: 123, y: 45 }, 'there and back');
+  assert.equal(zoomPlaneAt(v, W, H, { x: 60, y: 50 }, 4), null, 'zoomed out past the whole map: no zoom');
+  assert.equal(zoomPlaneAt(null, W, H, { x: 10, y: 10 }, 0.001).k, 12, 'no closer than 12 times');
+});
+
+test('a zoomed map keeps the frame on the drawing', () => {
+  const v = clampPlane({ k: 2, cx: 0, cy: 1000 }, W, H);
+  assert.deepEqual(v, { k: 2, cx: 75, cy: 150 }, 'slid back so the frame shows only the drawing');
+  assert.equal(clampPlane({ k: 1, cx: 10, cy: 10 }, W, H), null, 'the whole map is no zoom');
+  assert.equal(clampPlane({ k: 0.5, cx: 10, cy: 10 }, W, H), null);
+});
+
+test('a drag slides a zoomed map with the finger, both ways', () => {
+  const v = { k: 4, cx: 150, cy: 100 };
+  assert.deepEqual(dragPlane(v, W, H, 40, -20), { k: 4, cx: 140, cy: 105 });
+  assert.equal(dragPlane(null, W, H, 40, -20), null, 'nothing to slide on the whole map');
+});
+
+test('a box zooms the map to fit it, keeping its shape', () => {
+  const v = boxPlane(null, W, H, { x: 100, y: 50 }, { x: 160, y: 70 });
+  assert.equal(v.k, 5, 'the wide box fits across: 300 / 60');
+  nearPt({ x: v.cx, y: v.cy }, { x: 130, y: 60 }, 'centred on the box');
+  assert.equal(boxPlane(null, W, H, { x: 100, y: 50 }, { x: 103, y: 52 }), null, 'a click is no box');
+});
+
+test('a pinch keeps the point between the fingers between them', () => {
+  const v = pinchPlane(null, W, H, [{ x: 100, y: 100 }, { x: 140, y: 100 }], [{ x: 80, y: 100 }, { x: 160, y: 100 }]);
+  assert.equal(v.k, 2, 'fingers twice as far apart');
+  nearPt(toFrame(v, W, H, { x: 120, y: 100 }), { x: 120, y: 100 }, 'the middle stays');
+  const moved = pinchPlane(v, W, H, [{ x: 100, y: 100 }, { x: 140, y: 100 }], [{ x: 110, y: 110 }, { x: 150, y: 110 }]);
+  assert.equal(moved.k, 2, 'the same spread: no zoom');
+  nearPt(toFrame(moved, W, H, fromFrame(v, W, H, { x: 120, y: 100 })), { x: 130, y: 110 }, 'and it pans with them');
 });

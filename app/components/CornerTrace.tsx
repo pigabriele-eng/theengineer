@@ -13,10 +13,36 @@ import { gearName, GuideCorner, GuidePass } from '@/lib/guide';
 import { isZoomed, pixelOf, Range, shownRange, valueAt } from '@/lib/zoom';
 import { face, Fonts, themed, useTheme } from '@/constants/Theme';
 
-const PAD = { left: 40, right: 10, top: 20 }; // top: the corner numbers' row
+const PAD = { left: 40, right: 10, top: 20 }; // top: the first panel's title, under the rows of corner numbers
 const GAP = 34; // between the panels: their titles sit in it
 const DASH = '7 5';
 const LEAST_POINTS = 6; // the narrowest zoom, in grid steps
+const MARK_ROW = 14; // px between rows of corner numbers
+const MARK_ROWS = 3;
+const MARK_CHAR = 7; // about one character's width at 12 px
+
+type Mark = { code: string; at_m: number };
+
+/** The corner numbers left to right, each on the first row where it clears the one before it, so close corners (T2,
+ * T3 and T4 on a phone) stay readable; kept inside the chart's width. A number with no room on any row is left out:
+ * its line stays. */
+function placeMarks(marks: Mark[], xAt: (m: number) => number, width: number) {
+  const ends: number[] = []; // the right edge of the last number on each row
+  const out: (Mark & { x: number; label: number; row: number })[] = [];
+  for (const m of [...marks].sort((a, b) => a.at_m - b.at_m)) {
+    const x = xAt(m.at_m);
+    const half = (m.code.length * MARK_CHAR) / 2;
+    const label = Math.min(Math.max(x, half), width - half);
+    let row = ends.findIndex((end) => label - half >= end + 4);
+    if (row === -1) {
+      if (ends.length === MARK_ROWS) continue;
+      row = ends.length;
+    }
+    ends[row] = label + half;
+    out.push({ ...m, x, label, row });
+  }
+  return out;
+}
 
 type Panel = { key: 'speed' | 'throttle' | 'brake'; title: string; unit: string; height: number;
   domain: [number, number]; ticks: number[]; digits: number };
@@ -94,14 +120,17 @@ export default function CornerTrace({ corner, step, brakeUnit, wide }: { corner:
   const w = Math.max(width - PAD.left - PAD.right, 1);
   const x = (i: number) => pixelOf(x0 + i * step, view, PAD.left, w);
   const mx = (m: number) => pixelOf(m, view, PAD.left, w);
+  // the corner numbers in a band of their own above the first panel's title, close ones on rows of their own
+  const shown = corner.marks.filter((k) => k.at_m >= view[0] && k.at_m <= view[1]);
+  const marks = placeMarks(shown, mx, width);
+  const rows = marks.length ? Math.max(...marks.map((k) => k.row)) + 1 : 0;
   const tops: number[] = [];
-  let y0 = PAD.top;
+  let y0 = PAD.top + rows * MARK_ROW;
   for (const p of panels) {
     tops.push(y0);
     y0 += p.height + GAP;
   }
   const height = y0 - GAP + 4;
-  const marks = corner.marks.filter((k) => k.at_m >= view[0] && k.at_m <= view[1]);
   const cursorAt = (px: number) =>
     setCursor(Math.max(0, Math.min(n - 1, Math.round((valueAt(px, view, PAD.left, w) - x0) / step))));
   const cx = cursor != null ? x(cursor) : null;
@@ -146,7 +175,7 @@ export default function CornerTrace({ corner, step, brakeUnit, wide }: { corner:
         <Text style={styles.readout} accessibilityLiveRegion="polite">{readout.join(' · ')}</Text>
         {!zoom.shared && <ResetZoom zoom={zoom} />}
       </View>
-      <ZoomArea zoom={zoom} full={full} view={view} left={PAD.left} width={w} minSpan={least} onCursor={cursorAt}
+      <ZoomArea zoom={zoom} full={full} left={PAD.left} width={w} minSpan={least} onCursor={cursorAt}
         onLeave={() => setCursor(null)} onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}>
         {width > 0 && n > 1 && (
           <Svg width={width} height={height} pointerEvents="none" accessibilityRole="image"
@@ -158,14 +187,14 @@ export default function CornerTrace({ corner, step, brakeUnit, wide }: { corner:
                 </ClipPath>
               </Defs>
             )}
-            {marks.map((k) => (
-              <Line key={`m${k.code}`} x1={mx(k.at_m)} x2={mx(k.at_m)} y1={PAD.top - 4} y2={height - 4}
+            {panels.map((p, k) => shown.map((m) => (
+              <Line key={`m${p.key}${m.code}`} x1={mx(m.at_m)} x2={mx(m.at_m)} y1={tops[k]} y2={tops[k] + p.height}
                 stroke={c.grid} strokeWidth={1} />
-            ))}
-            {marks.map((k) => (
-              <SvgText key={`t${k.code}`} x={mx(k.at_m)} y={PAD.top - 7} fontSize={12} fontFamily={Fonts.label}
-                fontWeight="700" fill={c.ink2} textAnchor="middle">
-                {k.code}
+            )))}
+            {marks.map((m) => (
+              <SvgText key={`t${m.code}`} x={m.label} y={MARK_ROW + m.row * MARK_ROW - 2} fontSize={12}
+                fontFamily={Fonts.label} fontWeight="700" fill={c.ink2} textAnchor="middle">
+                {m.code}
               </SvgText>
             ))}
             {panels.map((p, k) => {
@@ -197,7 +226,7 @@ export default function CornerTrace({ corner, step, brakeUnit, wide }: { corner:
               );
             })}
             {showCursor && (
-              <Line x1={cx} x2={cx} y1={PAD.top - 2} y2={height - 4} stroke={c.ink} strokeWidth={1} />
+              <Line x1={cx} x2={cx} y1={tops[0]} y2={height - 4} stroke={c.ink} strokeWidth={1} />
             )}
           </Svg>
         )}

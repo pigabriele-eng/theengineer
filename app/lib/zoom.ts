@@ -115,12 +115,14 @@ export function nearestIndex(xs: ArrayLike<number>, v: number) {
   return v - xs[i - 1] <= xs[i] - v ? i - 1 : i;
 }
 
-/** The lowest and highest finite values of some series over points i0..i1; null when there are none. */
-export function extent(series: ArrayLike<number>[], i0: number, i1: number): Range | null {
+/** The lowest and highest finite values of some series over points i0..i1 (gaps, null or NaN, left out); null when
+ * there are none. */
+export function extent(series: ArrayLike<number | null>[], i0: number, i1: number): Range | null {
   let lo = Infinity, hi = -Infinity;
   for (const s of series) {
     for (let i = Math.max(0, i0); i <= Math.min(i1, s.length - 1); i++) {
       const v = s[i];
+      if (v == null || !Number.isFinite(v)) continue;
       if (v < lo) lo = v;
       if (v > hi) hi = v;
     }
@@ -131,3 +133,66 @@ export function extent(series: ArrayLike<number>[], i0: number, i1: number): Ran
 /** A second tap close enough in time and place to the last one to be a double tap. */
 export const isDoubleTap = (last: { t: number; x: number } | null, t: number, x: number, ms = 350, px = 30) =>
   !!last && t - last.t <= ms && Math.abs(x - last.x) <= px;
+
+// ---------- in two directions: a map, the g-g diagram ----------
+// A drawing that keeps its shape zooms both ways at once: by a scale `k` (1 is the whole drawing), about the point of
+// the unzoomed drawing (in its pixels) now at the middle of the frame. The frame is the drawing's own w by h pixels.
+
+export type Point = { x: number; y: number };
+export type Plane = { k: number; cx: number; cy: number };
+
+/** The most a drawing zooms in. */
+export const MAX_SCALE = 12;
+
+/** A zoom kept between the whole drawing and MAX_SCALE (or `maxK`), with the frame inside the drawing; null when it
+ * shows the whole drawing. */
+export function clampPlane(v: Plane, w: number, h: number, maxK = MAX_SCALE): Plane | null {
+  if (!(w > 0) || !(h > 0) || ![v.k, v.cx, v.cy].every(Number.isFinite)) return null;
+  const k = Math.min(maxK, v.k);
+  if (k <= 1 + 1e-6) return null;
+  const within = (c: number, size: number) => Math.min(size - size / (2 * k), Math.max(size / (2 * k), c));
+  return { k, cx: within(v.cx, w), cy: within(v.cy, h) };
+}
+
+/** Where a point of the unzoomed drawing is drawn, and the point of the unzoomed drawing under a pixel. */
+export const toFrame = (v: Plane | null, w: number, h: number, p: Point): Point =>
+  v ? { x: (p.x - v.cx) * v.k + w / 2, y: (p.y - v.cy) * v.k + h / 2 } : p;
+export const fromFrame = (v: Plane | null, w: number, h: number, p: Point): Point =>
+  v ? { x: (p.x - w / 2) / v.k + v.cx, y: (p.y - h / 2) / v.k + v.cy } : p;
+
+const whole = (w: number, h: number): Plane => ({ k: 1, cx: w / 2, cy: h / 2 });
+
+/** Zoom by `factor` (below 1 in, as wheelFactor gives it) keeping the point under pixel `at` where it is. */
+export function zoomPlaneAt(v: Plane | null, w: number, h: number, at: Point, factor: number, maxK?: number) {
+  const base = v ?? whole(w, h);
+  const under = fromFrame(v, w, h, at);
+  const k = Math.max(1, Math.min(maxK ?? MAX_SCALE, base.k / factor));
+  return clampPlane({ k, cx: under.x - (at.x - w / 2) / k, cy: under.y - (at.y - h / 2) / k }, w, h, maxK);
+}
+
+/** The zoom a drag of dx, dy pixels leaves, from the zoom it started on: the drawing follows the finger. */
+export const dragPlane = (start: Plane | null, w: number, h: number, dx: number, dy: number, maxK?: number) =>
+  start ? clampPlane({ k: start.k, cx: start.cx - dx / start.k, cy: start.cy - dy / start.k }, w, h, maxK) : null;
+
+/** The zoom that fits a box dragged from pixel a to b, keeping the drawing's shape; null for a box too small to be
+ * one (a click). */
+export function boxPlane(v: Plane | null, w: number, h: number, a: Point, b: Point, minPx = 6, maxK?: number) {
+  if (Math.abs(b.x - a.x) < minPx && Math.abs(b.y - a.y) < minPx) return null;
+  const p = fromFrame(v, w, h, a), q = fromFrame(v, w, h, b);
+  const bw = Math.max(Math.abs(q.x - p.x), 1e-9), bh = Math.max(Math.abs(q.y - p.y), 1e-9);
+  const k = Math.max(1, Math.min(maxK ?? MAX_SCALE, w / bw, h / bh));
+  return clampPlane({ k, cx: (p.x + q.x) / 2, cy: (p.y + q.y) / 2 }, w, h, maxK);
+}
+
+/** A two-finger pinch: from the zoom at its start, with the fingers then at p and now at q, the zoom that keeps the
+ * point between the fingers between them, scaled by how far they have spread. Fingers too close to measure only pan. */
+export function pinchPlane(start: Plane | null, w: number, h: number, p: [Point, Point], q: [Point, Point],
+  maxK?: number) {
+  const base = start ?? whole(w, h);
+  const before = Math.hypot(p[1].x - p[0].x, p[1].y - p[0].y), now = Math.hypot(q[1].x - q[0].x, q[1].y - q[0].y);
+  const k = before > 12 && now > 12 ? Math.max(1, Math.min(maxK ?? MAX_SCALE, (base.k * now) / before)) : base.k;
+  const mid = (r: [Point, Point]) => ({ x: (r[0].x + r[1].x) / 2, y: (r[0].y + r[1].y) / 2 });
+  const under = fromFrame(start, w, h, mid(p));
+  const m = mid(q);
+  return clampPlane({ k, cx: under.x - (m.x - w / 2) / k, cy: under.y - (m.y - h / 2) / k }, w, h, maxK);
+}

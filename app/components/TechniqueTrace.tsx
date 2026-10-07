@@ -2,12 +2,14 @@
 // lap's mistakes marked as numbered bands. Series colours are slots 1 and 3 of the validated chart palette (as in
 // the report), the realistic target a dashed neutral line; each band wears the colour of its driving phase, as
 // the phase strip and the report do, with the phase named in the legend.
-import { useMemo, useState } from 'react';
-import { GestureResponderEvent, LayoutChangeEvent, Platform, StyleSheet } from 'react-native';
-import Svg, { Circle, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
+import { useId, useMemo, useState } from 'react';
+import { LayoutChangeEvent, Platform, StyleSheet } from 'react-native';
+import Svg, { Circle, ClipPath, Defs, G, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
 
 import { niceTicks, useChartColors } from '@/components/ReportCharts';
 import { Text, View } from '@/components/Themed';
+import { ResetZoom, useZoom, ZoomArea } from '@/components/Zoom';
+import { isZoomed, pixelOf, Range, shownRange, valueAt } from '@/lib/zoom';
 import { chartPlate, Fonts, Palette, phaseColor, themed, Type, useTheme } from '@/constants/Theme';
 
 export type Band = { n: number; start_m: number; end_m: number; label: string; phase?: string };
@@ -47,8 +49,15 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
   const c = useChartColors();
   const [width, setWidth] = useState(0);
   const [own, setOwn] = useState<number | null>(null);
+  const zoom = useZoom();
+  const clip = `clip${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
   const last = driven.length - 1;
-  const [i0, i1] = pointRange(stepM, last, from, to);
+  // the stretch this chart covers (from..to, or the whole lap), and the part of it shown when zoomed
+  const [f0, f1] = pointRange(stepM, last, from, to);
+  const full: Range = [f0 * stepM, f1 * stepM];
+  const view = shownRange(zoom.view, full);
+  const zoomed = isZoomed(view, full);
+  const i0 = Math.max(f0, Math.floor(view[0] / stepM)), i1 = Math.min(f1, Math.ceil(view[1] / stepM));
   const at = onCursor ? sharedCursor ?? null : own;
   const cursor = at != null && at >= i0 && at <= i1 ? at - i0 : null; // index into the points shown
   const setCursor = (k: number | null) => (onCursor ?? setOwn)(k == null ? null : k + i0);
@@ -67,12 +76,15 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
   const ticks = niceTicks(lo, hi, 4);
   const w = Math.max(width - PAD.left - PAD.right, 1);
   const h = height - PAD.top - PAD.bottom;
-  const x0 = x[0], x1 = x[x.length - 1];
-  const px = (v: number) => PAD.left + ((v - x0) / (x1 - x0 || 1)) * w;
+  const [x0, x1] = view;
+  const px = (v: number) => pixelOf(v, view, PAD.left, w);
   const py = (v: number) => PAD.top + (1 - (v - lo) / (hi - lo)) * h;
   const path = (vals: number[]) => vals.map((v, i) => `${i ? 'L' : 'M'}${px(x[i]).toFixed(1)},${py(v).toFixed(1)}`)
     .join('');
   const shown = bands.filter((b) => b.end_m >= x0 && b.start_m <= x1);
+  // the legend names the phases of the mistakes on the whole chart, so it holds still while the chart zooms
+  const phases = [...new Set(bands.filter((b) => b.end_m >= full[0] && b.start_m <= full[1]).map((b) => b.phase)
+    .filter((p): p is string => !!p))];
   // numbers over the bands, the costliest first, each kept only where it clears those already placed
   const badges: { n: number; x: number }[] = [];
   for (const b of [...shown].sort((a, z) => a.n - z.n)) {
@@ -88,15 +100,10 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
     ticksX.push({ label: k.code, x: kx });
   }
 
-  const indexAt = (sx: number) => Math.max(0, Math.min(x.length - 1, Math.round(((sx - PAD.left) / w) * (x.length - 1))));
+  // the point under a pixel, one of those inside the view
+  const indexAt = (sx: number) => Math.max(Math.ceil(x0 / stepM - 1e-9), Math.min(Math.floor(x1 / stepM + 1e-9),
+    Math.round(valueAt(sx, view, PAD.left, w) / stepM))) - i0;
   const bandAt = (m: number) => shown.filter((b) => m >= b.start_m && m <= b.end_m).sort((a, z) => a.n - z.n)[0];
-  const scrub = (e: GestureResponderEvent) => setCursor(indexAt(e.nativeEvent.locationX));
-  const hover = Platform.OS === 'web'
-    ? {
-        onMouseMove: (e: any) => setCursor(indexAt(e.nativeEvent.offsetX ?? e.nativeEvent.locationX)),
-        onMouseLeave: () => setCursor(null),
-      }
-    : {};
   const release = () => {
     if (cursor != null && onSelect) {
       const b = bandAt(x[cursor]);
@@ -106,10 +113,16 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
   };
   const under = cursor != null ? bandAt(x[cursor]) : undefined;
   const tipLeft = cursor != null && px(x[cursor]) > width / 2;
+  const cx = cursor != null ? px(x[cursor]) : null;
+  const showCursor = cx != null && cx >= PAD.left - 0.5 && cx <= PAD.left + w + 0.5;
 
   return (
     <View style={styles.chart}>
-      <Text style={styles.title}>{title}</Text>
+      <View style={styles.titleRow}>
+        <Text style={styles.title}>{title}</Text>
+        {/* its own zoom's, or the zoom it shares with the charts under it */}
+        <ResetZoom zoom={zoom} />
+      </View>
       <View style={styles.legend}>
         {[...series].reverse().map((s) => (
           <View key={s.key} style={styles.legendItem}>
@@ -123,23 +136,26 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
           <View style={StyleSheet.flatten([styles.bandKey, { backgroundColor: c.grid }])} />
           <Text style={styles.legendText}>Mistake, numbered by cost, in its phase&apos;s colour:</Text>
         </View>
-        {[...new Set(shown.map((b) => b.phase).filter((p): p is string => !!p))].map((p) => (
+        {phases.map((p) => (
           <View key={p} style={styles.legendItem}>
             <View style={StyleSheet.flatten([styles.bandKey, { backgroundColor: phaseColor(theme, p) }])} />
             <Text style={styles.legendText}>{p}</Text>
           </View>
         ))}
       </View>
-      <View
-        onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}
-        onStartShouldSetResponder={() => true}
-        onResponderGrant={scrub}
-        onResponderMove={scrub}
-        onResponderRelease={release}
-        {...hover}>
+      <ZoomArea zoom={zoom} full={full} left={PAD.left} width={w} minSpan={stepM * 4}
+        onCursor={(sx) => setCursor(indexAt(sx))} onLeave={() => setCursor(null)} onRelease={release}
+        onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}>
         {width > 0 && (
           <Svg width={width} height={height} pointerEvents="none"
             accessibilityLabel={`${title}: your lap against perfect driving, ${shown.length} mistakes marked`}>
+            {zoomed && (
+              <Defs>
+                <ClipPath id={clip}>
+                  <Rect x={PAD.left} y={0} width={w} height={height} />
+                </ClipPath>
+              </Defs>
+            )}
             {shown.map((b) => (
               <Rect key={`b${b.n}`} x={px(Math.max(b.start_m, x0))} y={PAD.top}
                 width={Math.max(px(Math.min(b.end_m, x1)) - px(Math.max(b.start_m, x0)), 2)} height={h}
@@ -178,10 +194,12 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
               textAnchor="middle" fontFamily={SANS}>
               km/h, by metres from the line
             </SvgText>
-            {series.map((s) => (
-              <Path key={s.key} d={path(s.values)} stroke={s.color} strokeWidth={s.width} fill="none"
-                strokeDasharray={s.dash} strokeLinejoin="round" strokeLinecap="round" />
-            ))}
+            <G clipPath={zoomed ? `url(#${clip})` : undefined}>
+              {series.map((s) => (
+                <Path key={s.key} d={path(s.values)} stroke={s.color} strokeWidth={s.width} fill="none"
+                  strokeDasharray={s.dash} strokeLinejoin="round" strokeLinecap="round" />
+              ))}
+            </G>
             {/* the mistake's number in a square block: ink when picked, grey otherwise */}
             {badges.map((b) => (
               <Rect key={`c${b.n}`} x={b.x - 8} y={PAD.top - 19} width={16} height={16}
@@ -193,17 +211,16 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
                 {String(b.n)}
               </SvgText>
             ))}
-            {cursor != null && (
-              <Line x1={px(x[cursor])} x2={px(x[cursor])} y1={PAD.top} y2={PAD.top + h} stroke={c.text}
-                strokeWidth={1} />
+            {showCursor && (
+              <Line x1={cx} x2={cx} y1={PAD.top} y2={PAD.top + h} stroke={c.text} strokeWidth={1} />
             )}
-            {cursor != null && series.map((s) => (
-              <Circle key={`d${s.key}`} cx={px(x[cursor])} cy={py(s.values[cursor])} r={4} fill={s.color}
+            {showCursor && cursor != null && series.map((s) => (
+              <Circle key={`d${s.key}`} cx={cx} cy={py(s.values[cursor])} r={4} fill={s.color}
                 stroke={c.surface} strokeWidth={2} />
             ))}
           </Svg>
         )}
-        {cursor != null && (
+        {showCursor && cursor != null && (
           <View pointerEvents="none" style={StyleSheet.flatten([styles.tip, { top: PAD.top },
           tipLeft ? { right: width - px(x[cursor]) + 10 } : { left: px(x[cursor]) + 10 }])}>
             <Text style={styles.tipHead}>{`${Math.round(x[cursor])} m`}</Text>
@@ -217,7 +234,7 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
             {under && <Text style={styles.tipBand}>{`${under.n}. ${under.label}`}</Text>}
           </View>
         )}
-      </View>
+      </ZoomArea>
     </View>
   );
 }
@@ -229,7 +246,9 @@ export function pointRange(stepM: number, last: number, from?: number, to?: numb
 
 const useStyles = themed((c) => ({
   chart: { gap: 8, ...chartPlate(c) },
-  title: { ...Type.label, fontSize: 12, color: c.text, borderBottomWidth: 1, borderColor: c.rule, paddingBottom: 5 },
+  titleRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12, minHeight: 25,
+    backgroundColor: 'transparent', borderBottomWidth: 1, borderColor: c.rule, paddingBottom: 5 },
+  title: { ...Type.label, fontSize: 12, color: c.text, flexShrink: 1 },
   legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, rowGap: 6, backgroundColor: 'transparent' },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6, maxWidth: '100%', backgroundColor: 'transparent' },
   legendText: { ...Type.label, fontFamily: Fonts.label, fontSize: 13, letterSpacing: 0.8, color: c.textSecondary,

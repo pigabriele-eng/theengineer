@@ -11,6 +11,7 @@ import { BalanceDumbbell, ChangeBar, CornerText, FadeBars, MIN_SHIFT, OnCorner, 
   useBalanceColors } from '@/components/StintCharts';
 import { Text, View } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
+import { ResetZoom, useZoomState, ZOOM_HINT, ZoomGroup } from '@/components/Zoom';
 import { formatLap } from '@/lib/api';
 import {
   average,
@@ -505,6 +506,8 @@ function PhaseTable({ fits, fade, stint, wide }: {
   const tx = useText();
   const pal = useBalanceColors();
   const [phase, setPhase] = useState<GripPhase>('exit');
+  // every phase's grip and balance lap by lap zoom together; another stint starts on every lap again
+  const zoom = useZoomState(stint?.key);
   const pct = (f?: Fit) => (f && f.level ? (100 * f.change) / f.level : null);
   const gripMax = Math.max(3, ...GRIP_PHASES.map((p) => Math.abs(pct(fits[`grip_${p.key}`]) ?? 0)));
   const balMax = Math.max(0.5, ...GRIP_PHASES.map((p) => Math.abs(p.balance ? fits[`balance_${p.balance}`]?.change ?? 0 : 0)));
@@ -556,19 +559,25 @@ function PhaseTable({ fits, fade, stint, wide }: {
             );
           })}
         </View>
-        <Text style={tx.small}>
-          Change from the first to the last lap{stint ? ' of the stint' : ' of a stint, over every stint in view'}. Grip
-          falling in red, rising in green; balance moving towards understeer in blue, oversteer in magenta. Faded: within
-          the lap-to-lap scatter.{!wide && stint ? ' Tap a phase to see it lap by lap.' : ''}
-        </Text>
+        <View style={styles.captionRow}>
+          <Text style={StyleSheet.flatten([tx.small, styles.flex])}>
+            Change from the first to the last lap{stint ? ' of the stint' : ' of a stint, over every stint in view'}. Grip
+            falling in red, rising in green; balance moving towards understeer in blue, oversteer in magenta. Faded:
+            within the lap-to-lap scatter.{!wide && stint ? ' Tap a phase to see it lap by lap.' : ''}
+            {stint ? ` ${ZOOM_HINT}` : ''}
+          </Text>
+          {stint && <ResetZoom zoom={zoom} reserve />}
+        </View>
       </View>
       {stint ? (
-        <View style={styles.panels}>
-          {shown.map((p) => (
-            <PhasePanel key={p.key} stint={stint} phase={p} fade={fade.find((f) => f.key === p.key)}
-              width={wide ? '48%' : '100%'} />
-          ))}
-        </View>
+        <ZoomGroup zoom={zoom}>
+          <View style={styles.panels}>
+            {shown.map((p) => (
+              <PhasePanel key={p.key} stint={stint} phase={p} fade={fade.find((f) => f.key === p.key)}
+                width={wide ? '48%' : '100%'} />
+            ))}
+          </View>
+        </ZoomGroup>
       ) : (
         <Text style={tx.small}>Open a stint to see grip and balance lap by lap.</Text>
       )}
@@ -957,6 +966,7 @@ const useStyles = themed((c) => ({
   panels: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 24, columnGap: 16, justifyContent: 'space-between' },
   panel: { gap: 8, borderTopWidth: 3, borderColor: c.rule, paddingTop: 8 },
   panelHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  captionRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
   panelTitle: { fontFamily: Fonts.display, fontSize: 22, lineHeight: 26, textTransform: 'uppercase', color: c.text },
   // laps
   lapIntro: { maxWidth: 760, marginBottom: 12 },

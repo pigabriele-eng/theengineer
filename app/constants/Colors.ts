@@ -91,6 +91,7 @@ export type TimingTokens = {
   slower: string; // yellow: the mark of a slower time
   slowerTint: string; // the fill behind a slower time, ink text on it
   onBest: string; // text on purple and green
+  bestInk: string; // the event's best as words on the paper ("Event best"): purple that reads at 4.5:1
   loss: string[]; // 5 steps, least time lost first
 };
 
@@ -159,6 +160,7 @@ const light: Palette = {
     slower: '#D9A400',
     slowerTint: '#F1DE9A',
     onBest: '#FFFFFF',
+    bestInk: '#7B2FBE',
     loss: ['#F4D3C9', '#EBA08B', '#E06A4F', '#C8361F', '#8F1D10'],
   },
   delta: {
@@ -202,7 +204,7 @@ const dark: Palette = {
   onTint: '#141311',
   tintSoft: '#262420',
   mark: '#D63A3A',
-  error: '#EE4A4A',
+  error: '#EF5959',
   warning: '#E0B44A',
   success: '#2FB06A',
   tabBar: '#141311',
@@ -232,11 +234,12 @@ const dark: Palette = {
     slower: '#B48C16',
     slowerTint: '#463A12',
     onBest: '#FFFFFF',
+    bestInk: '#A970EF',
     loss: ['#7E3222', '#A83A26', '#CF4A30', '#EE6A4C', '#FF9F84'],
   },
   delta: {
     gain: '#3B9E68',
-    loss: '#EE4A4A',
+    loss: '#EF5959',
     even: '#928C7C',
     gainRamp: ['#1A5A36', '#1E8F52'],
     lossRamp: ['#7E3222', '#FF9F84'],

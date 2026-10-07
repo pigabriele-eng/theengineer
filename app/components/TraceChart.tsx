@@ -124,7 +124,7 @@ export function TraceChart({ title, unit, distance, series, cursor, onCursor, ma
         )}
         {!zoom.shared && <ResetZoom zoom={zoom} />}
       </View>
-      <ZoomArea zoom={zoom} full={full} view={view} left={PAD.left} width={w} onCursor={cursorAt}
+      <ZoomArea zoom={zoom} full={full} left={PAD.left} width={w} onCursor={cursorAt}
         onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}>
         {width > 0 && n > 1 && (
           <Svg width={width} height={svgHeight} pointerEvents="none">

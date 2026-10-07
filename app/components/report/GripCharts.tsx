@@ -1,14 +1,17 @@
 // Charts for the grip report: a scatter with a trend line, the g-g diagram with the car's grip limit, grip use by
 // phase for the quickest and slowest laps, and the track coloured by grip use or traction control.
-// Each chart reads out the point nearest the finger (or the mouse on the web) in a line above it.
-import { ComponentProps, ReactNode, useState } from 'react';
-import { GestureResponderEvent, LayoutChangeEvent, Platform, Pressable, StyleSheet } from 'react-native';
-import Svg, { Circle, G, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
+// Each chart reads out the point nearest the finger (or the mouse on the web) in a line above it, and zooms
+// (components/Zoom.tsx): the scatter and the phases along x, the g-g diagram and the map both ways at once.
+import { ComponentProps, ReactNode, useId, useState } from 'react';
+import { LayoutChangeEvent, Pressable, StyleSheet } from 'react-native';
+import Svg, { Circle, ClipPath, Defs, G, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
 
 import { Text, View } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
+import { ResetZoom, usePlaneZoom, useZoom, ZoomArea, ZoomPlane } from '@/components/Zoom';
 import { byScheme, chartPlate, Fonts, inkOn, ramp, themed, Type } from '@/constants/Theme';
 import { noPrint } from '@/lib/print';
+import { isZoomed, pixelOf, Plane, Range, shownRange } from '@/lib/zoom';
 
 // Slots 1 and 2 of the validated chart palette, a grey for context, ink, and two one-hue ramps (grip in blue,
 // traction control in orange), each stepped for its own mode; status colours for the verdicts.
@@ -45,26 +48,29 @@ function ticks(lo: number, hi: number, n: number) {
   return { values: out, label: (v: number) => num(v, digits) };
 }
 
-/** Width of the parent, and pointer position (finger or mouse) inside it. */
+/** Width of the chart, and the pointer (finger or mouse) inside it: the props for its ZoomArea or ZoomPlane. */
 function usePointer() {
   const [width, setWidth] = useState(0);
   const [at, setAt] = useState<{ x: number; y: number } | null>(null);
-  const grab = (e: GestureResponderEvent) => setAt({ x: e.nativeEvent.locationX, y: e.nativeEvent.locationY });
   const props = {
     onLayout: (e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width),
-    onStartShouldSetResponder: () => true,
-    onResponderGrant: grab,
-    onResponderMove: grab,
-    ...(Platform.OS === 'web'
-      ? {
-          onMouseMove: (e: any) =>
-            setAt({ x: e.nativeEvent.offsetX ?? e.nativeEvent.locationX, y: e.nativeEvent.offsetY ?? e.nativeEvent.locationY }),
-          onMouseLeave: () => setAt(null),
-        }
-      : {}),
+    onCursor: (x: number, y: number) => setAt({ x, y }),
+    onLeave: () => setAt(null),
   };
   return { width, at, props };
 }
+
+/** An id for a chart's clip path. */
+const useClip = () => `clip${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
+
+/** A zoomed drawing's pixel for one of the whole drawing's: x and y apart (toFrame in lib/zoom.ts). */
+function framer(v: Plane | null, width: number, height: number) {
+  return {
+    fx: (p: number) => (v ? (p - v.cx) * v.k + width / 2 : p),
+    fy: (p: number) => (v ? (p - v.cy) * v.k + height / 2 : p),
+  };
+}
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
 function nearest<T>(items: T[], pos: (t: T, i: number) => [number, number], at: { x: number; y: number } | null, reach = 30) {
   if (!at) return -1;
@@ -81,12 +87,22 @@ function nearest<T>(items: T[], pos: (t: T, i: number) => [number, number], at: 
   return best;
 }
 
-export function Readout({ children, hint }: { children: ReactNode; hint: string }) {
+/** The line above a chart reading out the point under the finger, and the chart's Reset zoom link beside it when
+ * it zooms. */
+export function Readout({ children, hint, zoom }: { children: ReactNode; hint: string;
+  zoom?: { view: unknown; setView: (v: null) => void } }) {
   const styles = useStyles();
-  return (
-    <Text style={[styles.readout, !children && styles.hint]} numberOfLines={2}>
+  const text = (
+    <Text style={[styles.readout, !children && styles.hint, zoom && styles.readoutBeside]} numberOfLines={2}>
       {children || hint}
     </Text>
+  );
+  if (!zoom) return text;
+  return (
+    <View style={styles.readoutRow}>
+      {text}
+      <ResetZoom zoom={zoom} reserve />
+    </View>
   );
 }
 
@@ -126,28 +142,43 @@ export function Scatter({ points, xLabel, yLabel, fit, yFmt, height = 240, hint 
   const styles = useStyles();
   const c = useChartColors();
   const { width, at, props } = usePointer();
+  const zoom = useZoom();
+  const clip = useClip();
   const pad = { l: 40, r: 10, t: 22, b: 34 };
   const xs = points.map((p) => p.x);
-  const ys = points.map((p) => p.y);
   const [x0r, x1r] = [Math.min(...xs), Math.max(...xs)];
-  const [y0r, y1r] = [Math.min(...ys), Math.max(...ys)];
   const xm = (x1r - x0r) * 0.06 || 1;
+  // zoomed along x, the y axis fits the points shown
+  const full: Range = [x0r - xm, x1r + xm];
+  const [x0, x1] = shownRange(zoom.view, full);
+  const zoomed = isZoomed([x0, x1], full);
+  const inView = (p: ScatterPoint) => p.x >= x0 && p.x <= x1;
+  const shown = points.filter(inView);
+  const ys = (shown.length ? shown : points).map((p) => p.y);
+  const [y0r, y1r] = [Math.min(...ys), Math.max(...ys)];
   const ym = (y1r - y0r) * 0.08 || 1;
-  const [x0, x1, y0, y1] = [x0r - xm, x1r + xm, y0r - ym, y1r + ym];
+  const [y0, y1] = [y0r - ym, y1r + ym];
   const w = Math.max(width - pad.l - pad.r, 1);
   const h = height - pad.t - pad.b;
-  const X = (v: number) => pad.l + ((v - x0) / (x1 - x0)) * w;
+  const X = (v: number) => pixelOf(v, [x0, x1], pad.l, w);
   const Y = (v: number) => pad.t + (1 - (v - y0) / (y1 - y0)) * h;
   const order = points.map((_, i) => i).sort((a, b) => Number(!!points[a].front) - Number(!!points[b].front));
-  const hit = nearest(points, (p) => [X(p.x), Y(p.y)], at);
+  const hit = nearest(points, (p) => (inView(p) ? [X(p.x), Y(p.y)] : [Infinity, Infinity]), at);
   const yt = ticks(y0, y1, 4);
   const xt = ticks(x0, x1, width < 420 ? 4 : 6);
   return (
     <View style={styles.chart}>
-      <Readout hint={hint}>{hit >= 0 ? points[hit].label : null}</Readout>
-      <View {...props}>
+      <Readout hint={hint} zoom={zoom}>{hit >= 0 ? points[hit].label : null}</Readout>
+      <ZoomArea zoom={zoom} full={full} left={pad.l} width={w} {...props}>
         {width > 0 && points.length > 0 && (
           <Svg width={width} height={height} pointerEvents="none">
+            {zoomed && (
+              <Defs>
+                <ClipPath id={clip}>
+                  <Rect x={pad.l} y={0} width={w} height={height} />
+                </ClipPath>
+              </Defs>
+            )}
             {yt.values.map((v) => (
               <G key={`y${v}`}>
                 <Line x1={pad.l} x2={width - pad.r} y1={Y(v)} y2={Y(v)} stroke={c.grid} strokeWidth={1} />
@@ -167,20 +198,22 @@ export function Scatter({ points, xLabel, yLabel, fit, yFmt, height = 240, hint 
             <T x={0} y={11} fontSize={11} fill={c.ink2}>
               {yLabel}
             </T>
-            {fit && (
-              <Line x1={X(x0)} x2={X(x1)} y1={Y(fit.intercept + fit.slope * x0)} y2={Y(fit.intercept + fit.slope * x1)}
-                stroke={c.ink2} strokeOpacity={0.7} strokeWidth={2} strokeDasharray="5 4" />
-            )}
-            {order.map((i) => (
-              <Circle key={i} cx={X(points[i].x)} cy={Y(points[i].y)} r={4.5} fill={points[i].color} stroke={c.surface}
-                strokeWidth={1.5} />
-            ))}
-            {hit >= 0 && (
-              <Circle cx={X(points[hit].x)} cy={Y(points[hit].y)} r={7} fill="none" stroke={c.ink} strokeWidth={1.5} />
-            )}
+            <G clipPath={zoomed ? `url(#${clip})` : undefined}>
+              {fit && (
+                <Line x1={X(x0)} x2={X(x1)} y1={Y(fit.intercept + fit.slope * x0)} y2={Y(fit.intercept + fit.slope * x1)}
+                  stroke={c.ink2} strokeOpacity={0.7} strokeWidth={2} strokeDasharray="5 4" />
+              )}
+              {order.map((i) => (
+                <Circle key={i} cx={X(points[i].x)} cy={Y(points[i].y)} r={4.5} fill={points[i].color} stroke={c.surface}
+                  strokeWidth={1.5} />
+              ))}
+              {hit >= 0 && (
+                <Circle cx={X(points[hit].x)} cy={Y(points[hit].y)} r={7} fill="none" stroke={c.ink} strokeWidth={1.5} />
+              )}
+            </G>
           </Svg>
         )}
-      </View>
+      </ZoomArea>
     </View>
   );
 }
@@ -201,14 +234,17 @@ export function GgDiagram({ limit, series, band, hint }: {
   const styles = useStyles();
   const c = useChartColors();
   const { width, at, props } = usePointer();
+  const zoom = usePlaneZoom();
   const height = Math.min(Math.max(width * 0.8, 240), 420);
   const pad = { l: 34, r: 8, t: 8, b: 30 };
   const xr: [number, number] = [-2, 2];
   const yr: [number, number] = [-2, 1.2];
   const sc = Math.min((width - pad.l - pad.r) / (xr[1] - xr[0]), (height - pad.t - pad.b) / (yr[1] - yr[0]));
   const ox = pad.l + (width - pad.l - pad.r - sc * (xr[1] - xr[0])) / 2;
-  const X = (v: number) => ox + (v - xr[0]) * sc;
-  const Y = (v: number) => pad.t + (yr[1] - v) * sc;
+  // zoomed both ways at once (the diagram keeps its circle round); the axis numbers stay in the frame
+  const { fx, fy } = framer(zoom.view, width, height);
+  const X = (v: number) => fx(ox + (v - xr[0]) * sc);
+  const Y = (v: number) => fy(pad.t + (yr[1] - v) * sc);
   const right = limit.directions.map((d, j) => [limit.radius[j] * Math.cos((d * Math.PI) / 180), limit.radius[j] * Math.sin((d * Math.PI) / 180)]);
   const ring = [...right, ...[...right].reverse().map(([x, y]) => [-x, y])];
   const ringPath = ring.map(([x, y], i) => `${i ? 'L' : 'M'}${X(x).toFixed(1)},${Y(y).toFixed(1)}`).join('') + 'Z';
@@ -216,16 +252,18 @@ export function GgDiagram({ limit, series, band, hint }: {
   const pts = series.flatMap((s, k) =>
     s.ax.flatMap((ax, i) => (inBand(s.speed[i]) ? [{ k, i, x: s.ay[i], y: ax }] : [])));
   const hit = nearest(pts, (p) => [X(p.x), Y(p.y)], at, 20);
+  const xAxisY = clamp(Y(yr[0]) + 13, 12, height - 17); // the numbers along the bottom, and up the left side
+  const yAxisX = clamp(X(xr[0]) - 5, 24, width - 4);
   return (
     <View style={styles.chart}>
-      <Readout hint={hint}>{hit >= 0 ? series[pts[hit].k].label(pts[hit].i) : null}</Readout>
-      <View {...props}>
+      <Readout hint={hint} zoom={zoom}>{hit >= 0 ? series[pts[hit].k].label(pts[hit].i) : null}</Readout>
+      <ZoomPlane zoom={zoom} width={width} height={height} {...props}>
         {width > 0 && (
           <Svg width={width} height={height} pointerEvents="none">
             {[-2, -1, 0, 1, 2].map((v) => (
               <G key={`x${v}`}>
                 <Line x1={X(v)} x2={X(v)} y1={Y(yr[0])} y2={Y(yr[1])} stroke={c.grid} strokeWidth={1} />
-                <T x={X(v)} y={Y(yr[0]) + 13} fontSize={10} fill={c.muted} textAnchor="middle">
+                <T x={X(v)} y={xAxisY} fontSize={10} fill={c.muted} textAnchor="middle">
                   {num(v)}
                 </T>
               </G>
@@ -233,18 +271,20 @@ export function GgDiagram({ limit, series, band, hint }: {
             {[-2, -1, 0, 1].map((v) => (
               <G key={`y${v}`}>
                 <Line x1={X(xr[0])} x2={X(xr[1])} y1={Y(v)} y2={Y(v)} stroke={c.grid} strokeWidth={1} />
-                <T x={X(xr[0]) - 5} y={Y(v) + 4} fontSize={10} fill={c.muted} textAnchor="end">
+                <T x={yAxisX} y={Y(v) + 4} fontSize={10} fill={c.muted} textAnchor="end">
                   {num(v)}
                 </T>
               </G>
             ))}
-            <T x={X(0)} y={height - 3} fontSize={11} fill={c.ink2} textAnchor="middle">
+            <T x={clamp(X(0), 40, width - 40)} y={height - 3} fontSize={11} fill={c.ink2} textAnchor="middle">
               Lateral g
             </T>
-            <T x={X(xr[1])} y={Y(yr[1]) + 11} fontSize={11} fill={c.ink2} textAnchor="end">
+            <T x={Math.min(X(xr[1]), width - 2)} y={Math.max(Y(yr[1]) + 11, 11)} fontSize={11} fill={c.ink2}
+              textAnchor="end">
               Accelerating
             </T>
-            <T x={X(xr[1])} y={Y(yr[0]) - 5} fontSize={11} fill={c.ink2} textAnchor="end">
+            <T x={Math.min(X(xr[1]), width - 2)} y={Math.min(Y(yr[0]) - 5, height - 18)} fontSize={11} fill={c.ink2}
+              textAnchor="end">
               Braking
             </T>
             <Path d={ringPath} fill={c.wash} stroke={c.ink2} strokeWidth={2} strokeDasharray="6 4" />
@@ -257,7 +297,7 @@ export function GgDiagram({ limit, series, band, hint }: {
             {hit >= 0 && <Circle cx={X(pts[hit].x)} cy={Y(pts[hit].y)} r={6} fill="none" stroke={c.ink} strokeWidth={1.5} />}
           </Svg>
         )}
-      </View>
+      </ZoomPlane>
     </View>
   );
 }
@@ -271,25 +311,37 @@ export function Dumbbell({ rows, hint }: {
   const styles = useStyles();
   const c = useChartColors();
   const { width, at, props } = usePointer();
+  const zoom = useZoom();
+  const clip = useClip();
   const rowH = 44;
   const left = 104;
   const height = rows.length * rowH + 22;
   const vals = rows.flatMap((r) => [r.fast, r.slow]).filter((v): v is number => v != null);
-  const lo = Math.floor((Math.min(...vals) - 2) / 5) * 5;
-  const hi = Math.ceil((Math.max(...vals) + 2) / 5) * 5;
-  const X = (v: number) => left + ((v - lo) / (hi - lo || 1)) * Math.max(width - left - 40, 1);
+  const full: Range = [Math.floor((Math.min(...vals) - 2) / 5) * 5, Math.ceil((Math.max(...vals) + 2) / 5) * 5];
+  // zoomed along the % scale, 1 % at the closest
+  const [lo, hi] = shownRange(zoom.view, full, 1);
+  const zoomed = isZoomed([lo, hi], full);
+  const plot = Math.max(width - left - 40, 1);
+  const X = (v: number) => pixelOf(v, [lo, hi], left, plot);
   const hitRow = at ? Math.floor((at.y - 4) / rowH) : -1;
   const r = rows[hitRow];
   return (
     <View style={styles.chart}>
-      <Readout hint={hint}>
+      <Readout hint={hint} zoom={zoom}>
         {r && r.fast != null && r.slow != null
           ? `${r.label}: quickest third ${r.fast.toFixed(1)} %, slowest third ${r.slow.toFixed(1)} % (${r.sub})`
           : null}
       </Readout>
-      <View {...props}>
+      <ZoomArea zoom={zoom} full={full} left={left} width={plot} minSpan={1} {...props}>
         {width > 0 && vals.length > 0 && (
           <Svg width={width} height={height} pointerEvents="none">
+            {zoomed && (
+              <Defs>
+                <ClipPath id={clip}>
+                  <Rect x={left - 8} y={0} width={width - left + 8} height={height} />
+                </ClipPath>
+              </Defs>
+            )}
             {ticks(lo, hi, 4).values.map((v) => (
               <G key={v}>
                 <Line x1={X(v)} x2={X(v)} y1={4} y2={height - 20} stroke={c.grid} strokeWidth={1} />
@@ -309,7 +361,7 @@ export function Dumbbell({ rows, hint }: {
                     {row.sub}
                   </T>
                   {row.fast != null && row.slow != null && (
-                    <>
+                    <G clipPath={zoomed ? `url(#${clip})` : undefined}>
                       <Line x1={X(Math.min(row.fast, row.slow))} x2={X(Math.max(row.fast, row.slow))} y1={y} y2={y}
                         stroke={c.ink2} strokeWidth={2} />
                       <Circle cx={X(row.slow)} cy={y} r={6} fill={c.other} stroke={c.surface} strokeWidth={2} />
@@ -317,14 +369,14 @@ export function Dumbbell({ rows, hint }: {
                       <T x={X(Math.max(row.fast, row.slow)) + 10} y={y + 4} fontSize={11} fill={c.ink2}>
                         {`${row.fast - row.slow >= 0 ? '+' : '−'}${Math.abs(row.fast - row.slow).toFixed(1)}`}
                       </T>
-                    </>
+                    </G>
                   )}
                 </G>
               );
             })}
           </Svg>
         )}
-      </View>
+      </ZoomArea>
     </View>
   );
 }
@@ -345,13 +397,16 @@ export function GripMap({ x, y, step, modes, labels, describe }: {
   const c = useChartColors();
   const [mode, setMode] = useState(0);
   const { width, at, props } = usePointer();
+  const zoom = usePlaneZoom();
   const md = modes[mode];
   const pad = 26;
   const [x0, x1, y0, y1] = [Math.min(...x), Math.max(...x), Math.min(...y), Math.max(...y)];
   const sc = Math.min((width - 2 * pad) / (x1 - x0 || 1), 300 / (y1 - y0 || 1));
   const height = (y1 - y0) * sc + 2 * pad;
-  const X = (v: number) => pad + (v - x0) * sc + (width - 2 * pad - (x1 - x0) * sc) / 2;
-  const Y = (v: number) => pad + (y1 - v) * sc;
+  // zoomed both ways at once, keeping the track's shape; the lines and labels keep their size
+  const { fx, fy } = framer(zoom.view, width, height);
+  const X = (v: number) => fx(pad + (v - x0) * sc + (width - 2 * pad - (x1 - x0) * sc) / 2);
+  const Y = (v: number) => fy(pad + (y1 - v) * sc);
   const base = x.map((v, i) => `${i ? 'L' : 'M'}${X(v).toFixed(1)},${Y(y[i]).toFixed(1)}`).join('') + 'Z';
   // one path per colour step keeps the drawing light
   const STEPS = 8;
@@ -390,16 +445,18 @@ export function GripMap({ x, y, step, modes, labels, describe }: {
           </Pressable>
         ))}
       </View>
-      <Readout hint="Point at the track to read it.">
+      <Readout hint="Point at the track to read it." zoom={zoom}>
         {hit >= 0 ? `${describe(hit * step)} · ${md.values[hit] == null ? 'full throttle, the engine is the limit' : `${md.label.toLowerCase()} ${Math.round(md.values[hit] as number)} ${md.unit}`}` : null}
       </Readout>
-      <View {...props}>
+      <ZoomPlane zoom={zoom} width={width} height={height} {...props}>
         {width > 0 && (
           <Svg width={width} height={height} pointerEvents="none">
             <Path d={base} fill="none" stroke={c.track} strokeWidth={10} strokeLinejoin="round" />
             {paths.map((d, k) => (d ? <Path key={k} d={d} stroke={ramp(md.ramp, (k + 0.5) / STEPS)} strokeWidth={6} strokeLinecap="round" /> : null))}
             {labels.map((l) => {
-              const [lx, ly] = place(Math.round(l.at / step));
+              const j = Math.max(0, Math.min(x.length - 1, Math.round(l.at / step)));
+              if (X(x[j]) < 0 || X(x[j]) > width || Y(y[j]) < 0 || Y(y[j]) > height) return null; // zoomed out of sight
+              const [lx, ly] = place(j);
               return (
                 <T key={l.code} x={lx} y={ly} fontSize={11} fontWeight="700" fill={c.ink} textAnchor="middle">
                   {l.code}
@@ -410,7 +467,7 @@ export function GripMap({ x, y, step, modes, labels, describe }: {
             {hit >= 0 && <Circle cx={X(x[hit])} cy={Y(y[hit])} r={7} fill="none" stroke={c.ink} strokeWidth={2} />}
           </Svg>
         )}
-      </View>
+      </ZoomPlane>
       <View style={styles.legendRow}>
         <Text style={styles.legendText}>{`${md.lo} ${md.unit}`}</Text>
         <Svg width={90} height={8}>
@@ -429,6 +486,8 @@ export function GripMap({ x, y, step, modes, labels, describe }: {
 const useStyles = themed((c) => ({
   chart: { gap: 4, ...chartPlate(c) },
   readout: { fontSize: 12, lineHeight: 16, minHeight: 32, fontVariant: ['tabular-nums'] },
+  readoutRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  readoutBeside: { flex: 1, minWidth: 0 },
   hint: { opacity: 0.55 },
   legendRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },

@@ -50,8 +50,8 @@ const today = () => {
 type NavKey = 'weekend' | 'coaching' | 'drivers' | 'upload' | 'tools';
 const NAV: { key: NavKey; label: string; href: Href }[] = [
   { key: 'weekend', label: 'Weekend', href: '/' },
-  // Coaching joins with its page; Drivers opens on the driver fingerprints until the Drivers page is in
-  { key: 'drivers', label: 'Drivers', href: '/drivers/fingerprints' },
+  { key: 'coaching', label: 'Coaching', href: '/coaching' },
+  { key: 'drivers', label: 'Drivers', href: '/drivers' },
   { key: 'upload', label: 'Upload', href: '/upload' },
   { key: 'tools', label: 'Tools', href: '/tools' },
 ];

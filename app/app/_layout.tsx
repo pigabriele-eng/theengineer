@@ -93,6 +93,8 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
     headerTintColor: c.text,
     headerTitleStyle: { fontFamily: Fonts.label, fontSize: 15, color: c.text },
     headerBackTitleStyle: { fontFamily: Fonts.label, fontSize: 14 },
+    // "Back", read out as "Go back" (not the route group's name, "(tabs)")
+    headerBackTitle: 'Back',
     contentStyle: { backgroundColor: c.background },
   }), [c]);
   // the print styles (lib/print.ts), so a page prints right from the browser's own Print menu too
@@ -133,6 +135,8 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
             <Stack.Screen name="tools/calendar" options={{ title: 'Racing calendar' }} />
             <Stack.Screen name="garage" options={{ title: 'Cars, drivers and teams' }} />
             <Stack.Screen name="seasons" options={{ title: 'Seasons', ...NO_BAR }} />
+            <Stack.Screen name="coaching" options={{ title: 'Coaching', ...NO_BAR }} />
+            <Stack.Screen name="drivers/index" options={{ title: 'Drivers', ...NO_BAR }} />
             <Stack.Screen name="drivers/tag" options={{ title: 'Tag drivers' }} />
             <Stack.Screen name="drivers/compare" options={{ title: 'Compare drivers' }} />
             <Stack.Screen name="drivers/fingerprints" options={{ title: 'Driver fingerprints' }} />
