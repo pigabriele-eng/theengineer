@@ -117,15 +117,14 @@ def _advice(vec: dict[str, float], links: list[dict]) -> list[dict]:
             continue
         k = ds.KINDS[link["kind"]]
         quicker_more = link["r"] < 0
-        yours = k.more if x > 0 else k.less
         if (x > 0) == quicker_more:
             out.append({"kind": link["kind"], "type": "strength", "label": k.label, "r": link["r"],
                         "words": f"On quicker laps a driver {k.more if quicker_more else k.less}, "
-                                 f"and this driver {yours} than their teammates."})
+                                 "and this driver already does that more than their teammates."})
         else:
             out.append({"kind": link["kind"], "type": "gain", "label": k.label, "r": link["r"],
                         "words": f"On quicker laps a driver {k.more if quicker_more else k.less}, "
-                                 f"but this driver {yours} than their teammates."})
+                                 f"but this driver {k.more if x > 0 else k.less} than their teammates."})
     return out
 
 
