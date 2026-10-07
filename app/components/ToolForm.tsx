@@ -18,19 +18,22 @@ import {
 
 import { Block, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
+import { noPrint } from '@/lib/print';
 import { Corner } from '@/lib/tyres';
 import { face, Fonts, themed, Type, useTheme } from '@/constants/Theme';
 
 // ---------- the page's opening ----------
 
-/** A tool's opening: its name as the headline (the page has no photo) and the italic line under it. */
-export function Opening({ title, dek }: { title: string; dek?: ReactNode }) {
+/** A tool's opening: its name as the headline (the page has no photo), the italic line under it, then `children`
+ * (the Print link). */
+export function Opening({ title, dek, children }: { title: string; dek?: ReactNode; children?: ReactNode }) {
   const styles = useStyles();
   const wide = useWide();
   return (
     <View style={wide ? styles.opening : styles.openingPhone}>
       <Text style={wide ? styles.title : styles.titlePhone} accessibilityRole="header">{title}</Text>
       {dek ? <Text style={wide ? styles.dek : styles.dekPhone}>{dek}</Text> : null}
+      {children ? <View style={styles.openingMore}>{children}</View> : null}
     </View>
   );
 }
@@ -141,7 +144,7 @@ export function Stepper({ value, of, onStep, label }: { value: string; of?: stri
   return (
     <View style={styles.stepper}>
       <Pressable onPress={() => onStep(-1)} hitSlop={6} accessibilityRole="button" accessibilityLabel={`${label} down`}
-        style={styles.stepKey}>
+        style={styles.stepKey} {...noPrint}>
         <Text style={styles.stepKeyText}>−</Text>
       </Pressable>
       <Text style={styles.stepValue}>
@@ -149,7 +152,7 @@ export function Stepper({ value, of, onStep, label }: { value: string; of?: stri
         {of ? <Text style={styles.stepOf}>{of}</Text> : null}
       </Text>
       <Pressable onPress={() => onStep(1)} hitSlop={6} accessibilityRole="button" accessibilityLabel={`${label} up`}
-        style={styles.stepKey}>
+        style={styles.stepKey} {...noPrint}>
         <Text style={styles.stepKeyText}>+</Text>
       </Pressable>
     </View>
@@ -181,8 +184,9 @@ export function Options<T extends string | number>({ options, value, onPick, mul
         const on = isOn(o.value);
         if (multi) {
           return (
+            // on paper only the ticked and the picked options are left
             <Pressable key={String(o.value)} onPress={() => onPick(o.value)} disabled={disabled} hitSlop={4}
-              accessibilityRole="checkbox" accessibilityState={{ checked: on, disabled }}
+              accessibilityRole="checkbox" accessibilityState={{ checked: on, disabled }} {...(on ? null : noPrint)}
               style={StyleSheet.flatten([styles.check, disabled && styles.dim])}>
               <View style={StyleSheet.flatten([styles.checkBox, on && styles.checkBoxOn])} />
               <View style={styles.optionWords}>
@@ -194,7 +198,7 @@ export function Options<T extends string | number>({ options, value, onPick, mul
         }
         return (
           <Pressable key={String(o.value)} onPress={() => onPick(o.value)} disabled={disabled} hitSlop={4}
-            accessibilityRole={big ? 'tab' : 'radio'}
+            accessibilityRole={big ? 'tab' : 'radio'} {...(on ? null : noPrint)}
             accessibilityState={big ? { selected: on, disabled } : { checked: on, disabled }}
             style={StyleSheet.flatten([big ? (wide ? styles.bigOption : styles.bigOptionPhone) : styles.option,
               on && styles.optionOn, disabled && styles.dim])}>
@@ -221,7 +225,7 @@ export function MainAction({ label, onPress, busy, disabled }: { label: string; 
   const wide = useWide();
   return (
     <Pressable onPress={onPress} disabled={busy || disabled} accessibilityRole="button"
-      accessibilityState={{ disabled: busy || disabled, busy }}
+      accessibilityState={{ disabled: busy || disabled, busy }} {...noPrint}
       style={StyleSheet.flatten([styles.main, wide ? null : styles.mainPhone, (disabled && !busy) && styles.dim])}>
       {busy ? <ActivityIndicator color={c.background} /> : <Text style={styles.mainText}>{label}</Text>}
     </Pressable>
@@ -233,7 +237,7 @@ export function MainAction({ label, onPress, busy, disabled }: { label: string; 
 export function Actions({ children, style }: { children: ReactNode; style?: ViewStyle }) {
   const styles = useStyles();
   return (
-    <View style={StyleSheet.flatten([styles.actions, style])}>
+    <View style={StyleSheet.flatten([styles.actions, style])} {...noPrint}>
       {Children.map(children, (ch) => (isValidElement(ch) && ch.type !== MainAction ? <View>{ch}</View> : ch))}
     </View>
   );
@@ -337,6 +341,7 @@ export const useTableStyles = themed((c) => ({
 const useStyles = themed((c) => ({
   opening: { paddingTop: 30, paddingBottom: 4 },
   openingPhone: { paddingTop: 20, paddingBottom: 2 },
+  openingMore: { marginTop: 14 },
   title: { ...Type.title, color: c.text },
   titlePhone: { ...Type.title, fontSize: 40, lineHeight: 42, color: c.text },
   dek: { ...Type.dek, fontSize: 19, lineHeight: 27, color: c.textSecondary, marginTop: 8, maxWidth: 760 },

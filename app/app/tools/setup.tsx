@@ -2,6 +2,7 @@ import { Stack, useLocalSearchParams } from 'expo-router';
 import { ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet } from 'react-native';
 
+import PrintButton from '@/components/PrintButton';
 import { Block, Colophon, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import {
@@ -102,7 +103,9 @@ export default function SetupScreen() {
     <Page keyboardShouldPersistTaps="handled">
       <Stack.Screen options={{ title: current ? `Setup · ${current.name ?? `Session ${current.id}`}` : 'Setup' }} />
       <Opening title={current ? `Setup · ${current.name ?? `Session ${current.id}`}` : 'Setup'}
-        dek="One setup sheet per run. Copy the last run and change what you changed, then see it against lap time and balance, and get setup changes to try from the debrief and the data." />
+        dek="One setup sheet per run. Copy the last run and change what you changed, then see it against lap time and balance, and get setup changes to try from the debrief and the data.">
+        <PrintButton title={current ? `Setup · ${current.name ?? `Session ${current.id}`}` : 'Setup'} />
+      </Opening>
 
       <View style={styles.runs}>
         <SubHead>Run</SubHead>

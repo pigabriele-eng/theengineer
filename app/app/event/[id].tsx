@@ -13,6 +13,7 @@ import { PrepButton, usePrepAvailability } from '@/components/PrepButton';
 import {
   B, Colophon, Fig, Folio, Hero, Label, Page, Section, Swatch, TextLink, useGutter, useWide,
 } from '@/components/Programme';
+import PrintButton from '@/components/PrintButton';
 import { RenameEvent } from '@/components/RenameEvent';
 import { ResultsPanel } from '@/components/ResultsPanel';
 import { SeasonMatch } from '@/components/SeasonMatch';
@@ -23,6 +24,7 @@ import { todayIso, When, whenOf } from '@/lib/calendar';
 import { MAX_LAPS } from '@/lib/compare';
 import { dateRange, dayLabel, eventsApi, Folder, FolderSession, KIND_NAMES, NO_EVENT } from '@/lib/events';
 import { Garage, garageApi, RunFields } from '@/lib/garage';
+import { noPrint } from '@/lib/print';
 import { face, Fonts, PHOTOS, photoFor, themed, Type, useTheme } from '@/constants/Theme';
 
 // A run row as the server sends it, with its driver and car ids
@@ -169,7 +171,7 @@ export default function EventScreen() {
   // ---------- the event's links, and the band under them ----------
 
   const links = isEvent && eventId != null && folder && (
-    <View style={wide ? styles.links : styles.linksPhone}>
+    <View style={wide ? styles.links : styles.linksPhone} {...noPrint}>
       {timed && <TextLink href={{ pathname: '/report', params: { event: eventId } }} label="Report" red arrow />}
       {timed && <TextLink href={{ pathname: '/quali', params: { event: eventId } }} label="Quali prep" arrow />}
       {timed && <TextLink href={{ pathname: '/technique', params: { event: eventId } }} label="Technique check" arrow />}
@@ -180,6 +182,7 @@ export default function EventScreen() {
         <TextLink onPress={() => showPanel(panel === 'rename' ? null : 'rename')} label="Rename" small />
         <TextLink onPress={() => showPanel(panel === 'edit' ? null : 'edit')} label="Change dates" small />
         <TextLink onPress={() => showPanel(panel === 'delete' ? null : 'delete')} label="Delete event" small />
+        <PrintButton title={['Event', folder.name, folder.track].filter(Boolean).join(' · ')} />
       </View>
     </View>
   );
@@ -187,7 +190,7 @@ export default function EventScreen() {
   // One panel at a time in a ruled band under the links: rename, change the dates, delete the event, move the ticked
   // runs.
   const band = folder && panel && (
-    <View style={styles.band}>
+    <View style={styles.band} {...noPrint}>
       {panel === 'rename' && eventId != null && (
         <>
           <Label>Rename the event</Label>
@@ -310,7 +313,7 @@ export default function EventScreen() {
 
   // logs are uploaded on the Upload page (Gabriele, 2026-10-07: "remove upload window in the event window")
   const addRun = folder && (
-    <Section no={++no} title="Add a run" dek="A run made by hand, to upload a log to later or to hold a debrief.">
+    <Section no={++no} title="Add a run" dek="A run made by hand, to upload a log to later or to hold a debrief." print={false}>
       <AddSession eventId={eventId} onAdded={load} />
     </Section>
   );

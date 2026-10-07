@@ -23,6 +23,7 @@ import {
   Strength,
 } from '@/lib/balance';
 import { quickestLapsLine } from '@/lib/grip';
+import { noPrint } from '@/lib/print';
 import { byScheme, Fonts, themed, Type } from '@/constants/Theme';
 
 // bare: inside a report section that already names it, so without its own heading
@@ -414,6 +415,7 @@ function BalanceTable({ r }: { r: BalanceReport }) {
           <Pressable
             key={o.label}
             onPress={() => setQuick(o.label === 'Quickest passes')}
+            {...(o.on ? null : noPrint)}
             style={[styles.toggleItem, o.on && { borderColor: tint }]}>
             <Text style={o.on ? { color: tint } : styles.dim}>{o.label}</Text>
           </Pressable>

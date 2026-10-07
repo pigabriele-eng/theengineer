@@ -23,6 +23,7 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 
 import { Text, View } from '@/components/Themed';
 import { Fonts, Focus, Photo, Space, themed, Type, useTheme, WIDE } from '@/constants/Theme';
+import { noPrint, printFill, printHead } from '@/lib/print';
 
 /** True on a wide screen (desktop, tablet): pages take their multi-column layout. */
 export function useWide() {
@@ -83,8 +84,9 @@ export function Masthead() {
     </View>
   );
   return (
+    // the menu stays off the printed page
     <View style={StyleSheet.flatten([styles.masthead, { paddingTop: insets.top + (wide ? 14 : 10),
-      paddingHorizontal: wide ? Space.gutter : Space.gutterPhone }])}>
+      paddingHorizontal: wide ? Space.gutter : Space.gutterPhone }])} {...noPrint}>
       {wide ? (
         <View style={styles.mastRow}>
           <View style={styles.nameplate}>
@@ -151,7 +153,8 @@ export function PhotoFill({ photo, focus, style }: { photo: Photo; focus?: Focus
     <View style={StyleSheet.flatten([{ overflow: 'hidden' }, style])} accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
       onLayout={(e: LayoutChangeEvent) => setBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}>
-      {img && <Image source={photo.source} style={img as object} resizeMode="cover" accessibilityIgnoresInvertColors />}
+      {img && <Image source={photo.source} style={img as object} resizeMode="cover" accessibilityIgnoresInvertColors
+        {...printFill} />}
     </View>
   );
 }
@@ -271,21 +274,25 @@ export function Page({ top, children, scrollRef, ...rest }: ScrollViewProps & {
   );
 }
 
-/** A numbered section: the thick rule, the number in an ink block, the headline and its italic line, then the content. */
-export function Section({ no, title, dek, children, style, onLayout }: {
+/** A numbered section: the thick rule, the number in an ink block, the headline and its italic line, then the content.
+ * `print={false}`: left off a printed page (a form). */
+export function Section({ no, title, dek, children, style, onLayout, print }: {
   no: number | string;
   title: string;
   dek?: string;
   children?: ReactNode;
   style?: ViewStyle;
   onLayout?: (e: LayoutChangeEvent) => void;
+  print?: boolean;
 }) {
   const styles = useStyles();
   const wide = useWide();
   return (
-    <View style={StyleSheet.flatten([wide ? styles.section : styles.sectionPhone, style])} onLayout={onLayout}>
-      <View style={styles.secRule} />
-      <View style={wide ? styles.secHead : styles.secHeadPhone}>
+    <View style={StyleSheet.flatten([wide ? styles.section : styles.sectionPhone, style])} onLayout={onLayout}
+      {...(print === false ? noPrint : null)}>
+      {/* on paper the headline starts on the same page as what it heads */}
+      <View style={styles.secRule} {...printHead} />
+      <View style={wide ? styles.secHead : styles.secHeadPhone} {...printHead}>
         <View style={styles.secNo}><Text style={styles.secNoText}>{typeof no === 'number' ? String(no).padStart(2, '0') : no}</Text></View>
         <View style={styles.secWords}>
           <Text style={wide ? styles.secTitle : styles.secTitlePhone} accessibilityRole="header">{title}</Text>
@@ -339,8 +346,9 @@ export function Fig({ label, value, unit, size = 64, color, bar, barHeight = 8, 
 }
 
 /** A text link: Archivo Narrow capitals over a heavy underline (red for the main one), with an arrow when it goes
- * somewhere. Give it an `href`, or an `onPress` for an action on the page. */
-export function TextLink({ label, href, onPress, red, arrow, small, disabled }: {
+ * somewhere. Give it an `href`, or an `onPress` for an action on the page. Left off a printed page unless `print`
+ * (a link that names something the page is about). */
+export function TextLink({ label, href, onPress, red, arrow, small, disabled, print }: {
   label: string;
   href?: Href;
   onPress?: () => void;
@@ -348,10 +356,12 @@ export function TextLink({ label, href, onPress, red, arrow, small, disabled }: 
   arrow?: boolean;
   small?: boolean;
   disabled?: boolean;
+  print?: boolean;
 }) {
   const styles = useStyles();
   const body = (
     <Pressable onPress={onPress} disabled={disabled} accessibilityRole={href ? 'link' : 'button'} hitSlop={6}
+      {...(print ? null : noPrint)}
       style={StyleSheet.flatten([styles.tlink, red && styles.tlinkRed, disabled && styles.dim])}>
       <Text style={small ? styles.tlinkTextSmall : styles.tlinkText}>{label}{arrow ? ' →' : ''}</Text>
     </Pressable>

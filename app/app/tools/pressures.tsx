@@ -2,6 +2,7 @@ import { Stack, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { StyleSheet } from 'react-native';
 
+import PrintButton from '@/components/PrintButton';
 import { Block, Colophon, Fig, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import {
@@ -161,7 +162,9 @@ export default function PressuresScreen() {
     <Page keyboardShouldPersistTaps="handled">
       <Stack.Screen options={{ title: 'Tyre pressures' }} />
       <Opening title="Tyre pressures"
-        dek="The cold pressures to set now so the tyres reach your target hot pressure: by the gas law, and by what your logged runs on this tyre show." />
+        dek="The cold pressures to set now so the tyres reach your target hot pressure: by the gas law, and by what your logged runs on this tyre show.">
+        <PrintButton title="Tyre pressures" />
+      </Opening>
 
       <Section no={1} title="Tyre" dek="Different tyres are different pressure models: pick the one on the car.">
         <TyrePicker kinds={kinds} kindId={kindId} onPick={setKindId} notSet={notSet} />

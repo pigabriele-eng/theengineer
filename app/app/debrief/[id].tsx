@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet } from 'react-native';
 
 import { FigRow, Notice, PageHead, useText } from '@/components/Picks';
+import PrintButton from '@/components/PrintButton';
 import { Colophon, Fig, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { api, Debrief, DebriefCorner, DebriefPoint, SECTIONS } from '@/lib/api';
@@ -129,7 +130,10 @@ export default function DebriefReport() {
     <Page>
       <Stack.Screen options={{ title: 'Debrief report' }} />
       <PageHead title="Debrief report" dek={dek}>
-        {d ? <View style={styles.headLink}><TextLink label="Open the session" href={`/session/${d.session_id}`} arrow small /></View> : null}
+        <View style={styles.headLinks}>
+          {d ? <TextLink label="Open the session" href={`/session/${d.session_id}`} arrow small /> : null}
+          <PrintButton title={['Debrief report', dek].filter(Boolean).join(' · ')} />
+        </View>
       </PageHead>
 
       {!d && !error && <ActivityIndicator color={theme.text} style={styles.loading} />}
@@ -392,7 +396,7 @@ function PointCheck({ c }: { c: CheckedPoint }) {
 }
 
 const useStyles = themed((c) => ({
-  headLink: { marginTop: 6 },
+  headLinks: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 20, rowGap: 8, marginTop: 6 },
   loading: { alignSelf: 'flex-start', marginTop: 24 },
   gapTop: { marginTop: 18 },
   notice: { marginTop: 24 },

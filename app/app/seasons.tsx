@@ -7,11 +7,13 @@ import {
 } from '@/components/Controls';
 import { EntryFields, Lists, useLists } from '@/components/EventInfoForm';
 import { SeasonMatch } from '@/components/SeasonMatch';
+import PrintButton from '@/components/PrintButton';
 import { Block, Colophon, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { todayIso } from '@/lib/calendar';
 import { carLong } from '@/lib/garage';
 import { dateRange, parseDay } from '@/lib/events';
+import { noPrint } from '@/lib/print';
 import {
   EMPTY_ENTRY,
   Entry,
@@ -130,9 +132,10 @@ export default function SeasonsScreen() {
         {listsError && <ErrorLine>{listsError}</ErrorLine>}
         {notice && <Said text={notice} onPress={() => setNotice(null)} />}
         {!making && <MainButton label="+ New season" onPress={() => setMaking(true)} disabled={!lists} />}
+        <PrintButton title="Seasons" />
       </View>
       {making && lists && (
-        <Section no="NEW" title="New season" dek="A series and a year, our car number and what we run.">
+        <Section no="NEW" title="New season" dek="A series and a year, our car number and what we run." print={false}>
           <NewSeason lists={lists} series={series} onListsChanged={reloadLists} onCancel={() => setMaking(false)}
             onMade={(text, id) => {
               setMaking(false);
@@ -476,7 +479,7 @@ function SeasonSection({ no, season, lists, series, open, onToggle, questions, o
           )}
           {error && <ErrorLine>{error}</ErrorLine>}
           {busy && <Note>{busy}</Note>}
-          <View style={styles.actions}>
+          <View style={styles.actions} {...noPrint}>
             {fromSite && (busy ? <ActivityIndicator /> : <TextLink onPress={update} label="Update from the series’ site" red arrow />)}
             {editing !== 'rounds' && <TextLink onPress={() => setEditing('rounds')} label="+ Add a round" />}
             {asking ? (

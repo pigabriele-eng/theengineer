@@ -1,6 +1,7 @@
 import { Stack } from 'expo-router';
 import { useEffect, useState } from 'react';
 
+import PrintButton from '@/components/PrintButton';
 import { Block, Colophon, Fig, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import {
@@ -150,7 +151,9 @@ export default function TyreTempsScreen() {
     <Page keyboardShouldPersistTaps="handled">
       <Stack.Screen options={{ title: 'Tyre temperatures' }} />
       <Opening title="Tyre temperatures"
-        dek="Temperatures across each tyre straight after a run: inside (nearest the car’s centre), middle and outside, in °C. You get camber and pressure advice per tyre and the car’s balance." />
+        dek="Temperatures across each tyre straight after a run: inside (nearest the car’s centre), middle and outside, in °C. You get camber and pressure advice per tyre and the car’s balance.">
+        <PrintButton title="Tyre temperatures" />
+      </Opening>
 
       <Section no={1} title="Readings" dek="Typed in from the pyrometer, pasted from your notes, or read from IR sensors in a log.">
         <Options label="Where the readings come from" value={mode} onPick={setMode} options={MODES} />
