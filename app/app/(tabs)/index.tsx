@@ -7,7 +7,7 @@ import { CalendarLine, FilterBar, PlanForm, plannedLine, RemovePlanned } from '@
 import { FoldHead, SubFoldHead } from '@/components/Fold';
 import { PrepButton, usePrepAvailability } from '@/components/PrepButton';
 import {
-  B, Colophon, Fig, Folio, Hero, Label, Page, SpecLine, Swatch, TextLink, useWide,
+  Colophon, Fig, Label, Page, SpecLine, Swatch, TextLink, useWide,
 } from '@/components/Programme';
 import { RenameEvent } from '@/components/RenameEvent';
 import { SeasonMatchCount } from '@/components/SeasonMatch';
@@ -17,7 +17,7 @@ import {
   CalendarState, calendarApi, countByWhen, defaultFilter, Filter, filtered, Plan, todayIso, When, whenOf,
 } from '@/lib/calendar';
 import {
-  dateRange, dayLabel, eventsApi, Folder, FolderSession, FolderSummary, NO_EVENT,
+  dayLabel, eventsApi, Folder, FolderSession, FolderSummary, NO_EVENT,
 } from '@/lib/events';
 import {
   byYear, carLine, Championship, champKey, driversLine, eventKey, Folds, monthSpan, openByDefault, readFolds, saveFolds,
@@ -26,7 +26,7 @@ import {
 import { launchEvent } from '@/lib/openCurrent';
 import { PrepAvailability } from '@/lib/prep';
 import { fetchReport, Report } from '@/lib/report';
-import { face, Fonts, PHOTOS, photoFor, Space, themed, Type, useTheme } from '@/constants/Theme';
+import { face, Fonts, Space, themed, Type, useTheme } from '@/constants/Theme';
 
 // What the page knows about an event beyond the list: its runs by day, its report and the logger it was recorded on.
 type Detail = { folder?: Folder; report?: Report; logger?: string };
@@ -94,7 +94,6 @@ export default function SessionsScreen() {
   const lead = filtered(all, 'current', today).find((f) => f.id != null)
     ?? filtered(all, 'past', today).find((f) => f.id != null && f.sessions > 0)
     ?? filtered(all, 'upcoming', today).find((f) => f.id != null) ?? null;
-  const leadWhen = lead ? whenOf(lead, today) : null;
 
   // folded or open: what was tapped on this device, else the default
   const defaults = openByDefault(years, lead, Number(today.slice(0, 4)));
@@ -107,7 +106,7 @@ export default function SessionsScreen() {
     });
   const toggle = (key: string) => setOpen([key], !isOpen(key));
 
-  // the runs of the events open on the page, read when they open and again with the list; the lead's for its headline
+  // the runs of the events open on the page, read when they open and again with the list; the lead's always
   const leadKey = lead && lead.sessions > 0 ? lead.key : null;
   const opened = years.flatMap((y) => (!isOpen(yearKey(y)) ? [] : y.championships.flatMap((c) => (
     !isOpen(champKey(y, c)) ? [] : c.events.filter((f) => f.sessions > 0 && isOpen(eventKey(f))).map((f) => f.key)))));
@@ -135,33 +134,14 @@ export default function SessionsScreen() {
     }
   }, [leadKey, leadBestSession, loads]);
 
-  const leadDetail = lead ? details[lead.key] : undefined;
   const renamed = (key: string) => (name: string) => {
     setFolders((list) => list?.map((x) => (x.key === key ? { ...x, name } : x)) ?? list);
     load();
   };
 
-  const top = lead ? (
-    <>
-      <Hero photo={photoFor(lead.track)} tag={TAG[leadWhen!]} rest="Sessions" title={headlineOf(lead, leadDetail?.folder)}
-        deck={deckOf(lead, plans.get(lead.id!))} />
-      <Folio items={[
-        lead.track ? (
-          <>{lead.track}{leadDetail?.report ? <> <B>{metres(leadDetail.report.length_m)}</B></> : null}</>
-        ) : null,
-        crewOf(lead),
-        dateRange(lead.start, lead.end),
-        lead.sessions > 0 ? <><B>{lead.sessions}</B> runs · <B>{lead.clean_laps}</B> clean laps</> : 'No data yet',
-        lead.best_lap_s != null ? <>Best <B>{formatLap(lead.best_lap_s)}</B></> : null,
-      ]} />
-    </>
-  ) : (
-    <Hero photo={PHOTOS.dusk} tag="Sessions" title="The Engineer"
-      deck={folders ? 'No events yet. Upload logs or a zip of a whole test: each log becomes a run, and a zip an event of its own.' : undefined} />
-  );
-
+  // no big block for the latest event on top (Gabriele, 2026-10-07: "i don't need this information"): the list starts the page
   return (
-    <Page top={top}>
+    <Page>
       <View style={wide ? styles.indexBar : styles.indexBarPhone}>
         <FilterBar filter={active} counts={counts} onPick={setFilter} />
         {/* uploads have a page of their own: one big drop box */}
@@ -240,7 +220,6 @@ export default function SessionsScreen() {
   );
 }
 
-const TAG: Record<When, string> = { current: 'Current event', past: 'Latest event', upcoming: 'Next event' };
 const EMPTY: Record<When, string> = {
   current: 'Nothing on today or tomorrow.',
   upcoming: 'Nothing planned yet. Plan a test or a race weekend with + New event, or bring them in from your racing calendar.',
@@ -287,51 +266,9 @@ function YearFold({ no, y, isOpen, toggle, today, children }: {
 // ---------- words ----------
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
-const inWords = (n: number) => WORDS[n] ?? String(n);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const metres = (m: number) => `${Math.round(m).toLocaleString('en-GB')} m`;
 const pad2 = (n: number) => String(n).padStart(2, '0');
-
-/** A track's short name for a headline: "Hockenheim" for the Hockenheimring, "Spa" for Circuit de Spa-Francorchamps. */
-function shortTrack(track: string | null) {
-  if (!track) return null;
-  const t = track.replace(/^(Circuit|Circuito|Autodromo|Autódromo)( de| di| do| of)?\s+/i, '').trim();
-  if (/^hockenheim/i.test(t)) return 'Hockenheim';
-  return t.split(/\s*[,(]|\s+-\s+|-(?=[A-Z])/)[0];
-}
-
-/** What kind of event its runs make: a race weekend (qualifying or races), a practice, or a test. */
-function kindOf(folder: Folder | undefined, f: FolderSummary): 'test' | 'practice' | 'weekend' {
-  const kinds = new Set(folder?.days.flatMap((d) => d.sessions.map((s) => s.kind)) ?? []);
-  if (kinds.has('race') || kinds.has('qualifying')) return 'weekend';
-  if (kinds.size) return kinds.has('test') ? 'test' : 'practice';
-  return f.series ? 'weekend' : 'test';
-}
-
-/** The headline on the photo: "Hockenheim test", "Zandvoort weekend"; the event's name without a track. */
-function headlineOf(f: FolderSummary, folder?: Folder) {
-  const short = shortTrack(f.track);
-  return short ? `${short} ${kindOf(folder, f)}` : f.name;
-}
-
-/** Who drove the event and in what, for the facts under the photo: "Piana, Rackl · BMW M4 GT4 Evo". */
-function crewOf(f: FolderSummary) {
-  const line = [driversLine(f), carLine(f)].filter(Boolean).join(' · ');
-  return line || null;
-}
-
-const dayCount = (start: string | null, end: string | null) => {
-  if (!start || !end) return start || end ? 1 : 0;
-  return Math.round((Date.parse(end) - Date.parse(start)) / 86_400_000) + 1;
-};
-
-/** The italic line under the headline. */
-function deckOf(f: FolderSummary, plan?: Plan) {
-  if (f.sessions === 0) return `${f.name}: ${plannedLine(f, plan).toLowerCase()}.`;
-  const days = dayCount(f.start, f.end);
-  return `${f.name}: ${inWords(f.sessions)} run${f.sessions === 1 ? '' : 's'}${days ? ` over ${inWords(days)} day${days === 1 ? '' : 's'}` : ''}, ${plural(f.clean_laps, 'clean lap')}.`;
-}
 
 /** "28–30 Aug", "31 Oct–2 Nov", "Tue 3 Nov": the year's heading above says the year. */
 function shortDates(start: string | null, end: string | null) {
