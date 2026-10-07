@@ -610,10 +610,12 @@ def _steering(tr: dict[str, np.ndarray], a: int, b: int, phase: str, code: str) 
 
 # ---------- the obvious mistakes ----------
 
-EXIT_LIFT_PTS = 20.0  # % pedal: the throttle falls this far below the most it reached on the way out: a lift
-EXIT_LIFT_HOLD_S = 0.15  # ...and stays 10 points or more below it this long (a jolt of the foot on a kerb is not)
+EXIT_LIFT_PTS = 10.0  # % pedal: the throttle falls this far below the most it reached on the way out: a lift (every
+# one is a mistake, however small: this only keeps the pedal sensor's own wobble out)
+EXIT_LIFT_HOLD_S = 0.08  # ...and stays LIFT_BELOW_PTS or more below it this long (a single sample's jolt is not)
+LIFT_BELOW_PTS = 5.0
 EXIT_REACH_M = 150  # the exit runs this far past full throttle, at most (and never into the next corner's lift)
-MIN_LIFT_FROM = 40.0  # % pedal: a lift is from at least this much throttle
+MIN_LIFT_FROM = 20.0  # % pedal: a lift is from at least this much throttle (the throttle is on: PICKUP)
 EXIT_PAST_APEX_M = 10  # a lift from full throttle this far past the slowest point is on the way out, cornering or not
 STEP_RATE = 300.0  # %/s over STEP_WINDOW_S: the throttle stepped on rather than squeezed
 STEP_WINDOW_S = 0.2
@@ -624,6 +626,7 @@ MIN_STRAIGHT_BRAKE_S = 0.3
 MIN_SCRUB_KMH = 20.0  # braking that takes off less than this is a dab, not a stop
 ABS_ANY = 0.2  # the ABS working this share of the straight-line braking: the brakes are at the limit already
 LIFT_BEFORE_S = 0.3  # a lift is costed against the acceleration the car had this long before it
+LIFT_SMOOTH_M = 9  # m, odd
 MAX_LIFT_LOSS = 15 / 3.6  # m/s: a lift costs at most this much speed (a pre-lift jolt is no acceleration to keep)
 APEX_DIP_KMH = 5.0  # in a run of corners, a dip this deep is another corner
 LAST_CORNER_M = 30  # ...and the way out starts no sooner than this before the last one's official position
@@ -645,6 +648,7 @@ STALL_SHIFT_S = 0.4  # a stall no longer than this around a gear change is the g
 DRIVING_MS2 = 0.5  # m/s²: accelerating at least this before a lift, the car was driving out of the corner
 DIP_MAX_M = 200  # a lift the throttle never comes back from is counted this far at most
 MIN_OBVIOUS_S = 0.01  # an obvious mistake that costs less than this is the car at its limit (or noise)
+LIFT_KINDS = ("exit_lift", "on_off_throttle")  # ...except a lift: every one is a mistake
 
 
 def span_cost(e: Envelope, tr: dict[str, np.ndarray], a: int, b: int) -> float:
@@ -657,19 +661,22 @@ def span_cost(e: Envelope, tr: dict[str, np.ndarray], a: int, b: int) -> float:
 
 def lift_cost(tr: dict[str, np.ndarray], j: int, end: int, stop: int, most: np.ndarray | None = None) -> float:
     """What a lift from metre j to end costs: the car keeps the acceleration it had just before the lift (LIFT_BEFORE_S)
-    through it instead, or where it was not accelerating then (balanced in a corner), the acceleration it had just
-    after, once back on the throttle; and what it would have had
+    through it instead, or the acceleration it had just after, once back on the throttle, if that was more; and what
+    it would have had
     more at the end is carried on until stop, the next corner's lift or brake point (_carried). Never above most (m/s
     at each metre: the speed the car's best cornering allows there), nor below the lap's own."""
     v, t = np.asarray(tr["speed"], float) / 3.6, np.asarray(tr["t"], float)
     most = np.full_like(v, np.inf) if most is None else np.maximum(np.asarray(most, float), v)
     j0 = max(int(np.searchsorted(t, t[j] - LIFT_BEFORE_S)), 0)
     k1 = min(int(np.searchsorted(t, t[end] + LIFT_BEFORE_S)), len(v) - 1)
-    before = float(v[j] - v[j0]) / max(float(t[j] - t[j0]), 1e-3) if j > j0 else 0.0
-    after = float(v[k1] - v[end]) / max(float(t[k1] - t[end]), 1e-3) if k1 > end else 0.0
-    acc = max(before if before >= DRIVING_MS2 else after, 0.0)
+    # read on the speed smoothed over LIFT_SMOOTH_M: a logged speed steps a few km/h from one metre to the next
+    vs = np.convolve(np.pad(v, LIFT_SMOOTH_M // 2, mode="edge"), np.ones(LIFT_SMOOTH_M) / LIFT_SMOOTH_M, "valid")
+    before = float(vs[j] - vs[j0]) / max(float(t[j] - t[j0]), 1e-3) if j > j0 else 0.0
+    after = float(vs[k1] - vs[end]) / max(float(t[k1] - t[end]), 1e-3) if k1 > end else 0.0
+    acc = max(before, after, 0.0)  # the drive it had either side of the lift: a lift begun as the drive builds
+    # (the pedal coming back a few points first) costs the drive it had once back on
     x = np.arange(end - j + 1, dtype=float)
-    held = np.minimum(np.sqrt(v[j] ** 2 + 2 * acc * x), np.minimum(v[j:end + 1] + MAX_LIFT_LOSS, most[j:end + 1]))
+    held = np.minimum(np.sqrt(vs[j] ** 2 + 2 * acc * x), np.minimum(v[j:end + 1] + MAX_LIFT_LOSS, most[j:end + 1]))
     held = np.maximum(held, v[j:end + 1])
     return float(np.sum(1 / v[j:end] - 1 / held[:-1])) + _carried(v, end, float(held[-1]), stop, most)
 
@@ -1019,9 +1026,9 @@ def _into_next(ay: np.ndarray, j: int, side: float) -> bool:
 
 
 def _held_below(seg: np.ndarray, ts: np.ndarray, top: np.ndarray, j: int) -> float:
-    """How long from j the throttle stays 10 points or more below the most it had reached."""
+    """How long from j the throttle stays LIFT_BELOW_PTS or more below the most it had reached."""
     k = j
-    while k < len(seg) and seg[k] <= top[k] - 10:
+    while k < len(seg) and seg[k] <= top[k] - LIFT_BELOW_PTS:
         k += 1
     return float(ts[min(k, len(ts) - 1)] - ts[j])
 
@@ -1119,7 +1126,7 @@ def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Enve
             if dips:
                 j, end = dips[0][0], dips[-1][1]
                 cost = sum(lift_cost(tr, x, e, stop, most) for x, e, _, _ in dips)
-                most_g = float(np.max(np.abs(ay[c.m:j + 1])))
+                most_g = float(np.max(np.abs(ay[min(c.m, j):max(c.m, j) + 1])))
                 cornering = max(abs(ay[x]) for x, _, _, _ in dips) > EXIT_AY_SHARE * most_g
                 # off full throttle past the slowest point is a lift on the way out, however hard the car is still
                 # cornering (a long fast corner's exit is still cornering)
@@ -1269,7 +1276,8 @@ def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Enve
                     braking[c.code] = item("braking_unused", c, a, e, a, f"Braking grip left unused into {c.code}",
                                            what, "Hold the pressure at the limit until the turn-in, and release it "
                                            "only as the steering goes on; then move the brake point later.", cost)
-    out = [x for x in out if x["cost_s"] >= MIN_OBVIOUS_S]
+    # every lift counts, however little it cost; the rest under MIN_OBVIOUS_S is the car at its limit (or noise)
+    out = [x for x in out if x["cost_s"] >= MIN_OBVIOUS_S or x["kind"] in LIFT_KINDS]
     out.sort(key=lambda x: -x["cost_s"])
     return out
 
@@ -1619,8 +1627,12 @@ def _with_exit_lifts(obvious: list[dict], items: list[dict], tr: dict[str, np.nd
         if x["kind"] != "exit_lift" or x["cost_s"] < MIN_OBVIOUS_S:
             continue
         a, b = int(x["start_m"]), int(x["end_m"])
-        if any(o["code"] == x["code"] and o["kind"] in EXIT_KINDS and o["start_m"] <= b and a <= o["end_m"]
-               for o in out):
+        over = [o for o in out if o["code"] == x["code"] and o["kind"] in EXIT_KINDS and o["start_m"] <= b
+                and a <= o["end_m"]]
+        if over:  # the same lift, costed against the target too: the larger of the two
+            for o in over:
+                if o["kind"] in LIFT_KINDS:
+                    o["cost_s"] = max(o["cost_s"], x["cost_s"])
             continue
         what = (f"On the way out of {x['code']} you came off the throttle before reaching full throttle, and the "
                 f"speed only went from {v[a]:.0f} to {v[b]:.0f} km/h from {a} m to {b} m. " + x["what"])

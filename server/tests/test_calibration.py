@@ -298,3 +298,14 @@ def test_a_lift_taken_out_of_the_lap_runs_on_at_its_own_acceleration(fastest):
     assert fixed[400] > v[400] and fixed[400] <= fastest.trace["speed"][400] * 1.01
     assert np.abs(np.diff(fixed)).max() <= np.abs(np.diff(v)).max() + 0.5
     assert without_mistakes(lifted.trace, env_r, SECTIONS, []).tolist() == v.tolist()
+
+
+def test_a_small_lift_is_a_lift_too():
+    from app.analysis.technique import _dips
+    n = 200
+    thr = np.full(n, 100.0)
+    thr[50:54] = 88.0  # 12 points off for 0.1 s: still off the throttle
+    thr[120] = 80.0  # one sample's jolt is not
+    ts = np.arange(n) * 0.025  # 40 m/s
+    out = _dips(thr, ts, np.maximum.accumulate(thr), np.full(n, -1.5), 0, -1.0, 0)
+    assert [(a, lo) for a, _, _, lo in out] == [(50, 88.0)]
