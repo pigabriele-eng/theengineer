@@ -11,7 +11,7 @@ from datetime import date, timedelta
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app import models
+from app import event_modes, models
 
 DAY_BEFORE = timedelta(days=1)
 
@@ -131,6 +131,7 @@ def remove(db: Session, ev: models.Event) -> None:
     db.execute(delete(models.ReportCache).where(models.ReportCache.scope == scope))
     db.execute(delete(models.TechniqueCache).where(models.TechniqueCache.scope == scope))
     db.execute(delete(models.EventPlan).where(models.EventPlan.event_id == ev.id))
+    event_modes.forget(db, ev.id)
     db.delete(ev)
     db.flush()
 
