@@ -1,16 +1,21 @@
 import { Stack } from 'expo-router';
-import { ReactNode, useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  Linking,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  TextInput,
-  TextInputProps,
-} from 'react-native';
+import { useEffect, useState } from 'react';
 
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { Block, Colophon, Fig, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
+import { Text, View } from '@/components/Themed';
+import {
+  Actions,
+  CarGrid,
+  ErrorLine,
+  Field,
+  FieldGrid,
+  InlineLink,
+  MainAction,
+  Note,
+  Opening,
+  Options,
+  SubHead,
+} from '@/components/ToolForm';
 import { api, Session } from '@/lib/api';
 import {
   Axle,
@@ -24,13 +29,13 @@ import {
   TempAnalysis,
   tyres,
 } from '@/lib/tyres';
-import { Palette, Radius, themed, useTheme } from '@/constants/Theme';
+import { Fonts, inkOn, Palette, themed, Type, useTheme } from '@/constants/Theme';
 
 type Mode = 'pyrometer' | 'paste' | 'log';
-const MODES: [Mode, string][] = [
-  ['pyrometer', 'Type readings'],
-  ['paste', 'Paste readings'],
-  ['log', 'IR sensors in a log'],
+const MODES: { value: Mode; label: string }[] = [
+  { value: 'pyrometer', label: 'Type readings' },
+  { value: 'paste', label: 'Paste readings' },
+  { value: 'log', label: 'IR sensors in a log' },
 ];
 type Pos = 'inside' | 'middle' | 'outside';
 const SHORT: Record<Pos, string> = { inside: 'In', middle: 'Mid', outside: 'Out' };
@@ -42,61 +47,20 @@ const ACROSS: Record<Corner, Pos[]> = {
   RR: ['inside', 'middle', 'outside'],
 };
 
-// Four tyres laid out like the car seen from above, front at the top.
-function CarGrid({ cell }: { cell: (c: Corner) => ReactNode }) {
-  const styles = useStyles();
-  return (
-    <View style={styles.car}>
-      <Text style={styles.carLabel}>Front</Text>
-      {[CORNERS.slice(0, 2), CORNERS.slice(2)].map((row) => (
-        <View key={row[0]} style={styles.carRow}>
-          {row.map((c) => (
-            <View key={c} style={styles.carCell}>
-              <Text style={styles.cornerName}>{c}</Text>
-              {cell(c)}
-            </View>
-          ))}
-        </View>
-      ))}
-    </View>
-  );
-}
-
 // A figure from an older public booklet, with a link to it.
 function Ref({ r }: { r: Reference }) {
-  const styles = useStyles();
-  const tint = useThemeColor({}, 'tint');
   return (
-    <Text style={styles.dim}>
-      {r.text}{' '}
-      <Text style={{ color: tint }} onPress={() => Linking.openURL(r.source)}>
-        Source
-      </Text>
-    </Text>
+    <Note small>
+      {r.text} <InlineLink label="Source" url={r.source} />
+    </Note>
   );
 }
 
-function Field(props: TextInputProps & { label?: string }) {
-  const styles = useStyles();
-  const theme = useTheme();
-  const color = useThemeColor({}, 'text');
-  const { label, style, ...rest } = props;
-  return (
-    <View style={styles.field}>
-      {label && <Text style={styles.fieldLabel}>{label}</Text>}
-      <TextInput
-        placeholderTextColor={theme.textMuted}
-        keyboardType="numbers-and-punctuation"
-        {...rest}
-        style={[styles.input, { color }, style]}
-      />
-    </View>
-  );
-}
-
+/** Tyre temperatures: readings across each tyre in (typed, pasted, or IR sensors in a log), the target spread, then
+ * the camber and pressure advice per tyre and the car's balance. */
 export default function TyreTempsScreen() {
   const styles = useStyles();
-  const theme = useTheme();
+  const wide = useWide();
   const [mode, setMode] = useState<Mode>('pyrometer');
   const [vals, setVals] = useState<Record<string, string>>({});
   const [paste, setPaste] = useState('');
@@ -110,7 +74,6 @@ export default function TyreTempsScreen() {
   const [result, setResult] = useState<TempAnalysis | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const tint = useThemeColor({}, 'tint');
 
   useEffect(() => {
     tyres.tempSettings().then((s) => {
@@ -183,106 +146,93 @@ export default function TyreTempsScreen() {
     }
   };
 
-  const chip = (selected: boolean) => [styles.chip, selected && { borderColor: tint }];
-  const chipText = (selected: boolean) => (selected ? { color: tint } : undefined);
-
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <Page keyboardShouldPersistTaps="handled">
       <Stack.Screen options={{ title: 'Tyre temperatures' }} />
-      <Text style={styles.intro}>
-        Temperatures across each tyre straight after a run: inside (nearest the car's centre), middle and outside, in
-        °C. You get camber and pressure advice per tyre and the car's balance.
-      </Text>
+      <Opening title="Tyre temperatures"
+        dek="Temperatures across each tyre straight after a run: inside (nearest the car’s centre), middle and outside, in °C. You get camber and pressure advice per tyre and the car’s balance." />
 
-      <View style={styles.chips}>
-        {MODES.map(([key, name]) => (
-          <Pressable key={key} onPress={() => setMode(key)} style={chip(key === mode)}>
-            <Text style={chipText(key === mode)}>{name}</Text>
-          </Pressable>
-        ))}
-      </View>
+      <Section no={1} title="Readings" dek="Typed in from the pyrometer, pasted from your notes, or read from IR sensors in a log.">
+        <Options label="Where the readings come from" value={mode} onPick={setMode} options={MODES} />
 
-      {mode === 'pyrometer' && (
-        <>
-          <CarGrid
-            cell={(c) => (
-              <View style={styles.cell}>
-                <View style={styles.across}>
-                  {ACROSS[c].map((p) => (
-                    <Field
-                      key={p}
-                      label={SHORT[p]}
-                      value={vals[`${c}-${p}`] ?? ''}
-                      onChangeText={set(`${c}-${p}`)}
-                      accessibilityLabel={`${c} ${p} temperature`}
-                      style={styles.tempInput}
-                    />
-                  ))}
+        {mode === 'pyrometer' && (
+          <>
+            <CarGrid style={styles.grid}
+              cell={(c) => (
+                <View style={styles.cell}>
+                  <View style={styles.across}>
+                    {ACROSS[c].map((p) => (
+                      <Field key={p} small label={SHORT[p]} align="center" value={vals[`${c}-${p}`] ?? ''}
+                        onChangeText={set(`${c}-${p}`)} accessibilityLabel={`${c} ${p} temperature`} />
+                    ))}
+                  </View>
+                  <View style={styles.across}>
+                    <Field small label="Hot bar" align="center" value={vals[`${c}-p`] ?? ''} onChangeText={set(`${c}-p`)}
+                      keyboardType="decimal-pad" placeholder="opt." accessibilityLabel={`${c} hot pressure, bar`} />
+                    <Field small label="Camber °" align="center" value={vals[`${c}-camber`] ?? ''}
+                      onChangeText={set(`${c}-camber`)} placeholder="opt." accessibilityLabel={`${c} camber, degrees`} />
+                  </View>
                 </View>
-                <View style={styles.across}>
-                  <Field label="Hot bar" value={vals[`${c}-p`] ?? ''} onChangeText={set(`${c}-p`)}
-                    keyboardType="decimal-pad" placeholder="opt." style={styles.tempInput} />
-                  <Field label="Camber °" value={vals[`${c}-camber`] ?? ''} onChangeText={set(`${c}-camber`)}
-                    placeholder="opt." style={styles.tempInput} />
-                </View>
-              </View>
-            )}
-          />
-          <Text style={styles.note}>Hot pressure and camber are optional; with them the advice gives new values.</Text>
-        </>
-      )}
+              )}
+            />
+            <Note small style={styles.gapTop}>Hot pressure and camber are optional; with them the advice gives new values.</Note>
+          </>
+        )}
 
-      {mode === 'paste' && (
-        <>
-          <Text style={styles.note}>
-            One tyre per line: corner, inside, middle, outside, and optionally hot pressure and camber. For example
-            {'\n'}FL 92 88 84 1.85 -3.5
-          </Text>
-          <Field value={paste} onChangeText={setPaste} multiline keyboardType="default"
-            placeholder={'FL 92 88 84\nFR 90 87 85\nRL 80 78 77\nRR 79 78 76'} style={styles.paste} />
-          <Pressable style={[styles.outline, { borderColor: tint }]} onPress={applyPaste}>
-            <Text style={{ color: tint }}>Use these readings</Text>
-          </Pressable>
-        </>
-      )}
-
-      {mode === 'log' && (
-        <>
-          <Text style={styles.note}>
-            Uses IR tyre sensors (inside, middle and outside channels) in the session's log, averaged at racing speed.
-            TPMS temperatures can't be used: they measure the air inside the tyre.
-          </Text>
-          <View style={styles.chips}>
-            {sessions.slice(0, 8).map((s) => (
-              <Pressable key={s.id} onPress={() => setSessionId(s.id)} style={chip(s.id === sessionId)}>
-                <Text style={chipText(s.id === sessionId)}>{s.name ?? `Session ${s.id}`}</Text>
-              </Pressable>
-            ))}
-            {sessions.length === 0 && <Text style={styles.note}>No sessions yet.</Text>}
+        {mode === 'paste' && (
+          <View style={styles.paste}>
+            <Note small>
+              One tyre per line: corner, inside, middle, outside, and optionally hot pressure and camber. For example
+              {'\n'}FL 92 88 84 1.85 -3.5
+            </Note>
+            <Field boxed value={paste} onChangeText={setPaste} multiline keyboardType="default"
+              accessibilityLabel="Readings, one tyre per line"
+              placeholder={'FL 92 88 84\nFR 90 87 85\nRL 80 78 77\nRR 79 78 76'} inputStyle={styles.pasteBox} />
+            <TextLink onPress={applyPaste} label="Use these readings" arrow />
           </View>
-        </>
-      )}
+        )}
 
-      <Text style={styles.h2}>Target spread, °C</Text>
-      <Text style={styles.note}>How much hotter the inside edge should run than the outside.</Text>
-      <View style={styles.row}>
-        <Field label="Front" value={spread.front} onChangeText={(v) => setSpread((s) => ({ ...s, front: v }))} />
-        <Field label="Rear" value={spread.rear} onChangeText={(v) => setSpread((s) => ({ ...s, rear: v }))} />
-      </View>
-      {spreadSource && <Text style={styles.dim}>{spreadSource}</Text>}
-      {reference && <Ref r={reference} />}
-      {mode !== 'log' && (
-        <Field label="Series (optional, checks pressures against its P-Book hot minimum)" value={series}
-          onChangeText={setSeries} keyboardType="default" placeholder="e.g. GT4 Germany" />
-      )}
+        {mode === 'log' && (
+          <View style={styles.paste}>
+            <Note small>
+              Uses IR tyre sensors (inside, middle and outside channels) in the session’s log, averaged at racing
+              speed. TPMS temperatures can’t be used: they measure the air inside the tyre.
+            </Note>
+            {sessions.length === 0 ? <Note small>No sessions yet.</Note> : (
+              <Options label="Session" value={sessionId} onPick={setSessionId}
+                options={sessions.slice(0, 8).map((s) => ({ value: s.id, label: s.name ?? `Session ${s.id}` }))} />
+            )}
+          </View>
+        )}
+      </Section>
 
-      <Pressable style={[styles.button, { backgroundColor: tint }]} onPress={analyse} disabled={busy}>
-        {busy ? <ActivityIndicator color={theme.onTint} /> : <Text style={styles.buttonText}>Analyse</Text>}
-      </Pressable>
-      {error && <Text style={styles.error}>{error}</Text>}
+      <Section no={2} title="Target spread" dek="How much hotter the inside edge should run than the outside, in °C.">
+        <FieldGrid columns={wide ? 4 : 2}>
+          <Field label="Front" unit="°C" value={spread.front} onChangeText={(v) => setSpread((s) => ({ ...s, front: v }))} />
+          <Field label="Rear" unit="°C" value={spread.rear} onChangeText={(v) => setSpread((s) => ({ ...s, rear: v }))} />
+        </FieldGrid>
+        {spreadSource ? <Note small style={styles.gapTop}>{spreadSource}</Note> : null}
+        {reference ? <View style={styles.gapTop}><Ref r={reference} /></View> : null}
+        {mode !== 'log' && (
+          <View style={styles.series}>
+            <Field label="Series" unit="(optional, checks pressures against its P-Book hot minimum)" value={series}
+              onChangeText={setSeries} keyboardType="default" placeholder="e.g. GT4 Germany" />
+          </View>
+        )}
+        <Actions>
+          <MainAction label="Analyse" onPress={analyse} busy={busy} />
+        </Actions>
+        {error ? <View style={styles.gapTop}><ErrorLine>{error}</ErrorLine></View> : null}
+      </Section>
 
       {result && <Results result={result} />}
-    </ScrollView>
+
+      <Colophon left="The Engineer · Tyre temperatures" links={[
+        { label: 'Tyre pressures', href: '/tools/pressures' },
+        { label: 'Tyre fit', href: '/tools/tyre-fit' },
+        { label: 'Setup', href: '/tools/setup' },
+      ]} />
+    </Page>
   );
 }
 
@@ -299,104 +249,104 @@ const pressureTone = (theme: Palette, verdict: string) =>
   verdict === 'raise' ? theme.tyre.cold : verdict === 'lower' ? theme.tyre.hot : verdict === 'ok' ? theme.tyre.ok : undefined;
 
 function Results({ result }: { result: TempAnalysis }) {
-  const theme = useTheme();
+  const c = useTheme();
   const styles = useStyles();
+  const wide = useWide();
   const by = Object.fromEntries(result.tyres.map((t) => [t.corner, t]));
   return (
-    <View style={styles.section}>
-      <Text style={styles.h2}>Advice{result.file ? ` · ${result.file}` : ''}</Text>
+    <Section no={3} title="Advice" dek={result.file ? `From ${result.file}.` : 'Average across each tyre, and what to change.'}>
       <CarGrid
-        cell={(c) => {
-          const t = by[c];
-          if (!t) return <Text style={styles.dim}>–</Text>;
+        cell={(k) => {
+          const t = by[k];
+          if (!t) return <Text style={styles.dash}>–</Text>;
+          const tone = pressureTone(c, t.pressure.verdict);
           return (
-            <View style={{ gap: 2 }}>
-              <Text style={styles.big}>{t.average_c.toFixed(0)} °C</Text>
-              <Text style={styles.small}>
-                Camber: {VERDICT[t.camber.verdict] ?? t.camber.verdict} ({t.camber.spread_c > 0 ? '+' : ''}
-                {t.camber.spread_c.toFixed(0)})
+            <View>
+              <Fig value={t.average_c.toFixed(0)} unit="°C" size={wide ? 72 : 46} bar={tone ?? c.rule} barHeight={6} />
+              <Text style={styles.across3}>
+                {ACROSS[k].map((p) => `${SHORT[p]} ${t[p]}`).join(' · ')}
               </Text>
-              <Text style={styles.small}>
-                Pressure:{' '}
-                <Text style={StyleSheet.flatten([styles.verdict, { color: pressureTone(theme, t.pressure.verdict) }])}>
-                  {VERDICT[t.pressure.verdict] ?? t.pressure.verdict}
-                </Text>
-              </Text>
+              <View style={styles.verdicts}>
+                <View style={styles.verdict}>
+                  <Label small muted>Camber</Label>
+                  <Text style={styles.verdictText}>
+                    {VERDICT[t.camber.verdict] ?? t.camber.verdict}{' '}
+                    <Text style={styles.spread}>({t.camber.spread_c > 0 ? '+' : ''}{t.camber.spread_c.toFixed(0)})</Text>
+                  </Text>
+                </View>
+                <View style={styles.verdict}>
+                  <Label small muted>Pressure</Label>
+                  {tone ? (
+                    <Block label={VERDICT[t.pressure.verdict] ?? t.pressure.verdict} color={tone} ink={inkOn(tone)} />
+                  ) : (
+                    <Text style={styles.verdictText}>{VERDICT[t.pressure.verdict] ?? t.pressure.verdict}</Text>
+                  )}
+                </View>
+              </View>
             </View>
           );
         }}
       />
+
+      {result.balance.length > 0 && <SubHead style={styles.subGap}>Balance</SubHead>}
       {result.balance.map((b) => (
-        <View key={b.kind} style={{ gap: 2 }}>
-          <Text>{b.text}</Text>
-          {b.references.map((r) => (
-            <Ref key={r.text} r={r} />
-          ))}
+        <View key={b.kind} style={styles.balance}>
+          <Text style={styles.body}>{b.text}</Text>
+          {b.references.map((r) => <Ref key={r.text} r={r} />)}
         </View>
       ))}
+
+      <SubHead style={styles.subGap}>Tyre by tyre</SubHead>
       {result.tyres.map((t) => (
-        <View key={t.corner} style={styles.card}>
-          <Text style={styles.cardTitle}>
-            {t.corner} · in {t.inside} · mid {t.middle} · out {t.outside} °C
-          </Text>
-          <Text style={styles.label}>Camber</Text>
-          <Text>{t.camber.text}</Text>
-          {t.camber.references.map((r) => (
-            <Ref key={r.text} r={r} />
-          ))}
-          <Text style={StyleSheet.flatten([styles.label, { color: pressureTone(theme, t.pressure.verdict), opacity: 1 }])}>
-            Pressure
-          </Text>
-          <Text style={t.pressure.below_minimum ? styles.error : undefined}>{t.pressure.text}</Text>
+        <View key={t.corner} style={styles.why}>
+          <View style={styles.whyHead}>
+            <Block label={t.corner} color={c.rule} ink={c.background} size={13} />
+            <Text style={styles.whyTemps}>In {t.inside} · mid {t.middle} · out {t.outside} °C</Text>
+          </View>
+          <View style={wide ? styles.whyCols : undefined}>
+            <View style={wide ? styles.whyCol : undefined}>
+              <Label small muted>Camber</Label>
+              <Text style={styles.body}>{t.camber.text}</Text>
+              {t.camber.references.map((r) => <Ref key={r.text} r={r} />)}
+            </View>
+            <View style={wide ? styles.whyCol : styles.whyNext}>
+              <Label small muted>Pressure</Label>
+              <Text style={t.pressure.below_minimum ? styles.bodyError : styles.body}>{t.pressure.text}</Text>
+            </View>
+          </View>
         </View>
       ))}
-      <Text style={styles.dim}>
+      <Note small style={styles.gapTop}>
         Target spread front {result.target_spread_c.front} °C, rear {result.target_spread_c.rear} °C (
         {result.target_spread_source === 'entered' ? 'entered' : 'estimate'}). Change one thing at a time and measure
         again.
-      </Text>
-    </View>
+      </Note>
+    </Section>
   );
 }
 
 const useStyles = themed((c) => ({
-  container: { padding: 16, gap: 12, maxWidth: 720, width: '100%', alignSelf: 'center' },
-  intro: { opacity: 0.8 },
-  h2: { fontSize: 18, fontWeight: '700', marginTop: 8 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { borderWidth: 1, borderColor: c.borderStrong, borderRadius: Radius.chip, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: c.surface },
-  row: { flexDirection: 'row', gap: 12, alignItems: 'flex-end' },
-  field: { flex: 1, gap: 2 },
-  fieldLabel: { fontSize: 11, opacity: 0.6 },
-  input: {
-    borderWidth: 1,
-    borderColor: c.borderStrong,
-    borderRadius: Radius.control,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    fontSize: 16,
-    fontVariant: ['tabular-nums'], backgroundColor: c.surface,
-  },
-  tempInput: { paddingHorizontal: 6, textAlign: 'center' },
-  paste: { minHeight: 110, textAlignVertical: 'top', fontFamily: 'SpaceMono' },
-  car: { gap: 8, padding: 8, borderRadius: Radius.card, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface },
-  carLabel: { textAlign: 'center', fontSize: 12, opacity: 0.5, textTransform: 'uppercase', letterSpacing: 1 },
-  carRow: { flexDirection: 'row', gap: 12 },
-  carCell: { flex: 1, gap: 4 },
-  cornerName: { fontWeight: '700' },
-  cell: { gap: 6 },
-  across: { flexDirection: 'row', gap: 4 },
-  big: { fontSize: 22, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  small: { fontSize: 13, fontVariant: ['tabular-nums'] },
-  verdict: { fontWeight: '700' },
-  button: { borderRadius: Radius.control, padding: 14, alignItems: 'center' },
-  buttonText: { color: c.onTint, fontWeight: '600', fontSize: 16 },
-  outline: { borderRadius: Radius.control, padding: 12, alignItems: 'center', borderWidth: 1 },
-  error: { color: c.error },
-  note: { opacity: 0.7, fontSize: 13 },
-  dim: { opacity: 0.55, fontSize: 13 },
-  section: { gap: 10 },
-  card: { paddingVertical: 10, borderBottomWidth: 1, borderColor: c.separator, gap: 4 },
-  cardTitle: { fontSize: 16, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  label: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4 },
+  grid: { marginTop: 18 },
+  cell: { gap: 12 },
+  across: { flexDirection: 'row', gap: 8 },
+  gapTop: { marginTop: 12 },
+  paste: { gap: 14, marginTop: 18, maxWidth: 640 },
+  pasteBox: { minHeight: 120 },
+  series: { marginTop: 20, maxWidth: 640 },
+  dash: { fontFamily: Fonts.display, fontSize: 40, color: c.textMuted },
+  across3: { fontFamily: Fonts.label, fontSize: 13, fontVariant: ['tabular-nums'], color: c.textSecondary, marginTop: 8 },
+  verdicts: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 18, rowGap: 8, marginTop: 10 },
+  verdict: { gap: 3 },
+  verdictText: { fontFamily: Type.label.fontFamily, fontSize: 14, color: c.text },
+  spread: { fontFamily: Fonts.label, fontSize: 13, fontVariant: ['tabular-nums'], color: c.textSecondary },
+  subGap: { marginTop: 28 },
+  balance: { gap: 4, paddingVertical: 6 },
+  body: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 23, color: c.text },
+  bodyError: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 23, color: c.error },
+  why: { borderBottomWidth: 1, borderColor: c.separator, paddingTop: 10, paddingBottom: 12, gap: 6 },
+  whyHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  whyTemps: { fontFamily: Fonts.label, fontSize: 14, fontVariant: ['tabular-nums'], color: c.text },
+  whyCols: { flexDirection: 'row', gap: 28 },
+  whyCol: { flex: 1, minWidth: 0, gap: 3 },
+  whyNext: { marginTop: 8, gap: 3 },
 }));
