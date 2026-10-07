@@ -35,6 +35,7 @@ MIN_LAPS_FOR_TRENDS = 8
 LIMIT_LAPS_WITHIN = 0.02  # the car's limits come from laps this close to the quickest
 MIN_LIMIT_LAPS = 3
 SHAPE_LAPS = 40  # the road's shape is read from the quickest laps, at most this many
+FLAT_OUT_PCT, FLAT_OUT_SHARE = 98.0, 0.95  # a section at this throttle over this share of it is flat out
 OFF_LINE_KMH = 20.0  # a lap whose speed is this far from the fastest lap's on average (km/h) is off the line
 SIGNIFICANT_P = 0.01
 
@@ -169,13 +170,24 @@ def targets(laps: list, reference: dict[str, np.ndarray], lap_time: float,
         def best(ts: list[np.ndarray]) -> list[tuple[int, int, float]]:
             return [(s.start, s.end, min(float(t[s.end] - t[s.start]) for t in ts)) for s in sections]
         passes = best([_times(x) for x in laps])
+        # a flat-out section is only as quick as the speed carried into it: a pass with more (a tow, another lap's
+        # exit) is no floor for it, so there the model alone shapes the lap, never quicker than that pass
+        floor = [p for p, s in zip(passes, sections, strict=True) if not _flat_out(reference, s)]
         # the theoretical lap takes exactly the best pass the car has really made through every section: the model
         # only shapes the speed inside it (it ran up to ~0.5 s a lap quicker than any pass ever driven); the
         # realistic target is never slower than the fastest lap's own pass, nor quicker than the best one
-        cal_p = cal.to_best(raw, passes, cap=passes)
+        cal_p = cal.to_best(raw, floor, cap=passes)
         cal_h = cal.to_best(raw_held, best([np.asarray(reference["t"], float)]), cap=passes)
     return Targets(car_limits(traces, load, shaped), perfect, held, cal_p.target(raw), cal_h.target(raw_held), cal_p,
                    cal_h, shape)
+
+
+def _flat_out(reference: dict[str, np.ndarray], s: Section) -> bool:
+    """The fastest lap is at full throttle through (nearly) all of the section."""
+    thr = reference.get("throttle")
+    if thr is None or s.end <= s.start:
+        return False
+    return float(np.mean(np.asarray(thr[s.start:s.end], float) >= FLAT_OUT_PCT)) >= FLAT_OUT_SHARE
 
 
 def _matching(laps: list, reference: dict[str, np.ndarray]) -> list:

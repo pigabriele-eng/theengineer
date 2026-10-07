@@ -633,10 +633,12 @@ NEXT_TURN_M = 30  # a lift is for the next corner when the car turns the other w
 NEXT_TURN_G = 0.5  # this much, in g) or loads up the same way (by NEXT_TURN_RISE, to twice NEXT_TURN_G)
 NEXT_TURN_RISE = 0.3
 EXIT_AY_SHARE = 0.8  # a lift with the car still cornering this hard (of the most it did from the slowest point) is
-# balancing it in the corner, not a lift on the way out
+# on and off the throttle through the corner, not a lift on the way out
 SHIFT_MARGIN_RPM = 150  # an upshift this far off the ideal revs is early or late
 LIMITER_RPM = 80  # revs within this of the limiter: on it
 LIMITER_HELD_M = 10  # metres on the limiter before an upshift: late, wherever the ideal revs are
+DRIVING_MS2 = 0.5  # m/s²: accelerating at least this before a lift, the car was driving out of the corner
+DIP_MAX_M = 200  # a lift the throttle never comes back from is counted this far at most
 MIN_OBVIOUS_S = 0.01  # an obvious mistake that costs less than this is the car at its limit (or noise)
 
 
@@ -649,14 +651,18 @@ def span_cost(e: Envelope, tr: dict[str, np.ndarray], a: int, b: int) -> float:
 
 
 def lift_cost(tr: dict[str, np.ndarray], j: int, end: int, stop: int, most: np.ndarray | None = None) -> float:
-    """What a lift from metre j to end costs: the car keeps the acceleration it had before the lift (LIFT_BEFORE_S)
-    through it instead, and the speed it would have had more at the end shrinks down the straight as the power's
-    share of it does (as 1/v) until stop, the next corner's lift or brake point. Never above most (m/s at each metre:
-    perfect driving's speed), nor below the lap's own."""
+    """What a lift from metre j to end costs: the car keeps the acceleration it had just before the lift (LIFT_BEFORE_S)
+    through it instead, or where it was not accelerating then (balanced in a corner), the acceleration it had just
+    after, once back on the throttle; and what it would have had
+    more at the end is carried on until stop, the next corner's lift or brake point (_carried). Never above most (m/s
+    at each metre: the speed the car's best cornering allows there), nor below the lap's own."""
     v, t = np.asarray(tr["speed"], float) / 3.6, np.asarray(tr["t"], float)
     most = np.full_like(v, np.inf) if most is None else np.maximum(np.asarray(most, float), v)
     j0 = max(int(np.searchsorted(t, t[j] - LIFT_BEFORE_S)), 0)
-    acc = max(float(v[j] - v[j0]) / max(float(t[j] - t[j0]), 1e-3), 0.0) if j > j0 else 0.0
+    k1 = min(int(np.searchsorted(t, t[end] + LIFT_BEFORE_S)), len(v) - 1)
+    before = float(v[j] - v[j0]) / max(float(t[j] - t[j0]), 1e-3) if j > j0 else 0.0
+    after = float(v[k1] - v[end]) / max(float(t[k1] - t[end]), 1e-3) if k1 > end else 0.0
+    acc = max(before if before >= DRIVING_MS2 else after, 0.0)
     x = np.arange(end - j + 1, dtype=float)
     held = np.minimum(np.sqrt(v[j] ** 2 + 2 * acc * x), np.minimum(v[j:end + 1] + MAX_LIFT_LOSS, most[j:end + 1]))
     held = np.maximum(held, v[j:end + 1])
@@ -761,6 +767,24 @@ def _last_apex(v: np.ndarray, a: int, b: int) -> int:
     return apex if dip is None else dip
 
 
+def _dips(seg: np.ndarray, ts: np.ndarray, top: np.ndarray, ay: np.ndarray, a: int, side: float,
+          apex: int) -> list[tuple[int, int, float, float]]:
+    """Every lift from metre a on (seg: the throttle from there): the throttle EXIT_LIFT_PTS or more below the most
+    it had reached, for EXIT_LIFT_HOLD_S or longer, and not for the next corner. Each as (start metre, metre the
+    throttle is back, the throttle before, the lowest)."""
+    out, i0 = [], 0
+    for j in np.flatnonzero((top - seg >= EXIT_LIFT_PTS) & (top >= MIN_LIFT_FROM)):
+        j = int(j)
+        if j < i0 or _held_below(seg, ts, top, j) < EXIT_LIFT_HOLD_S or _into_next(ay, a + j, side):
+            continue
+        back = _first(seg[j:] >= top[j] - 5, j)
+        end = back if back is not None else min(j + DIP_MAX_M, len(seg) - 1)
+        low_k = j + int(np.argmin(seg[j:end + 1]))
+        out.append((a + j, a + end, float(top[j]), float(seg[low_k])))
+        i0 = end + 1
+    return out
+
+
 def _into_next(ay: np.ndarray, j: int, side: float) -> bool:
     """A lift at j is for the next corner, not off the exit of this one: the car turns the other way after it, or
     loads up into a new turn the same way (NEXT_TURN_M either side of it)."""
@@ -804,17 +828,18 @@ def _correction(st: np.ndarray, ts: np.ndarray, j: int, until_s: float) -> int |
 
 
 def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Envelope, env_r: Envelope,
-                     perfect: SimLap | None = None, shifts: ShiftModel | None = None) -> list[dict]:
-    """The mistakes that are wrong whatever the target: a lift on the way out of a corner, the throttle stepped on so
-    early or so hard that the car forces a lift or a steering correction, and braking in a straight line, with no
-    cornering to share the grip with, below the deceleration the car shows at that place. Each with what it alone
-    costs (lift_cost, never past perfect driving's speed; brake_cost; else the span against the realistic target),
-    per corner, most costly first; under MIN_OBVIOUS_S left out."""
+                     shifts: ShiftModel | None = None) -> list[dict]:
+    """The mistakes that are wrong whatever the target: a lift on the way out of a corner, the throttle on and off
+    through it, the throttle stepped on so early or so hard that the car forces a lift or a steering correction,
+    braking in a straight line, with no cornering to share the grip with, below the deceleration the car shows at
+    that place, and upshifts early or late (shifts). Each with what it alone costs (lift_cost and gain_cost, never
+    past the speed the car's best cornering allows; brake_cost; else the span against the realistic target), per
+    corner, most costly first; under MIN_OBVIOUS_S left out."""
     thr = tr.get("throttle")
     if thr is None:
         return []
     v, t, ay = tr["speed"], tr["t"], np.asarray(tr["ay"], float)
-    most = None if perfect is None else np.asarray(perfect.speed, float) / 3.6
+    most = np.asarray(env.vc, float)  # m/s: the speed the car's best cornering allows at each metre
     n = len(v) - 1
     st = tr.get("steer")
     out = []
@@ -826,7 +851,8 @@ def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Enve
             cost = span_cost(env_r, tr, a, b)
         return {"key": f"{c.code}:{kind}", "kind": kind, "code": c.code,
                 "phase": {"soft_straight_braking": "braking", "early_shift": "full throttle",
-                          "late_shift": "full throttle"}.get(kind, "exit"), "start_m": a, "end_m": b, "at_m": at,
+                          "late_shift": "full throttle", "on_off_throttle": "mid-corner"}.get(kind, "exit"),
+                "start_m": a, "end_m": b, "at_m": at,
                 "cost_s": round(max(cost, 0.0), 3), "title": title, "what": what, "do": do}
 
     for i, c in enumerate(corners):
@@ -841,41 +867,50 @@ def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Enve
             seg, ts = thr[a:b], t[a:b]
             top = np.maximum.accumulate(seg)
             side = np.sign(np.mean(ay[max(c.m - 5, 0):c.m + 6]))
-            lift = next((j for j in np.flatnonzero((top - seg >= EXIT_LIFT_PTS) & (top >= MIN_LIFT_FROM))
-                         if _held_below(seg, ts, top, int(j)) >= EXIT_LIFT_HOLD_S
-                         and not _into_next(ay, a + int(j), side)
-                         and abs(ay[a + int(j)]) <= EXIT_AY_SHARE * float(np.max(np.abs(ay[c.m:a + int(j) + 1])))
-                         ), None)
+            dips = _dips(seg, ts, top, ay, a, side, c.m)
+            lift = dips[0][0] - a if dips else None
             step = _step_at(thr[c.pickup:b], t[c.pickup:b])
             step_at = c.pickup + step[0] if step else None
             forced_lift = (lift is not None and step_at is not None
                            and t[a + lift] - t[step_at] <= STEP_FORCES_S and a + lift > step_at)
             corr = (_correction(st, t, step_at, STEP_FORCES_S) if st is not None and step_at is not None
                     and lift is None else None)
-            if lift is not None:
-                j = a + int(lift)
-                low_k = j + int(np.argmin(thr[j:min(j + 200, b)]))
-                back = _first(thr[low_k:b] >= top[lift] - 5, low_k)
-                end = back if back is not None else min(low_k + 20, b)
-                low = float(thr[low_k])
-                after = f" {j - c.m} m after the slowest point ({c.m} m)" if j > c.m else ""
-                what = (f"On the way out of {c.code} you were at {top[lift]:.0f}% throttle, then lifted to {low:.0f}% "
-                        f"at {j} m{after}, at {v[j]:.0f} km/h. Every metre off the throttle on the way out is speed "
-                        "lost all the way down the next straight.")
-                if forced_lift:
-                    early = step_at < c.m
-                    what += (f" The lift was forced: you went to the throttle at {step[1]:.0f}%/s at {step_at} m"
-                             + (f", {c.m - step_at} m before the slowest point" if early else "") +
-                             ", and the car would not take it.")
-                    out.append(item("power_step", c, step_at, end, step_at,
-                                    "Too early on the power, then lifted" if early else
-                                    "Stepped on the power, then lifted", what,
-                                    "Squeeze the throttle on from the slowest point, as fast as the car takes it, so "
-                                    "you never have to come back off it.", lift_cost(tr, j, end, stop, most)))
-                else:
+            if dips and forced_lift:
+                j, end, high, low = dips.pop(0)
+                early = step_at < c.m
+                what = (f"On the way out of {c.code} you went to the throttle at {step[1]:.0f}%/s at {step_at} m"
+                        + (f", {c.m - step_at} m before the slowest point" if early else "") +
+                        f", and the car would not take it: you had to lift from {high:.0f}% to {low:.0f}% at {j} m, "
+                        f"at {v[j]:.0f} km/h.")
+                out.append(item("power_step", c, step_at, end, step_at,
+                                "Too early on the power, then lifted" if early else
+                                "Stepped on the power, then lifted", what,
+                                "Squeeze the throttle on from the slowest point, as fast as the car takes it, so "
+                                "you never have to come back off it.", lift_cost(tr, j, end, stop, most)))
+            if dips:
+                j, end = dips[0][0], dips[-1][1]
+                cost = sum(lift_cost(tr, x, e, stop, most) for x, e, _, _ in dips)
+                most_g = float(np.max(np.abs(ay[c.m:j + 1])))
+                cornering = max(abs(ay[x]) for x, _, _, _ in dips) > EXIT_AY_SHARE * most_g
+                if len(dips) == 1 and not cornering:
+                    _, _, high, low = dips[0]
+                    after = f" {j - c.m} m after the slowest point ({c.m} m)" if j > c.m else ""
+                    what = (f"On the way out of {c.code} you were at {high:.0f}% throttle, then lifted to {low:.0f}% "
+                            f"at {j} m{after}, at {v[j]:.0f} km/h. Every metre off the throttle on the way out is "
+                            "speed lost all the way down the next straight.")
                     out.append(item("exit_lift", c, j, end, j, f"Lifted on the exit of {c.code}", what,
                                     "Once the throttle is on, keep it on: open it only as fast as the car takes it, "
-                                    "and keep adding until full throttle.", lift_cost(tr, j, end, stop, most)))
+                                    "and keep adding until full throttle.", cost))
+                else:
+                    lows = ", ".join(f"{lo:.0f}% at {x} m" for x, _, _, lo in dips)
+                    times = "once" if len(dips) == 1 else ("twice" if len(dips) == 2 else f"{len(dips)} times")
+                    what = (f"Through {c.code}, with the car still cornering, you came off the throttle {times} "
+                            f"(down to {lows}) at {v[j]:.0f}-{v[end]:.0f} km/h. Each lift takes drive away "
+                            "and unsettles the car, and the speed it costs is carried all the way down the next "
+                            "straight.")
+                    out.append(item("on_off_throttle", c, j, end, j, f"Throttle on and off through {c.code}", what,
+                                    "Find the throttle the car holds through the corner and keep adding to it "
+                                    "smoothly: balance the car with the steering, not by lifting.", cost))
             elif corr is not None:
                 what = (f"You went to the throttle at {step[1]:.0f}%/s at {step_at} m"
                         + (f", {c.m - step_at} m before the slowest point" if step_at < c.m else "") +
@@ -1020,7 +1055,7 @@ def check_lap(tr: dict[str, np.ndarray], perfect: PlaceLimits, held: PlaceLimits
                       "title": mk.title, "what": mk.what, "do": mk.do,
                       "value": None if mk.value is None else round(float(mk.value), 3), "unit": mk.unit})
     items.sort(key=lambda x: -x["cost_s"])
-    obvious = obvious_mistakes(tr, corners, env, env_r, sim, shifts)
+    obvious = obvious_mistakes(tr, corners, env, env_r, shifts)
     trace_time = float(tr["t"][-1])
     named_at = {x["start_m"] for x in items}
     named = sum(p.cost for p in pieces if p.start in named_at)

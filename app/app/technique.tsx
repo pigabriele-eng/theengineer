@@ -300,7 +300,7 @@ const METHOD = [
     'control working) and the car still fell short, that is the car on the day, not a mistake. ABS and traction ' +
     'control on their own aren\'t mistakes: the event\'s quicker laps use more of both.',
   'Obvious mistakes are wrong whatever the target: a lift on the way out of a corner (not a lift for the next ' +
-    'corner, nor balancing the car at its grip limit), the power stepped on so early or so hard that the car forced ' +
+    'corner), the throttle on and off through a corner, the power stepped on so early or so hard that the car forced ' +
     'a lift or a steering correction, and braking in a straight line, with no cornering to share the grip, below ' +
     'the deceleration the car has shown there. Each costs what it alone lost: the speed a lift took off, carried ' +
     'down the straight, or the later braking point missed. Under 0.01 s they are left out.',
@@ -309,7 +309,8 @@ const METHOD = [
     'published. Drive force is torque times the ratio, so the best upshift is where the next gear drives harder, or ' +
     'just short of the rev limiter where it never does. An upshift 150 rpm or more before that is early; after it, ' +
     'or held on the limiter, late. Each costs the drive it missed, carried down the straight.',
-  'The perfect lap is never quicker through a section than the best pass a lap has really made there.',
+  'The perfect lap is never quicker through a section than the best pass a lap has really made there. A flat-out ' +
+    'section is only as quick as the speed carried into it, so a pass with more (a tow) sets no floor there.',
   'Corners are named by their official numbers only.',
 ];
 

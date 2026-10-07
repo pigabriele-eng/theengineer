@@ -122,6 +122,31 @@ def theoretical_lap(curvature: np.ndarray, lim: PlaceLimits) -> SimLap:
     return LapModel(np.asarray(curvature, float)[:-1], lim).sim()
 
 
+TAPER_M = 40  # a section's time is moved less within this many metres of its ends, none at the ends themselves
+MAX_TAKEN = 0.5  # at most this share of the time to any metre is taken off it
+
+
+def _taper(a: int, b: int) -> np.ndarray:
+    """Weights for the metres from a to b: 1 in the middle, falling to 0 at both ends over TAPER_M (or a third of a
+    short section)."""
+    x = np.arange(a, b) + 0.5
+    reach = max(1.0, min(TAPER_M, (b - a) / 3))
+    return np.clip(np.minimum(x - a, b - x) / reach, 0.0, 1.0)
+
+
+def _spread(room: np.ndarray, need: float, weight: np.ndarray) -> np.ndarray:
+    """need (seconds) shared over the metres in proportion to weight, none taking more than its room."""
+    out = np.zeros_like(room)
+    for _ in range(8):
+        left = need - float(out.sum())
+        free = (out < room - 1e-15) & (weight > 0)
+        if left <= 1e-12 or not free.any():
+            break
+        share = np.where(free, weight, 0.0)
+        out = np.minimum(out + left * share / float(share.sum()), room)
+    return out
+
+
 @dataclass
 class Calibration:
     """The model's own error along the fastest lap, metre by metre: the lap's real time and speed against perfect
@@ -153,17 +178,17 @@ class Calibration:
         gain = np.minimum(np.diff(sim.t) - np.diff(self.own.t), 0.0)
         t = np.concatenate([[0.0], np.cumsum(np.diff(self.t) + gain)])
         speed = self.speed + np.maximum(sim.speed - self.own.speed, 0.0)
-        if self.best_t is not None:
-            t, speed = t + self.best_t, speed + self.best_v
+        if self.best_t is not None:  # never below the fastest lap's speed either
+            t, speed = t + self.best_t, np.maximum(speed + self.best_v, self.speed)
         return SimLap(speed, t, float(t[-1]), sim.limited_by)
 
     def to_best(self, sim: SimLap, best: list[tuple[int, int, float]],
                 cap: list[tuple[int, int, float]] | None = None) -> Calibration:
         """This calibration for a target that is never slower than the best pass through any section (start metre,
         end metre, the best pass's time) and, given cap, never quicker than cap's pass through it either. Where it
-        would be slower, its time through the section is scaled to that pass's, its speed with it; where it would be
-        quicker, what it gains over the fastest lap is scaled down at every metre, so it stays never slower than that
-        lap anywhere."""
+        would be slower, it takes the time it lacks; where it would be quicker, it gives back what it gains over the
+        fastest lap, so it stays never slower than that lap anywhere. Either way most in the section's middle and
+        none at its ends (_taper), so the speed runs on smoothly from one section into the next."""
         lap = self.target(sim)
         dt = np.diff(lap.t)
         extra, dv = np.zeros_like(dt), np.zeros_like(lap.speed)
@@ -173,15 +198,16 @@ class Calibration:
         own_dt = np.diff(self.t)
         for (a, b), (slowest, quickest) in bound.items():
             took = float(lap.t[b] - lap.t[a])
-            if slowest is not None and slowest < took and took > 0:  # quicker, at every metre alike
-                f = slowest / took
-                extra[a:b] = dt[a:b] * (f - 1)
-                dv[a + 1:b] = lap.speed[a + 1:b] * (1 / f - 1)
-            elif quickest is not None and quickest > took:  # less of the gain over the fastest lap, at every metre
-                gained = float(self.t[b] - self.t[a]) - took
-                keep = max(float(self.t[b] - self.t[a]) - quickest, 0.0) / gained if gained > 0 else 0.0
-                extra[a:b] = (own_dt[a:b] - dt[a:b]) * (1 - keep)
-                dv[a + 1:b] = (self.speed[a + 1:b] - lap.speed[a + 1:b]) * (1 - keep)
+            w = _taper(a, b)
+            if slowest is not None and slowest < took and took > 0:  # quicker, most in the section's middle
+                extra[a:b] = -_spread(dt[a:b] * MAX_TAKEN, took - slowest, dt[a:b] * w)
+            elif quickest is not None and quickest > took:  # less of the gain over the fastest lap
+                extra[a:b] = _spread(np.maximum(own_dt[a:b] - dt[a:b], 0.0), quickest - took,
+                                     np.maximum(own_dt[a:b] - dt[a:b], 0.0) * w)
+        moved = np.flatnonzero(extra)
+        if len(moved):
+            dv[1:] = lap.speed[1:] * (dt / np.maximum(dt + extra, 1e-9) - 1)
+            dv[-1] = 0.0
         return Calibration(self.t, self.speed, self.own, np.concatenate([[0.0], np.cumsum(extra)]), dv)
 
     @property

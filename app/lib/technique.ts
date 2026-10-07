@@ -28,11 +28,12 @@ export type Mistake = {
 
 /** A mistake that is wrong whatever the target: a lift on the way out of a corner, the power stepped on so early or
  * so hard that the car forced a lift or a steering correction, braking in a straight line below the car's limit, an
- * upshift before or after the revs where the next gear drives harder (or held on the rev limiter).
+ * upshift before or after the revs where the next gear drives harder (or held on the rev limiter), the throttle on
+ * and off through a corner.
  * cost_s is what it alone cost: the speed the lift lost carried down the straight, the later braking point missed. */
 export type ObviousMistake = {
   key: string;
-  kind: 'exit_lift' | 'power_step' | 'soft_straight_braking' | 'early_shift' | 'late_shift';
+  kind: 'exit_lift' | 'on_off_throttle' | 'power_step' | 'soft_straight_braking' | 'early_shift' | 'late_shift';
   code: string;
   phase: Phase;
   start_m: number;

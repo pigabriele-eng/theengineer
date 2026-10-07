@@ -167,7 +167,9 @@ def test_a_lift_on_the_way_out_of_a_corner_is_an_obvious_mistake(fastest):
                     calibrations=(t.calibration, t.held_calibration))
     lifts = [m for m in out["obvious"] if m["kind"] == "exit_lift"]
     assert [m["code"] for m in lifts] == ["T1"] and 350 <= lifts[0]["at_m"] <= 360
-    assert 0.01 <= lifts[0]["cost_s"] <= lifted.time - fastest.time + 0.01
+    # this lap gets its speed back by 420 m, quicker than any car could, so it loses less than a real lift would:
+    # the cost (the drive the lift took, carried on) is of its size, not under it
+    assert 0.01 <= lifts[0]["cost_s"] <= 2 * (lifted.time - fastest.time)
     clean = check_lap(fastest.trace, t.perfect, t.held, SECTIONS, lap_time=fastest.time,
                       calibrations=(t.calibration, t.held_calibration))
     assert clean["obvious"] == []
@@ -179,3 +181,22 @@ def test_braking_below_the_limit_costs_the_later_brake_point():
     soft = brake_cost(60.0, 25.0, 1.0, 1.3)
     # braking 35 m/s at 1.0 g instead of 1.3 g: 0.83 s longer, of which the later brake point wins back most
     assert 0.05 < soft < 0.83
+
+
+def test_the_theoretical_speed_runs_on_smoothly_across_a_section_join(fastest):
+    d = np.arange(N + 1, dtype=float)
+    other = Lap(0.97 + 0.06 * _step(d, 40, 460))
+    t = targets([fastest, other], fastest.trace, fastest.time, SECTIONS)
+    jump = np.abs(np.diff(t.sim.speed))
+    own = np.abs(np.diff(fastest.trace["speed"]))
+    assert jump[495:505].max() <= own.max() + 0.5  # no step at the join (500 m) beyond the lap's own
+
+
+def test_the_throttle_on_and_off_twice_is_two_lifts():
+    from app.analysis.technique import _dips
+    n = 200
+    thr = np.full(n, 100.0)
+    thr[50:60], thr[90:100] = 40.0, 30.0  # off and back on, twice
+    ts = np.arange(n) * 0.025  # 40 m/s
+    out = _dips(thr, ts, np.maximum.accumulate(thr), np.full(n, -1.5), 0, -1.0, 0)
+    assert [(a, lo) for a, _, _, lo in out] == [(50, 40.0), (90, 30.0)]
