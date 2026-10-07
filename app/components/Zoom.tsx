@@ -326,6 +326,7 @@ function useGestures<S>(cfg: Live<S>, whole: S, plane: boolean) {
 type AreaProps = {
   zoom: Zoom;
   full: Range; // the whole axis, in its own units
+  view?: Range; // no longer read: the area works out the range shown from `zoom` and `full` itself
   left: number; // the plot area, in pixels from the area's left edge
   width: number;
   minSpan?: number; // the narrowest view, in axis units (a hundredth of the axis by default)
