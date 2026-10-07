@@ -58,8 +58,9 @@ def test_season_venues_find_their_track_and_other_layouts_do_not():
                       ("N&uuml;rburgring", "Nürburgring GP"), ("Nürburgring", "Nürburgring GP"),
                       ("Red Bull Ring", "Red Bull Ring"), ("Imola", "Autodromo Enzo e Dino Ferrari"),
                       ("Silverstone", "Silverstone Circuit"), ("Brands Hatch", "Brands Hatch GP"),
-                      ("Magny-Cours", "Circuit de Nevers Magny-Cours"), ("Hockenheimring", "Hockenheim GP")]:
+                      ("Magny-Cours", "Circuit de Nevers Magny-Cours"), ("Hockenheimring", "Hockenheim GP"),
+                      ("Misano World Circuit Marco Simoncelli", "Misano World Circuit")]:
         assert known_track(name)[0] == key, name
-    for name in ("Nürburgring Nordschleife", "Brands Hatch Indy", "Circuit de Barcelona-Catalunya, Spain", "Misano",
+    for name in ("Nürburgring Nordschleife", "Brands Hatch Indy", "Circuit de Barcelona-Catalunya, Spain",
                  "Test Track", "", None):
         assert known_track(name) is None, name
