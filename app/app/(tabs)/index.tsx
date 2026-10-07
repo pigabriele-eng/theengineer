@@ -1,14 +1,14 @@
 import { Link, useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
 
 import { DeletedNotice, DeleteEventAction } from '@/components/DeleteEvent';
 import { CalendarLine, FilterBar, PlanForm, plannedLine, RemovePlanned } from '@/components/EventFilter';
-import { CountryTag, HeroCountry } from '@/components/Flag';
+import { CountryTag } from '@/components/Flag';
 import { FoldHead, SubFoldHead } from '@/components/Fold';
 import { PrepButton, usePrepAvailability } from '@/components/PrepButton';
 import {
-  B, Colophon, Fig, Folio, Hero, Label, Page, SpecLine, Swatch, TextLink, useWide,
+  Colophon, Fig, Label, Page, SpecLine, Swatch, TextLink, useWide,
 } from '@/components/Programme';
 import { RenameEvent } from '@/components/RenameEvent';
 import { SeasonMatchCount } from '@/components/SeasonMatch';
@@ -19,7 +19,7 @@ import {
 } from '@/lib/calendar';
 import { Country, countryOfAny } from '@/lib/countries';
 import {
-  dateRange, dayLabel, eventsApi, Folder, FolderSession, FolderSummary, NO_EVENT,
+  dayLabel, eventsApi, Folder, FolderSession, FolderSummary, NO_EVENT,
 } from '@/lib/events';
 import {
   byYear, carLine, Championship, champKey, driversLine, eventKey, Folds, monthSpan, openByDefault, readFolds, saveFolds,
@@ -28,7 +28,7 @@ import {
 import { launchEvent } from '@/lib/openCurrent';
 import { PrepAvailability } from '@/lib/prep';
 import { fetchReport, Report } from '@/lib/report';
-import { face, Fonts, PHOTOS, photoFor, themed, Type, useTheme } from '@/constants/Theme';
+import { face, Fonts, Space, themed, Type, useTheme } from '@/constants/Theme';
 
 // What the page knows about an event beyond the list: its runs by day, its report and the logger it was recorded on.
 type Detail = { folder?: Folder; report?: Report; logger?: string };
@@ -96,10 +96,8 @@ export default function SessionsScreen() {
   const lead = filtered(all, 'current', today).find((f) => f.id != null)
     ?? filtered(all, 'past', today).find((f) => f.id != null && f.sessions > 0)
     ?? filtered(all, 'upcoming', today).find((f) => f.id != null) ?? null;
-  const leadWhen = lead ? whenOf(lead, today) : null;
   // an event's country, from its track, else the venue it was planned at, else its name ("Monza test")
   const countryOfEvent = (f: FolderSummary) => countryOfAny([f.track, f.id != null ? plans.get(f.id)?.venue : null, f.name]);
-  const leadCountry = lead ? countryOfEvent(lead) : null;
 
   // folded or open: what was tapped on this device, else the default
   const defaults = openByDefault(years, lead, Number(today.slice(0, 4)));
@@ -112,7 +110,7 @@ export default function SessionsScreen() {
     });
   const toggle = (key: string) => setOpen([key], !isOpen(key));
 
-  // the runs of the events open on the page, read when they open and again with the list; the lead's for its headline
+  // the runs of the events open on the page, read when they open and again with the list; the lead's always
   const leadKey = lead && lead.sessions > 0 ? lead.key : null;
   const opened = years.flatMap((y) => (!isOpen(yearKey(y)) ? [] : y.championships.flatMap((c) => (
     !isOpen(champKey(y, c)) ? [] : c.events.filter((f) => f.sessions > 0 && isOpen(eventKey(f))).map((f) => f.key)))));
@@ -140,34 +138,14 @@ export default function SessionsScreen() {
     }
   }, [leadKey, leadBestSession, loads]);
 
-  const timed = folders?.some((f) => f.best_lap_s != null) ?? false;
-  const leadDetail = lead ? details[lead.key] : undefined;
   const renamed = (key: string) => (name: string) => {
     setFolders((list) => list?.map((x) => (x.key === key ? { ...x, name } : x)) ?? list);
     load();
   };
 
-  const top = lead ? (
-    <>
-      <Hero photo={photoFor(lead.track)} tag={TAG[leadWhen!]} rest="Sessions" title={headlineOf(lead, leadDetail?.folder)}
-        deck={deckOf(lead, plans.get(lead.id!))} badge={leadCountry ? <HeroCountry country={leadCountry} /> : undefined} />
-      <Folio items={[
-        lead.track ? (
-          <>{lead.track}{leadDetail?.report ? <> <B>{metres(leadDetail.report.length_m)}</B></> : null}</>
-        ) : null,
-        crewOf(lead),
-        dateRange(lead.start, lead.end),
-        lead.sessions > 0 ? <><B>{lead.sessions}</B> runs · <B>{lead.clean_laps}</B> clean laps</> : 'No data yet',
-        lead.best_lap_s != null ? <>Best <B>{formatLap(lead.best_lap_s)}</B></> : null,
-      ]} />
-    </>
-  ) : (
-    <Hero photo={PHOTOS.dusk} tag="Sessions" title="The Engineer"
-      deck={folders ? 'No events yet. Upload logs or a zip of a whole test: each log becomes a run, and a zip an event of its own.' : undefined} />
-  );
-
+  // no big block for the latest event on top (Gabriele, 2026-10-07: "i don't need this information"): the list starts the page
   return (
-    <Page top={top}>
+    <Page>
       <View style={wide ? styles.indexBar : styles.indexBarPhone}>
         <FilterBar filter={active} counts={counts} onPick={setFilter} />
         {/* uploads have a page of their own: one big drop box */}
@@ -196,11 +174,9 @@ export default function SessionsScreen() {
         </View>
       ) : (
         <View style={wide ? styles.toolsLine : styles.toolsLinePhone}>
+          {/* only what concerns the whole list here; comparing, tagging and the driver fingerprints are in each event
+              and under Tools (Gabriele, 2026-10-07: that row "is normally event specific") */}
           <TextLink onPress={() => setMaking(true)} label="+ New event" />
-          {timed && <TextLink href="/compare" label="Compare laps" />}
-          <TextLink href="/drivers/tag" label="Tag drivers" />
-          <TextLink href="/drivers/compare" label="Compare drivers" />
-          <TextLink href="/drivers/fingerprints" label="Driver fingerprints" />
           {calendar && (
             <View style={wide ? styles.sync : styles.syncPhone}>
               <CalendarLine calendar={calendar} onSynced={(c) => {
@@ -249,7 +225,6 @@ export default function SessionsScreen() {
   );
 }
 
-const TAG: Record<When, string> = { current: 'Current event', past: 'Latest event', upcoming: 'Next event' };
 const EMPTY: Record<When, string> = {
   current: 'Nothing on today or tomorrow.',
   upcoming: 'Nothing planned yet. Plan a test or a race weekend with + New event, or bring them in from your racing calendar.',
@@ -296,51 +271,9 @@ function YearFold({ no, y, isOpen, toggle, today, children }: {
 // ---------- words ----------
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
-const inWords = (n: number) => WORDS[n] ?? String(n);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const metres = (m: number) => `${Math.round(m).toLocaleString('en-GB')} m`;
 const pad2 = (n: number) => String(n).padStart(2, '0');
-
-/** A track's short name for a headline: "Hockenheim" for the Hockenheimring, "Spa" for Circuit de Spa-Francorchamps. */
-function shortTrack(track: string | null) {
-  if (!track) return null;
-  const t = track.replace(/^(Circuit|Circuito|Autodromo|Autódromo)( de| di| do| of)?\s+/i, '').trim();
-  if (/^hockenheim/i.test(t)) return 'Hockenheim';
-  return t.split(/\s*[,(]|\s+-\s+|-(?=[A-Z])/)[0];
-}
-
-/** What kind of event its runs make: a race weekend (qualifying or races), a practice, or a test. */
-function kindOf(folder: Folder | undefined, f: FolderSummary): 'test' | 'practice' | 'weekend' {
-  const kinds = new Set(folder?.days.flatMap((d) => d.sessions.map((s) => s.kind)) ?? []);
-  if (kinds.has('race') || kinds.has('qualifying')) return 'weekend';
-  if (kinds.size) return kinds.has('test') ? 'test' : 'practice';
-  return f.series ? 'weekend' : 'test';
-}
-
-/** The headline on the photo: "Hockenheim test", "Zandvoort weekend"; the event's name without a track. */
-function headlineOf(f: FolderSummary, folder?: Folder) {
-  const short = shortTrack(f.track);
-  return short ? `${short} ${kindOf(folder, f)}` : f.name;
-}
-
-/** Who drove the event and in what, for the facts under the photo: "Piana, Rackl · BMW M4 GT4 Evo". */
-function crewOf(f: FolderSummary) {
-  const line = [driversLine(f), carLine(f)].filter(Boolean).join(' · ');
-  return line || null;
-}
-
-const dayCount = (start: string | null, end: string | null) => {
-  if (!start || !end) return start || end ? 1 : 0;
-  return Math.round((Date.parse(end) - Date.parse(start)) / 86_400_000) + 1;
-};
-
-/** The italic line under the headline. */
-function deckOf(f: FolderSummary, plan?: Plan) {
-  if (f.sessions === 0) return `${f.name}: ${plannedLine(f, plan).toLowerCase()}.`;
-  const days = dayCount(f.start, f.end);
-  return `${f.name}: ${inWords(f.sessions)} run${f.sessions === 1 ? '' : 's'}${days ? ` over ${inWords(days)} day${days === 1 ? '' : 's'}` : ''}, ${plural(f.clean_laps, 'clean lap')}.`;
-}
 
 /** "28–30 Aug", "31 Oct–2 Nov", "Tue 3 Nov": the year's heading above says the year. */
 function shortDates(start: string | null, end: string | null) {
@@ -461,6 +394,9 @@ function LooseRuns({ f, onChanged }: { f: FolderSummary; onChanged: () => void }
 
 // ---------- an open event's runs ----------
 
+const DAY_GAP = 24; // between the day columns of an open event
+const MIN_DAY = 230; // narrowest a day column gets before the days go two a row
+
 /** An event open on the page: its links, its runs by day (each with its best lap: a purple block for the event's
  * best, else a red bar for the gap to it), and beside them the best lap, clean laps, ideal lap (the lead event's,
  * from its report; runs for the others) and the event's facts. */
@@ -476,10 +412,18 @@ function Feature({ f, detail }: { f: FolderSummary; detail?: Detail }) {
   const bestRun = runs.find((s) => s.id === f.best_session_id);
   const drivers = [...new Set(runs.map((s) => s.driver).filter(Boolean))] as string[];
   const id = f.id!;
+  // Three or four days of driving (Gabriele, 2026-10-07: "allow for 4 columns"): the days take the page's whole
+  // width side by side and the figures go under them; a window too narrow for that many columns shows two a row
+  const { width } = useWindowDimensions();
+  const nDays = folder?.days.length ?? 0;
+  const full = wide && nDays >= 3;
+  const across = Math.min(width, 1240) - 2 * Space.gutter;
+  const oneRow = !full || (across - (nDays - 1) * DAY_GAP) / nDays >= MIN_DAY;
+  const dayStyle = full ? (oneRow ? styles.dayAcross : styles.dayHalf) : wide ? styles.day : undefined;
   let no = 0;
   let dated = 0;
   return (
-    <View style={wide ? styles.feature : styles.featurePhone}>
+    <View style={full ? styles.featureFull : wide ? styles.feature : styles.featurePhone}>
       <View style={styles.featureMain}>
         <View style={styles.links}>
           <TextLink href={{ pathname: '/report', params: { event: id } }} label="Report" red arrow />
@@ -489,11 +433,11 @@ function Feature({ f, detail }: { f: FolderSummary; detail?: Detail }) {
           <TextLink href={{ pathname: '/event/[id]', params: { id: f.key } }} label="Event page" arrow />
         </View>
         {!folder ? <ActivityIndicator style={styles.loading} /> : (
-          <View style={wide ? styles.days : styles.daysPhone}>
+          <View style={full ? (oneRow ? styles.daysAcross : styles.daysHalf) : wide ? styles.days : styles.daysPhone}>
             {folder.days.map((day) => {
               if (day.date) dated += 1;
               return (
-                <View key={day.date ?? 'none'} style={wide ? styles.day : undefined}>
+                <View key={day.date ?? 'none'} style={dayStyle}>
                   <View style={styles.dayHead}>
                     <Label>{day.date ? `Day ${dated}` : 'No date'}</Label>
                     {day.date ? <Label>{dayLabel(day.date, { long: true })}</Label> : null}
@@ -513,14 +457,16 @@ function Feature({ f, detail }: { f: FolderSummary; detail?: Detail }) {
         </View>
       </View>
 
-      <View style={wide ? styles.side : undefined}>
+      <View style={full ? styles.sideUnder : wide ? styles.side : undefined}>
         {best != null && (
-          <Fig label="Best lap of the event" value={formatLap(best)} size={wide ? 104 : 96} bar={c.timing.best}
-            note={bestRun ? [`${bestRun.name}, lap ${bestRun.best_lap ?? '?'}`, bestRun.date
-              ? `${dayLabel(bestRun.date, { long: true }).split(' ')[0]}${bestRun.time ? ` ${bestRun.time}` : ''}` : null]
-              .filter(Boolean).join(' · ') : f.best_session ?? undefined} />
+          <View style={full ? styles.underCell : undefined}>
+            <Fig label="Best lap of the event" value={formatLap(best)} size={wide ? 104 : 96} bar={c.timing.best}
+              note={bestRun ? [`${bestRun.name}, lap ${bestRun.best_lap ?? '?'}`, bestRun.date
+                ? `${dayLabel(bestRun.date, { long: true }).split(' ')[0]}${bestRun.time ? ` ${bestRun.time}` : ''}` : null]
+                .filter(Boolean).join(' · ') : f.best_session ?? undefined} />
+          </View>
         )}
-        <View style={styles.pair}>
+        <View style={full ? styles.pairUnder : styles.pair}>
           <View style={styles.pairLeft}><Fig label="Clean laps" value={String(f.clean_laps)} size={64} /></View>
           <View style={styles.pairRight}>
             {report
@@ -528,7 +474,7 @@ function Feature({ f, detail }: { f: FolderSummary; detail?: Detail }) {
               : <Fig label="Runs" value={String(f.sessions)} size={64} />}
           </View>
         </View>
-        <View style={styles.specs}>
+        <View style={full ? styles.specsUnder : styles.specs}>
           {f.track && <SpecLine label="Track" value={report ? `${f.track} · ${metres(report.length_m)}` : f.track} />}
           {drivers.length > 0 && <SpecLine label={drivers.length === 1 ? 'Driver' : 'Drivers'} value={drivers.join(' / ')} />}
           {report && <SpecLine label="Laps analysed" value={`${report.laps_analysed} of ${plural(report.runs_analysed, 'run')}`} />}
@@ -639,14 +585,21 @@ const useStyles = themed((c) => ({
 
   // an open event's runs
   feature: { flexDirection: 'row', gap: 36 },
+  featureFull: { flexDirection: 'column', gap: 30 },
   featurePhone: { flexDirection: 'column', gap: 26 },
   featureMain: { flex: 1, minWidth: 0 },
   side: { width: 300 },
+  sideUnder: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', columnGap: 36, rowGap: 24 },
+  underCell: { flexGrow: 1, flexBasis: 260 },
   links: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 22, rowGap: 12, marginBottom: 22 },
   linksAlone: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 22, rowGap: 12 },
   days: { flexDirection: 'row', flexWrap: 'wrap', gap: 28 },
   daysPhone: { flexDirection: 'column', gap: 22 },
   day: { flex: 1, minWidth: 260 },
+  daysAcross: { flexDirection: 'row', columnGap: DAY_GAP },
+  daysHalf: { flexDirection: 'row', flexWrap: 'wrap', columnGap: DAY_GAP, rowGap: 28 },
+  dayAcross: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0 },
+  dayHalf: { flexBasis: '47%', flexGrow: 1, minWidth: 0 },
   dayHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', borderTopWidth: 3,
     borderBottomWidth: 1, borderColor: c.rule, paddingTop: 7, paddingBottom: 6 },
   run: { flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 1, borderColor: c.separator,
@@ -664,4 +617,6 @@ const useStyles = themed((c) => ({
   pairLeft: { paddingTop: 10, paddingRight: 14, borderRightWidth: 1, borderColor: c.rule },
   pairRight: { flex: 1, paddingTop: 10, paddingLeft: 14 },
   specs: { marginTop: 26, borderTopWidth: 3, borderColor: c.rule },
+  pairUnder: { flexGrow: 1, flexBasis: 260, flexDirection: 'row', borderTopWidth: 1, borderColor: c.rule },
+  specsUnder: { flexGrow: 1, flexBasis: 260, borderTopWidth: 3, borderColor: c.rule },
 }));

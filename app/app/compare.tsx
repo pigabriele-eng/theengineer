@@ -28,6 +28,8 @@ type Pick = { session_id: number; lap: number; slot: number };
 type Shown = { picks: Pick[]; data: CompareResult };
 
 const keyOf = (p: { session_id: number; lap: number }) => `${p.session_id}.${p.lap}`;
+const ASK_AFTER_MS = 150; // taps this close together are one change of laps
+const ANSWERS_KEPT = 8;
 const freeSlot = (picks: Pick[]) => [0, 1, 2, 3, 4, 5].find((s) => !picks.some((p) => p.slot === s)) ?? 0;
 
 // Compare laps: pick 2 to 6 laps from any sessions at one track (a driver's own runs, a teammate's, a client's),
@@ -82,8 +84,10 @@ export default function CompareScreen() {
     router.setParams({ laps: encodePicks(picks) || undefined, ideal: ideal ? '1' : undefined, session: undefined });
   }, [picks, ideal, router]);
 
-  // compare once the picks settle; a late answer to an older pick list is dropped
+  // compare once the picks settle; a late answer to an older pick list is dropped. The answers already had on this
+  // page are kept, so going back to laps compared before shows them at once.
   const ask = useRef(0);
+  const answers = useRef(new Map<string, CompareResult>());
   useEffect(() => {
     const id = ++ask.current;
     if (picks.length < MIN_LAPS) {
@@ -91,18 +95,31 @@ export default function CompareScreen() {
       return;
     }
     const snapshot = picks;
+    const key = encodePicks(snapshot);
+    const show = (data: CompareResult) => {
+      setShown({ picks: snapshot, data });
+      setZoom((z) => (z && data.sections.some((s) => s.code === z) ? z : null));
+    };
+    const known = answers.current.get(key);
+    if (known) {
+      setBusy(false);
+      setError(null);
+      show(known);
+      return;
+    }
     const timer = setTimeout(() => {
       setBusy(true);
       setError(null);
       compareLaps(snapshot.map(({ session_id, lap }) => ({ session_id, lap })))
         .then((data) => {
-          if (id !== ask.current) return;
-          setShown({ picks: snapshot, data });
-          setZoom((z) => (z && data.sections.some((s) => s.code === z) ? z : null));
+          answers.current.set(key, data);
+          const oldest = answers.current.keys().next().value;
+          if (answers.current.size > ANSWERS_KEPT && oldest != null) answers.current.delete(oldest);
+          if (id === ask.current) show(data);
         })
         .catch((e) => id === ask.current && setError((e as Error).message))
         .finally(() => id === ask.current && setBusy(false));
-    }, 350);
+    }, ASK_AFTER_MS);
     return () => clearTimeout(timer);
   }, [picks]);
 
@@ -266,7 +283,8 @@ export default function CompareScreen() {
       </Section>
 
       {error && <Text style={StyleSheet.flatten([t.error, styles.gapTop])}>{error}</Text>}
-      {busy && (
+      {/* comparing other laps: the last answer stays in place, dimmed, rather than moving down for this line */}
+      {busy && !(data && picks.length >= MIN_LAPS) && (
         <View style={StyleSheet.flatten([styles.busy, styles.gapTop])}>
           <ActivityIndicator color={theme.text} />
           <Text style={t.note}>Placing the laps on one line…</Text>

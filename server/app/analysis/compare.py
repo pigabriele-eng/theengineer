@@ -5,7 +5,8 @@ Built for many runs at once. Each run is loaded, its clean laps are placed on on
 per-lap section metrics plus a few small per-metre arrays (about 0.1 MB a lap), and the run is freed before the
 next is read, so memory grows with the number of laps, not with the size of the logs. The run with the quickest
 lap is read first: that lap gives the line every lap is placed on and the corner sections. The car's limits
-(for grip use) come from all the quick laps once every run has been read.
+(for grip use) come from all the quick laps once every run has been read. A run whose lap pack and compact traces
+hold its laps (lappack.py) is traced from them instead of its log: the same section times, without reading the log.
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from app import heavy
 from app.analysis.align import aligned_trace, track_line
 from app.analysis.channels import BRAKE, EXIT, MID, PHASES, POWER, TRAIL, TURNING_G, math_channels
 from app.analysis.insights import RunInput, _first, _wmean, _within, consistency, corr, targets, top_speeds
+from app.analysis.lappack import NotCovered, PackedRun
 from app.analysis.laps import CornerSpec, Lap, SessionData, lap_length, make_sections
 from app.analysis.limits import CarLimits
 
@@ -82,6 +84,8 @@ class RunSource:
     load: Callable[[], RunInput]
     best: float | None = None  # its quickest clean lap if known, so the quickest run is read first
     meta: dict = field(default_factory=dict)
+    # its laps without the log (lappack.py), when its lap pack and compact traces hold them; None: read the log
+    packed: Callable[[], PackedRun | None] | None = None
 
 
 @dataclass
@@ -262,13 +266,36 @@ def _slim(data: SessionData) -> SessionData:
     return replace(data, channels={k: v for k, v in data.channels.items() if k in ROLES})
 
 
-def _reference(data: SessionData, src: RunSource, lap: Lap, corners: list[CornerSpec] | None) -> _Reference:
+REFERENCE_ROLES = ("distance", "t", "speed", "throttle", "ax", "braking", "curvature", "phase")
+# every channel a lap's summary reads, when the run has it
+LAP_ROLES = ("speed", "throttle", "brake", "steer", "phase", "braking", "coasting", "overlap", "tc_on", "abs_on", "ax",
+             "ay", "understeer", "rear_slip", "curvature", *SHAPE_ROLES)
+
+
+def _reference(data: SessionData, src: RunSource, lap: Lap, corners: list[CornerSpec] | None,
+               trace: Callable | None = None) -> _Reference:
+    """The reference from its run's data; trace(lap, line, length) traces it when the run is a lap pack's."""
     line = track_line(data, lap)
     length = line.length if line is not None else round(lap_length(data, lap))
-    full = aligned_trace(data, lap, line, length)
+    full = trace(lap, line, length) if trace is not None else aligned_trace(data, lap, line, length)
     sections, numbering = make_sections(full, corners)
-    keep = ("distance", "t", "speed", "throttle", "ax", "braking", "curvature", "phase")
+    keep = REFERENCE_ROLES
     return _Reference(src.name, lap.number, line, length, {k: full[k] for k in keep if k in full}, sections, numbering)
+
+
+def _read_packed(run: PackedRun, src: RunSource, ref: _Reference | None, corners: list[CornerSpec] | None
+                 ) -> tuple[_Reference | None, list[LapSummary], list[Lap]]:
+    """_read's work on one run, from its lap pack and compact traces instead of its log."""
+    clean = run.clean_laps()
+    laps = []
+    if clean and ref is None:
+        lap = min(clean, key=lambda l: l.time)
+        ref = _reference(run.window(lap.number), src, lap, corners,
+                         lambda l, line, length: run.trace(l.number, line, length, REFERENCE_ROLES))
+    for i, lap in enumerate(clean):
+        laps.append(_summarise(run.trace(lap.number, ref.line, ref.align_length, LAP_ROLES), src, lap, i,
+                               ref.sections))
+    return ref, laps, clean
 
 
 def _read(sources: list[RunSource], corners: list[CornerSpec] | None,
@@ -280,22 +307,30 @@ def _read(sources: list[RunSource], corners: list[CornerSpec] | None,
     for done, src in enumerate(sorted(sources, key=lambda s: (s.best is None, s.best or 0.0))):
         if progress:
             progress(done, src.meta.get("session", src.name))
-        with heavy.lock:  # one log in memory at a time, across this job, imports and requests
-            run = src.load()
-            clean = [l for l in run.data.laps if l.clean]
-            data = _slim(run.data) if clean else None
-            run.data.channels, run.ld = {}, None
-            del run
-            if data is not None:
-                math_channels(data)
-                if ref is None:
-                    ref = _reference(data, src, min(clean, key=lambda l: l.time), corners)
-                for i, lap in enumerate(clean):
-                    tr = aligned_trace(data, lap, ref.line, ref.align_length)
-                    laps.append(_summarise(tr, src, lap, i, ref.sections))
-                    del tr
-                del data
-            heavy.release_memory()  # also when the lock is held further out, as by POST /compare/drivers
+        packed = src.packed() if src.packed is not None else None
+        if packed is not None:  # no log to read, so no lock to wait for
+            try:
+                ref, got, clean = _read_packed(packed, src, ref, corners)
+                laps += got
+            except NotCovered:  # not all there after all: from the log
+                packed = None
+        if packed is None:
+            with heavy.lock:  # one log in memory at a time, across this job, imports and requests
+                run = src.load()
+                clean = [l for l in run.data.laps if l.clean]
+                data = _slim(run.data) if clean else None
+                run.data.channels, run.ld = {}, None
+                del run
+                if data is not None:
+                    math_channels(data)
+                    if ref is None:
+                        ref = _reference(data, src, min(clean, key=lambda l: l.time), corners)
+                    for i, lap in enumerate(clean):
+                        tr = aligned_trace(data, lap, ref.line, ref.align_length)
+                        laps.append(_summarise(tr, src, lap, i, ref.sections))
+                        del tr
+                    del data
+                heavy.release_memory()  # also when the lock is held further out, as by POST /compare/drivers
         times = [l.time for l in clean]
         runs.append({"run": src.name, "side": src.side, **src.meta, "laps": len(times),
                      "best": min(times) if times else None,

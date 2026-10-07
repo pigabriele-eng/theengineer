@@ -62,6 +62,32 @@ const GROUPS: { name: string; dek: string; tools: Tool[] }[] = [
     ],
   },
   {
+    name: 'Drivers and laps',
+    dek: 'Every driver and every lap, across events.',
+    tools: [
+      {
+        href: '/drivers/fingerprints',
+        title: 'Driver fingerprints',
+        blurb: 'Each driver’s driving style from their laps, which traits go with faster laps, and who drove a run nobody tagged.',
+      },
+      {
+        href: '/compare',
+        title: 'Compare laps',
+        blurb: 'Any two to six laps from any sessions at one track, on one line: where the time is and why.',
+      },
+      {
+        href: '/drivers/compare',
+        title: 'Compare drivers',
+        blurb: 'Two drivers over many runs at one track: who gains where, and the technique behind it.',
+      },
+      {
+        href: '/drivers/tag',
+        title: 'Tag drivers',
+        blurb: 'Say who drove each run, event by event.',
+      },
+    ],
+  },
+  {
     name: 'Events',
     dek: 'The season and the weekends to come.',
     tools: [

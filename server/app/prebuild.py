@@ -263,11 +263,11 @@ def _prep(eid: int) -> None:
 def warm(session_ids: list[int]) -> None:
     """Other modules' warm-ups for these runs, last of their pieces."""
     # ===== Other per-session warm-ups go here. =====
-    # The lap comparison's (branch claude/fast-compare) is one call, e.g.:
-    #     from app.routers import lapcompare  # here: the routers import this module
-    #     lapcompare.warm_sessions(session_ids)
-    # (or that module calls prebuild.register(warm_sessions) once, at import). Runs on the prebuild's thread as
-    # background work: each heavy.lock it takes waits for the requests and jobs waiting for it.
+    # Runs on the prebuild's thread as background work: each heavy.lock it takes waits for the requests and jobs
+    # waiting for it.
+    from app import lappacks  # here: it imports the routers, which import this module
+
+    lappacks.warm_sessions(session_ids)  # the lap packs the lap and driver comparisons read instead of the logs
     for fn in list(_warmers):
         try:
             fn(session_ids)

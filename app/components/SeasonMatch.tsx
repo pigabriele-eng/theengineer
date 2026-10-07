@@ -95,12 +95,14 @@ function Question({ q, showEvent, onDone }: { q: SeasonQuestion; showEvent: bool
   const [number, setNumber] = useState('');
   const needsNumber = q.needs.includes('car_number');
   const single = q.options.length === 1;
+  // our drivers are on several cars of the round's entry list: each one a tap, the likeliest first
+  const cars = single && needsNumber ? q.options[0].numbers ?? [] : [];
 
-  const send = async (key: string) => {
-    setBusy(key);
+  const send = async (key: string, carNumber = number, busyKey = key) => {
+    setBusy(busyKey);
     setError(null);
     try {
-      const r = await seasonMatchApi.answer(q.id, key, number);
+      const r = await seasonMatchApi.answer(q.id, key, carNumber);
       onDone(r.done);
     } catch (e) {
       setError((e as Error).message);
@@ -121,8 +123,16 @@ function Question({ q, showEvent, onDone }: { q: SeasonQuestion; showEvent: bool
       <Text style={wide ? styles.prompt : styles.promptPhone}>{q.prompt}</Text>
       {q.why ? <Note>{q.why}</Note> : null}
       {q.kind === 'drivers' && q.runs != null ? <Note>{plural(q.runs, 'run')} without a driver.</Note> : null}
+      {cars.length > 0 && (
+        <FormActions style={styles.answers}>
+          {cars.map((c) => (
+            <MainButton key={`car-${c.car_number}`} label={c.label} sub={c.why} busy={busy === `car-${c.car_number}`}
+              disabled={busy != null} onPress={() => send(q.options[0].key, c.car_number, `car-${c.car_number}`)} />
+          ))}
+        </FormActions>
+      )}
       {needsNumber && (
-        <Field label="Car number" style={styles.number}>
+        <Field label={cars.length ? 'Another number' : 'Car number'} style={styles.number}>
           <Input value={number} onChangeText={setNumber} placeholder={`Your car's number in ${q.series_name ?? 'the series'}`}
             maxLength={8} editable={busy == null} accessibilityLabel="Car number" box
             onSubmitEditing={() => number.trim() && send(q.options[0].key)} returnKeyType="done" />

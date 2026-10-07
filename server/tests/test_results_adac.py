@@ -288,3 +288,65 @@ Circuit Paul Ricard, Length: 5822m
     # a heading the parser doesn't know: the session's kind from the site's list still reads it as timed laps
     plain = sheet.replace("Official Paid Test Session - Part 1", "Something Else")
     assert parse_pages([plain], "test").rows[1].best_lap_s == 147.827
+
+
+def test_an_adac_test_day_is_told_from_its_name_or_its_logs(client):
+    from app import db as app_db
+    from app import models
+    from app.results import sync
+    assert sync.series_key("2025 GT4GER T02 HOC") == "adac-gt4-germany"
+    assert sync.series_key("02_ADACGT4_T01_HOC") == "adac-gt4-germany"
+    assert sync.series_key("GT4_ES_R05 Zandvoort") == "gt4-europe"
+    assert sync.series_key("Germany trip") is None and sync.series_key("Hockenheim test") is None
+    named = client.post("/events/folders", json={"name": "02_ADACGT4_T01_HOC"}).json()
+    logged = client.post("/events/folders", json={"name": "Hockenheim May"}).json()
+    with app_db.SessionLocal() as db:
+        run = models.RunSession(event_id=logged["id"], name="D1S1")
+        db.add(run)
+        db.flush()
+        db.add(models.LoggerFile(session_id=run.id, logger="motec", filename="a.ld", path="a.ld",
+                                 meta={"event": "2025 GT4GER T02 HOC", "venue": "Hockenheimring"}))
+        db.commit()
+        assert sync.series_of_event(db, named["id"]) == "adac-gt4-germany"
+        assert sync.series_of_event(db, logged["id"]) == "adac-gt4-germany"
+    # a car number typed in keeps the event's own series
+    body = client.put(f"/results/events/{logged['id']}/link", json={"car_number": "21"}).json()
+    assert body["series"] == "adac-gt4-germany" and body["car_number"] == "21"
+
+
+def test_a_round_matches_only_on_the_events_days():
+    from app.results import models as rm
+    from app.routers.results import _same_weekend
+    rnd = rm.ResultRound(series="adac-gt4-germany", year=2025, round_id="x", name="Hockenheim", venue="hockenheim")
+    rnd.sessions = [rm.ResultSession(code="Q1", title="Q1", kind="qualifying", source_url="u",
+                                     starts_at="2025-10-04T10:00:00")]
+    assert not _same_weekend(rnd, "2025-05-05", "2025-05-06")  # a test in May is not October's round
+    assert _same_weekend(rnd, "2025-10-03", "2025-10-05") and _same_weekend(rnd, None, None)
+
+
+def test_our_car_in_past_seasons_is_found_by_our_driver(client):
+    from app import db as app_db
+    from app.results import models as rm
+    from app.results import summary
+
+    def round_(year, cars):
+        rnd = rm.ResultRound(series="adac-gt4-germany", year=year, round_id=f"{year}-05-01", name="Hockenheim",
+                             venue="hockenheim", order=1)
+        s = rm.ResultSession(code="Q1", title="Qualifying 1", kind="qualifying", source_url="u",
+                             starts_at=f"{year}-05-02T10:00:00")
+        s.rows = [rm.ResultRow(position=i + 1, status="classified", car_number=n, drivers=d, team=t, best_lap_s=100 + i)
+                  for i, (n, d, t) in enumerate(cars)]
+        rnd.sessions = [s]
+        return rnd
+
+    with app_db.SessionLocal() as db:
+        db.add_all([
+            round_(2024, [("51", ["Other ONE"], "FK Performance Motorsport"), ("2", ["Gabriele PIANA", "Max BONK"], "Hofor")]),
+            round_(2025, [("21", ["Gabriele PIANA", "Kai BESLER"], "FK Performance Motorsport"), ("2", ["Max BONK"], "Hofor")]),
+            round_(2026, [("7", ["Kai BESLER"], "Other"), ("51", ["Gabriele PIANA", "Ole SYLVESTERSSON"], "FK Performance Motorsport")]),
+        ])
+        db.commit()
+        assert summary.our_driver(db, "adac-gt4-germany", "51", 2026) == "piana"  # three seasons, not one
+        h = summary.history(db, venue="hockenheim", series="adac-gt4-germany", car_number="51", year=2026)
+        ours = {y["year"]: y["sessions"][0]["us"]["car_number"] for y in h["years"]}
+        assert ours == {2026: "51", 2025: "21", 2024: "2"}  # not #51 of 2024, which was another car
