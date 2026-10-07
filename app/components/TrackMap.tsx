@@ -369,8 +369,9 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
                   strokeLinejoin="round" strokeLinecap="round" />
               ))}
               {pins.map((k) => (
+                // the disc holds the whole of its number's 16 px line, so the paper figure reads on it at every edge
                 <G key={`p-${k.n}`}>
-                  <Circle cx={k.p.x} cy={k.p.y} r={k.n === selectedMark ? 10 : 8}
+                  <Circle cx={k.p.x} cy={k.p.y} r={k.n === selectedMark ? 12 : 10}
                     fill={k.n === selectedMark ? c.ink : c.secondary} stroke={surface} strokeWidth={1.5} />
                   <SvgText x={k.p.x} y={k.p.y + 4} fontSize={12} fontFamily={SANS} fontWeight="700"
                     textAnchor="middle" fill={surface}>

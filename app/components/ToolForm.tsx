@@ -20,7 +20,7 @@ import { Block, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { noPrint } from '@/lib/print';
 import { Corner } from '@/lib/tyres';
-import { face, Fonts, themed, Type, useTheme } from '@/constants/Theme';
+import { face, Fonts, tapRoom, themed, Type, useTheme } from '@/constants/Theme';
 
 // ---------- the page's opening ----------
 
@@ -144,16 +144,20 @@ export function Stepper({ value, of, onStep, label }: { value: string; of?: stri
   return (
     <View style={styles.stepper}>
       <Pressable onPress={() => onStep(-1)} hitSlop={6} accessibilityRole="button" accessibilityLabel={`${label} down`}
-        style={styles.stepKey} {...noPrint}>
-        <Text style={styles.stepKeyText}>−</Text>
+        style={styles.stepHit} {...noPrint}>
+        <View style={styles.stepKey}>
+          <Text style={styles.stepKeyText}>−</Text>
+        </View>
       </Pressable>
       <Text style={styles.stepValue}>
         {value}
         {of ? <Text style={styles.stepOf}>{of}</Text> : null}
       </Text>
       <Pressable onPress={() => onStep(1)} hitSlop={6} accessibilityRole="button" accessibilityLabel={`${label} up`}
-        style={styles.stepKey} {...noPrint}>
-        <Text style={styles.stepKeyText}>+</Text>
+        style={styles.stepHit} {...noPrint}>
+        <View style={styles.stepKey}>
+          <Text style={styles.stepKeyText}>+</Text>
+        </View>
       </Pressable>
     </View>
   );
@@ -196,18 +200,22 @@ export function Options<T extends string | number>({ options, value, onPick, mul
             </Pressable>
           );
         }
+        // the pressable is the 44 px tap target round the drawn option (its underline on the inner view)
         return (
           <Pressable key={String(o.value)} onPress={() => onPick(o.value)} disabled={disabled} hitSlop={4}
             accessibilityRole={big ? 'tab' : 'radio'} {...(on ? null : noPrint)}
             accessibilityState={big ? { selected: on, disabled } : { checked: on, disabled }}
-            style={StyleSheet.flatten([big ? (wide ? styles.bigOption : styles.bigOptionPhone) : styles.option,
-              on && styles.optionOn, disabled && styles.dim])}>
-            <Text style={StyleSheet.flatten([
-              big ? (wide ? styles.bigText : styles.bigTextPhone) : styles.optionText,
-              on && (big ? styles.bigTextOn : styles.optionTextOn),
-              !on && o.muted && styles.optionMuted,
-            ])}>{o.label}</Text>
-            {o.sub ? <Text style={styles.optionSub}>{o.sub}</Text> : null}
+            style={StyleSheet.flatten([big ? (wide ? null : styles.bigHitPhone) : o.sub ? styles.optionHitSub
+              : styles.optionHit, disabled && styles.dim])}>
+            <View style={StyleSheet.flatten([big ? (wide ? styles.bigOption : styles.bigOptionPhone) : styles.option,
+              on && styles.optionOn])}>
+              <Text style={StyleSheet.flatten([
+                big ? (wide ? styles.bigText : styles.bigTextPhone) : styles.optionText,
+                on && (big ? styles.bigTextOn : styles.optionTextOn),
+                !on && o.muted && styles.optionMuted,
+              ])}>{o.label}</Text>
+              {o.sub ? <Text style={styles.optionSub}>{o.sub}</Text> : null}
+            </View>
           </Pressable>
         );
       })}
@@ -352,9 +360,10 @@ const useStyles = themed((c) => ({
   fieldLabel: { ...Type.label, fontFamily: Fonts.label, fontSize: 11, letterSpacing: 1.1, color: c.textSecondary, marginBottom: 4 },
   fieldUnit: { ...Type.label, fontFamily: face('label', 400), fontSize: 11, letterSpacing: 0.6, textTransform: 'none',
     color: c.textMuted },
-  input: { fontFamily: Fonts.mono, fontSize: 18, fontVariant: ['tabular-nums'], color: c.text, paddingTop: 5,
-    paddingBottom: 5, paddingHorizontal: 0, borderBottomWidth: 2, borderColor: c.rule, borderRadius: 0, minWidth: 0,
-    backgroundColor: 'transparent', outlineWidth: 0 },
+  // 37 px drawn, a 45 px tap target: 8 px more room above the figures, taken back by the margin
+  input: { fontFamily: Fonts.mono, fontSize: 18, fontVariant: ['tabular-nums'], color: c.text, paddingTop: 13,
+    marginTop: -8, paddingBottom: 5, paddingHorizontal: 0, borderBottomWidth: 2, borderColor: c.rule, borderRadius: 0,
+    minWidth: 0, backgroundColor: 'transparent', outlineWidth: 0 },
   inputSmall: { fontFamily: Fonts.mono, fontSize: 15, fontVariant: ['tabular-nums'], color: c.text, paddingTop: 3,
     paddingBottom: 3, paddingHorizontal: 0, borderBottomWidth: 2, borderColor: c.rule, borderRadius: 0, minWidth: 0,
     backgroundColor: 'transparent', outlineWidth: 0 },
@@ -378,6 +387,7 @@ const useStyles = themed((c) => ({
   // stepper
   stepper: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   stepKey: { width: 26, height: 26, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: c.rule },
+  stepHit: tapRoom(9, 9), // the 26 px key in a 44 px tap target
   stepKeyText: { fontFamily: Fonts.mono, fontSize: 17, lineHeight: 19, color: c.text },
   stepValue: { fontFamily: Fonts.mono, fontSize: 16, fontVariant: ['tabular-nums'], minWidth: 30, textAlign: 'center',
     color: c.text },
@@ -385,7 +395,10 @@ const useStyles = themed((c) => ({
 
   // options
   options: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 22, rowGap: 12, alignItems: 'flex-start' },
-  option: { paddingBottom: 4, borderBottomWidth: 3, borderColor: 'transparent', maxWidth: '100%' },
+  option: { paddingBottom: 4, borderBottomWidth: 3, borderColor: 'transparent' },
+  // tap targets of 44 px round an option drawn 25 px tall (one line) or 43 px (with its sub line), and 36 px wide
+  optionHit: { ...tapRoom(10, 5), maxWidth: '100%' },
+  optionHitSub: { ...tapRoom(2, 5), maxWidth: '100%' },
   optionOn: { borderColor: c.mark },
   optionText: { ...Type.label, fontFamily: Fonts.label, fontSize: 14, letterSpacing: 1.3, color: c.textSecondary },
   optionTextOn: { fontFamily: Type.label.fontFamily, color: c.text },
@@ -396,6 +409,7 @@ const useStyles = themed((c) => ({
   bigOptionsPhone: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 18, rowGap: 6, alignItems: 'flex-end' },
   bigOption: { paddingBottom: 6, borderBottomWidth: 6, borderColor: 'transparent' },
   bigOptionPhone: { paddingBottom: 5, borderBottomWidth: 5, borderColor: 'transparent' },
+  bigHitPhone: tapRoom(5), // a 36 px tab in a 46 px tap target (on a computer it is 44 px already)
   bigText: { fontFamily: Fonts.display, fontSize: 30, lineHeight: 32, textTransform: 'uppercase', color: c.textMuted },
   bigTextPhone: { fontFamily: Fonts.display, fontSize: 24, lineHeight: 26, textTransform: 'uppercase', color: c.textMuted },
   bigTextOn: { color: c.text },
