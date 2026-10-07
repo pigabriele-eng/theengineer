@@ -2,11 +2,12 @@
 corner-by-corner passes of the race weekend's Before view.
 
 From the past events at the venue with the same car, as the prep report picks them (app/prep/plan.py), and the
-report's compact lap traces of their sessions: no log is read, so it needs neither the heavy-work lock nor much
-memory (one session's traces at a time, a few MB). While some of those traces are still being made (the report's own
-background work, started here when needed) the answer is "working"; the client asks again. A finished answer is kept
-in page_cache with a signature of the sessions' traces, names, the track's corners and the car, so it opens at once
-the next time.
+report's compact lap traces of their sessions, one session's at a time (a few MB each). The only log read is the best
+lap's gear, speed and revs channels, to tell which logged gear is first. The answer is made under the heavy-work lock,
+one at a time with the other heavy work. While some of those traces are still being made (the report's own background
+work, started here when needed) the answer is "working"; the client asks again. A finished answer is kept in
+page_cache with a signature of the sessions' traces, names, the track's official corners and the car, so it opens at
+once the next time.
 """
 from __future__ import annotations
 
@@ -119,20 +120,25 @@ def prep_guide(event_id: int, car: str | None = None, db: Session = Depends(get_
         return guide.Source(s.id, s.name, s.driver.name if s.driver else None, pe.id, pe.info.event.name,
                             pe.info.start[:4] if pe.info.start else None)
 
-    cs = _load(ref_row[2])
-    if cs is None or not cs.n_laps:
-        return _none(p, "The best lap's traces couldn't be read.")
-    lap = int(np.argmin(np.where(cs.times >= floor, cs.times, np.inf)))
-    db.commit()  # hands the database connection back while the log waits for the heavy-work lock
-    g = guide.Guide(source(ref_row[0], ref_row[1]), cs, lap, corners, _first_gear(ref_row[1], cs, lap))
-    del cs
-    for pe, s, rec, _ in ready:
-        if s.id == ref_row[1].id:
-            continue
-        other = _load(rec)
-        if other is not None:
-            g.add(source(pe, s), other, floor)
-        del other
-    out = {"status": "ready", "reason": None, "car": p.car, **g.result()}
-    page_cache.store(db, scope, sig, out)
+    db.commit()  # hands the database connection back while waiting for the heavy-work lock
+    with heavy.lock:
+        hit = page_cache.lookup(db, scope, sig)  # made meanwhile by a request that had the lock first
+        if hit is not None and hit[0] == 200:
+            return hit[1]
+        cs = _load(ref_row[2])
+        if cs is None or not cs.n_laps:
+            return _none(p, "The best lap's traces couldn't be read.")
+        lap = int(np.argmin(np.where(cs.times >= floor, cs.times, np.inf)))
+        g = guide.Guide(source(ref_row[0], ref_row[1]), cs, lap, corners, _first_gear(ref_row[1], cs, lap))
+        del cs
+        for pe, s, rec, _ in ready:
+            if s.id == ref_row[1].id:
+                continue
+            other = _load(rec)
+            if other is not None:
+                g.add(source(pe, s), other, floor)
+            del other
+        out = {"status": "ready", "reason": None, "car": p.car, **g.result()}
+        del g
+        page_cache.store(db, scope, sig, out)
     return page_cache.plain(out)

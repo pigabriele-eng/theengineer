@@ -2,6 +2,7 @@
 the venue and each corner's best and typical pass, on synthetic logs."""
 import numpy as np
 
+from app import heavy
 from app.analysis import compact
 from app.analysis.laps import load_session
 from app.importers.motec import read_ld
@@ -84,7 +85,11 @@ def test_the_gear_map_and_each_corners_best_and_typical_pass():
     assert marks == ["T1", "T2"]
 
 
-def test_guide_endpoint_from_past_events(client):
+def test_guide_endpoint_from_past_events(client, monkeypatch):
+    held = []  # whether the heavy-work lock is held while the guide is made
+    result = guide.Guide.result
+    monkeypatch.setattr(guide.Guide, "result",
+                        lambda self: held.append(getattr(heavy.lock._held, "depth", 0)) or result(self))
     track = client.post("/tracks", json={"name": "Test ring", "corners": [
         {"code": c, "apex_m": m, "sector": s} for c, m, s in CORNERS]}).json()
     past = client.post("/events", json={"name": "Test ring 2025", "track_id": track["id"]}).json()
@@ -98,6 +103,8 @@ def test_guide_endpoint_from_past_events(client):
 
     body = _wait(client, f"/prep/events/{coming['id']}/guide")
     assert body["status"] == "ready", body
+    assert held and all(held)
+    assert body["numbering"] == "official"
     assert body["best_lap"]["session"] == "Run 2" and body["best_lap"]["year"] == "2025"
     assert [c["code"] for c in body["corners"]] and all(c["best"] for c in body["corners"])
     # the synthetic logs have no gear channel: the map is drawn without gears
