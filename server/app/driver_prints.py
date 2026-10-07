@@ -17,6 +17,11 @@ change or removal stands). Who could have driven comes from the event's or its s
 one: a style named after one of two drivers makes the other style the other driver. The season's question of who
 drove (season_match) waits for this, and is then asked only about the runs left, with the style's suggestion first.
 
+What the pages ask is kept (app/page_cache.py): what the tagged runs teach ("drivers|learned") and the fingerprints
+page's answer ("drivers|fingerprints"), each under a signature of the stored fingerprints, the runs' drivers and the
+names it shows, read from a few small queries. The background pass ends by working both out, so the page answers at
+once after an upload or a tag; on server start a pass catches up on events that have no fingerprints yet.
+
 New tables (create_all adds them; nothing on the existing tables changes). No foreign key: the row of an event that
 is deleted is never read again, and is removed with it when the event goes (event_delete removes rows by event id
 where it knows the table; this one is cleared here when its event is missing).
@@ -34,7 +39,7 @@ from sqlalchemy import JSON, DateTime, Float, Integer, String, delete, func, sel
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app import db as app_db  # SessionLocal is looked up when used: the tests swap the database
-from app import garage, heavy, models, storage
+from app import garage, heavy, models, page_cache, storage
 from app.analysis import compact
 from app.analysis import driver_style as ds
 from app.db import Base
@@ -42,6 +47,8 @@ from app.db import Base
 log = logging.getLogger(__name__)
 
 ROLES = ("t", "speed", "throttle", "brake", "steer", "gear")
+LEARNED, PAGE = "drivers|learned", "drivers|fingerprints"  # page_cache scopes
+START_DELAY_S = 60  # after server start, before the catch-up pass (the first requests and the prebuild go first)
 MAX_LAPS = 250  # the quickest laps of an event, as the report: each on the reference line while it is worked out
 
 
@@ -148,12 +155,15 @@ _bg: dict = {"thread": None, "again": False}
 _bg_lock = threading.Lock()
 
 
-def stale(db: Session) -> list[int]:
-    """Events whose fingerprints are missing or out of date and can be worked out now (their traces are made)."""
+def stale(db: Session, state: dict | None = None) -> list[int]:
+    """Events whose fingerprints are missing or out of date and can be worked out now (their traces are made).
+    state, when given, gets every event's (signature, sessions still waiting for their traces)."""
     out = []
-    rows = {r.event_id: r.signature for r in db.scalars(select(StylePrint)).all()}
+    rows = dict(db.execute(select(StylePrint.event_id, StylePrint.signature)).all())
     for ev_id in db.scalars(select(models.Event.id).order_by(models.Event.id.desc())).all():
-        ready, signature, _ = _ready(db, ev_id)
+        ready, signature, pending = _ready(db, ev_id)
+        if state is not None:
+            state[ev_id] = (signature, pending)
         if ready and rows.get(ev_id) != signature:
             out.append(ev_id)
     return out
@@ -164,20 +174,30 @@ def refresh_all() -> None:
     then every event's runs get the drivers the style is sure of."""
     while True:
         _bg["again"] = False
-        with app_db.SessionLocal() as db:
-            for ev_id in stale(db):
+        with app_db.SessionLocal() as db, heavy.background():
+            state: dict = {}
+            for ev_id in stale(db, state):
                 try:
                     refresh(db, ev_id)
+                    state[ev_id] = _ready(db, ev_id)[1:]
                 except Exception:
                     db.rollback()
                     log.exception("Driver fingerprints of event %s failed", ev_id)
             try:
-                settle_all(db)
+                settle_all(db, state)
             except Exception:
                 db.rollback()
                 log.exception("Setting drivers from the driving style failed")
-        if not _bg["again"]:
-            return
+            try:
+                from app.routers import driver_style  # here: the router imports this module
+                driver_style.keep_page(db)
+            except Exception:
+                db.rollback()
+                log.exception("The driver fingerprints page failed")
+        with _bg_lock:  # a call that comes in from here on starts a new pass
+            if not _bg["again"]:
+                _bg["thread"] = None
+                return
 
 
 def refresh_in_background() -> bool:
@@ -193,6 +213,15 @@ def refresh_in_background() -> bool:
         return True
 
 
+def start() -> None:
+    """On server start, with the prebuild on: a catch-up pass a little later (events without fingerprints yet)."""
+    from app import prebuild
+    if prebuild.enabled():
+        t = threading.Timer(START_DELAY_S, refresh_in_background)
+        t.daemon = True
+        t.start()
+
+
 def wait_idle(timeout: float = 60) -> None:
     t = _bg["thread"]
     if t is not None:
@@ -205,6 +234,49 @@ def busy() -> bool:
 
 
 # ---------- the database ----------
+
+def _state(db: Session) -> list:
+    """What the learned fingerprints are made from, in a few small queries: the stored fingerprints' signatures, the
+    drivers of their events' runs and the runs whose driver the style set."""
+    prints = [list(r) for r in db.execute(select(StylePrint.event_id, StylePrint.signature)
+                                          .order_by(StylePrint.event_id)).all()]
+    evs = [e for e, _ in prints]
+    runs = [list(r) for r in db.execute(select(models.RunSession.id, models.RunSession.driver_id)
+                                        .where(models.RunSession.event_id.in_(evs))
+                                        .order_by(models.RunSession.id)).all()] if evs else []
+    auto = [list(r) for r in db.execute(select(StyleTag.session_id, StyleTag.driver_id)
+                                        .order_by(StyleTag.session_id)).all()]
+    return [ds.VERSION, prints, runs, auto]
+
+
+def page_signature(db: Session) -> str:
+    """What the fingerprints page shows is made from: _state, and the names and driver lists it uses."""
+    from app import seasons
+    state = _state(db)
+    evs = [e for e, _ in state[1]]
+    names = [list(r) for r in db.execute(select(models.Driver.id, models.Driver.name).order_by(models.Driver.id))]
+    events = [[e, n, str(d)] for e, n, d in db.execute(select(models.Event.id, models.Event.name, models.Event.date)
+                                                        .where(models.Event.id.in_(evs)).order_by(models.Event.id))]
+    info = [[e, s, d] for e, s, d in db.execute(select(seasons.EventInfo.event_id, seasons.EventInfo.season_id,
+                                                       seasons.EventInfo.drivers).order_by(seasons.EventInfo.event_id))]
+    entries = [[i, e] for i, e in db.execute(select(seasons.Season.id, seasons.Season.entry)
+                                             .order_by(seasons.Season.id))]
+    rounds = [list(r) for r in db.execute(select(seasons.SeasonRound.season_id, seasons.SeasonRound.event_id)
+                                          .where(seasons.SeasonRound.event_id.in_(evs))
+                                          .order_by(seasons.SeasonRound.id))] if evs else []
+    return page_cache.digest(["page", *state, names, events, info, entries, rounds])
+
+
+def learned(db: Session) -> dict[int, list[tuple[int, dict[str, float], int]]]:
+    """taught() of every stored fingerprint, kept until the fingerprints or the runs' drivers change."""
+    sig = page_cache.digest(["learned", *_state(db)])
+    hit = page_cache.lookup(db, LEARNED, sig)
+    if hit is not None and hit[0] == 200:
+        return {int(k): [(int(e), v, int(n)) for e, v, n in rows] for k, rows in hit[1].items()}
+    out = taught(db, stored(db))
+    page_cache.store(db, LEARNED, sig, {str(k): [[e, v, n] for e, v, n in rows] for k, rows in out.items()})
+    return out
+
 
 def stored(db: Session) -> dict[int, ds.EventPrint]:
     out = {}
@@ -341,18 +413,20 @@ def settle(db: Session, event_id: int, ep: ds.EventPrint | None, learned: dict) 
     return n
 
 
-def settle_all(db: Session) -> int:
-    """settle() for every event whose fingerprints are up to date and whose runs all have their lap traces."""
+def settle_all(db: Session, state: dict | None = None) -> int:
+    """settle() for every event whose fingerprints are up to date and whose runs all have their lap traces (state:
+    each event's (signature, sessions waiting), as stale() found them)."""
     db.execute(delete(StyleTag).where(StyleTag.session_id.not_in(select(models.RunSession.id))))
+    db.commit()
     rows = db.scalars(select(StylePrint).order_by(StylePrint.event_id)).all()
     prints = {r.event_id: ep for r in rows if (ep := ds.EventPrint.from_json(r.payload or {})) is not None}
-    learned = taught(db, prints)
+    knows = learned(db)
     n = 0
     for r in rows:
         if db.get(models.Event, r.event_id) is None:
             continue
-        _, signature, pending = _ready(db, r.event_id)
+        signature, pending = state[r.event_id] if state and r.event_id in state else _ready(db, r.event_id)[1:]
         if pending or signature != r.signature:
             continue  # still being read: settled when it is done
-        n += settle(db, r.event_id, prints.get(r.event_id), learned)
+        n += settle(db, r.event_id, prints.get(r.event_id), knows)
     return n
