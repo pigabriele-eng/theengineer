@@ -107,8 +107,8 @@ export function FadeBars({ rows, focus, onCorner }: { rows: FadeRow[]; focus?: s
             <View style={styles.rowHead}>
               <View style={StyleSheet.flatten([styles.phaseKey, { backgroundColor: phaseColor(theme, r.key) }])} />
               <Text style={StyleSheet.flatten([styles.rowLabel, r.key === top && styles.strong])}>{r.label}</Text>
-              <Text style={StyleSheet.flatten([styles.rowValue, { color: deltaColor(theme, r.per_lap) ?? theme.text },
-                !r.clear && styles.dim])}>
+              <Text style={StyleSheet.flatten([styles.rowValue,
+                { color: r.clear ? deltaColor(theme, r.per_lap) ?? theme.text : theme.textMuted }])}>
                 {signed(r.per_lap, 3)} s/lap
               </Text>
             </View>

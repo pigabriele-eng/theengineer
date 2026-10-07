@@ -173,7 +173,7 @@ export default function CompareScreen() {
                     <Text style={styles.pickTitle} numberOfLines={1}>
                       {s?.name ?? `Session ${p.session_id}`} · L{p.lap}
                     </Text>
-                    <Text style={t.labelMuted} numberOfLines={1}>
+                    <Text style={t.labelMuted} numberOfLines={2}>
                       {[s?.driver, s?.date, open ? 'pick a lap below' : 'tap to change the lap'].filter(Boolean).join(' · ')}
                     </Text>
                   </View>

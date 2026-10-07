@@ -163,16 +163,18 @@ export function MainAction({ label, onPress, disabled, busy }: { label: string; 
 
 /** A row of big figures split by ink rules, an ink rule over them: one row on a wide screen, two to a row on a
  * phone. */
-export function FigRow({ children, style }: { children: ReactNode[]; style?: ViewStyle }) {
+export function FigRow({ children, style, phoneCols = 2 }: { children: ReactNode[]; style?: ViewStyle;
+  phoneCols?: number }) {
   const styles = useStyles();
   const wide = useWide();
   const items = children.filter(Boolean);
+  const n = phoneCols;
   return (
     <View style={StyleSheet.flatten([styles.figs, style])}>
       {items.map((child, i) => (
         <View key={i} style={StyleSheet.flatten([wide ? styles.figCell : styles.figCellPhone,
-          (wide ? i > 0 : i % 2 === 1) && styles.figRule, !wide && i > 1 && styles.figTop,
-          (wide ? i === 0 : i % 2 === 0) && styles.figFirst])}>
+          !wide && { width: `${100 / n}%` as const }, (wide ? i > 0 : i % n > 0) && styles.figRule,
+          !wide && i >= n && styles.figTop, (wide ? i === 0 : i % n === 0) && styles.figFirst])}>
           {child}
         </View>
       ))}

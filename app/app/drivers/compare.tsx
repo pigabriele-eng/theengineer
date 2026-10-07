@@ -1,6 +1,6 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, TextInput } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, TextInput, TextStyle } from 'react-native';
 
 import {
   Dot,
@@ -254,6 +254,7 @@ function SessionSides({ group, sideOf, setSideOf, names, setNames, colors }: {
   const styles = useStyles();
   const t = useText();
   const theme = useTheme();
+  const [focused, setFocused] = useState<Side | null>(null);
   const toggle = (id: number, side: Side) => {
     const next = { ...sideOf };
     if (next[id] === side) delete next[id];
@@ -274,7 +275,9 @@ function SessionSides({ group, sideOf, setSideOf, names, setNames, colors }: {
               onChangeText={(v) => setNames({ ...names, [side]: v })}
               maxLength={120}
               placeholderTextColor={theme.textMuted}
-              style={styles.input}
+              onFocus={() => setFocused(side)}
+              onBlur={() => setFocused((f) => (f === side ? null : f))}
+              style={StyleSheet.flatten([styles.input, focused === side && styles.inputFocus])}
               accessibilityLabel={`Name of group ${side.toUpperCase()}`}
             />
           </View>
@@ -472,8 +475,10 @@ const useStyles = themed((c) => ({
   names: { flexDirection: 'row', columnGap: 24, rowGap: 14, flexWrap: 'wrap' },
   nameBox: { flex: 1, minWidth: 220, gap: 6 },
   nameLabel: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  // the browser's own focus ring is rounded: the rule turns red instead
   input: { fontFamily: Fonts.body, fontSize: 17, color: c.text, borderBottomWidth: 2, borderColor: c.rule,
-    paddingVertical: 6, paddingHorizontal: 0 },
+    paddingVertical: 6, paddingHorizontal: 0, outlineWidth: 0 } as TextStyle,
+  inputFocus: { borderColor: c.mark },
   headRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, borderBottomWidth: 1, borderColor: c.rule,
     paddingBottom: 5 },
   th: { ...Type.label, fontSize: 11, color: c.text },

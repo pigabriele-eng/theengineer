@@ -324,7 +324,7 @@ function Channel({ geo, title, unit, digits, role, values, under, bands, selecte
 const useStyles = themed((c) => ({
   wrap: { gap: 8, ...chartPlate(c) },
   head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', gap: 8,
-    backgroundColor: 'transparent', borderBottomWidth: 1, borderColor: c.rule, paddingBottom: 4, minHeight: 24 },
+    backgroundColor: 'transparent', borderBottomWidth: 1, borderColor: c.rule, paddingBottom: 4, minHeight: 24, marginBottom: 6 },
   title: { ...Type.label, fontSize: 11, color: c.text },
   readoutRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },
   readout: { ...Type.number, fontSize: 13, color: c.text },
