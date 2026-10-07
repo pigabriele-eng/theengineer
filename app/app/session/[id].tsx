@@ -16,15 +16,15 @@ import { SetupCard } from '@/components/SetupCard';
 import { Text, View } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
 import { UntimedNote } from '@/components/UntimedNote';
-import { Analysis, api, Debrief, DETECTED_CORNERS_NOTE, formatLap, SessionDetail } from '@/lib/api';
+import { Analysis, api, Debrief, DETECTED_CORNERS_NOTE, formatLap, prefetch, SessionDetail } from '@/lib/api';
 import { Tagged } from '@/lib/drivers';
 import { dayLabel, KIND_NAMES, sessionsInOrder } from '@/lib/events';
+import { poll } from '@/lib/poll';
 import { noPrint } from '@/lib/print';
-import { fetchReport } from '@/lib/report';
+import { fetchReport, fetchReportProgress } from '@/lib/report';
 import { fetchStintView, StintLap, StintView } from '@/lib/stint';
 import { face, Fonts, Palette, photoFor, themed, Type, useTheme } from '@/constants/Theme';
 
-const EVENT_POLL_MS = 5000;
 const SAME_S = 0.0015; // section times are kept to the millisecond: closer than this is the same time
 const CORNERS = ['fl', 'fr', 'rl', 'rr'] as const;
 const CORNER_NAMES = ['FL', 'FR', 'RL', 'RR'];
@@ -188,6 +188,12 @@ export default function SessionScreen() {
   useEffect(() => {
     load();
   }, [load]);
+  // what the page's parts ask for once the run is in, but don't need its answer for: asked for now, with the run
+  // (its official result, its setup sheet, the garage behind its chips, its track map and shape)
+  useEffect(() => {
+    prefetch(`/results/runs/${sessionId}`, `/sessions/${sessionId}/setup`, '/garage', `/sessions/${sessionId}/map`,
+      `/sessions/${sessionId}/shape`);
+  }, [sessionId]);
 
   // the stint tool's view of the run's main log: each lap's kind (out, in, pit), its stint and its tyre readings
   const mainFile = analysisFor === sessionId ? analysis?.file_id ?? session?.files[0]?.id : undefined;
@@ -201,29 +207,27 @@ export default function SessionScreen() {
     };
   }, [mainFile]);
 
-  // the event's best pass of each section, from its report (asked for again while the server works it out)
+  // the event's best pass of each section, from its report; while the server works it out, only how far it is is
+  // asked for again (lib/poll.ts: less and less often), and the report once more when it's ready
   useEffect(() => {
     if (eventId == null) {
       setEventSections(null);
       return;
     }
-    let live = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const poll = async () => {
+    const working = (status: string) => status === 'queued' || status === 'running';
+    let read = false; // the report itself read once already
+    return poll(async (live) => {
       try {
+        if (read && working((await fetchReportProgress({ event: eventId })).status)) return live();
         const a = await fetchReport({ event: eventId });
-        if (!live) return;
+        if (!live()) return false;
+        read = true;
         if (a.report) setEventSections(Object.fromEntries(a.report.sections.map((s) => [s.code, s.times.best])));
-        if (a.status === 'queued' || a.status === 'running') timer = setTimeout(poll, EVENT_POLL_MS);
+        return working(a.status);
       } catch {
-        // no report: the chart compares with this run only
+        return false; // no report: the chart compares with this run only
       }
-    };
-    poll();
-    return () => {
-      live = false;
-      if (timer) clearTimeout(timer);
-    };
+    });
   }, [eventId]);
 
   const upload = async () => {
@@ -362,7 +366,11 @@ export default function SessionScreen() {
           {hasClean && (
             <TextLink href={{ pathname: '/report', params: { session: sessionId } }} label="Report: how to go faster" red arrow />
           )}
-          {hasClean && <TextLink href={{ pathname: '/technique', params: { session: sessionId } }} label="Technique check" />}
+          {hasClean && (
+            // with its event, so the check asks for the event's parts at once
+            <TextLink href={{ pathname: '/technique', params: eventId != null ? { session: sessionId, event: eventId } : { session: sessionId } }}
+              label="Technique check" />
+          )}
           {hasClean && <TextLink href={{ pathname: '/quali', params: { session: sessionId } }} label="Quali prep" />}
           {session.laps.length > 0 && (
             <TextLink href={{ pathname: '/tools/stint', params: { session: sessionId } }} label="Stint analysis" />

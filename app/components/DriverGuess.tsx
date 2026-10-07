@@ -1,45 +1,31 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet } from 'react-native';
 
 import { Text, View } from '@/components/Themed';
 import { EventGuess, fingerprintsApi, guessLine, RunGuess } from '@/lib/fingerprints';
 import { RunFields } from '@/lib/garage';
+import { poll } from '@/lib/poll';
 import { face, themed } from '@/constants/Theme';
-
-const POLL_MS = 4000;
 
 /** Who drove each run of the event by driving style: asked once `version` is there (the event's runs: not before,
  * so a visit asks once), again whenever it changes (a driver tagged, a run added) and while the event's laps are
- * still being read. */
+ * still being read (lib/poll.ts: less and less often). */
 export function useDriverGuess(eventId: number | null, version: unknown) {
   const [guess, setGuess] = useState<EventGuess | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const live = useRef(true); // false once the page is gone: an answer still on its way is dropped, not polled on
   useEffect(() => {
-    live.current = true;
-    return () => {
-      live.current = false;
-    };
-  }, []);
-  const load = useCallback(() => {
-    if (eventId == null) return;
-    fingerprintsApi.event(eventId).then(
+    if (version == null || eventId == null) return;
+    return poll((live) => fingerprintsApi.event(eventId).then(
       (g) => {
-        if (!live.current) return;
+        if (!live()) return false;
         setGuess(g);
-        if (timer.current) clearTimeout(timer.current);
-        if (g.status === 'working') timer.current = setTimeout(load, POLL_MS);
+        return g.status === 'working';
       },
-      () => live.current && setGuess(null), // an older server, or no laps: the runs simply show no suggestion
-    );
-  }, [eventId]);
-  useEffect(() => {
-    if (version == null) return;
-    load();
-    return () => {
-      if (timer.current) clearTimeout(timer.current);
-    };
-  }, [load, version]);
+      () => {
+        if (live()) setGuess(null); // an older server, or no laps: the runs simply show no suggestion
+        return false;
+      },
+    ));
+  }, [eventId, version]);
   return guess;
 }
 
