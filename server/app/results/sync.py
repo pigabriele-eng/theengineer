@@ -148,8 +148,9 @@ def _with_weather(client: httpx.Client, adapter, link, parsed: ResultList) -> Re
     if not getattr(link, "pdf_url", None):
         return parsed
     try:
+        data = adapter.fetch(client, link.pdf_url)  # the download first: only reading it takes the heavy lock
         with heavy.lock:
-            sheet = parse_pdf(adapter.fetch(client, link.pdf_url))
+            sheet = parse_pdf(data)
     except Exception as e:
         log.info("results: no weather from %s: %s", link.pdf_url, e)
         return parsed

@@ -352,3 +352,23 @@ def test_one_round_the_site_fails_on_doesn_t_stop_the_others_and_long_text_is_cu
         assert (len(s.title), len(s.fastest)) == (60, 80)
         row = s.rows[0]
         assert (len(row.car_model), len(row.status), len(row.car_class)) == (80, 12, 20)
+
+
+def test_a_sheet_is_downloaded_before_the_heavy_lock_is_taken(fake_site):
+    from types import SimpleNamespace
+
+    from app import heavy
+    from app.results import resultlist
+
+    held = []
+
+    class Site:
+        @staticmethod
+        def fetch(client, url):
+            held.append(getattr(heavy.lock._held, "depth", 0))  # a slow download must not hold up log analysis
+            return QUALI.encode()
+
+    table = resultlist.parse_pages([RACE])
+    table.weather = {}
+    out = fake_site._with_weather(None, Site, SimpleNamespace(pdf_url="https://x/q1.pdf"), table)
+    assert held == [0] and out.weather["conditions_end"] == "Wet"
