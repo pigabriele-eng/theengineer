@@ -144,7 +144,7 @@ export default function SessionsScreen() {
       eventsApi.folder(key).then((folder) => setDetails((d) => ({ ...d, [key]: { ...d[key], folder } })), () => {});
     }
   }, [wanted, loads]);
-  // the lead event's report and logger, read again with the list
+  // the lead event's report and logger, read once per lead event
   const leadBestSession = lead?.best_session_id ?? null;
   useEffect(() => {
     if (!leadKey) return;
@@ -158,7 +158,7 @@ export default function SessionsScreen() {
         if (logger) put({ logger });
       }, () => {});
     }
-  }, [leadKey, leadBestSession, loads]);
+  }, [leadKey, leadBestSession]);
 
   const renamed = (key: string) => (name: string) => {
     setFolders((list) => list?.map((x) => (x.key === key ? { ...x, name } : x)) ?? list);
