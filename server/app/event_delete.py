@@ -292,7 +292,7 @@ def _not_importing(db: Session) -> None:
     """An import adds runs to events as it goes: none is deleted meanwhile."""
     busy = (models.ImportStatus.queued, models.ImportStatus.running)
     if db.scalar(select(models.ImportJob.id).where(models.ImportJob.status.in_(busy)).limit(1)) is not None:
-        raise HTTPException(409, "An upload is still being imported: delete the event once it is done")
+        raise HTTPException(409, "An upload is still being imported: delete once it is done")
 
 
 def counts(f: Found, sizes: dict[str, int] | None) -> dict:
