@@ -4,8 +4,8 @@ import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
-from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from app import garage, heavy, models, page_cache, schemas, storage
 from app.analysis.emptyrun import NoLaps, judge
@@ -34,6 +34,9 @@ def _get(db: Session, session_id: int) -> models.RunSession:
     return s
 
 
+SESSION_COLUMNS = ("id", "created_at", *schemas.SessionIn.model_fields)  # SessionOut's own
+
+
 def _with_best(s: models.RunSession) -> dict:
     clean = [l.time_s for l in s.laps if l.clean]
     out = schemas.SessionDetail.model_validate(s).model_dump()
@@ -60,11 +63,24 @@ def create_session(body: schemas.SessionIn, db: Session = Depends(get_db)):
 
 @router.get("", response_model=list[schemas.SessionOut])
 def list_sessions(db: Session = Depends(get_db)):
-    rows = db.scalars(select(models.RunSession)
-                      .options(selectinload(models.RunSession.laps), selectinload(models.RunSession.files),
-                               selectinload(models.RunSession.event).selectinload(models.Event.track))
-                      .order_by(models.RunSession.created_at.desc())).all()
-    return [_with_best(s) for s in rows]
+    """Every session, newest first, as _with_best has it less its files and laps: read column by column, the best
+    lap by the database, and the files' headers only for the sessions whose event has no track."""
+    S, E, T = models.RunSession, models.Event, models.Track
+    rows = db.execute(select(*(getattr(S, c) for c in SESSION_COLUMNS), E.name, T.name)
+                      .outerjoin(E, S.event_id == E.id).outerjoin(T, E.track_id == T.id)
+                      .order_by(S.created_at.desc())).all()
+    best = dict(db.execute(select(models.Lap.session_id, func.min(models.Lap.time_s))
+                           .where(models.Lap.clean.is_(True)).group_by(models.Lap.session_id)).all())
+    no_track = [r.id for r in rows if r[-1] is None]
+    venues: dict[int, str] = {}
+    for i in range(0, len(no_track), 500):
+        for sid, meta in db.execute(select(models.LoggerFile.session_id, models.LoggerFile.meta)
+                                    .where(models.LoggerFile.session_id.in_(no_track[i:i + 500]))
+                                    .order_by(models.LoggerFile.id)):
+            if sid not in venues and meta.get("venue"):
+                venues[sid] = meta["venue"]
+    return [{**{c: r[j] for j, c in enumerate(SESSION_COLUMNS)}, "best_lap_s": best.get(r.id), "event_name": r[-2],
+             "track_name": r[-1] if r[-1] is not None else venues.get(r.id)} for r in rows]
 
 
 @router.get("/{session_id}", response_model=schemas.SessionDetail)
