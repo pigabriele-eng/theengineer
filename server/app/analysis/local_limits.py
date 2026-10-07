@@ -29,7 +29,6 @@ lateral g keeps it, and lends it to no other corner.
 """
 from __future__ import annotations
 
-from array import array
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -98,20 +97,16 @@ class PlaceLimits:
         s = np.maximum(v, 30 / 3.6)
         return c0 / s + c1 + c2 * s * s
 
-    def tables(self, ay_step: float, ay_max: float) -> tuple[array, array, int]:
+    def tables(self, ay_step: float, ay_max: float) -> tuple[memoryview, memoryview, int]:
         """Acceleration and braking (g) for every place against cornering g in steps of ay_step, flat (place by
         place, cols values each) for the lap simulation's quick lookups, and cols. Never below the floor's at the
         same cornering, so that perfect driving at these limits is nowhere slower than at the floor."""
         key = (ay_step, ay_max)
         if key not in self._tables:
-            out = []
             grid = self._grid(ay_step, ay_max)
-            for t in grid:
-                flat = array("d")
-                flat.frombytes(np.ascontiguousarray(t, dtype=np.float64).tobytes())
-                out.append(flat)
-            self._tables[key] = (out[0], out[1], grid[0].shape[1])
-        return self._tables[key]
+            self._tables[key] = [np.ascontiguousarray(t, dtype=np.float64).reshape(-1) for t in grid]
+        acc, brk = self._tables[key]
+        return memoryview(acc), memoryview(brk), len(acc) // len(self.lateral)
 
     def _grid(self, ay_step: float, ay_max: float, keep: bool = False) -> list[np.ndarray]:
         """Acceleration and braking (g), [place, cornering g in steps of ay_step], never below the floor's. keep:
@@ -121,8 +116,15 @@ class PlaceLimits:
             return self._tables[key]
         ayg = np.arange(0, ay_max + ay_step / 2, ay_step)
         lat = np.maximum(self.lateral, 1e-3)
-        out = [np.array([np.interp(ayg, LEVELS * lv, row) for lv, row in zip(lat, table, strict=True)])
-               for table in (self.accel, self.brake)]
+        # a place with no braking or acceleration at any cornering has none at any cornering g either: only the
+        # others are interpolated (most places of one lap's own limits, on_own_line, are like that)
+        live = np.flatnonzero(self.accel.any(axis=1) | self.brake.any(axis=1))
+        out = []
+        for table in (self.accel, self.brake):
+            t = np.zeros((len(lat), len(ayg)))
+            for p in live:
+                t[p] = np.interp(ayg, LEVELS * lat[p], table[p])
+            out.append(t)
         if self.floor is not None:
             out = [np.maximum(t, f) for t, f in zip(out, self.floor._grid(ay_step, ay_max, keep=True), strict=True)]
         if keep:

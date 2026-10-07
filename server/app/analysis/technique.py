@@ -58,6 +58,9 @@ PHASE_WORDS = ("braking", "entry", "mid-corner", "exit", "full throttle")
 
 # ---------- perfect driving from any point ----------
 
+REJOIN_TOL = 1e-7  # m/s: perfect driving from a point closer than this to the perfect lap has rejoined it
+
+
 class Envelope(LapModel):
     """Perfect driving along one lap's line (the theoretical lap's own model, lapsim.LapModel), able to drive the rest
     of the lap perfectly from any metre at any speed.
@@ -84,17 +87,10 @@ class Envelope(LapModel):
         starts where it would be had it driven as the driver did: v0 plus what it drives that metre faster than the
         fastest lap really did at its own limits, so that the fastest lap checked against its own limits costs
         nothing anywhere."""
-        n, F, B = self.n, self.F, self.B
         fw = max(v0 + float(self.ahead[i0]), 1.0)
-        out = [min(fw, B[i0])]
-        i = i0
-        while i < n:
-            fw = self.step_up(i, fw)
-            i += 1
-            if abs(fw - F[i]) < 1e-7:
-                break
-            out.append(min(fw, B[i]))
-        return Restart(self, i0, np.array(out))
+        run = self.run_up(i0, fw, self.n, self.F, REJOIN_TOL)
+        out = np.array([min(x, b) for x, b in zip([fw, *run], self.B[i0:], strict=False)])
+        return Restart(self, i0, out)
 
 
 @dataclass

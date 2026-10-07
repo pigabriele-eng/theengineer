@@ -672,11 +672,12 @@ def lap_scores(x: LapRecord, prep: Prepared) -> dict:
     }
 
 
-def consistency(times: list[float]) -> float | None:
-    """100 when every clean lap matches the best; 10 points off for each 1 % the median lap is slower."""
+def consistency(times: list[float], median: float | None = None) -> float | None:
+    """100 when every clean lap matches the best; 10 points off for each 1 % the median lap is slower (median: theirs,
+    when the caller has it already)."""
     if len(times) < 3:
         return None
-    best, med = min(times), float(np.median(times))
+    best, med = min(times), float(np.median(times)) if median is None else median
     return round(float(np.clip(100 - 1000 * (med / best - 1), 0, 100)), 1)
 
 
