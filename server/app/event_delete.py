@@ -243,20 +243,21 @@ def _sizes(keys: list[str]) -> dict[str, int] | None:
 
 
 def _delete_files(keys: list[str], sizes: dict[str, int] | None) -> tuple[int, int]:
-    """Delete the stored files; a missing one is logged, a failure too (the rows are gone already). How many were
-    deleted, and the bytes they took (of those whose size is known)."""
+    """Delete the stored files; a failure is logged (the rows are gone already). Each is deleted even when the
+    listing didn't show it (deleting a missing file does nothing), so a listing that missed one never leaves it
+    taking space. How many that were listed were deleted, and the bytes they took."""
     n, freed = 0, 0
     for key in keys:
-        if sizes is not None and key not in sizes:
-            log.warning("Stored file %s was already missing", key)
-            continue
         try:
             storage.delete(key)
         except Exception as e:
             log.warning("Couldn't delete the stored file %s: %s", key, e)
             continue
-        n += 1
-        freed += (sizes or {}).get(key, 0)
+        if sizes is None or key in sizes:
+            n += 1
+            freed += (sizes or {}).get(key, 0)
+        else:
+            log.warning("Stored file %s was already missing", key)
     return n, freed
 
 
