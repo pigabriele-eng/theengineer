@@ -6,6 +6,7 @@ import { useLapColors } from '@/components/CompareViews';
 import { DeleteEvent } from '@/components/DeleteEvent';
 import { DeleteRuns, deletedLine } from '@/components/DeleteRuns';
 import { DriverGuessLine, useDriverGuess } from '@/components/DriverGuess';
+import { DriverTag } from '@/components/DriverTag';
 import { ErrorLine, FormActions, Input, MainButton, Note, Said, Tick } from '@/components/Controls';
 import { EventCompare, Pick, RunKey } from '@/components/EventCompare';
 import { EventForm } from '@/components/EventForm';
@@ -34,7 +35,10 @@ import { RunsDeleted } from '@/lib/deleteRuns';
 import { dateRange, dayLabel, eventsApi, Folder, FolderSession, KIND_NAMES, NO_EVENT } from '@/lib/events';
 import { EventGuess } from '@/lib/fingerprints';
 import { Garage, garageApi, RunFields } from '@/lib/garage';
-import { duringSections } from '@/lib/weekendRuns';
+import { defaultStage, duringSections, Stage } from '@/lib/weekendRuns';
+import { driverTag } from '@/lib/driverTag';
+import { driverState } from '@/lib/runDriver';
+import { encodePicks } from '@/lib/compare';
 import { EventMode, fetchMode, setMode as saveMode } from '@/lib/eventModes';
 import { noPrint } from '@/lib/print';
 import { face, Fonts, PHOTOS, photoFor, themed, Type, useTheme } from '@/constants/Theme';
@@ -43,8 +47,8 @@ import { face, Fonts, PHOTOS, photoFor, themed, Type, useTheme } from '@/constan
 type Run = FolderSession & { driver_id?: number | null; car_id?: number | null };
 // What opens in the band under the event's links: one at a time
 type Panel = 'rename' | 'edit' | 'delete' | 'move' | 'delete runs';
-// A race weekend's two stages (Gabriele, 2026-10-07): getting ready for it, and while it is on
-type Stage = 'before' | 'during';
+// A race weekend's three stages (Gabriele, 2026-10-07): getting ready for it, while it is on, and after it (the runs
+// to compare and the full report)
 
 const freeSlot = (picks: Pick[]) => [0, 1, 2, 3, 4, 5].find((s) => !picks.some((p) => p.slot === s)) ?? 0;
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -144,10 +148,6 @@ export default function EventScreen() {
     .map((d) => d.sessions.filter((s) => s.best_lap_s != null).sort((a, b) => a.best_lap_s! - b.best_lap_s!)[0])
     .filter((s): s is FolderSession => s != null)
     .slice(0, MAX_LAPS) ?? [];
-  const pickBestOfDays = () => {
-    setPicks(bestOfDays.map((s, slot) => ({ id: s.id, slot })));
-    setTimeout(() => showCompare(), 50);
-  };
   const showCompare = () =>
     scroll.current?.scrollTo({ y: Math.max(topH.current + compareY.current - 12, 0), animated: true });
   const showPanel = (p: Panel | null) => {
@@ -199,12 +199,15 @@ export default function EventScreen() {
   const timed = sessions.some((s) => s.best_lap_s != null);
   // its country (the flag and three letters in the hero's kicker), from its track, else its name ("Monza test")
   const country = isEvent && folder ? countryOfAny([folder.track, folder.name]) : null;
-  // a weekend opens on Before while it has no runs, on During once it has; a tap keeps the pick in the address
-  const asked: Stage | null = params.stage === 'before' || params.stage === 'during' ? params.stage : null;
-  const stage: Stage = asked ?? (sessions.length > 0 ? 'during' : 'before');
+  // a weekend opens on Before while it has no runs, During while it is on, After once it is over
+  // (lib/weekendRuns.ts defaultStage); a tap keeps the pick in the address
+  const asked: Stage | null = params.stage === 'before' || params.stage === 'during' || params.stage === 'after'
+    ? params.stage : null;
+  const stage: Stage = asked ?? defaultStage(folder, todayIso());
   const pickStage = (s: Stage) => router.setParams({ stage: s });
   const during = isEvent && stage === 'during';
-  const showRuns = !isEvent || during; // the runs by day and side by side are part of During
+  const after = isEvent && stage === 'after';
+  const showRuns = !isEvent || during || after; // the runs by day are part of During and After
 
   // ---------- the photo and the folio ----------
 
@@ -212,7 +215,8 @@ export default function EventScreen() {
     <View onLayout={(e) => (topH.current = e.nativeEvent.layout.height)}>
       <Hero photo={isEvent ? photoFor(folder.track) : PHOTOS.dusk} tag={isEvent ? TAG[whenOf(folder, todayIso())] : 'Unfiled'}
         rest="Weekend" restHref="/" title={headlineOf(folder, isEvent)} deck={deckOf(folder, isEvent)}
-        height={wide ? 380 : 400} badge={country ? <HeroCountry country={country} /> : undefined} />
+        // a lower photo than other pages: the weekend page is read for its answers, which start under it
+        height={wide ? 320 : 290} badge={country ? <HeroCountry country={country} /> : undefined} />
       <Folio items={isEvent ? [
         folder.track,
         dateRange(folder.start, folder.end),
@@ -226,16 +230,17 @@ export default function EventScreen() {
 
   // ---------- the stage tabs, and the band under them ----------
 
-  // Before | During, the full report and print: nothing else to choose from first (every analysis is in the section it
-  // belongs to, or in the More line at the end)
+  // Before | During | After, and print: nothing else to choose from first (every analysis is in the
+  // section it belongs to, or in the More line at the end)
   const stageBar = isEvent && eventId != null && folder && (
     <View style={wide ? styles.links : styles.linksPhone}>
       <Tabs big value={stage} onChange={pickStage} items={[
         { key: 'before', label: 'Before', sub: 'Prep' },
         { key: 'during', label: 'During', sub: sessions.length ? plural(sessions.length, 'run') : 'No runs yet' },
+        { key: 'after', label: 'After', sub: 'Compare, report' },
       ]} />
       <View style={wide ? styles.manage : styles.managePhone} {...noPrint}>
-        {timed && <TextLink href={{ pathname: '/report', params: { event: eventId } }} label="Full report" red arrow />}
+        {/* the whole-event report is for after the weekend (Gabriele, 2026-10-07): it is in After, not here */}
         <PrintButton title={['Event', folder.name, folder.track].filter(Boolean).join(' · ')} />
       </View>
     </View>
@@ -246,7 +251,7 @@ export default function EventScreen() {
     <View style={styles.more} {...noPrint}>
       <Label>More</Label>
       <View style={styles.moreLinks}>
-        {timed && <TextLink href={{ pathname: '/report', params: { event: eventId } }} label="Full report" arrow small />}
+        {after && timed && <TextLink href={{ pathname: '/report', params: { event: eventId } }} label="Full report" arrow small />}
         {timed && <TextLink href={{ pathname: '/technique', params: { event: eventId } }} label="Technique check" arrow small />}
         {timed && <TextLink href={{ pathname: '/quali', params: { event: eventId } }} label="Quali prep" arrow small />}
         {timed && <TextLink href={{ pathname: '/tools/stint', params: { event: eventId } }} label="Stint analysis" arrow small />}
@@ -334,11 +339,12 @@ export default function EventScreen() {
     : wide ? styles.days : styles.daysPhone;
   const dayStyle = cols === 'across' ? styles.dayAcross : cols === 'half' ? styles.dayHalf : wide ? styles.day : undefined;
 
-  // During's own sections come first (lib/weekendRuns.ts duringSections); Before is the prep report alone
+  // During's own sections come first (lib/weekendRuns.ts duringSections); Before is the prep report alone; After
+  // opens on the runs
   let no = during ? duringSections(folder) : 0;
   const runs = folder && showRuns && (
     <Section no={++no} title="Runs" dek={isEvent
-      ? 'Day by day, each with its best lap. Tick two to six to put them side by side; tap a name to rename it, a best lap to open the run.'
+      ? 'Day by day, each with its driver and best lap. Tick two to six, then Compare laps at the foot of the screen; tap a name to rename it, a best lap to open the run.'
       : 'Runs filed in no event. Tick them, then Move to put them into one, or Delete to remove them for good.'}>
       {sessions.length > 0 && isEvent && <Figures folder={folder} />}
       <View style={daysStyle}>
@@ -366,6 +372,13 @@ export default function EventScreen() {
         })}
       </View>
       {timed && <Legend />}
+      {isEvent && bestOfDays.length >= 2 && picks.length === 0 && (
+        <View style={styles.quick} {...noPrint}>
+          <TextLink onPress={() => setPicks(bestOfDays.map((s, slot) => ({ id: s.id, slot })))}
+            label="Tick the quickest run of each day" arrow small />
+          <Text style={styles.quickRuns}>{bestOfDays.map((s) => s.name).join(' · ')}</Text>
+        </View>
+      )}
       {sessions.length === 0 && (
         <Note style={styles.empty}>
           {isEvent
@@ -376,25 +389,21 @@ export default function EventScreen() {
     </Section>
   );
 
-  const sideBySide = folder && showRuns && sessions.length >= 2 && (
+  // the ticked runs' lap times, sections, top speed and tyres, next to each other (what the lap comparison doesn't
+  // show): only once two are ticked
+  const sideBySide = folder && showRuns && picks.length >= 2 && (
     <Section no={++no} title="Side by side" onLayout={(e) => (compareY.current = e.nativeEvent.layout.y)}
-      dek="Two to six runs next to each other: lap times, the best time in each section, top speed, tyres.">
-      {picks.length >= 2 ? (
-        <EventCompare folderKey={key} picks={picks} onClear={() => setPicks([])} />
-      ) : (
-        <View style={styles.compareEmpty}>
-          <Note>
-            Tick two to six runs above (the first run on Friday and the race on Sunday, say) to see their lap times,
-            section times, top speed and tyres here, next to each other.
-          </Note>
-          {bestOfDays.length >= 2 && (
-            <View style={styles.quick}>
-              <TextLink onPress={pickBestOfDays} label="The quickest run of each day" arrow />
-              <Text style={styles.quickRuns}>{bestOfDays.map((s) => s.name).join(' · ')}</Text>
-            </View>
-          )}
-        </View>
-      )}
+      dek="The ticked runs next to each other: lap times, the best time in each section, top speed, tyres.">
+      <EventCompare folderKey={key} picks={picks} onClear={() => setPicks([])} />
+    </Section>
+  );
+
+  // After the weekend: the full report, under the runs
+  const report = after && eventId != null && timed && (
+    <Section no={++no} title="Report" dek="The whole weekend analysed: where the time is, corner by corner, every run.">
+      <View style={styles.quick}>
+        <TextLink href={{ pathname: '/report', params: { event: eventId } }} label="Open the full report" red arrow />
+      </View>
     </Section>
   );
 
@@ -418,6 +427,11 @@ export default function EventScreen() {
       <AddSession eventId={eventId} onAdded={load} />
     </Section>
   );
+
+  // the ticked runs' best laps, opened together on the lap comparison: one tap from the bar
+  const tickedLaps = picks.map((p) => sessions.find((s) => s.id === p.id))
+    .filter((s): s is FolderSession => s?.best_lap != null).map((s) => ({ session_id: s.id, lap: s.best_lap! }));
+  const compareHref = tickedLaps.length >= 2 ? { pathname: '/compare' as const, params: { laps: encodePicks(tickedLaps) } } : null;
 
   return (
     <View style={styles.screen}>
@@ -443,6 +457,15 @@ export default function EventScreen() {
             {results}
             {addRun}
           </WeekendDuring>
+        ) : after ? (
+          <>
+            {runs}
+            {sideBySide}
+            {report}
+            {info}
+            {results}
+            {addRun}
+          </>
         ) : isEvent ? before : (
           <>
             {runs}
@@ -462,7 +485,10 @@ export default function EventScreen() {
       {picks.length > 0 && (
         <View style={styles.bar}>
           <View style={StyleSheet.flatten([styles.barInner, { paddingHorizontal: gutter }])}>
-            <Text style={styles.barText}>{picks.length} ticked</Text>
+            <Text style={styles.barText}>
+              {picks.length >= 2 ? plural(picks.length, 'run') : '1 run: tick another to compare'}
+            </Text>
+            {compareHref && <TextLink href={compareHref} label="Compare laps" red arrow />}
             {picks.length >= 2 && <TextLink onPress={showCompare} label="Side by side ↓" small />}
             <TextLink onPress={() => showPanel('move')} label="Move…" small />
             <TextLink onPress={() => showPanel('delete runs')} label="Delete…" small />
@@ -658,6 +684,7 @@ function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, e
           ) : (
             <View style={styles.nameLine}>
               {color && <RunKey color={color} />}
+              <DriverTag tag={driverTag(driverState(s, guess, garage))} run={s.name} onPress={() => onOpen('driver')} />
               <Pressable onPress={onEdit} hitSlop={6} accessibilityRole="button" accessibilityLabel={`Rename ${s.name}`}
                 style={styles.namePress}>
                 <Text style={styles.runName} numberOfLines={1}>{s.name}</Text>
@@ -823,7 +850,6 @@ const useStyles = themed((c) => ({
   underPhone: { paddingLeft: 0, paddingTop: 8 },
 
   // side by side
-  compareEmpty: { gap: 16, maxWidth: 720 },
   quick: { gap: 6 },
   quickRuns: { fontFamily: face('label', 400), fontSize: 13, color: c.textSecondary },
 

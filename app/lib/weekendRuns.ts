@@ -76,3 +76,24 @@ export function debriefLines(folder: Folder | null | undefined, debriefs: EventD
  * things, the latest run against the best (with where the time is and the traces when there are two timed runs),
  * debriefs, setup suggestions. */
 export const duringSections = (folder: Folder | null | undefined) => (latestAgainstBest(folder) ? 6 : 4);
+
+export type Stage = 'before' | 'during' | 'after';
+
+const dayBefore = (iso: string) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d - 1)).toISOString().slice(0, 10);
+};
+
+/** The weekend page's tab when none is asked for: Before while the event has no runs; During while it is on (today
+ * within its days, or its newest run from today or yesterday); After once its last day has passed. */
+export function defaultStage(folder: Folder | null | undefined, today: string): Stage {
+  const runs = runsInOrder(folder);
+  if (!folder || runs.length === 0) return 'before';
+  const end = folder.end ?? folder.start;
+  const start = folder.start ?? folder.end;
+  const newest = runs.map((s) => s.date).filter((d): d is string => d != null).sort().at(-1) ?? null;
+  if (newest != null && newest >= dayBefore(today)) return 'during';
+  if (start != null && end != null && start <= today && today <= end) return 'during';
+  if (end != null && end < today) return 'after';
+  return 'during';
+}
