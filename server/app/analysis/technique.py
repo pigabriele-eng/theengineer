@@ -637,6 +637,13 @@ EXIT_AY_SHARE = 0.8  # a lift with the car still cornering this hard (of the mos
 SHIFT_MARGIN_RPM = 150  # an upshift this far off the ideal revs is early or late
 LIMITER_RPM = 80  # revs within this of the limiter: on it
 LIMITER_HELD_M = 10  # metres on the limiter before an upshift: late, wherever the ideal revs are
+STALL_SMOOTH_S = 0.15  # the acceleration out of a corner, averaged over this long
+STALL_BEFORE_S = 0.3  # ...against what it was this long before
+STALL_MIN_ACC = 1.0  # m/s²: the speed was climbing at least this fast
+STALL_SHARE = 0.25  # the acceleration falling below this share of it: the speed stalls (or drops)
+STALL_BACK = 0.5  # ...until it is back above this share
+STALL_MIN_S = 0.2  # for this long or longer
+STALL_SHIFT_S = 0.4  # a stall no longer than this around a gear change is the gear change
 DRIVING_MS2 = 0.5  # m/s²: accelerating at least this before a lift, the car was driving out of the corner
 DIP_MAX_M = 200  # a lift the throttle never comes back from is counted this far at most
 MIN_OBVIOUS_S = 0.01  # an obvious mistake that costs less than this is the car at its limit (or noise)
@@ -785,6 +792,40 @@ def _dips(seg: np.ndarray, ts: np.ndarray, top: np.ndarray, ay: np.ndarray, a: i
     return out
 
 
+def _stalls(tr: dict[str, np.ndarray], a: int, b: int, ay: np.ndarray,
+            side: float) -> list[tuple[int, int, np.ndarray, float]]:
+    """Where the speed, climbing out of a corner (from metre a to b, the next corner's lift or brake point), stops
+    climbing or drops and then climbs again: the acceleration (smoothed over STALL_SMOOTH_S) below STALL_SHARE of
+    what it was just before, for STALL_MIN_S or longer, with no braking and not for the next corner. A gear change
+    alone is not a stall. Each as (start metre, end metre, the acceleration missing at each metre in m/s², the
+    acceleration before in g)."""
+    v, t = np.asarray(tr["speed"], float) / 3.6, np.asarray(tr["t"], float)
+    if b - a < 20:
+        return []
+    acc = np.gradient(v[a:b + 1], t[a:b + 1])
+    k = max(1, round(STALL_SMOOTH_S * float(np.median(v[a:b + 1]))))
+    acc = np.convolve(acc, np.ones(k) / k, mode="same")
+    braking = np.asarray(tr["braking"][a:b + 1], float) > 0.5 if "braking" in tr else np.zeros(b - a + 1, bool)
+    gear = np.rint(np.asarray(tr["gear"][a:b + 1], float)) if "gear" in tr else None
+    out, i = [], 0
+    while i < len(acc):
+        i0 = max(int(np.searchsorted(t[a:b + 1], t[a + i] - STALL_BEFORE_S)), 0)
+        was = float(np.median(acc[i0:i])) if i - i0 >= 3 else 0.0
+        if was < STALL_MIN_ACC or acc[i] >= STALL_SHARE * was or braking[i]:
+            i += 1
+            continue
+        e = i
+        while e < len(acc) - 1 and acc[e] < STALL_BACK * was and not braking[e]:
+            e += 1
+        back = e < len(acc) - 1 and not braking[e]
+        long = t[a + e] - t[a + i] >= STALL_MIN_S
+        shift = gear is not None and np.any(np.diff(gear[i:e + 1]) != 0) and t[a + e] - t[a + i] < STALL_SHIFT_S
+        if back and long and not shift and not _into_next(ay, a + i, side):
+            out.append((a + i, a + e, np.clip(was - acc[i:e + 1], 0, None), was / 9.81))
+        i = e + 1
+    return out
+
+
 def _into_next(ay: np.ndarray, j: int, side: float) -> bool:
     """A lift at j is for the next corner, not off the exit of this one: the car turns the other way after it, or
     loads up into a new turn the same way (NEXT_TURN_M either side of it)."""
@@ -868,6 +909,7 @@ def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Enve
             top = np.maximum.accumulate(seg)
             side = np.sign(np.mean(ay[max(c.m - 5, 0):c.m + 6]))
             dips = _dips(seg, ts, top, ay, a, side, c.m)
+            lifted = [(x, e) for x, e, _, _ in dips]
             lift = dips[0][0] - a if dips else None
             step = _step_at(thr[c.pickup:b], t[c.pickup:b])
             step_at = c.pickup + step[0] if step else None
@@ -887,6 +929,7 @@ def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Enve
                                 "Stepped on the power, then lifted", what,
                                 "Squeeze the throttle on from the slowest point, as fast as the car takes it, so "
                                 "you never have to come back off it.", lift_cost(tr, j, end, stop, most)))
+            lift_item = None
             if dips:
                 j, end = dips[0][0], dips[-1][1]
                 cost = sum(lift_cost(tr, x, e, stop, most) for x, e, _, _ in dips)
@@ -901,6 +944,7 @@ def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Enve
                     out.append(item("exit_lift", c, j, end, j, f"Lifted on the exit of {c.code}", what,
                                     "Once the throttle is on, keep it on: open it only as fast as the car takes it, "
                                     "and keep adding until full throttle.", cost))
+                    lift_item = out[-1]
                 else:
                     lows = ", ".join(f"{lo:.0f}% at {x} m" for x, _, _, lo in dips)
                     times = "once" if len(dips) == 1 else ("twice" if len(dips) == 2 else f"{len(dips)} times")
@@ -911,6 +955,7 @@ def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Enve
                     out.append(item("on_off_throttle", c, j, end, j, f"Throttle on and off through {c.code}", what,
                                     "Find the throttle the car holds through the corner and keep adding to it "
                                     "smoothly: balance the car with the steering, not by lifting.", cost))
+                    lift_item = out[-1]
             elif corr is not None:
                 what = (f"You went to the throttle at {step[1]:.0f}%/s at {step_at} m"
                         + (f", {c.m - step_at} m before the slowest point" if step_at < c.m else "") +
@@ -918,6 +963,30 @@ def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Enve
                 out.append(item("power_step", c, step_at, corr + 10, step_at,
                                 "Stepped on the power, then corrected", what,
                                 "Squeeze the throttle on rather than stepping on it, so the rear stays with you."))
+            # ---- the speed stops climbing (or drops) on the way out, whatever the pedal shows
+            for j, e, extra, was in _stalls(tr, a, b, ay, side):
+                if any(x <= e and j <= y for x, y in lifted):  # the lift above says it: it costs the stall at least
+                    if lift_item is not None:
+                        stall = round(max(gain_cost(tr, j, e, extra, stop, most), 0.0), 3)
+                        lift_item["cost_s"] = max(lift_item["cost_s"], stall)
+                        lift_item["end_m"] = max(lift_item["end_m"], e)
+                    continue
+                drop = float(v[j] - v[j:e + 1].min())
+                how = f"dropped {drop:.0f} km/h" if drop >= 1 else "stopped climbing"
+                least = float(thr[j:e + 1].min())
+                if least < FULL_THROTTLE:
+                    why = f" with the throttle down to {least:.0f}%"
+                elif st is not None and np.abs(st[j:e + 1]).max() >= 1.15 * abs(st[j]) + 0.5:
+                    why = " at full throttle while the steering was wound on: the tyres scrubbed it off"
+                else:
+                    why = " at full throttle: the car slid or ran wide"
+                what = (f"On the way out of {c.code} the speed was climbing ({was:.2f} g) and then {how} from {j} m "
+                        f"to {e} m, at {v[j]:.0f} km/h,{why}, before any braking for the next corner. Speed that "
+                        "stops building on the way out is lost all the way down the next straight.")
+                out.append(item("exit_stall", c, j, e, j, f"Speed stalled on the exit of {c.code}", what,
+                                "Keep the car accelerating from the slowest point to the next brake point: open the "
+                                "steering and add throttle steadily; no lift, no scrub.",
+                                gain_cost(tr, j, e, extra, stop, most)))
         # ---- the upshifts on the way out, early or late against the revs where the next gear drives harder
         if shifts is not None and c.pickup is not None:
             def gear_of(m: int) -> int:
