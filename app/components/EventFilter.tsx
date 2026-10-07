@@ -1,60 +1,54 @@
 // The event list's Past / Current / Upcoming filter with the racing calendar's state under it, removing a planned
 // event (made by hand or from the calendar, no data yet) and the form that plans one.
-import { Link } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, StyleSheet, TextInput } from 'react-native';
 
 import { EventForm } from '@/components/EventForm';
+import { TextLink, useWide } from '@/components/Programme';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { CalendarState, calendarApi, clockLabel, Filter, FILTERS, Plan } from '@/lib/calendar';
 import { Folder, FolderSummary } from '@/lib/events';
+import { Fonts, Radius, themed, Type, useTheme } from '@/constants/Theme';
 
-export function FilterBar({ filter, counts, onPick, calendar, onSynced }: {
+/** The index of the event list: Past, Current, Upcoming and All as large words with their counts, the one shown
+ * underlined in red. */
+export function FilterBar({ filter, counts, onPick }: {
   filter: Filter;
   counts: Record<Filter, number>;
   onPick: (f: Filter) => void;
-  calendar: CalendarState | null; // null: not known (yet)
-  onSynced: (c: CalendarState) => void;
 }) {
-  const tint = useThemeColor({}, 'tint');
+  const styles = useStyles();
+  const wide = useWide();
   return (
-    <View style={styles.bar}>
-      <View style={styles.chips} accessibilityRole="tablist">
-        {FILTERS.map(({ key, label }) => {
-          const on = key === filter;
-          return (
-            <Pressable key={key} onPress={() => onPick(key)} accessibilityRole="tab"
-              accessibilityState={{ selected: on }} accessibilityLabel={`${label}: ${counts[key]}`}
-              style={StyleSheet.flatten([styles.chip, on && { borderColor: tint, borderWidth: 1.5 }])}>
-              <Text style={StyleSheet.flatten([styles.chipText, on && { color: tint, fontWeight: '700' }])}>{label}</Text>
-              <Text style={StyleSheet.flatten([styles.count, on && { color: tint, opacity: 1 }])}>{counts[key]}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
-      {calendar && <CalendarLine calendar={calendar} onSynced={onSynced} tint={tint} />}
+    <View style={wide ? styles.tabs : styles.tabsPhone} accessibilityRole="tablist">
+      {FILTERS.map(({ key, label }) => {
+        const on = key === filter;
+        return (
+          <Pressable key={key} onPress={() => onPick(key)} accessibilityRole="tab" hitSlop={4}
+            accessibilityState={{ selected: on }} accessibilityLabel={`${label}: ${counts[key]}`}
+            style={StyleSheet.flatten([wide ? styles.tab : styles.tabPhone, on && styles.tabOn])}>
+            <Text style={StyleSheet.flatten([wide ? styles.tabText : styles.tabTextPhone, on && styles.tabTextOn])}>
+              {label}
+            </Text>
+            <Text style={StyleSheet.flatten([styles.count, on && styles.tabTextOn])}>{counts[key]}</Text>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
 
-function CalendarLine({ calendar, onSynced, tint }: {
+/** The racing calendar's state in one line, with Sync now; an offer to bring it in when there is none. */
+export function CalendarLine({ calendar, onSynced }: {
   calendar: CalendarState;
   onSynced: (c: CalendarState) => void;
-  tint: string;
 }) {
+  const styles = useStyles();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const feed = calendar.feed;
-  const link = StyleSheet.flatten([styles.calLink, { color: tint }]);
   if (!feed) {
-    return (
-      // Link asChild hands its child's style to a web anchor, which can't take a style array: one object
-      <Link href="/tools/calendar" asChild>
-        <Pressable hitSlop={6} accessibilityRole="link">
-          <Text style={link}>Bring in your tests and race weekends from Google Calendar ›</Text>
-        </Pressable>
-      </Link>
-    );
+    return <TextLink href="/tools/calendar" label="Bring in your racing calendar" arrow small />;
   }
   const sync = async () => {
     setBusy(true);
@@ -73,16 +67,10 @@ function CalendarLine({ calendar, onSynced, tint }: {
   return (
     <View style={styles.calRow}>
       <Text style={StyleSheet.flatten([styles.calText, feed.error && !busy ? styles.warn : null])} numberOfLines={3}>
-        Calendar{feed.name ? ` “${feed.name}”` : ''}: {error ?? status}
+        Calendar{feed.name ? ` “${feed.name}”` : ''} {error ?? status}
       </Text>
-      <Pressable onPress={sync} disabled={busy} hitSlop={6} accessibilityRole="button">
-        <Text style={link}>Sync now</Text>
-      </Pressable>
-      <Link href="/tools/calendar" asChild>
-        <Pressable hitSlop={6} accessibilityRole="link">
-          <Text style={link}>Settings</Text>
-        </Pressable>
-      </Link>
+      <TextLink onPress={sync} disabled={busy} label="Sync now" small />
+      <TextLink href="/tools/calendar" label="Settings" small />
     </View>
   );
 }
@@ -90,9 +78,9 @@ function CalendarLine({ calendar, onSynced, tint }: {
 /** Remove a planned event (no data yet): the button and, once tapped, the question. In a wrapping row: the question
  * takes a line of its own. */
 export function RemovePlanned({ f, plan, onRemoved }: { f: FolderSummary; plan?: Plan; onRemoved: () => void }) {
+  const styles = useStyles();
   const [asking, setAsking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const tint = useThemeColor({}, 'tint');
   const remove = async () => {
     try {
       await calendarApi.removePlanned(f.id!);
@@ -104,10 +92,7 @@ export function RemovePlanned({ f, plan, onRemoved }: { f: FolderSummary; plan?:
   };
   return (
     <>
-      <Pressable onPress={() => setAsking(!asking)} hitSlop={8} accessibilityRole="button"
-        accessibilityLabel={`Remove ${f.name}`} style={styles.removeButton}>
-        <Text style={StyleSheet.flatten([styles.removeText, { color: tint }])}>✕ Remove</Text>
-      </Pressable>
+      <TextLink onPress={() => setAsking(!asking)} label="Remove" small />
       {asking && (
         <View style={styles.confirm}>
           <Text style={styles.confirmText}>
@@ -138,6 +123,8 @@ export const plannedLine = (f: FolderSummary, plan?: Plan) =>
 
 /** A new event with its venue: a planned event that uploads from that venue on its days go into. */
 export function PlanForm({ onCancel, onMade }: { onCancel: () => void; onMade: (f: Folder) => void }) {
+  const styles = useStyles();
+  const theme = useTheme();
   const [venue, setVenue] = useState('');
   const text = useThemeColor({}, 'text');
   return (
@@ -147,7 +134,7 @@ export function PlanForm({ onCancel, onMade }: { onCancel: () => void; onMade: (
       extra={
         <>
           <Text style={styles.label}>Venue</Text>
-          <TextInput value={venue} onChangeText={setVenue} placeholder="e.g. Hockenheimring" placeholderTextColor="#888"
+          <TextInput value={venue} onChangeText={setVenue} placeholder="e.g. Hockenheimring" placeholderTextColor={theme.textMuted}
             style={StyleSheet.flatten([styles.input, { color: text }])} maxLength={255} accessibilityLabel="Venue" />
         </>
       }
@@ -155,27 +142,27 @@ export function PlanForm({ onCancel, onMade }: { onCancel: () => void; onMade: (
   );
 }
 
-const styles = StyleSheet.create({
-  bar: { gap: 8, marginTop: 8 },
-  chips: { flexDirection: 'row', gap: 6 },
-  chip: { flexGrow: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'baseline', gap: 5,
-    borderWidth: 1, borderColor: '#8884', borderRadius: 18, paddingHorizontal: 8, paddingVertical: 7 },
-  chipText: { fontSize: 15 },
-  count: { fontSize: 12, opacity: 0.6, fontVariant: ['tabular-nums'] },
-  calRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 4 },
-  calText: { fontSize: 13, opacity: 0.75, flexShrink: 1 },
-  calLink: { fontSize: 13, fontWeight: '600' },
-  warn: { color: '#b26b00', opacity: 1 },
-  removeButton: { paddingVertical: 2 },
-  removeText: { fontWeight: '600', fontSize: 14 },
+const useStyles = themed((c) => ({
+  tabs: { flexDirection: 'row', alignItems: 'flex-end', gap: 26, paddingTop: 18, paddingBottom: 12 },
+  tabsPhone: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', paddingTop: 14, paddingBottom: 10 },
+  tab: { flexDirection: 'row', alignItems: 'flex-start', paddingBottom: 6, borderBottomWidth: 6, borderColor: 'transparent' },
+  tabPhone: { flexDirection: 'row', alignItems: 'flex-start', paddingBottom: 6, borderBottomWidth: 5, borderColor: 'transparent' },
+  tabOn: { borderColor: c.mark },
+  tabText: { fontFamily: Fonts.display, fontSize: 30, lineHeight: 32, textTransform: 'uppercase', color: c.textMuted },
+  tabTextPhone: { fontFamily: Fonts.display, fontSize: 24, lineHeight: 26, textTransform: 'uppercase', color: c.textMuted },
+  tabTextOn: { color: c.text },
+  count: { fontFamily: Type.label.fontFamily, fontSize: 13, lineHeight: 14, marginLeft: 3, color: c.textMuted },
+  calRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 12, rowGap: 6 },
+  calText: { fontFamily: Fonts.label, fontSize: 13, color: c.textSecondary, flexShrink: 1 },
+  warn: { color: c.warning },
   confirm: { width: '100%', gap: 8, backgroundColor: 'transparent' },
   confirmText: { fontSize: 15, lineHeight: 21 },
   actions: { flexDirection: 'row', gap: 8, backgroundColor: 'transparent' },
-  action: { borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
-  danger: { borderColor: '#c8372d' },
-  dangerText: { color: '#c8372d', fontWeight: '600' },
-  error: { color: '#c8372d' },
+  action: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, paddingHorizontal: 14, paddingVertical: 8 },
+  danger: { borderColor: c.error },
+  dangerText: { color: c.error, fontWeight: '600' },
+  error: { color: c.error },
   label: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
-  input: { borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 9,
-    fontSize: 16 },
-});
+  input: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, paddingHorizontal: 12, paddingVertical: 9,
+    fontSize: 16, backgroundColor: c.surface },
+}));

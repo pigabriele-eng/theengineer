@@ -1,9 +1,26 @@
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { ReactNode, useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
+import { Stack, useLocalSearchParams } from 'expo-router';
+import { useCallback, useEffect, useState } from 'react';
+import { StyleSheet } from 'react-native';
 
+import { Colophon, Fig, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { SetupLoader } from '@/components/SetupLoader';
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { Text, View } from '@/components/Themed';
+import {
+  Actions,
+  ErrorLine,
+  Field,
+  FieldGrid,
+  MainAction,
+  Note,
+  Opening,
+  Options,
+  SheetRow,
+  Stepper,
+  SubHead,
+  useTableStyles,
+  WarnLine,
+  Working,
+} from '@/components/ToolForm';
 import { toolLists, VehicleDetail, VehicleItem } from '@/lib/toolLists';
 import {
   Change,
@@ -15,13 +32,14 @@ import {
   vehicleApi,
   WhatIfResult,
 } from '@/lib/vehicle';
+import { Fonts, themed, Type, useTheme } from '@/constants/Theme';
 
 type Axle = 'front' | 'rear';
-type Field = { key: keyof Vehicle; label: string; unit: string; percent?: boolean };
+type FieldDef = { key: keyof Vehicle; label: string; unit: string; percent?: boolean };
 
 const k = (s: string) => s as keyof Vehicle;
 
-const CAR_FIELDS: Field[] = [
+const CAR_FIELDS: FieldDef[] = [
   { key: 'mass_kg', label: 'Mass with driver and fuel', unit: 'kg' },
   { key: 'front_weight_fraction', label: 'Front weight', unit: '%', percent: true },
   { key: 'cog_height_mm', label: 'CoG height', unit: 'mm' },
@@ -29,7 +47,7 @@ const CAR_FIELDS: Field[] = [
   { key: 'tyre_radius_mm', label: 'Tyre loaded radius', unit: 'mm' },
 ];
 
-const axleFields = (a: Axle): Field[] => [
+const axleFields = (a: Axle): FieldDef[] => [
   { key: k(`track_${a}_mm`), label: 'Track', unit: 'mm' },
   { key: k(`roll_centre_${a}_mm`), label: 'Roll centre height', unit: 'mm' },
   { key: k(`spring_${a}_n_per_mm`), label: 'Spring rate', unit: 'N/mm' },
@@ -38,8 +56,9 @@ const axleFields = (a: Axle): Field[] => [
   { key: k(`tyre_vertical_${a}_n_per_mm`), label: 'Tyre vertical stiffness', unit: 'N/mm' },
   { key: k(`unsprung_${a}_kg`), label: 'Unsprung mass per corner', unit: 'kg' },
 ];
+const AXLE_ROWS = axleFields('front').map((f, i) => ({ front: f, rear: axleFields('rear')[i] }));
 
-const AERO_FIELDS: Field[] = [
+const AERO_FIELDS: FieldDef[] = [
   { key: 'downforce_n', label: 'Downforce (0 = none)', unit: 'N' },
   { key: 'aero_balance_front', label: 'Aero balance front', unit: '%', percent: true },
   { key: 'aero_ref_speed_kmh', label: 'at speed', unit: 'km/h' },
@@ -47,11 +66,11 @@ const AERO_FIELDS: Field[] = [
   { key: 'acceleration_g', label: 'Acceleration', unit: 'g' },
 ];
 
-const NUMERIC: Field[] = [...CAR_FIELDS, ...axleFields('front'), ...axleFields('rear'), ...AERO_FIELDS];
+const NUMERIC: FieldDef[] = [...CAR_FIELDS, ...axleFields('front'), ...axleFields('rear'), ...AERO_FIELDS];
 
 type BarState = { rates: string; setting: number | null; rate: string };
 
-const toText = (v: Partial<Record<keyof Vehicle, unknown>>, f: Field) => {
+const toText = (v: Partial<Record<keyof Vehicle, unknown>>, f: FieldDef) => {
   const x = v[f.key];
   if (typeof x !== 'number') return ''; // a value the vehicle's specs don't have yet
   return f.percent ? String(Math.round(x * 1000) / 10) : String(x);
@@ -59,7 +78,11 @@ const toText = (v: Partial<Record<keyof Vehicle, unknown>>, f: Field) => {
 
 const CONFIDENCE: Record<string, string> = { stored: "this vehicle's specs" };
 
+/** The vehicle model: the vehicle and a run's setup in, the car's values as a spec sheet (the car, the two axles side
+ * by side, aero), then its ride, roll and load transfer as large figures and a table, and what a change would do. */
 export default function VehicleScreen() {
+  const styles = useStyles();
+  const wide = useWide();
   // ?session=<id> loads that run's setup sheet; ?vehicle=<id> picks the vehicle (else the session's)
   const params = useLocalSearchParams<{ session?: string; vehicle?: string }>();
   const [vehicles, setVehicles] = useState<VehicleItem[] | null>(null);
@@ -78,9 +101,6 @@ export default function VehicleScreen() {
   const [showSources, setShowSources] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
-  const text = useThemeColor({}, 'text');
 
   const fill = (v: Partial<Record<keyof Vehicle, unknown>>) => {
     setForm(Object.fromEntries(NUMERIC.map((f) => [f.key, toText(v, f)])));
@@ -194,187 +214,181 @@ export default function VehicleScreen() {
   };
 
   const missing = preset && 'missing' in preset ? preset.missing : [];
-  const input = (f: Field) => (
-    <View key={f.key} style={styles.field}>
-      <View style={styles.fieldRow}>
-        <View style={styles.fieldLabel}>
-          <Text>{f.label}</Text>
-          <Text style={styles.unit}>
-            {f.unit}
-            {preset?.values[f.key]
-              ? ` · ${CONFIDENCE[preset.values[f.key]!.confidence] ?? preset.values[f.key]!.confidence}`
-              : missing.includes(f.key)
-                ? ' · needed'
-                : ''}
-          </Text>
-        </View>
-        <TextInput
-          style={[styles.input, { color: text, borderColor: missing.includes(f.key) ? '#b26a00' : '#8884' }]}
-          value={form[f.key] ?? ''}
-          onChangeText={(t) => setForm((s) => ({ ...s, [f.key]: t }))}
-          keyboardType="decimal-pad"
-          placeholder={missing.includes(f.key) ? 'needed' : undefined}
-          placeholderTextColor="#8888"
-          selectTextOnFocus
-        />
-      </View>
-      {showSources && preset?.values[f.key] && <Text style={styles.note}>{preset.values[f.key]!.note}</Text>}
-    </View>
-  );
+  const sourceOf = (key: keyof Vehicle) => {
+    const v = preset?.values[key];
+    return v ? CONFIDENCE[v.confidence] ?? v.confidence : missing.includes(key) ? 'needed' : null;
+  };
+  const setField = (key: keyof Vehicle) => (t: string) => setForm((s) => ({ ...s, [key]: t }));
 
-  const barEditor = (a: Axle) => {
-    const b = bars[a];
-    const rates = b.rates.split(/[,;\s]+/).filter(Boolean).map(Number);
-    const setBar = (patch: Partial<BarState>) => setBars((s) => ({ ...s, [a]: { ...s[a], ...patch } }));
-    const prov = preset?.values[k(`arb_${a}_settings_n_per_mm`)];
+  // one value on a line of the sheet
+  const input = (f: FieldDef) => {
+    const needed = missing.includes(f.key);
+    const source = sourceOf(f.key);
     return (
-      <View style={styles.field}>
-        <View style={styles.fieldRow}>
-          <View style={styles.fieldLabel}>
-            <Text>Anti-roll bar</Text>
-            <Text style={styles.unit}>
-              {rates.length ? `${rates[(b.setting ?? 1) - 1] ?? '–'} N/mm at the link` : 'N/mm at the link'}
-              {prov ? ` · ${prov.confidence}` : ''}
-            </Text>
+      <SheetRow key={f.key} label={f.label} sub={[f.unit, source].filter(Boolean).join(' · ')} warn={needed}
+        note={showSources ? preset?.values[f.key]?.note : null}>
+        <Field width={92} align="right" value={form[f.key] ?? ''} onChangeText={setField(f.key)} keyboardType="decimal-pad"
+          placeholder={needed ? 'needed' : undefined} warn={needed} selectTextOnFocus
+          accessibilityLabel={`${f.label}, ${f.unit}`} />
+      </SheetRow>
+    );
+  };
+
+  // a line of the axles' table: the value front and rear side by side
+  const axleRow = ({ front, rear }: { front: FieldDef; rear: FieldDef }) => {
+    const sf = sourceOf(front.key);
+    const sr = sourceOf(rear.key);
+    const source = sf === sr ? sf : [sf && `front ${sf}`, sr && `rear ${sr}`].filter(Boolean).join(', ');
+    const nf = preset?.values[front.key]?.note;
+    const nr = preset?.values[rear.key]?.note;
+    return (
+      <SheetRow key={front.key} label={front.label} sub={[front.unit, source].filter(Boolean).join(' · ')}
+        warn={missing.includes(front.key) || missing.includes(rear.key)}
+        note={showSources ? (nf === nr ? nf : [nf && `Front: ${nf}`, nr && `Rear: ${nr}`].filter(Boolean).join(' ')) : null}>
+        {[front, rear].map((f, i) => (
+          <View key={f.key} style={wide ? styles.axleCell : styles.axleCellPhone}>
+            <Field width={wide ? AXLE_W : AXLE_W_PHONE} align="right" value={form[f.key] ?? ''} onChangeText={setField(f.key)}
+              keyboardType="decimal-pad" placeholder={missing.includes(f.key) ? 'needed' : undefined}
+              warn={missing.includes(f.key)} selectTextOnFocus
+              accessibilityLabel={`${i === 0 ? 'Front' : 'Rear'} ${f.label.toLowerCase()}, ${f.unit}`} />
           </View>
-          {rates.length ? (
-            <View style={styles.stepper}>
-              <Pressable onPress={() => setBar({ setting: Math.max(1, (b.setting ?? 1) - 1) })} hitSlop={8}>
-                <Text style={[styles.step, { color: tint }]}>−</Text>
-              </Pressable>
-              <Text style={styles.stepValue}>
-                {b.setting ?? 1} of {rates.length}
-              </Text>
-              <Pressable onPress={() => setBar({ setting: Math.min(rates.length, (b.setting ?? 1) + 1) })} hitSlop={8}>
-                <Text style={[styles.step, { color: tint }]}>+</Text>
-              </Pressable>
+        ))}
+      </SheetRow>
+    );
+  };
+
+  const setBar = (a: Axle, patch: Partial<BarState>) => setBars((s) => ({ ...s, [a]: { ...s[a], ...patch } }));
+  const ratesOf = (a: Axle) => bars[a].rates.split(/[,;\s]+/).filter(Boolean).map(Number);
+  const barRow = () => {
+    const prov = (a: Axle) => preset?.values[k(`arb_${a}_settings_n_per_mm`)];
+    const rateNow = (a: Axle) => {
+      const rates = ratesOf(a);
+      return rates.length ? rates[(bars[a].setting ?? 1) - 1] ?? '–' : bars[a].rate;
+    };
+    const conf = [prov('front')?.confidence, prov('rear')?.confidence].filter(Boolean);
+    return (
+      <SheetRow key="bar" label="Anti-roll bar"
+        sub={`N/mm at the link: ${rateNow('front')} front, ${rateNow('rear')} rear${conf.length ? ` · ${conf[0]}` : ''}`}
+        note={showSources ? [prov('front')?.note, prov('rear')?.note].filter(Boolean).filter((n, i, all) => all.indexOf(n) === i).join(' ') : null}>
+        {(['front', 'rear'] as Axle[]).map((a) => {
+          const rates = ratesOf(a);
+          const b = bars[a];
+          return (
+            <View key={a} style={wide ? styles.axleCell : styles.axleCellPhone}>
+              {rates.length ? (
+                <Stepper label={`${a === 'front' ? 'Front' : 'Rear'} bar`} value={String(b.setting ?? 1)} of={`/${rates.length}`}
+                  onStep={(d) => setBar(a, { setting: Math.min(rates.length, Math.max(1, (b.setting ?? 1) + d)) })} />
+              ) : (
+                <Field width={wide ? AXLE_W : AXLE_W_PHONE} align="right" value={b.rate} onChangeText={(t) => setBar(a, { rate: t })}
+                  keyboardType="decimal-pad" accessibilityLabel={`${a === 'front' ? 'Front' : 'Rear'} bar rate, N/mm`} />
+              )}
             </View>
-          ) : (
-            <TextInput
-              style={[styles.input, { color: text, borderColor: '#8884' }]}
-              value={b.rate}
-              onChangeText={(t) => setBar({ rate: t })}
-              keyboardType="decimal-pad"
-            />
-          )}
-        </View>
-        <Text style={styles.unit}>Rate at each setting, softest first (empty: one rate)</Text>
-        <TextInput
-          style={[styles.input, styles.wide, { color: text, borderColor: '#8884' }]}
-          value={b.rates}
-          onChangeText={(t) => setBar({ rates: t })}
-          placeholder="e.g. 20, 30, 40, 50, 60"
-          placeholderTextColor="#8888"
-        />
-        {showSources && prov && <Text style={styles.note}>{prov.note}</Text>}
-      </View>
+          );
+        })}
+      </SheetRow>
     );
   };
 
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.container}>
+    <Page keyboardShouldPersistTaps="handled">
       <Stack.Screen options={{ title: 'Vehicle model' }} />
-      <Text style={styles.intro}>
-        Weight transfer, roll stiffness and ride frequencies from springs, bars and motion ratios
-        {preset ? `. Starting point: ${startingPoint(preset)}` : '.'}
-      </Text>
-      <VehiclePicker vehicles={vehicles} vehicleId={vehicleId} onPick={setVehicleId} />
-      {missing.length > 0 && (
-        <Text style={styles.warn}>
-          {pickedVehicle?.name}'s specs don't have every input yet: fill in the ones marked "needed", then save them to the
-          vehicle.
-        </Text>
-      )}
-      {preset && 'problem' in preset && preset.problem && <Text style={styles.warn}>{preset.problem}</Text>}
-      <Pressable onPress={() => setShowSources((s) => !s)}>
-        <Text style={{ color: tint }}>{showSources ? 'Hide' : 'Show'} where each value comes from</Text>
-      </Pressable>
-      <SetupLoader
-        initial={params.session ? Number(params.session) : undefined}
-        ready={preset != null}
-        vehicleId={vehicleId}
-        onLoad={(v) => {
-          fill(v);
-          setWhatIf(null);
-          vehicleApi.model(v).then(setResult, (e) => setError(e.message));
-        }}
-      />
+      <Opening title="Vehicle model"
+        dek={`Weight transfer, roll stiffness and ride frequencies from springs, bars and motion ratios${preset ? `. Starting point: ${startingPoint(preset)}` : '.'}`} />
 
-      <Section title="Car">{CAR_FIELDS.map(input)}</Section>
-      <Section title="Front">
-        {axleFields('front').slice(0, 4).map(input)}
-        {barEditor('front')}
-        {axleFields('front').slice(4).map(input)}
+      <Section no={1} title="Vehicle" dek="The car model is per vehicle: its stored specs fill the sheet below, and a run’s setup goes on top.">
+        <VehiclePicker vehicles={vehicles} vehicleId={vehicleId} onPick={setVehicleId} />
+        {missing.length > 0 && (
+          <View style={styles.gapTop}>
+            <WarnLine>
+              {pickedVehicle?.name}’s specs don’t have every input yet: fill in the ones marked “needed”, then save them
+              to the vehicle.
+            </WarnLine>
+          </View>
+        )}
+        {preset && 'problem' in preset && preset.problem ? (
+          <View style={styles.gapTop}><WarnLine>{preset.problem}</WarnLine></View>
+        ) : null}
+        <View style={styles.loader}>
+          <SetupLoader
+            initial={params.session ? Number(params.session) : undefined}
+            ready={preset != null}
+            vehicleId={vehicleId}
+            onLoad={(v) => {
+              fill(v);
+              setWhatIf(null);
+              vehicleApi.model(v).then(setResult, (e) => setError(e.message));
+            }}
+          />
+        </View>
       </Section>
-      <Section title="Rear">
-        {axleFields('rear').slice(0, 4).map(input)}
-        {barEditor('rear')}
-        {axleFields('rear').slice(4).map(input)}
-      </Section>
-      <Section title="Aero and longitudinal">{AERO_FIELDS.map(input)}</Section>
 
-      <Pressable style={[styles.button, { backgroundColor: tint }]} onPress={calculate}>
-        <Text style={styles.buttonText}>Calculate</Text>
-      </Pressable>
-      {pickedVehicle && (
-        <Pressable
-          style={StyleSheet.flatten([styles.button, styles.outline, { borderColor: tint }])}
-          onPress={saveToVehicle}
-          disabled={saving}>
-          <Text style={[styles.buttonText, { color: tint }]}>
-            {saving ? 'Saving…' : `Save these inputs as ${pickedVehicle.name}'s specs`}
-          </Text>
-        </Pressable>
-      )}
-      {saved && <Text style={styles.sub}>{saved}</Text>}
-      {error && <Text style={styles.error}>{error}</Text>}
+      <Section no={2} title="The car" dek="Mass, its centre of gravity and the aero, as the model takes them.">
+        <View style={styles.sources}>
+          <TextLink small onPress={() => setShowSources((s) => !s)}
+            label={showSources ? 'Hide where each value comes from' : 'Show where each value comes from'} />
+        </View>
+        <View style={wide ? styles.twoCols : undefined}>
+          <View style={wide ? styles.col : undefined}>
+            <SubHead>Car</SubHead>
+            {CAR_FIELDS.map(input)}
+          </View>
+          <View style={wide ? styles.col : styles.stacked}>
+            <SubHead>Aero and longitudinal</SubHead>
+            {AERO_FIELDS.map(input)}
+          </View>
+        </View>
+      </Section>
+
+      <Section no={3} title="Axles" dek="Front and rear side by side: track, roll centres, springs, bars and the tyres’ own spring.">
+        <View style={styles.axleTable}>
+          <View style={styles.axleHead}>
+            <Text style={StyleSheet.flatten([styles.axleHeadText, styles.axleHeadName])}>Value</Text>
+            <Text style={StyleSheet.flatten([styles.axleHeadText, wide ? styles.axleCell : styles.axleCellPhone, styles.right])}>Front</Text>
+            <Text style={StyleSheet.flatten([styles.axleHeadText, wide ? styles.axleCell : styles.axleCellPhone, styles.right])}>Rear</Text>
+          </View>
+          {AXLE_ROWS.slice(0, 4).map(axleRow)}
+          {barRow()}
+          {AXLE_ROWS.slice(4).map(axleRow)}
+        </View>
+        <SubHead style={styles.subGap}>Anti-roll bar rates</SubHead>
+        <Note small>Rate at each setting, softest first, in N/mm at the link. Empty: one rate, set above.</Note>
+        <FieldGrid columns={wide ? 2 : 1} style={styles.ratesGrid}>
+          {(['front', 'rear'] as Axle[]).map((a) => (
+            <Field key={a} label={a === 'front' ? 'Front bar' : 'Rear bar'} unit="N/mm" value={bars[a].rates}
+              onChangeText={(t) => setBar(a, { rates: t })} placeholder="e.g. 20, 30, 40, 50, 60" />
+          ))}
+        </FieldGrid>
+        <Actions>
+          <MainAction label="Calculate" onPress={calculate} />
+          {pickedVehicle && (
+            <TextLink onPress={saveToVehicle} disabled={saving}
+              label={saving ? 'Saving…' : `Save as ${pickedVehicle.name}’s specs`} />
+          )}
+        </Actions>
+        {saved ? <Note small style={styles.gapTop}>{saved}</Note> : null}
+        {error ? <View style={styles.gapTop}><ErrorLine>{error}</ErrorLine></View> : null}
+      </Section>
 
       {result && <Results r={result} />}
 
       {result && (
-        <Section title="What if">
-          <Text style={styles.sub}>Pick one or more changes to the setup above and compare.</Text>
-          <View style={styles.chips}>
-            {quick.map((q, i) => {
-              const on = picked.includes(i);
-              return (
-                <Pressable
-                  key={q.label}
-                  onPress={() => setPicked((p) => (on ? p.filter((x) => x !== i) : [...p, i]))}
-                  style={[styles.chip, on && { borderColor: tint }]}>
-                  <Text style={on ? { color: tint } : undefined}>{q.label}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-          <Pressable
-            style={[styles.button, { backgroundColor: tint, opacity: picked.length ? 1 : 0.5 }]}
-            onPress={compare}
-            disabled={!picked.length || busy}>
-            {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Compare</Text>}
-          </Pressable>
-          {whatIf && (
-            <View style={styles.card}>
-              <Text style={styles.summary}>{whatIf.summary}</Text>
-              {whatIf.deltas.map((d) => (
-                <View key={d.key} style={styles.deltaRow}>
-                  <Text>{d.label}</Text>
-                  <View style={styles.row}>
-                    <Text style={[styles.num, styles.sub, styles.rowLabel]}>
-                      {fmt(d.baseline)} → {fmt(d.changed)} {d.unit}
-                    </Text>
-                    <Text style={[styles.num, styles.delta, d.delta === 0 && styles.dim]}>
-                      {d.delta > 0 ? '+' : ''}
-                      {fmt(d.delta)}
-                    </Text>
-                  </View>
-                </View>
-              ))}
-            </View>
-          )}
+        <Section no={5} title="What if" dek="Pick one or more changes to the setup above and compare.">
+          <Options multi label="Changes" value={picked}
+            onPick={(i) => setPicked((p) => (p.includes(i) ? p.filter((x) => x !== i) : [...p, i]))}
+            options={quick.map((q, i) => ({ value: i, label: q.label }))} />
+          <Actions>
+            <MainAction label="Compare" onPress={compare} busy={busy} disabled={!picked.length} />
+          </Actions>
+          {whatIf && <WhatIf w={whatIf} />}
         </Section>
       )}
-    </ScrollView>
+
+      <Colophon left="The Engineer · Vehicle model" links={[
+        { label: 'Setup', href: '/tools/setup' },
+        { label: 'Tyre fit', href: '/tools/tyre-fit' },
+        { label: 'Garage', href: '/garage' },
+      ]} />
+    </Page>
   );
 }
 
@@ -395,42 +409,24 @@ function VehiclePicker({
   vehicleId: number | null;
   onPick: (id: number) => void;
 }) {
-  const tint = useThemeColor({}, 'tint');
-  const router = useRouter();
-  if (vehicles == null) return <ActivityIndicator />;
+  const styles = useStyles();
+  if (vehicles == null) return <Working>Reading the garage…</Working>;
   return (
-    <View style={styles.section}>
-      <View style={styles.headRow}>
-        <Text style={styles.h2}>Vehicle</Text>
-        <Pressable onPress={() => router.push('/garage')} hitSlop={6}>
-          <Text style={{ color: tint }}>Add a vehicle in the garage</Text>
-        </Pressable>
-      </View>
-      {vehicles.length === 0 && (
-        <Text style={styles.sub}>
+    <View style={styles.picker}>
+      {vehicles.length === 0 ? (
+        <Note>
           No vehicles in the garage yet, so the inputs start from the built-in values. Add your vehicle there to keep
           its specs.
-        </Text>
+        </Note>
+      ) : (
+        <Options label="Vehicle" value={vehicleId} onPick={onPick}
+          options={vehicles.map((v) => ({
+            value: v.id,
+            label: v.name,
+            sub: `${v.stored ? `${v.stored} spec${v.stored === 1 ? '' : 's'} stored` : 'no specs yet'}${v.missing.length ? ` · ${v.missing.length} needed` : ''}`,
+          }))} />
       )}
-      <View style={styles.chips}>
-        {vehicles.map((v) => {
-          const on = v.id === vehicleId;
-          return (
-            <Pressable
-              key={v.id}
-              onPress={() => onPick(v.id)}
-              style={on ? StyleSheet.flatten([styles.chip, { borderColor: tint }]) : styles.chip}
-              accessibilityRole="button"
-              accessibilityState={{ selected: on }}>
-              <Text style={on ? { color: tint, fontWeight: '600' } : undefined}>{v.name}</Text>
-              <Text style={styles.chipSub}>
-                {v.stored ? `${v.stored} spec${v.stored === 1 ? '' : 's'} stored` : 'no specs yet'}
-                {v.missing.length ? ` · ${v.missing.length} needed` : ''}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
+      <TextLink href="/garage" label="Add a vehicle in the garage" arrow small />
     </View>
   );
 }
@@ -462,134 +458,165 @@ function whatIfOptions(bars: Record<Axle, BarState>): { label: string; change: C
 }
 
 const fmt = (x: number) => (Math.abs(x) >= 100 ? x.toFixed(0) : Math.abs(x) >= 10 ? x.toFixed(1) : x.toFixed(2));
+const share = (x: number) => (x * 100).toFixed(1);
 
 function Results({ r }: { r: ModelResult }) {
+  const styles = useStyles();
+  const t = useTableStyles();
+  const c = useTheme();
+  const wide = useWide();
   const f = r.axles.front;
   const b = r.axles.rear;
   const lt = (a: 'front' | 'rear', part: 'geometric' | 'elastic' | 'unsprung' | 'total') =>
     r.axles[a].lateral_load_transfer_n_per_g[part].toFixed(0);
-  return (
-    <Section title="Results">
-      <View style={styles.card}>
-        <View style={styles.row}>
-          <Text style={[styles.rowLabel, styles.dim]} />
-          <Text style={[styles.col, styles.dim]}>Front</Text>
-          <Text style={[styles.col, styles.dim]}>Rear</Text>
+  const size = wide ? 64 : 48;
+  const figs = [
+    { label: 'Ride freq. rear ÷ front', value: r.ride_frequency_ratio.toFixed(2) },
+    { label: 'Roll stiffness front', value: share(r.roll_stiffness_front_share), unit: '%' },
+    { label: 'Roll gradient', value: r.roll_gradient_deg_per_g.toFixed(2), unit: '°/g' },
+    { label: 'Load transfer front', value: share(r.lateral_load_transfer_front_share), unit: '%' },
+  ];
+  const rows: { label: string; a: string; b: string; strong?: boolean }[] = [
+    { label: 'Wheel rate, N/mm', a: f.wheel_rate_n_per_mm.toFixed(0), b: b.wheel_rate_n_per_mm.toFixed(0) },
+    { label: 'Ride frequency, Hz', a: f.ride_frequency_hz.toFixed(2), b: b.ride_frequency_hz.toFixed(2) },
+    { label: 'Roll stiffness, Nm/deg', a: f.roll_stiffness_nm_per_deg.toFixed(0), b: b.roll_stiffness_nm_per_deg.toFixed(0) },
+  ];
+  const transfer: { label: string; a: string; b: string; strong?: boolean }[] = [
+    { label: 'Geometric (roll centre)', a: lt('front', 'geometric'), b: lt('rear', 'geometric') },
+    { label: 'Elastic (springs, bars)', a: lt('front', 'elastic'), b: lt('rear', 'elastic') },
+    { label: 'Unsprung', a: lt('front', 'unsprung'), b: lt('rear', 'unsprung') },
+    { label: 'Total', a: lt('front', 'total'), b: lt('rear', 'total'), strong: true },
+  ];
+  const table = (head: string, list: typeof rows) => (
+    <View style={styles.resultTable}>
+      <View style={t.head}>
+        <Text style={StyleSheet.flatten([t.th, styles.flex])}>{head}</Text>
+        <Text style={StyleSheet.flatten([t.th, t.num, styles.numCol])}>Front</Text>
+        <Text style={StyleSheet.flatten([t.th, t.num, styles.numCol])}>Rear</Text>
+      </View>
+      {list.map((x) => (
+        <View key={x.label} style={t.row}>
+          <Text style={StyleSheet.flatten([t.name, styles.flex, x.strong && styles.strong])}>{x.label}</Text>
+          <Text style={StyleSheet.flatten([t.td, t.num, styles.numCol, x.strong && styles.strong])}>{x.a}</Text>
+          <Text style={StyleSheet.flatten([t.td, t.num, styles.numCol, x.strong && styles.strong])}>{x.b}</Text>
         </View>
-        <Pair label="Wheel rate, N/mm" a={f.wheel_rate_n_per_mm.toFixed(0)} b={b.wheel_rate_n_per_mm.toFixed(0)} />
-        <Pair label="Ride frequency, Hz" a={f.ride_frequency_hz.toFixed(2)} b={b.ride_frequency_hz.toFixed(2)} />
-        <Pair
-          label="Roll stiffness, Nm/deg"
-          a={f.roll_stiffness_nm_per_deg.toFixed(0)}
-          b={b.roll_stiffness_nm_per_deg.toFixed(0)}
-        />
-        <Text style={styles.subhead}>Lateral load transfer, N per g</Text>
-        <Pair label="Geometric (roll centre)" a={lt('front', 'geometric')} b={lt('rear', 'geometric')} />
-        <Pair label="Elastic (springs, bars)" a={lt('front', 'elastic')} b={lt('rear', 'elastic')} />
-        <Pair label="Unsprung" a={lt('front', 'unsprung')} b={lt('rear', 'unsprung')} />
-        <Pair label="Total" a={lt('front', 'total')} b={lt('rear', 'total')} />
+      ))}
+    </View>
+  );
+  const frontLoad = r.balance.front_weight_share;
+  const frontLlt = r.balance.lateral_load_transfer_front_share;
+  return (
+    <Section no={4} title="Results" dek="The car as the sheet describes it: its ride, its roll and where the load goes in a corner.">
+      <View style={wide ? styles.figs : styles.figsPhone}>
+        {figs.map((x, i) => (
+          <View key={x.label} style={StyleSheet.flatten([wide ? styles.figCell : styles.figCellPhone,
+            wide ? i > 0 && styles.figRule : i % 2 === 1 && styles.figRule])}>
+            <Fig label={x.label} value={x.value} unit={x.unit} size={size} />
+          </View>
+        ))}
       </View>
-      <View style={styles.facts}>
-        <Fact label="Ride freq. rear ÷ front" value={r.ride_frequency_ratio.toFixed(2)} />
-        <Fact label="Roll stiffness front" value={pct(r.roll_stiffness_front_share)} />
-        <Fact label="Roll gradient" value={`${r.roll_gradient_deg_per_g.toFixed(2)} °/g`} />
-        <Fact label="Load transfer front" value={pct(r.lateral_load_transfer_front_share)} />
+      <View style={wide ? styles.twoCols : undefined}>
+        <View style={wide ? styles.col : undefined}>{table('Per axle', rows)}</View>
+        <View style={wide ? styles.col : styles.stacked}>{table('Lateral load transfer, N per g', transfer)}</View>
       </View>
-      <Text style={styles.sub}>
+      <Note small style={styles.gapTop}>
         Longitudinal transfer {r.longitudinal.per_g_n.toFixed(0)} N per g: +{r.longitudinal.braking_front_gain_n.toFixed(0)} N
         on the front braking at {r.longitudinal.braking_g} g, +{r.longitudinal.acceleration_rear_gain_n.toFixed(0)} N on the
         rear accelerating at {r.longitudinal.acceleration_g} g.
-      </Text>
-      <View style={styles.card}>
-        <Text style={styles.subhead}>Balance</Text>
-        <Text style={styles.sub}>
-          Front share of load {pct(r.balance.front_weight_share)} · of lateral load transfer{' '}
-          {pct(r.balance.lateral_load_transfer_front_share)}
-        </Text>
-        <Text>{r.balance.reading}</Text>
-        {r.balance.reading_at_speed && <Text>{r.balance.reading_at_speed}</Text>}
-        <Text style={styles.note}>
-          More front share of the load transfer than of the load means more understeer tendency at the limit, all
-          else equal.
-        </Text>
+      </Note>
+
+      <SubHead style={styles.subGap}>Balance</SubHead>
+      <View style={wide ? styles.balance : styles.balancePhone}>
+        <View style={wide ? styles.balanceFigs : styles.balanceFigsPhone}>
+          <Fig label="Front share of the load" value={share(frontLoad)} unit="%" size={wide ? 56 : 44}
+            bar={c.rule} barHeight={6} style={styles.balanceFig} />
+          <Fig label="Of the load transfer" value={share(frontLlt)} unit="%" size={wide ? 56 : 44}
+            bar={frontLlt > frontLoad ? c.balance.under : c.balance.over} barHeight={6} style={styles.balanceFig}
+            note={frontLlt > frontLoad ? 'More than its share: towards understeer' : 'Less than its share: towards oversteer'} />
+        </View>
+        <View style={wide ? styles.flex : undefined}>
+          <Text style={styles.body}>{r.balance.reading}</Text>
+          {r.balance.reading_at_speed ? <Text style={StyleSheet.flatten([styles.body, styles.gapTop])}>{r.balance.reading_at_speed}</Text> : null}
+          <Note small style={styles.gapTop}>
+            More front share of the load transfer than of the load means more understeer tendency at the limit, all
+            else equal.
+          </Note>
+        </View>
       </View>
     </Section>
   );
 }
 
-function Pair({ label, a, b }: { label: string; a: string; b: string }) {
+function WhatIf({ w }: { w: WhatIfResult }) {
+  const styles = useStyles();
+  const t = useTableStyles();
+  const wide = useWide();
   return (
-    <View style={styles.row}>
-      <Text style={styles.rowLabel}>{label}</Text>
-      <Text style={styles.col}>{a}</Text>
-      <Text style={styles.col}>{b}</Text>
+    <View style={styles.whatIf}>
+      <Text style={styles.summary}>{w.summary}</Text>
+      <View style={t.head}>
+        <Text style={StyleSheet.flatten([t.th, styles.flex])}>Measure</Text>
+        {wide && <Text style={StyleSheet.flatten([t.th, t.num, styles.wideCol])}>Now → with the change</Text>}
+        <Text style={StyleSheet.flatten([t.th, t.num, styles.numCol])}>Change</Text>
+      </View>
+      {w.deltas.map((d) => (
+        <View key={d.key} style={t.row}>
+          <View style={styles.flex}>
+            <Text style={t.name}>{d.label}</Text>
+            {!wide && <Text style={StyleSheet.flatten([t.td, t.muted, styles.small])}>{fmt(d.baseline)} → {fmt(d.changed)} {d.unit}</Text>}
+          </View>
+          {wide && (
+            <Text style={StyleSheet.flatten([t.td, t.num, t.muted, styles.wideCol])}>
+              {fmt(d.baseline)} → {fmt(d.changed)} {d.unit}
+            </Text>
+          )}
+          <Text style={StyleSheet.flatten([t.td, t.num, styles.numCol, styles.strong, d.delta === 0 && t.muted])}>
+            {d.delta > 0 ? '+' : d.delta < 0 ? '−' : ''}{fmt(Math.abs(d.delta))}
+          </Text>
+        </View>
+      ))}
     </View>
   );
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={styles.fact}>
-      <Text style={styles.factLabel}>{label}</Text>
-      <Text style={styles.factValue}>{value}</Text>
-    </View>
-  );
-}
+const AXLE_W = 104; // a column of the axles' table: an input, or the bar's stepper
+const AXLE_W_PHONE = 92;
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <View style={styles.section}>
-      <Text style={styles.h2}>{title}</Text>
-      {children}
-    </View>
-  );
-}
-
-const styles = StyleSheet.create({
-  container: { padding: 16, gap: 16, paddingBottom: 48 },
-  intro: { opacity: 0.8 },
-  section: { gap: 8 },
-  h2: { fontSize: 18, fontWeight: '700' },
-  field: { gap: 4, paddingVertical: 4, borderBottomWidth: 1, borderColor: '#8882' },
-  fieldRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  fieldLabel: { flex: 1, gap: 1 },
-  unit: { fontSize: 12, opacity: 0.6 },
-  note: { fontSize: 12, opacity: 0.7 },
-  input: {
-    borderWidth: 1,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    width: 96,
-    textAlign: 'right',
-    fontVariant: ['tabular-nums'],
-  },
-  wide: { width: '100%', textAlign: 'left' },
-  stepper: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  step: { fontSize: 24, fontWeight: '600', paddingHorizontal: 6 },
-  stepValue: { fontVariant: ['tabular-nums'] },
-  button: { borderRadius: 8, padding: 14, alignItems: 'center' },
-  buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-  error: { color: '#c8372d' },
-  card: { gap: 6, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#8883' },
-  row: { flexDirection: 'row', alignItems: 'baseline', gap: 8 },
-  rowLabel: { flex: 1 },
-  col: { width: 64, textAlign: 'right', fontVariant: ['tabular-nums'] },
-  num: { fontVariant: ['tabular-nums'] },
-  delta: { width: 64, textAlign: 'right', fontWeight: '600' },
-  deltaRow: { gap: 2, paddingVertical: 4, borderBottomWidth: 1, borderColor: '#8882' },
-  subhead: { fontWeight: '600', marginTop: 4 },
-  sub: { opacity: 0.7 },
-  summary: { fontWeight: '600' },
-  facts: { flexDirection: 'row', flexWrap: 'wrap', gap: 20 },
-  fact: { gap: 2, minWidth: 130 },
-  factLabel: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
-  factValue: { fontSize: 22, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6 },
-  chipSub: { fontSize: 12, opacity: 0.6 },
-  headRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 },
-  outline: { borderWidth: 1, backgroundColor: 'transparent' },
-  warn: { color: '#b26a00' },
-  dim: { opacity: 0.5 },
-});
+const useStyles = themed((c) => ({
+  gapTop: { marginTop: 12 },
+  subGap: { marginTop: 28 },
+  stacked: { marginTop: 26 },
+  picker: { gap: 14 },
+  loader: { marginTop: 20 },
+  sources: { marginBottom: 16 },
+  twoCols: { flexDirection: 'row', gap: 36 },
+  col: { flex: 1, minWidth: 0 },
+  axleTable: { maxWidth: 820 },
+  axleHead: { flexDirection: 'row', alignItems: 'flex-end', gap: 14, borderBottomWidth: 2, borderColor: c.rule, paddingBottom: 5 },
+  axleHeadText: { ...Type.label, fontFamily: Fonts.label, fontSize: 11, letterSpacing: 1.1, color: c.textSecondary },
+  axleHeadName: { flex: 1 },
+  axleCell: { alignItems: 'flex-end', width: AXLE_W },
+  axleCellPhone: { alignItems: 'flex-end', width: AXLE_W_PHONE },
+  right: { textAlign: 'right' },
+  ratesGrid: { marginTop: 12, maxWidth: 820 },
+  figs: { flexDirection: 'row', borderTopWidth: 1, borderBottomWidth: 1, borderColor: c.rule, marginBottom: 26 },
+  figsPhone: { flexDirection: 'row', flexWrap: 'wrap', borderTopWidth: 1, borderColor: c.rule, marginBottom: 22 },
+  figCell: { flex: 1, minWidth: 0, paddingTop: 12, paddingBottom: 14, paddingHorizontal: 16 },
+  figCellPhone: { width: '50%', paddingTop: 10, paddingBottom: 12, paddingHorizontal: 10, borderBottomWidth: 1,
+    borderColor: c.rule },
+  figRule: { borderLeftWidth: 1, borderColor: c.rule },
+  resultTable: {},
+  flex: { flex: 1, minWidth: 0 },
+  numCol: { width: 76 },
+  wideCol: { width: 220 },
+  strong: { fontFamily: Type.label.fontFamily },
+  small: { fontSize: 13 },
+  balance: { flexDirection: 'row', gap: 36, alignItems: 'flex-start', marginTop: 6 },
+  balancePhone: { gap: 18, marginTop: 6 },
+  balanceFigs: { flexDirection: 'row', gap: 24, width: 480 },
+  balanceFigsPhone: { flexDirection: 'row', gap: 18 },
+  balanceFig: { flex: 1, minWidth: 0 },
+  body: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 24, color: c.text },
+  whatIf: { marginTop: 24 },
+  summary: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 24, color: c.text, marginBottom: 14 },
+}));

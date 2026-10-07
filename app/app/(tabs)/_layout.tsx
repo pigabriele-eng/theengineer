@@ -1,69 +1,22 @@
-import { SymbolView } from 'expo-symbols';
 import { Tabs } from 'expo-router';
 
-import Colors from '@/constants/Colors';
-import { useColorScheme } from '@/components/useColorScheme';
-import { useClientOnlyValue } from '@/components/useClientOnlyValue';
+import { useTheme } from '@/constants/Theme';
 
+// The four parts of the app. They are reached from the masthead's text links (components/Programme.tsx Masthead), so
+// the tab bar itself is not drawn, and each page has its own headline instead of a header bar.
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
-
+  const c = useTheme();
   return (
     <Tabs
+      tabBar={() => null}
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme].tint,
-        // Disable the static render of the header on web
-        // to prevent a hydration error in React Navigation v6.
-        headerShown: useClientOnlyValue(false, true),
+        headerShown: false,
+        sceneStyle: { backgroundColor: c.background },
       }}>
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Sessions',
-          tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{ ios: 'flag.checkered', android: 'flag', web: 'flag' }}
-              tintColor={color}
-              size={26}
-            />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="upload"
-        options={{
-          title: 'Upload',
-          tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{ ios: 'square.and.arrow.up', android: 'upload', web: 'upload' }}
-              tintColor={color}
-              size={26}
-            />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="debrief"
-        options={{
-          title: 'Debrief',
-          tabBarIcon: ({ color }) => (
-            <SymbolView name={{ ios: 'mic', android: 'mic', web: 'mic' }} tintColor={color} size={26} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="tools"
-        options={{
-          title: 'Tools',
-          tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{ ios: 'wrench.and.screwdriver', android: 'build', web: 'build' }}
-              tintColor={color}
-              size={26}
-            />
-          ),
-        }}
-      />
+      <Tabs.Screen name="index" options={{ title: 'Sessions' }} />
+      <Tabs.Screen name="upload" options={{ title: 'Upload' }} />
+      <Tabs.Screen name="debrief" options={{ title: 'Debrief' }} />
+      <Tabs.Screen name="tools" options={{ title: 'Tools' }} />
     </Tabs>
   );
 }

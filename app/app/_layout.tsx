@@ -1,10 +1,23 @@
+import { Anton_400Regular } from '@expo-google-fonts/anton/400Regular';
+import { ArchivoNarrow_400Regular } from '@expo-google-fonts/archivo-narrow/400Regular';
+import { ArchivoNarrow_500Medium } from '@expo-google-fonts/archivo-narrow/500Medium';
+import { ArchivoNarrow_600SemiBold } from '@expo-google-fonts/archivo-narrow/600SemiBold';
+import { ArchivoNarrow_700Bold } from '@expo-google-fonts/archivo-narrow/700Bold';
+import { Newsreader_400Regular } from '@expo-google-fonts/newsreader/400Regular';
+import { Newsreader_400Regular_Italic } from '@expo-google-fonts/newsreader/400Regular_Italic';
+import { Newsreader_600SemiBold } from '@expo-google-fonts/newsreader/600SemiBold';
+import { Newsreader_700Bold } from '@expo-google-fonts/newsreader/700Bold';
 import { useFonts } from 'expo-font';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
+import { Platform, StyleSheet, View } from 'react-native';
 import 'react-native-reanimated';
 
+import { Masthead } from '@/components/Programme';
 import { useColorScheme } from '@/components/useColorScheme';
+import Colors from '@/constants/Colors';
+import { Fonts } from '@/constants/Theme';
 import { authEnabled, useAuthSession } from '@/lib/auth';
 import { NoteLaunch } from '@/lib/openCurrent';
 
@@ -22,8 +35,18 @@ export const unstable_settings = {
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
+  // The programme's faces (constants/Theme.ts FACES), loaded before the first page is drawn
   const [loaded, error] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
+    Anton_400Regular,
+    Newsreader_400Regular,
+    Newsreader_400Regular_Italic,
+    Newsreader_600SemiBold,
+    Newsreader_700Bold,
+    ArchivoNarrow_400Regular,
+    ArchivoNarrow_500Medium,
+    ArchivoNarrow_600SemiBold,
+    ArchivoNarrow_700Bold,
   });
   // Keep the splash screen up until the stored session has been read, so a signed-in user never sees sign-in flash by.
   const auth = useAuthSession();
@@ -47,41 +70,79 @@ export default function RootLayout() {
   return <RootLayoutNav signedIn={!authEnabled || auth.session != null} />;
 }
 
+// The pages that open on a full-bleed photo: the photo is their top, so they have no header bar (their kicker links
+// back up instead).
+const NO_BAR = { headerShown: false };
+
 function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
   const colorScheme = useColorScheme();
+  const c = Colors[colorScheme];
+  // React Navigation's headers and page backgrounds on the paper, in the app's colours
+  const theme = useMemo(() => {
+    const base = colorScheme === 'dark' ? DarkTheme : DefaultTheme;
+    return {
+      ...base,
+      colors: { ...base.colors, primary: c.tint, background: c.background, card: c.background, text: c.text,
+        border: c.rule, notification: c.error },
+    };
+  }, [colorScheme, c]);
+  // A pushed page's bar: the paper, no shadow, its name in Archivo Narrow
+  const screenOptions = useMemo(() => ({
+    headerStyle: { backgroundColor: c.background },
+    headerShadowVisible: false,
+    headerTintColor: c.text,
+    headerTitleStyle: { fontFamily: Fonts.label, fontSize: 15, color: c.text },
+    headerBackTitleStyle: { fontFamily: Fonts.label, fontSize: 14 },
+    contentStyle: { backgroundColor: c.background },
+  }), [c]);
+  // the browser's own pieces (scrollbars, date fields, the page behind the app) in the same scheme
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    document.documentElement.style.colorScheme = colorScheme;
+    document.body.style.backgroundColor = c.background;
+  }, [colorScheme, c]);
 
   // Without Supabase configured, signedIn is always true and there is no sign-in screen.
   // Every route other than sign-in must be listed in the first group: a route left out stays reachable when signed out.
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      {/* where the app was opened: on the event list while an event is on, it goes on to that event's page */}
-      <NoteLaunch />
-      <Stack>
-        <Stack.Protected guard={signedIn}>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="event/[id]" options={{ title: 'Event' }} />
-          <Stack.Screen name="session/[id]" options={{ title: 'Session' }} />
-          <Stack.Screen name="report" options={{ title: 'Report' }} />
-          <Stack.Screen name="technique" options={{ title: 'Technique check' }} />
-          <Stack.Screen name="quali" options={{ title: 'Quali prep' }} />
-          <Stack.Screen name="debrief/[id]" options={{ title: 'Debrief report' }} />
-          <Stack.Screen name="tools/pressures" />
-          <Stack.Screen name="tools/tyre-temps" />
-          <Stack.Screen name="tools/tyre-fit" />
-          <Stack.Screen name="tools/vehicle" />
-          <Stack.Screen name="tools/stint" />
-          <Stack.Screen name="tools/setup" />
-          <Stack.Screen name="tools/calendar" options={{ title: 'Racing calendar' }} />
-          <Stack.Screen name="garage" options={{ title: 'Cars, drivers and teams' }} />
-          <Stack.Screen name="seasons" options={{ title: 'Seasons' }} />
-          <Stack.Screen name="drivers/tag" options={{ title: 'Tag drivers' }} />
-          <Stack.Screen name="drivers/compare" options={{ title: 'Compare drivers' }} />
-          <Stack.Screen name="compare" options={{ title: 'Compare laps' }} />
-        </Stack.Protected>
-        <Stack.Protected guard={!signedIn}>
-          <Stack.Screen name="sign-in" options={{ headerShown: false, title: 'Sign in' }} />
-        </Stack.Protected>
-      </Stack>
+    <ThemeProvider value={theme}>
+      <View style={StyleSheet.flatten([styles.root, { backgroundColor: c.background }])}>
+        {/* where the app was opened: on the event list while an event is on, it goes on to that event's page */}
+        <NoteLaunch />
+        {/* the masthead and its four text links take the place of a tab bar, above every page */}
+        {signedIn && <Masthead />}
+        <Stack screenOptions={screenOptions}>
+          <Stack.Protected guard={signedIn}>
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="event/[id]" options={{ title: 'Event' }} />
+            <Stack.Screen name="session/[id]" options={{ title: 'Session', ...NO_BAR }} />
+            <Stack.Screen name="report" options={{ title: 'Report', ...NO_BAR }} />
+            <Stack.Screen name="technique" options={{ title: 'Technique check' }} />
+            <Stack.Screen name="quali" options={{ title: 'Quali prep' }} />
+            <Stack.Screen name="prep" options={{ title: 'Prep report' }} />
+            <Stack.Screen name="debrief/[id]" options={{ title: 'Debrief report' }} />
+            <Stack.Screen name="tools/pressures" />
+            <Stack.Screen name="tools/tyre-temps" />
+            <Stack.Screen name="tools/tyre-fit" />
+            <Stack.Screen name="tools/vehicle" />
+            <Stack.Screen name="tools/stint" />
+            <Stack.Screen name="tools/setup" />
+            <Stack.Screen name="tools/calendar" options={{ title: 'Racing calendar' }} />
+            <Stack.Screen name="garage" options={{ title: 'Cars, drivers and teams' }} />
+            <Stack.Screen name="seasons" options={{ title: 'Seasons', ...NO_BAR }} />
+            <Stack.Screen name="drivers/tag" options={{ title: 'Tag drivers' }} />
+            <Stack.Screen name="drivers/compare" options={{ title: 'Compare drivers' }} />
+            <Stack.Screen name="compare" options={{ title: 'Compare laps' }} />
+          </Stack.Protected>
+          <Stack.Protected guard={!signedIn}>
+            <Stack.Screen name="sign-in" options={{ headerShown: false, title: 'Sign in' }} />
+          </Stack.Protected>
+        </Stack>
+      </View>
     </ThemeProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  root: { flex: 1 },
+});

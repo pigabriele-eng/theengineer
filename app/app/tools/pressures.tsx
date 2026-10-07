@@ -1,16 +1,25 @@
-import { Stack, useFocusEffect, useRouter } from 'expo-router';
-import { ReactNode, useCallback, useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  Linking,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  TextInput,
-  TextInputProps,
-} from 'react-native';
+import { Stack, useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useState } from 'react';
+import { StyleSheet } from 'react-native';
 
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { Block, Colophon, Fig, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
+import { Text, View } from '@/components/Themed';
+import {
+  Actions,
+  CarGrid,
+  ErrorLine,
+  Field,
+  FieldGrid,
+  InlineLink,
+  MainAction,
+  Note,
+  Opening,
+  Options,
+  SubHead,
+  useTableStyles,
+  WarnLine,
+  Working,
+} from '@/components/ToolForm';
 import { eventLabel, NotSet, toolLists, TyreKind } from '@/lib/toolLists';
 import {
   Axle,
@@ -24,61 +33,27 @@ import {
   RunSummary,
   tyres,
 } from '@/lib/tyres';
+import { Fonts, inkOn, themed, Type, useTheme } from '@/constants/Theme';
 
 const AXLE_OF: Record<Corner, Axle> = { FL: 'front', FR: 'front', RL: 'rear', RR: 'rear' };
 
 const empty = (): Record<Corner, string> => ({ FL: '', FR: '', RL: '', RR: '' });
 const fmt = (x: number | null | undefined, digits = 2) => (x == null ? '–' : x.toFixed(digits));
 
-// Four tyres laid out like the car seen from above, front at the top.
-function CarGrid({ cell }: { cell: (c: Corner) => ReactNode }) {
-  return (
-    <View style={styles.car}>
-      <Text style={styles.carLabel}>Front</Text>
-      {[CORNERS.slice(0, 2), CORNERS.slice(2)].map((row) => (
-        <View key={row[0]} style={styles.carRow}>
-          {row.map((c) => (
-            <View key={c} style={styles.carCell}>
-              <Text style={styles.cornerName}>{c}</Text>
-              {cell(c)}
-            </View>
-          ))}
-        </View>
-      ))}
-    </View>
-  );
-}
-
 // A figure from an older public booklet, with a link to it.
 function Ref({ r }: { r: Reference }) {
-  const tint = useThemeColor({}, 'tint');
   return (
-    <Text style={styles.dim}>
-      {r.text}{' '}
-      <Text style={{ color: tint }} onPress={() => Linking.openURL(r.source)}>
-        Source
-      </Text>
-    </Text>
+    <Note small>
+      {r.text} <InlineLink label="Source" url={r.source} />
+    </Note>
   );
 }
 
-function Field(props: TextInputProps & { label?: string }) {
-  const color = useThemeColor({}, 'text');
-  const { label, style, ...rest } = props;
-  return (
-    <View style={styles.field}>
-      {label && <Text style={styles.fieldLabel}>{label}</Text>}
-      <TextInput
-        placeholderTextColor="#8889"
-        keyboardType="numbers-and-punctuation"
-        {...rest}
-        style={[styles.input, { color }, style]}
-      />
-    </View>
-  );
-}
-
+/** The pressure calculator: the tyre, today's conditions and the hot targets in, the cold pressures to set out (by
+ * the gas law and by the logged runs on that tyre), then the tyre's P-Book pressures and the runs it learns from. */
 export default function PressuresScreen() {
+  const styles = useStyles();
+  const wide = useWide();
   const [ambient, setAmbient] = useState('');
   const [track, setTrack] = useState('');
   const [setTemp, setSetTemp] = useState('');
@@ -94,8 +69,6 @@ export default function PressuresScreen() {
   const [plan, setPlan] = useState<PressurePlan | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
   const kind = kinds?.find((k) => k.id === kindId) ?? null;
 
   // the garage's tyres, again on coming back (a tyre may have been added there)
@@ -183,79 +156,79 @@ export default function PressuresScreen() {
     if (first) setTargets({ FL: first, FR: first, RL: first, RR: first });
   };
 
+  let no = 3;
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.container}>
+    <Page keyboardShouldPersistTaps="handled">
       <Stack.Screen options={{ title: 'Tyre pressures' }} />
-      <Text style={styles.intro}>
-        The cold pressures to set now so the tyres reach your target hot pressure: by the gas law, and by what your
-        logged runs on this tyre show.
-      </Text>
+      <Opening title="Tyre pressures"
+        dek="The cold pressures to set now so the tyres reach your target hot pressure: by the gas law, and by what your logged runs on this tyre show." />
 
-      <TyrePicker kinds={kinds} kindId={kindId} onPick={setKindId} notSet={notSet} />
+      <Section no={1} title="Tyre" dek="Different tyres are different pressure models: pick the one on the car.">
+        <TyrePicker kinds={kinds} kindId={kindId} onPick={setKindId} notSet={notSet} />
+      </Section>
 
-      <Text style={styles.h2}>Conditions now</Text>
-      <View style={styles.row}>
-        <Field label="Ambient °C" value={ambient} onChangeText={setAmbient} placeholder="e.g. 18" />
-        <Field label="Track °C" value={track} onChangeText={setTrack} placeholder="e.g. 30" />
-      </View>
-      <View style={styles.row}>
-        <Field
-          label="Tyre temp when setting °C"
-          value={setTemp}
-          onChangeText={setSetTemp}
-          placeholder={ambient ? `${ambient} (ambient)` : 'e.g. 22 in the garage'}
-        />
-        <Field label="Air pressure bar" value={atmos} onChangeText={setAtmos} keyboardType="decimal-pad" />
-      </View>
+      <Section no={2} title="Conditions now" dek="Ambient and track now, and the tyres’ own temperature where they are set.">
+        <FieldGrid columns={wide ? 4 : 2}>
+          <Field label="Ambient" unit="°C" value={ambient} onChangeText={setAmbient} placeholder="e.g. 18" />
+          <Field label="Track" unit="°C" value={track} onChangeText={setTrack} placeholder="e.g. 30" />
+          <Field label="Tyres when set" unit="°C" value={setTemp} onChangeText={setSetTemp}
+            placeholder={ambient ? `${ambient} (ambient)` : 'e.g. 22'} />
+          <Field label="Air pressure" unit="bar" value={atmos} onChangeText={setAtmos} keyboardType="decimal-pad" />
+        </FieldGrid>
+      </Section>
 
-      <View style={styles.headRow}>
-        <Text style={styles.h2}>Target hot pressure, bar</Text>
-        <Pressable onPress={copyFirst}>
-          <Text style={{ color: tint }}>Same for all</Text>
-        </Pressable>
-      </View>
-      {kind && (hotTarget?.front != null || hotTarget?.rear != null) && (
-        <Text style={styles.note}>Filled in from the P-Book hot target of {kind.label}; change it for today.</Text>
-      )}
-      <CarGrid
-        cell={(c) => (
-          <Field
-            value={targets[c]}
-            onChangeText={(v) => setTargets((cur) => ({ ...cur, [c]: v }))}
-            keyboardType="decimal-pad"
-            placeholder="e.g. 1.85"
-            accessibilityLabel={`${c} target hot pressure`}
-          />
-        )}
-      />
+      <Section no={3} title="Targets" dek="The hot pressure each tyre should reach, and how hot it will run.">
+        <View style={wide ? styles.pair : undefined}>
+          <View style={wide ? styles.pairCol : undefined}>
+            <SubHead right={<TextLink small label="Same for all" onPress={copyFirst} />}>Target hot pressure, bar</SubHead>
+            {kind && (hotTarget?.front != null || hotTarget?.rear != null) ? (
+              <Note small>Filled in from the P-Book hot target of {kind.label}; change it for today.</Note>
+            ) : null}
+            <CarGrid style={styles.grid}
+              cell={(c) => (
+                <Field
+                  value={targets[c]}
+                  onChangeText={(v) => setTargets((cur) => ({ ...cur, [c]: v }))}
+                  keyboardType="decimal-pad"
+                  placeholder="e.g. 1.85"
+                  accessibilityLabel={`${c} target hot pressure`}
+                />
+              )}
+            />
+          </View>
+          <View style={wide ? styles.pairCol : styles.stacked}>
+            <SubHead>Expected hot temperature, °C</SubHead>
+            <Note small>Optional. Empty uses what the TPMS read when hot in your logged runs.</Note>
+            <CarGrid style={styles.grid}
+              cell={(c) => (
+                <Field
+                  value={hotTemps[c]}
+                  onChangeText={(v) => setHotTemps((cur) => ({ ...cur, [c]: v }))}
+                  placeholder={summary[c]?.median_hot_c != null ? `${Math.round(summary[c]!.median_hot_c!)} (runs)` : '°C'}
+                  accessibilityLabel={`${c} expected hot temperature`}
+                />
+              )}
+            />
+          </View>
+        </View>
+        <Actions>
+          <MainAction label="Calculate cold pressures" onPress={calculate} busy={busy} disabled={kindId == null} />
+        </Actions>
+        {error ? <View style={styles.error}><ErrorLine>{error}</ErrorLine></View> : null}
+      </Section>
 
-      <Text style={styles.h2}>Expected hot tyre temperature, °C</Text>
-      <Text style={styles.note}>Optional. Empty uses what the TPMS read when hot in your logged runs.</Text>
-      <CarGrid
-        cell={(c) => (
-          <Field
-            value={hotTemps[c]}
-            onChangeText={(v) => setHotTemps((cur) => ({ ...cur, [c]: v }))}
-            placeholder={summary[c]?.median_hot_c != null ? `${Math.round(summary[c]!.median_hot_c!)} (runs)` : '°C'}
-            accessibilityLabel={`${c} expected hot temperature`}
-          />
-        )}
-      />
+      {plan && <Results no={++no} plan={plan} />}
 
-      <Pressable
-        style={[styles.button, { backgroundColor: tint, opacity: kindId == null ? 0.5 : 1 }]}
-        onPress={calculate}
-        disabled={busy || kindId == null}>
-        {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Calculate cold pressures</Text>}
-      </Pressable>
-      {error && <Text style={styles.error}>{error}</Text>}
+      {kind && <PBookEditor no={++no} key={kind.id} kind={kind} reference={reference} onSaved={loadKinds} />}
 
-      {plan && <Results plan={plan} />}
+      {kind && <LoggedRuns no={++no} tyre={kind.label} runs={runs} onChanged={loadRuns} />}
 
-      {kind && <PBookEditor key={kind.id} kind={kind} reference={reference} onSaved={loadKinds} />}
-
-      {kind && <LoggedRuns tyre={kind.label} runs={runs} onChanged={loadRuns} />}
-    </ScrollView>
+      <Colophon left="The Engineer · Tyre pressures" links={[
+        { label: 'Tyre temperatures', href: '/tools/tyre-temps' },
+        { label: 'Tyre fit', href: '/tools/tyre-fit' },
+        { label: 'Garage', href: '/garage' },
+      ]} />
+    </Page>
   );
 }
 
@@ -271,118 +244,105 @@ function TyrePicker({
   onPick: (id: number) => void;
   notSet: NotSet | null;
 }) {
-  const tint = useThemeColor({}, 'tint');
-  const router = useRouter();
-  if (kinds == null) return <ActivityIndicator />;
+  const styles = useStyles();
+  if (kinds == null) return <Working>Reading the garage’s tyres…</Working>;
   return (
-    <View style={styles.section}>
-      <View style={styles.headRow}>
-        <Text style={styles.h2}>Tyre</Text>
-        <Pressable onPress={() => router.push('/garage')} hitSlop={6}>
-          <Text style={{ color: tint }}>Add a tyre in the garage</Text>
-        </Pressable>
-      </View>
+    <View style={styles.stack}>
       {kinds.length === 0 && (
-        <Text style={styles.note}>
+        <Note>
           No tyres in the garage yet. Add the tyre you run there (brand and compound): the calculator works per tyre,
-          with that tyre's P-Book pressures and only the runs on it.
-        </Text>
+          with that tyre’s P-Book pressures and only the runs on it.
+        </Note>
       )}
-      <View style={styles.chips}>
-        {kinds.map((k) => {
-          const on = k.id === kindId;
-          return (
-            <Pressable
-              key={k.id}
-              onPress={() => onPick(k.id)}
-              style={on ? StyleSheet.flatten([styles.chip, { borderColor: tint }]) : styles.chip}
-              accessibilityRole="button"
-              accessibilityState={{ selected: on }}>
-              <Text style={on ? { color: tint, fontWeight: '600' } : undefined}>{k.label}</Text>
-              <Text style={styles.chipSub}>
-                {k.sessions} session{k.sessions === 1 ? '' : 's'}
-                {k.size ? ` · ${k.size}` : ''}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
+      {kinds.length > 0 && (
+        <Options label="Tyre" value={kindId} onPick={onPick}
+          options={kinds.map((k) => ({
+            value: k.id,
+            label: k.label,
+            sub: `${k.sessions} session${k.sessions === 1 ? '' : 's'}${k.size ? ` · ${k.size}` : ''}`,
+          }))} />
+      )}
+      <TextLink href="/garage" label="Add a tyre in the garage" arrow small />
       {notSet && notSet.sessions > 0 && kinds.length > 0 && (
         <View style={styles.unset}>
-          <Text style={styles.note}>
+          <Note small>
             {notSet.sessions} session{notSet.sessions === 1 ? ' has' : 's have'} no tyre set, so{' '}
             {notSet.sessions === 1 ? 'its runs are' : 'their runs are'} left out. Set the tyre on the event:
-          </Text>
-          {notSet.events.map((e) =>
-            e.event_id != null ? (
-              <Pressable
-                key={e.event_id}
-                onPress={() => router.push({ pathname: '/event/[id]', params: { id: e.event_id! } })}
-                accessibilityRole="link">
-                <Text style={{ color: tint }}>{eventLabel(e)}</Text>
-              </Pressable>
-            ) : (
-              <Text key="none" style={styles.dim}>
-                {e.sessions} session{e.sessions === 1 ? '' : 's'} in no event: put {e.sessions === 1 ? 'it' : 'them'}{' '}
-                in an event first
-              </Text>
-            ),
-          )}
+          </Note>
+          <View style={styles.links}>
+            {notSet.events.map((e) =>
+              e.event_id != null ? (
+                <TextLink key={e.event_id} small arrow label={eventLabel(e)}
+                  href={{ pathname: '/event/[id]', params: { id: e.event_id } }} />
+              ) : (
+                <Note key="none" small>
+                  {e.sessions} session{e.sessions === 1 ? '' : 's'} in no event: put {e.sessions === 1 ? 'it' : 'them'}{' '}
+                  in an event first
+                </Note>
+              ),
+            )}
+          </View>
         </View>
       )}
     </View>
   );
 }
 
-function Results({ plan }: { plan: PressurePlan }) {
-  const by = Object.fromEntries(plan.corners.map((c) => [c.corner, c]));
+function Results({ no, plan }: { no: number; plan: PressurePlan }) {
+  const c = useTheme();
+  const styles = useStyles();
+  const wide = useWide();
+  const by = Object.fromEntries(plan.corners.map((p) => [p.corner, p]));
   return (
-    <View style={styles.section}>
-      <Text style={styles.h2}>Set these cold</Text>
+    <Section no={no} title="Set these cold"
+      dek="The figure is your data’s answer where there are logged runs on this tyre, else the gas law’s.">
       <CarGrid
-        cell={(c) => {
-          const p = by[c];
-          if (!p) return <Text style={styles.dim}>–</Text>;
+        cell={(k) => {
+          const p = by[k];
+          if (!p) return <Text style={styles.dash}>–</Text>;
+          const cold = p.data.cold_bar ?? p.gas_law.cold_bar;
           return (
-            <View style={styles.result}>
-              <Text style={styles.big}>{fmt(p.data.cold_bar ?? p.gas_law.cold_bar)}</Text>
-              <Text style={styles.small}>Gas law {fmt(p.gas_law.cold_bar)}</Text>
-              <Text style={styles.small}>
-                Your data {fmt(p.data.cold_bar)}
-                {p.data.runs ? ` · ${p.data.runs} runs` : ''}
-              </Text>
-              {p.flags.length > 0 && <Text style={styles.error}>Below a minimum</Text>}
+            <View>
+              <Fig value={fmt(cold)} unit="bar" size={wide ? 72 : 46} bar={c.tyre.cold} barHeight={6}
+                note={`Gas law ${fmt(p.gas_law.cold_bar)} · your data ${fmt(p.data.cold_bar)}${p.data.runs ? ` (${p.data.runs} runs)` : ''}`} />
+              {p.flags.length > 0 && (
+                <Block label="Below a minimum" color={c.error} ink={inkOn(c.error)} style={styles.flag} />
+              )}
             </View>
           );
         }}
       />
-      <Text style={styles.note}>
-        The big number is the data answer where there are logged runs, else the gas law.
-        {plan.set_c_source && plan.set_c_source !== 'entered' ? ` Tyre temperature taken as ${plan.set_c_source}.` : ''}
-      </Text>
-      {plan.minimums.message && <Text style={styles.warn}>{plan.minimums.message}</Text>}
-      <Ref r={plan.minimums.reference} />
+      {plan.set_c_source && plan.set_c_source !== 'entered' ? (
+        <Note small style={styles.gapTop}>Tyre temperature when set taken as {plan.set_c_source}.</Note>
+      ) : null}
+      {plan.minimums.message ? <View style={styles.gapTop}><WarnLine>{plan.minimums.message}</WarnLine></View> : null}
+      <View style={styles.gapTop}><Ref r={plan.minimums.reference} /></View>
+
+      <SubHead style={styles.subGap}>Corner by corner</SubHead>
       {plan.corners.map((p) => (
-        <View key={p.corner} style={styles.card}>
-          <Text style={styles.cardTitle}>
-            {p.corner} · target {p.target_hot_bar.toFixed(2)} bar hot
-          </Text>
-          {p.flags.map((f) => (
-            <Text key={f} style={styles.error}>
-              {f}
-            </Text>
-          ))}
-          <Text style={styles.label}>Gas law</Text>
-          <Text>{p.gas_law.text}</Text>
-          {p.gas_law.hot_c_source && p.gas_law.hot_c_source !== 'entered' && (
-            <Text style={styles.dim}>Hot temperature: {p.gas_law.hot_c_source}.</Text>
-          )}
-          {p.gas_law.runs_note && <Text style={styles.dim}>{p.gas_law.runs_note}</Text>}
-          <Text style={styles.label}>Your logged runs</Text>
-          <Text>{p.data.text}</Text>
+        <View key={p.corner} style={styles.why}>
+          <View style={styles.whyHead}>
+            <Block label={p.corner} color={c.rule} ink={c.background} size={13} />
+            <Text style={styles.whyTarget}>Target {p.target_hot_bar.toFixed(2)} bar hot</Text>
+          </View>
+          {p.flags.map((f) => <ErrorLine key={f}>{f}</ErrorLine>)}
+          <View style={wide ? styles.whyCols : undefined}>
+            <View style={wide ? styles.whyCol : undefined}>
+              <Label small muted>Gas law</Label>
+              <Text style={styles.body}>{p.gas_law.text}</Text>
+              {p.gas_law.hot_c_source && p.gas_law.hot_c_source !== 'entered' ? (
+                <Note small>Hot temperature: {p.gas_law.hot_c_source}.</Note>
+              ) : null}
+              {p.gas_law.runs_note ? <Note small>{p.gas_law.runs_note}</Note> : null}
+            </View>
+            <View style={wide ? styles.whyCol : styles.whyNext}>
+              <Label small muted>Your logged runs</Label>
+              <Text style={styles.body}>{p.data.text}</Text>
+            </View>
+          </View>
         </View>
       ))}
-    </View>
+    </Section>
   );
 }
 
@@ -394,7 +354,10 @@ const BOOK_FIELDS = [
 
 // The tyre's P-Book pressures, kept with the tyre: the minimums the answers are checked against and the hot targets
 // the targets above start from.
-function PBookEditor({ kind, reference, onSaved }: { kind: TyreKind; reference: Reference | null; onSaved: () => void }) {
+function PBookEditor({ no, kind, reference, onSaved }: { no: number; kind: TyreKind; reference: Reference | null;
+  onSaved: () => void }) {
+  const styles = useStyles();
+  const t = useTableStyles();
   const book = kind.pbook;
   const [vals, setVals] = useState<Record<string, string>>(() => {
     const v: Record<string, string> = { source: book.source ?? '' };
@@ -407,7 +370,6 @@ function PBookEditor({ kind, reference, onSaved }: { kind: TyreKind; reference: 
   });
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const tint = useThemeColor({}, 'tint');
 
   const save = async () => {
     const pair = (key: string) => {
@@ -440,49 +402,58 @@ function PBookEditor({ kind, reference, onSaved }: { kind: TyreKind; reference: 
 
   const set = (k: string) => (v: string) => setVals((cur) => ({ ...cur, [k]: v }));
   return (
-    <View style={styles.section}>
-      <Text style={styles.h2}>P-Book pressures · {kind.label}</Text>
+    <Section no={no} title="P-Book pressures" dek={`${kind.label}, in bar: the minimums every answer is checked against, and the hot targets that fill in the targets above.`}>
       {book.origin === null && (
-        <Text style={styles.warn}>
-          Not entered yet. The P-Book is issued to teams and is not public: enter the minimums and hot targets from
-          your copy, and they stay with this tyre.
-        </Text>
+        <View style={styles.gapBottom}>
+          <WarnLine>
+            Not entered yet. The P-Book is issued to teams and is not public: enter the minimums and hot targets from
+            your copy, and they stay with this tyre.
+          </WarnLine>
+        </View>
       )}
       {book.origin === 'series' && (
-        <Text style={styles.note}>
+        <Note small style={styles.gapBottom}>
           From the minimums entered for {(book.series ?? []).join(', ')} before tyres had their own. Save to keep them
           with this tyre.
-        </Text>
+        </Note>
       )}
-      <Text style={styles.note}>In bar. The minimums are checked against every answer; the hot targets fill in the
-        targets above.</Text>
-      {(['front', 'rear'] as const).map((axle) => (
-        <View key={axle} style={styles.row}>
-          <Text style={styles.axle}>{axle === 'front' ? 'Front' : 'Rear'}</Text>
+      <View style={styles.book}>
+        <View style={t.head}>
+          <Text style={StyleSheet.flatten([t.th, styles.axleCol])}>Axle</Text>
           {BOOK_FIELDS.map(([key, label]) => (
-            <Field
-              key={key}
-              label={label}
-              value={vals[`${axle}-${key}`] ?? ''}
-              onChangeText={set(`${axle}-${key}`)}
-              keyboardType="decimal-pad"
-              accessibilityLabel={`${axle} ${label}`}
-            />
+            <Text key={key} style={StyleSheet.flatten([t.th, styles.bookCol])}>{label}</Text>
           ))}
         </View>
-      ))}
-      <Field label="Source" value={vals.source ?? ''} onChangeText={set('source')} keyboardType="default"
-        placeholder="P-Book edition and page" />
-      <Pressable style={StyleSheet.flatten([styles.outline, { borderColor: tint }])} onPress={save} disabled={saving}>
-        <Text style={{ color: tint }}>{saving ? 'Saving…' : `Save to ${kind.label}`}</Text>
-      </Pressable>
-      {msg && <Text style={styles.note}>{msg}</Text>}
-      {reference && <Ref r={reference} />}
-    </View>
+        {(['front', 'rear'] as const).map((axle) => (
+          <View key={axle} style={t.row}>
+            <Text style={StyleSheet.flatten([t.name, styles.axleCol])}>{axle === 'front' ? 'Front' : 'Rear'}</Text>
+            {BOOK_FIELDS.map(([key, label]) => (
+              <View key={key} style={styles.bookCol}>
+                <Field small value={vals[`${axle}-${key}`] ?? ''} onChangeText={set(`${axle}-${key}`)}
+                  keyboardType="decimal-pad" placeholder="–" accessibilityLabel={`${axle} ${label}`} />
+              </View>
+            ))}
+          </View>
+        ))}
+      </View>
+      <View style={styles.source}>
+        <Field label="Source" value={vals.source ?? ''} onChangeText={set('source')} keyboardType="default"
+          placeholder="P-Book edition and page" />
+      </View>
+      <Actions>
+        <TextLink onPress={save} disabled={saving} label={saving ? 'Saving…' : `Save to ${kind.label}`} red />
+        {msg ? <Note small>{msg}</Note> : null}
+      </Actions>
+      {reference ? <View style={styles.gapTop}><Ref r={reference} /></View> : null}
+    </Section>
   );
 }
 
-function LoggedRuns({ tyre, runs, onChanged }: { tyre: string; runs: LoggedRun[] | null; onChanged: () => void }) {
+function LoggedRuns({ no, tyre, runs, onChanged }: { no: number; tyre: string; runs: LoggedRun[] | null;
+  onChanged: () => void }) {
+  const styles = useStyles();
+  const wide = useWide();
+  const t = useTableStyles();
   const [tracks, setTracks] = useState<Record<number, string>>({});
   const saveTrack = async (sessionId: number) => {
     const v = tracks[sessionId];
@@ -491,101 +462,105 @@ function LoggedRuns({ tyre, runs, onChanged }: { tyre: string; runs: LoggedRun[]
     onChanged();
   };
   return (
-    <View style={styles.section}>
-      <Text style={styles.h2}>Your logged runs on {tyre}{runs ? ` (${runs.length})` : ''}</Text>
-      <Text style={styles.note}>
+    <Section no={no} title={`Logged runs${runs ? ` · ${runs.length}` : ''}`}
+      dek={`The runs on ${tyre} the calculator learns from.`}>
+      <Note small>
         Only the sessions whose event ran this tyre. Cold is where each TPMS sensor first reported after the car
-        rolled; hot is where the pressure settled after 12 minutes at speed. Enter a session's track temperature so
+        rolled; hot is where the pressure settled after 12 minutes at speed. Enter a session’s track temperature so
         the model can learn its effect.
-      </Text>
-      {runs == null && (
-        <View style={styles.statusRow}>
-          <ActivityIndicator size="small" />
-          <Text style={styles.dim}>Reading the logs…</Text>
-        </View>
-      )}
+      </Note>
+      {runs == null && <Working>Reading the logs…</Working>}
       {runs?.length === 0 && (
-        <Text style={styles.dim}>
+        <Note small style={styles.gapTop}>
           No logged run on this tyre yet: set the tyre on your events, and upload MoTeC logs with TPMS channels.
-        </Text>
+        </Note>
       )}
+      <View style={wide ? styles.runsWide : undefined}>
       {runs?.map((r) => (
-        <View key={`${r.file_id}-${r.set}`} style={styles.card}>
-          <Text style={styles.cardTitle}>
+        <View key={`${r.file_id}-${r.set}`} style={wide ? styles.runWide : styles.run}>
+          <SubHead>
             {r.session}
-            {r.set > 0 ? ` · tyre set ${r.set + 1} (fitted at ${Math.round(r.start_s / 60)} min)` : ''}
-          </Text>
-          <Text style={styles.dim}>{r.file}</Text>
-          <View style={styles.row}>
-            <Text style={styles.small}>
-              Ambient {fmt(r.ambient_c, 1)} °C{r.ambient_source ? ` (${r.ambient_source})` : ''}
-            </Text>
-            <Field
-              label="Track °C"
+            {r.set > 0 ? ` · tyre set ${r.set + 1}, fitted at ${Math.round(r.start_s / 60)} min` : ''}
+          </SubHead>
+          <View style={styles.runMeta}>
+            <View style={styles.runWhat}>
+              <Text style={styles.file} numberOfLines={1}>{r.file}</Text>
+              <Text style={styles.ambient}>
+                Ambient {fmt(r.ambient_c, 1)} °C{r.ambient_source ? ` (${r.ambient_source})` : ''}
+              </Text>
+            </View>
+            <Field label="Track" unit="°C" small width={70} align="right"
               value={tracks[r.session_id] ?? (r.track_c != null ? String(r.track_c) : '')}
               onChangeText={(v) => setTracks((cur) => ({ ...cur, [r.session_id]: v }))}
-              onBlur={() => saveTrack(r.session_id)}
-              style={styles.smallInput}
-            />
+              onBlur={() => saveTrack(r.session_id)} placeholder="–" />
+          </View>
+          <View style={t.head}>
+            <Text style={StyleSheet.flatten([t.th, styles.cornerCol])}>Tyre</Text>
+            {['Cold bar', 'Hot bar', 'Rise', 'Cold °C', 'Hot °C'].map((h) => (
+              <Text key={h} style={StyleSheet.flatten([t.th, t.num, styles.numCol])}>{h}</Text>
+            ))}
           </View>
           {CORNERS.map((c) => {
             const x = r.corners[c];
             if (!x) return null;
+            const td = StyleSheet.flatten([t.td, t.num, styles.numCol, !x.used && t.muted]);
             return (
-              <Text key={c} style={[styles.small, !x.used && styles.dim]}>
-                {c} {fmt(x.cold_bar)} → {fmt(x.hot_bar)} bar
-                {x.rise_bar != null ? ` (+${fmt(x.rise_bar)})` : ''} · {fmt(x.cold_c, 0)} → {fmt(x.hot_c, 0)} °C
-                {x.note ? ` · ${x.note}` : ''}
-              </Text>
+              <View key={c} style={styles.runRow}>
+                <View style={styles.runCells}>
+                  <Text style={StyleSheet.flatten([t.name, styles.cornerCol, !x.used && t.muted])}>{c}</Text>
+                  <Text style={td}>{fmt(x.cold_bar)}</Text>
+                  <Text style={td}>{fmt(x.hot_bar)}</Text>
+                  <Text style={td}>{x.rise_bar != null ? `+${fmt(x.rise_bar)}` : '–'}</Text>
+                  <Text style={td}>{fmt(x.cold_c, 0)}</Text>
+                  <Text style={td}>{fmt(x.hot_c, 0)}</Text>
+                </View>
+                {x.note ? <Text style={styles.runNote}>{x.note}</Text> : null}
+              </View>
             );
           })}
         </View>
       ))}
-    </View>
+      </View>
+    </Section>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { padding: 16, gap: 12, maxWidth: 720, width: '100%', alignSelf: 'center' },
-  intro: { opacity: 0.8 },
-  h2: { fontSize: 18, fontWeight: '700', marginTop: 8 },
-  headRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
-  row: { flexDirection: 'row', gap: 12, alignItems: 'flex-end' },
-  field: { flex: 1, gap: 4 },
-  fieldLabel: { fontSize: 12, opacity: 0.6 },
-  input: {
-    borderWidth: 1,
-    borderColor: '#8886',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    fontSize: 16,
-    fontVariant: ['tabular-nums'],
-  },
-  smallInput: { paddingVertical: 4, fontSize: 14 },
-  car: { gap: 8, padding: 8, borderRadius: 12, borderWidth: 1, borderColor: '#8883' },
-  carLabel: { textAlign: 'center', fontSize: 12, opacity: 0.5, textTransform: 'uppercase', letterSpacing: 1 },
-  carRow: { flexDirection: 'row', gap: 12 },
-  carCell: { flex: 1, gap: 4 },
-  cornerName: { fontWeight: '700' },
-  result: { gap: 2 },
-  big: { fontSize: 26, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  small: { fontSize: 13, fontVariant: ['tabular-nums'] },
-  button: { borderRadius: 8, padding: 14, alignItems: 'center' },
-  buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-  outline: { borderRadius: 8, padding: 12, alignItems: 'center', borderWidth: 1 },
-  error: { color: '#c8372d' },
-  warn: { color: '#b26a00' },
-  note: { opacity: 0.7, fontSize: 13 },
-  dim: { opacity: 0.55, fontSize: 13 },
-  section: { gap: 10 },
-  card: { paddingVertical: 10, borderBottomWidth: 1, borderColor: '#8882', gap: 4 },
-  cardTitle: { fontSize: 16, fontWeight: '600' },
-  label: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4 },
-  axle: { width: 40, fontWeight: '600', paddingBottom: 10 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6 },
-  chipSub: { fontSize: 12, opacity: 0.6 },
-  unset: { gap: 4 },
-  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-});
+const useStyles = themed((c) => ({
+  stack: { gap: 14 },
+  links: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 18, rowGap: 8, marginTop: 6 },
+  unset: { borderTopWidth: 1, borderColor: c.separator, paddingTop: 10 },
+  pair: { flexDirection: 'row', gap: 36 },
+  pairCol: { flex: 1, minWidth: 0 },
+  stacked: { marginTop: 26 },
+  grid: { marginTop: 8 },
+  error: { marginTop: 12 },
+  dash: { fontFamily: Fonts.display, fontSize: 40, color: c.textMuted },
+  flag: { marginTop: 10 },
+  gapTop: { marginTop: 12 },
+  gapBottom: { marginBottom: 12 },
+  subGap: { marginTop: 28 },
+  why: { borderBottomWidth: 1, borderColor: c.separator, paddingTop: 10, paddingBottom: 12, gap: 6 },
+  whyHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  whyTarget: { ...Type.label, fontSize: 13, color: c.text },
+  whyCols: { flexDirection: 'row', gap: 28 },
+  whyCol: { flex: 1, minWidth: 0, gap: 3 },
+  whyNext: { marginTop: 8, gap: 3 },
+  body: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 23, color: c.text },
+  book: { maxWidth: 560 },
+  axleCol: { width: 64 },
+  bookCol: { flex: 1, minWidth: 0, paddingRight: 14 },
+  source: { maxWidth: 560, marginTop: 18 },
+  run: { marginTop: 22 },
+  runsWide: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+  runWide: { marginTop: 26, width: '48%' },
+  runMeta: { flexDirection: 'row', alignItems: 'flex-end', gap: 16, marginBottom: 12 },
+  runWhat: { flex: 1, minWidth: 0 },
+  file: { fontFamily: Fonts.label, fontSize: 13, color: c.textMuted },
+  ambient: { fontFamily: Fonts.label, fontSize: 15, fontVariant: ['tabular-nums'], color: c.text, marginTop: 2 },
+  runRow: { borderBottomWidth: 1, borderColor: c.separator, paddingVertical: 6 },
+  runCells: { flexDirection: 'row', alignItems: 'center' },
+  runNote: { fontFamily: Type.dek.fontFamily, fontSize: 13, lineHeight: 18, color: c.textSecondary, marginTop: 2,
+    marginLeft: 40 },
+  cornerCol: { width: 40 },
+  numCol: { flex: 1, minWidth: 0 },
+}));

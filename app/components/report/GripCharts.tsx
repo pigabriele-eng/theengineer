@@ -7,45 +7,24 @@ import Svg, { Circle, G, Line, Path, Rect, Text as SvgText } from 'react-native-
 
 import { Text, View } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
+import { byScheme, chartPlate, Fonts, inkOn, ramp, themed, Type } from '@/constants/Theme';
 
 // Slots 1 and 2 of the validated chart palette, a grey for context, ink, and two one-hue ramps (grip in blue,
-// traction control in orange), each stepped for its own mode.
-const PALETTE = {
-  light: {
-    ink: '#0b0b0b', ink2: '#52514e', muted: '#898781', grid: '#e1e0d9', surface: '#ffffff',
-    s1: '#2a78d6', s2: '#eb6834', other: '#b4b2aa', wash: 'rgba(42,120,214,0.08)', track: '#e4e3dc',
-    seq: ['#cde2fb', '#184f95'], tc: ['#fbe1d4', '#b4441a'],
-    critical: '#d03b3b', warning: '#fab219', good: '#0ca30c',
-  },
-  dark: {
-    ink: '#ffffff', ink2: '#c3c2b7', muted: '#898781', grid: '#2c2c2a', surface: '#000000',
-    s1: '#3987e5', s2: '#d95926', other: '#55544f', wash: 'rgba(57,135,229,0.12)', track: '#2b2b29',
-    seq: ['#1c3554', '#86b6ef'], tc: ['#4a2617', '#f08a5d'],
-    critical: '#d03b3b', warning: '#fab219', good: '#0ca30c',
-  },
-};
+// traction control in orange), each stepped for its own mode; status colours for the verdicts.
+const PALETTE = byScheme((c) => ({
+  ink: c.chart.ink, ink2: c.chart.ink2, muted: c.chart.muted, grid: c.chart.grid, surface: c.chart.surface,
+  s1: c.chart.series[0], s2: c.chart.series[1], other: c.chart.other, wash: c.chart.wash, track: c.chart.track,
+  seq: c.chart.seq, tc: c.chart.seq2,
+  critical: c.status.critical, warning: c.status.warning, good: c.status.good,
+}));
 export type ChartColors = (typeof PALETTE)['light'];
 export const useChartColors = (): ChartColors => PALETTE[useColorScheme() === 'dark' ? 'dark' : 'light'];
 
-const hexRgb = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
-/** A step along a two-colour ramp, t from 0 to 1. */
-export function ramp([lo, hi]: string[], t: number) {
-  const k = Math.max(0, Math.min(1, t));
-  const a = hexRgb(lo);
-  const b = hexRgb(hi);
-  return `#${a.map((v, i) => Math.round(v + (b[i] - v) * k).toString(16).padStart(2, '0')).join('')}`;
-}
-/** White or ink for text on a filled cell, whichever reads. */
-export function inkOn(fill: string) {
-  const [r, g, b] = hexRgb(fill).map((v) => {
-    const c = v / 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.35 ? '#0b0b0b' : '#ffffff';
-}
+// the ramp step and the text colour on a cell, from the theme (here for the report screens that import them from here)
+export { inkOn, ramp };
 
 // SVG text falls back to a serif face on the web; use the page's sans-serif instead.
-const FONT = Platform.OS === 'web' ? 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' : undefined;
+const FONT = Fonts.sans;
 function T(props: ComponentProps<typeof SvgText>) {
   return <SvgText fontFamily={FONT} {...props} />;
 }
@@ -102,6 +81,7 @@ function nearest<T>(items: T[], pos: (t: T, i: number) => [number, number], at: 
 }
 
 export function Readout({ children, hint }: { children: ReactNode; hint: string }) {
+  const styles = useStyles();
   return (
     <Text style={[styles.readout, !children && styles.hint]} numberOfLines={2}>
       {children || hint}
@@ -110,6 +90,7 @@ export function Readout({ children, hint }: { children: ReactNode; hint: string 
 }
 
 export function LegendItem({ color, label, kind = 'dot' }: { color: string; label: string; kind?: 'dot' | 'ring' | 'line' | 'dash' }) {
+  const styles = useStyles();
   return (
     <View style={styles.legendItem}>
       {kind === 'dot' ? (
@@ -141,6 +122,7 @@ export function Scatter({ points, xLabel, yLabel, fit, yFmt, height = 240, hint 
   height?: number;
   hint: string;
 }) {
+  const styles = useStyles();
   const c = useChartColors();
   const { width, at, props } = usePointer();
   const pad = { l: 40, r: 10, t: 22, b: 34 };
@@ -215,6 +197,7 @@ export function GgDiagram({ limit, series, band, hint }: {
   band: [number, number | null];
   hint: string;
 }) {
+  const styles = useStyles();
   const c = useChartColors();
   const { width, at, props } = usePointer();
   const height = Math.min(Math.max(width * 0.8, 240), 420);
@@ -284,6 +267,7 @@ export function Dumbbell({ rows, hint }: {
   rows: { label: string; sub: string; fast: number | null; slow: number | null }[];
   hint: string;
 }) {
+  const styles = useStyles();
   const c = useChartColors();
   const { width, at, props } = usePointer();
   const rowH = 44;
@@ -356,6 +340,7 @@ export function GripMap({ x, y, step, modes, labels, describe }: {
   labels: { code: string; at: number }[];
   describe: (metre: number) => string;
 }) {
+  const styles = useStyles();
   const c = useChartColors();
   const [mode, setMode] = useState(0);
   const { width, at, props } = usePointer();
@@ -439,16 +424,16 @@ export function GripMap({ x, y, step, modes, labels, describe }: {
   );
 }
 
-const styles = StyleSheet.create({
-  chart: { gap: 4 },
+const useStyles = themed((c) => ({
+  chart: { gap: 4, ...chartPlate(c) },
   readout: { fontSize: 12, lineHeight: 16, minHeight: 32, fontVariant: ['tabular-nums'] },
   hint: { opacity: 0.55 },
   legendRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  legendDot: { width: 9, height: 9, borderRadius: 5 },
+  legendDot: { width: 18, height: 12 },
   legendText: { fontSize: 12, opacity: 0.75 },
   tabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  tab: { borderWidth: 1, borderColor: '#8884', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
-  tabText: { fontSize: 13, opacity: 0.7 },
-  tabOn: { fontSize: 13, fontWeight: '600' },
-});
+  tab: { borderBottomWidth: 3, borderColor: 'transparent', paddingBottom: 2, marginRight: 8 },
+  tabText: { ...Type.label, fontSize: 13, color: c.textMuted },
+  tabOn: { ...Type.label, fontSize: 13, color: c.text },
+}));

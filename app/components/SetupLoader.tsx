@@ -1,11 +1,13 @@
 // For the vehicle model: pick a run with a setup sheet and load its setup (bars, spring rates, fuel and ballast,
-// ride heights) on top of the vehicle picked (its specs), else the car's preset.
+// ride heights) on top of the vehicle picked (its specs), else the car's preset. The runs are the programme's
+// options (capitals, the one loaded over a red underline), under a ruled sub-head.
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
 
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { Text, View } from '@/components/Themed';
+import { ErrorLine, Note, Options, SubHead, Working } from '@/components/ToolForm';
 import { SetupListItem, setupApi, SetupVehicle } from '@/lib/setup';
 import { Vehicle } from '@/lib/vehicle';
+import { Fonts, themed } from '@/constants/Theme';
 
 export function SetupLoader({
   initial,
@@ -18,11 +20,11 @@ export function SetupLoader({
   vehicleId?: number | null; // the garage vehicle the setup goes on top of (else the session's)
   onLoad: (v: Vehicle) => void;
 }) {
+  const styles = useStyles();
   const [runs, setRuns] = useState<SetupListItem[]>([]);
   const [loaded, setLoaded] = useState<SetupVehicle | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const tint = useThemeColor({}, 'tint');
 
   useEffect(() => {
     setupApi.withSheets().then(setRuns, () => {});
@@ -48,50 +50,30 @@ export function SetupLoader({
   }, [ready, initial]);
 
   if (!runs.length && initial == null) return null;
+  const busyName = busy != null ? runs.find((r) => r.session_id === busy)?.name ?? `session ${busy}` : null;
   return (
-    <View style={styles.box}>
-      <Text style={styles.title}>Load a run's setup</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
-        {runs.map((r) => {
-          const on = loaded?.session_id === r.session_id;
-          return (
-            <Pressable
-              key={r.session_id}
-              onPress={() => load(r.session_id)}
-              disabled={!ready || busy != null}
-              style={[styles.chip, on && { borderColor: tint }]}>
-              {busy === r.session_id ? (
-                <ActivityIndicator />
-              ) : (
-                <Text style={on ? { color: tint } : undefined}>{r.name ?? `Session ${r.session_id}`}</Text>
-              )}
-            </Pressable>
-          );
-        })}
-      </ScrollView>
-      {error && <Text style={styles.error}>{error}</Text>}
+    <View>
+      <SubHead>Load a run’s setup</SubHead>
+      <Options label="Run with a setup sheet" value={loaded?.session_id ?? null} disabled={!ready || busy != null}
+        onPick={load} options={runs.map((r) => ({ value: r.session_id, label: r.name ?? `Session ${r.session_id}` }))} />
+      {busyName ? <Working>Loading {busyName}…</Working> : null}
+      {error ? <View style={styles.gap}><ErrorLine>{error}</ErrorLine></View> : null}
       {loaded && (
-        <View style={styles.box}>
-          <Text style={styles.sub}>
-            {loaded.name ?? 'This run'}: {loaded.applied.map((a) => a.from).join(' · ') || 'nothing the model uses'}
+        <View style={styles.loaded}>
+          <Text style={styles.applied}>
+            <Text style={styles.name}>{loaded.name ?? 'This run'}: </Text>
+            {loaded.applied.map((a) => a.from).join(' · ') || 'nothing the model uses'}
           </Text>
-          {loaded.notes.map((n) => (
-            <Text key={n} style={styles.note}>
-              {n}
-            </Text>
-          ))}
+          {loaded.notes.map((n) => <Note key={n} small>{n}</Note>)}
         </View>
       )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  box: { gap: 6 },
-  title: { fontWeight: '600' },
-  chips: { gap: 8 },
-  chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6 },
-  sub: { opacity: 0.8 },
-  note: { fontSize: 12, opacity: 0.7 },
-  error: { color: '#c8372d' },
-});
+const useStyles = themed((c) => ({
+  gap: { marginTop: 10 },
+  loaded: { marginTop: 14, gap: 4, borderTopWidth: 1, borderColor: c.separator, paddingTop: 10 },
+  applied: { fontFamily: Fonts.body, fontSize: 15, lineHeight: 21, color: c.text },
+  name: { fontFamily: Fonts.label, fontSize: 15, color: c.text },
+}));

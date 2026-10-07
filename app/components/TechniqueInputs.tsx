@@ -8,9 +8,10 @@ import { GestureResponderEvent, LayoutChangeEvent, Platform, StyleSheet } from '
 import Svg, { Circle, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
 
 import { niceTicks, useChartColors } from '@/components/ReportCharts';
-import { Band, pointRange, TRACE_PAD_X } from '@/components/TechniqueTrace';
+import { Band, bandFill, pointRange, TRACE_PAD_X } from '@/components/TechniqueTrace';
 import { Text, View } from '@/components/Themed';
 import { InputRole, Inputs, MODEL_PHASES } from '@/lib/technique';
+import { chartPlate, Fonts, phaseColor, PLATE_PAD, themed, Type, useTheme } from '@/constants/Theme';
 
 type Props = {
   stepM: number;
@@ -40,7 +41,7 @@ const CHANNELS: { role: InputRole; title: string; unit: string; digits: number; 
 const PAD = { ...TRACE_PAD_X, top: 4, bottom: 4 };
 const STRIP = 8;
 const AXIS_ROW = 18; // corner labels under the last chart
-const SANS = Platform.select({ web: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' });
+const SANS = Fonts.sans;
 
 type Geometry = {
   width: number;
@@ -53,6 +54,8 @@ type Geometry = {
 
 export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, phases, channels, bands, selected,
   onSelect, corners, from, to, cursor, onCursor, tall }: Props) {
+  const styles = useStyles();
+  const theme = useTheme();
   const c = useChartColors();
   const [width, setWidth] = useState(0);
   const [i0, i1] = pointRange(stepM, points - 1, from, to);
@@ -90,13 +93,13 @@ export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, 
   const have = CHANNELS.filter((ch) => inputs[ch.role]);
   const missing = CHANNELS.filter((ch) => !inputs[ch.role]);
   const fastestMissing = fastest ? have.filter((ch) => !fastest[ch.role]) : [];
-  const phaseColors = [c.secondary, c.axis, c.muted]; // braking stands out most, full throttle least
+  const phaseColors = MODEL_PHASES.map((p) => phaseColor(theme, p)); // the driving phases' colours, as everywhere
   const unitOf = (ch: (typeof CHANNELS)[number]) => channels?.[ch.role]?.unit ?? ch.unit;
   const height = (role: InputRole) => (role === 'gear' ? (tall ? 84 : 64) : tall ? 112 : 84);
   const sources = have.map((ch) => channels?.[ch.role]?.channel).filter((s): s is string => !!s);
 
   return (
-    <View style={styles.wrap} onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}>
+    <View style={styles.wrap} onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width - 2 * PLATE_PAD)}>
       <View style={styles.legend}>
         <LegendLine color={c.s1} label="This lap" />
         {fastest && fastestLabel && <LegendLine color={c.axis} label={fastestLabel} thin />}
@@ -139,6 +142,7 @@ export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, 
 }
 
 function LegendLine({ color, label, thin }: { color: string; label: string; thin?: boolean }) {
+  const styles = useStyles();
   return (
     <View style={styles.legendItem}>
       <Svg width={16} height={4}>
@@ -195,6 +199,8 @@ type ChannelProps = {
 
 function Channel({ geo, title, unit, digits, role, values, under, bands, selected, cursor, height, corners }:
   ChannelProps) {
+  const styles = useStyles();
+  const theme = useTheme();
   const c = useChartColors();
   const { i0, i1, stepM, px, width } = geo;
   const axisRow = corners.length ? AXIS_ROW : 0;
@@ -270,7 +276,7 @@ function Channel({ geo, title, unit, digits, role, values, under, bands, selecte
             const xa = px(Math.max(b.start_m, i0 * stepM)), xb = px(Math.min(b.end_m, i1 * stepM));
             return (
               <Rect key={`b${b.n}`} x={xa} y={top} width={Math.max(xb - xa, 2)} height={h}
-                fill={b.n === selected ? c.muted : c.grid} fillOpacity={b.n === selected ? 0.75 : 0.7} />
+                {...bandFill(theme, b, b.n === selected, c.grid, c.muted)} />
             );
           })}
           {ticks.map((t) => (
@@ -278,8 +284,7 @@ function Channel({ geo, title, unit, digits, role, values, under, bands, selecte
               strokeWidth={1} />
           ))}
           {role === 'steer' && lo < 0 && hi > 0 && (
-            <Line x1={PAD.left} x2={width - PAD.right} y1={py(0)} y2={py(0)} stroke={c.axis} strokeWidth={1}
-              strokeOpacity={0.6} />
+            <Line x1={PAD.left} x2={width - PAD.right} y1={py(0)} y2={py(0)} stroke={c.muted} strokeWidth={1} />
           )}
           {ticks.map((t) => (
             <SvgText key={`t${t}`} x={PAD.left - 6} y={py(t) + 4} fontSize={10} fill={c.axis} textAnchor="end"
@@ -293,7 +298,7 @@ function Channel({ geo, title, unit, digits, role, values, under, bands, selecte
           <Path d={paths.lap} stroke={c.s1} strokeWidth={2} fill="none" strokeLinejoin="round"
             strokeLinecap="round" />
           {cursor != null && (
-            <Line x1={px(cursor * stepM)} x2={px(cursor * stepM)} y1={top} y2={bottom} stroke={c.axis}
+            <Line x1={px(cursor * stepM)} x2={px(cursor * stepM)} y1={top} y2={bottom} stroke={c.text}
               strokeWidth={1} />
           )}
           {cursor != null && under && Number.isFinite(under[cursor]) && (
@@ -316,19 +321,19 @@ function Channel({ geo, title, unit, digits, role, values, under, bands, selecte
   );
 }
 
-const styles = StyleSheet.create({
-  wrap: { gap: 6 },
-  head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 8,
-    backgroundColor: 'transparent' },
-  title: { fontSize: 12, fontWeight: '600', opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 },
+const useStyles = themed((c) => ({
+  wrap: { gap: 8, ...chartPlate(c) },
+  head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', gap: 8,
+    backgroundColor: 'transparent', borderBottomWidth: 1, borderColor: c.rule, paddingBottom: 4, minHeight: 24, marginBottom: 6 },
+  title: { ...Type.label, fontSize: 11, color: c.text },
   readoutRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },
-  readout: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  readoutUnder: { fontSize: 13, opacity: 0.75, fontVariant: ['tabular-nums'] },
-  key: { width: 10, height: 2, borderRadius: 1 },
-  keyThin: { height: 1.5 },
-  legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, backgroundColor: 'transparent' },
+  readout: { ...Type.number, fontSize: 13, color: c.text },
+  readoutUnder: { ...Type.number, fontSize: 13, color: c.textSecondary },
+  key: { width: 10, height: 3 },
+  keyThin: { height: 2 },
+  legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, rowGap: 6, backgroundColor: 'transparent' },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },
-  legendText: { fontSize: 12, opacity: 0.75 },
-  swatch: { width: 12, height: 8, borderRadius: 2 },
-  note: { fontSize: 12, opacity: 0.65, lineHeight: 17 },
-});
+  legendText: { ...Type.label, fontFamily: Fonts.label, fontSize: 11, letterSpacing: 0.8, color: c.textSecondary },
+  swatch: { width: 14, height: 10 },
+  note: { fontFamily: Fonts.body, fontSize: 13, lineHeight: 18, color: c.textMuted },
+}));

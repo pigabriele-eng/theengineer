@@ -1,7 +1,9 @@
 import { memo, useMemo } from 'react';
 import { Pressable, ScrollView, StyleSheet } from 'react-native';
 
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { Tabs, useText } from '@/components/Picks';
+import { Fig, Section, Swatch, useWide } from '@/components/Programme';
+import { Text, View } from '@/components/Themed';
 import { TraceChart } from '@/components/TraceChart';
 import { useColorScheme } from '@/components/useColorScheme';
 import { DETECTED_CORNERS_NOTE } from '@/lib/api';
@@ -14,6 +16,7 @@ import {
   Opportunity,
   TraceRole,
 } from '@/lib/compare';
+import { deltaColor, deltaWash, face, Fonts, phaseColor, themed, Type, useTheme } from '@/constants/Theme';
 
 // Colours of the laps in a result, by the slot each lap was given when it was picked.
 export function useLapColors(slots: number[]) {
@@ -27,9 +30,10 @@ export function useLapColors(slots: number[]) {
 
 type Colors = ReturnType<typeof useLapColors>;
 
-/** A short stroke of the lap's colour: the key for a lap wherever its name is written. */
+/** A short flat stroke of the lap's colour: the key for a lap wherever its name is written. */
 export function LineKey({ color }: { color: string }) {
-  return <View style={[styles.key, { backgroundColor: color }]} />;
+  const styles = useStyles();
+  return <View style={StyleSheet.flatten([styles.key, { backgroundColor: color }])} />;
 }
 
 const sentence = (o: Opportunity) => {
@@ -44,56 +48,58 @@ type GlanceProps = {
   focus: number;
   onFocus: (i: number) => void;
   onShow: (code: string, at?: number) => void;
+  no?: number;
 };
 
 /** Where the time is for one lap: the sections where the other laps were quicker, biggest first, with the phase
- * and what the driver did differently there. */
-export const WhereTheTimeIs = memo(function WhereTheTimeIs({ data, colors, focus, onFocus, onShow }: GlanceProps) {
+ * and what the driver did differently there. The three biggest side by side, as the programme's columns. */
+export const WhereTheTimeIs = memo(function WhereTheTimeIs({ data, colors, focus, onFocus, onShow, no = 2 }: GlanceProps) {
+  const styles = useStyles();
+  const t = useText();
+  const theme = useTheme();
+  const wide = useWide();
   const lap = data.laps[focus];
   const opp = data.opportunities[focus];
-  const tint = useThemeColor({}, 'tint');
+  const top3 = opp.sections.slice(0, 3);
   return (
-    <View style={styles.section}>
-      <Text style={styles.h2}>Where the time is</Text>
-      <View style={styles.chips}>
-        {data.laps.map((l, i) => (
-          <Pressable key={i} onPress={() => onFocus(i)}
-            style={StyleSheet.flatten([styles.chip, i === focus && { borderColor: tint }])}>
-            <LineKey color={colors.laps[i]} />
-            <Text style={i === focus ? { color: tint } : undefined}>L{l.lap} · {l.session}</Text>
-          </Pressable>
-        ))}
-      </View>
-      <Text style={styles.lead}>
+    <Section no={no} title="Where the time is" dek="For the lap picked: the sections where another of these laps was quicker, biggest first.">
+      <Tabs value={focus} onChange={onFocus} style={styles.tabs}
+        items={data.laps.map((l, i) => ({ key: i, label: `L${l.lap} · ${l.session}`, swatch: colors.laps[i] }))} />
+      <Text style={StyleSheet.flatten([t.lead, styles.measure])}>
         {opp.sections.length === 0
           ? `${lapLabel(lap)} is the quickest of these laps in every section.`
           : `${lapLabel(lap)} is ${opp.to_ideal.toFixed(2)} s off the ideal lap (${formatLap(data.ideal.time)}), the quickest of each section. Most of it is here:`}
       </Text>
-      {opp.sections.slice(0, 3).map((o) => {
-        const vs = data.laps[o.versus];
-        return (
-          <Pressable key={o.code} onPress={() => onShow(o.code, (o.where_m[0] + o.where_m[1]) / 2)} style={styles.card}>
-            <View style={styles.cardHead}>
-              <Text style={styles.code}>{o.code}</Text>
-              <Text style={styles.loss}>{o.loss_s.toFixed(2)} s</Text>
-              <View style={styles.phase}>
-                <Text style={styles.phaseText}>{o.phase}</Text>
-              </View>
-            </View>
-            <View style={styles.versus}>
-              <Text style={styles.sub}>vs</Text>
-              <LineKey color={colors.laps[o.versus]} />
-              <Text style={styles.sub} numberOfLines={1}>
-                {lapLabel(vs)}
-              </Text>
-            </View>
-            <Text style={styles.why}>{sentence(o)}</Text>
-            <Text style={styles.show}>Show on the traces ›</Text>
-          </Pressable>
-        );
-      })}
+      {top3.length > 0 && (
+        <View style={wide ? styles.cols : styles.colsPhone}>
+          {top3.map((o, i) => {
+            const vs = data.laps[o.versus];
+            return (
+              <Pressable key={o.code} onPress={() => onShow(o.code, (o.where_m[0] + o.where_m[1]) / 2)}
+                accessibilityRole="button" accessibilityLabel={`${o.code}: ${o.loss_s.toFixed(2)} s. Show on the traces`}
+                style={StyleSheet.flatten([wide ? styles.col : styles.colPhone,
+                  wide ? i > 0 && styles.colRule : i > 0 && styles.colTop])}>
+                <View style={styles.colHead}>
+                  <View style={styles.colNo}><Text style={styles.colNoText}>{i + 1}</Text></View>
+                  <Text style={styles.code}>{o.code}</Text>
+                </View>
+                <Fig value={o.loss_s.toFixed(2)} unit="s" size={wide ? 64 : 52}
+                  color={deltaColor(theme, o.loss_s) ?? theme.text} />
+                <View style={styles.versus}>
+                  <Text style={t.labelMuted}>Against</Text>
+                  <LineKey color={colors.laps[o.versus]} />
+                  <Text style={StyleSheet.flatten([t.labelMuted, styles.shrink])} numberOfLines={1}>{lapLabel(vs)}</Text>
+                </View>
+                <Text style={t.body}>{sentence(o)}</Text>
+                <Swatch color={phaseColor(theme, o.phase)} label={`Mostly ${o.phase}`} width={14} height={10} />
+                <Text style={styles.show}>Show on the traces →</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
       {opp.sections.length > 3 && (
-        <Text style={styles.sub}>
+        <Text style={StyleSheet.flatten([t.note, styles.also])}>
           Also:{' '}
           {opp.sections
             .slice(3)
@@ -101,30 +107,33 @@ export const WhereTheTimeIs = memo(function WhereTheTimeIs({ data, colors, focus
             .join(' · ')}
         </Text>
       )}
-    </View>
+    </Section>
   );
 });
 
-type TableProps = { data: CompareResult; colors: Colors; ideal: boolean; onPick: (code: string) => void };
+type TableProps = { data: CompareResult; colors: Colors; ideal: boolean; onPick: (code: string) => void; no?: number };
 
 const CELL = 74;
 
-/** Section times on the official corner numbers: the quickest in each section in bold, the others as the gap to it. */
-export const SectionTable = memo(function SectionTable({ data, colors, ideal, onPick }: TableProps) {
-  const wash = '#8882';
+/** Section times on the official corner numbers: the quickest in each section on a purple block, the others as the
+ * gap to it on a wash that deepens with the gap. */
+export const SectionTable = memo(function SectionTable({ data, colors, ideal, onPick, no = 3 }: TableProps) {
+  const theme = useTheme();
+  const styles = useStyles();
+  const t = useText();
+  const biggest = Math.max(0.05, ...data.sections.flatMap((s) => s.times.map((x) => x - s.times[s.best])));
   return (
-    <View style={styles.section}>
-      <Text style={styles.h2}>Section times</Text>
-      {data.numbering === 'detected' && <Text style={styles.note}>{DETECTED_CORNERS_NOTE}</Text>}
-      <ScrollView horizontal>
+    <Section no={no} title="Section times" dek="Each section of the lap, every lap against the quickest there. Tap a section to zoom the traces to it.">
+      {data.numbering === 'detected' && <Text style={t.note}>{DETECTED_CORNERS_NOTE}</Text>}
+      <ScrollView horizontal showsHorizontalScrollIndicator>
         <View>
-          <View style={styles.row}>
-            <Text style={[styles.cell, styles.first, styles.head]}>Section</Text>
+          <View style={styles.headRow}>
+            <Text style={StyleSheet.flatten([styles.th, styles.first])}>Section</Text>
             {data.laps.map((l, i) => (
-              <View key={i} style={[styles.cellBox, { width: CELL }]}>
-                <View style={styles.colHead}>
+              <View key={i} style={StyleSheet.flatten([styles.cellBox, { width: CELL }])}>
+                <View style={styles.colHeadKey}>
                   <LineKey color={colors.laps[i]} />
-                  <Text style={styles.head}>L{l.lap}</Text>
+                  <Text style={styles.th}>L{l.lap}</Text>
                 </View>
                 <Text style={styles.colSub} numberOfLines={1}>
                   {l.session}
@@ -132,53 +141,73 @@ export const SectionTable = memo(function SectionTable({ data, colors, ideal, on
               </View>
             ))}
             {ideal && (
-              <View style={[styles.cellBox, { width: CELL }]}>
-                <View style={styles.colHead}>
+              <View style={StyleSheet.flatten([styles.cellBox, { width: CELL }])}>
+                <View style={styles.colHeadKey}>
                   <LineKey color={colors.ideal} />
-                  <Text style={styles.head}>Ideal</Text>
+                  <Text style={styles.th}>Ideal</Text>
                 </View>
               </View>
             )}
           </View>
           {data.sections.map((s) => (
-            <Pressable key={s.code} style={styles.row} onPress={() => onPick(s.code)}>
-              <Text style={[styles.cell, styles.first, styles.rowName]}>{s.code}</Text>
-              {s.times.map((t, i) => {
+            <Pressable key={s.code} style={styles.row} onPress={() => onPick(s.code)} accessibilityRole="button"
+              accessibilityLabel={`${s.code}: zoom the traces`}>
+              <Text style={StyleSheet.flatten([styles.rowName, styles.first])}>{s.code}</Text>
+              {s.times.map((x, i) => {
                 const best = i === s.best;
+                const gap = x - s.times[s.best];
                 return (
-                  <Text key={i} style={[styles.cell, { width: CELL }, best && styles.best, best && { backgroundColor: wash }]}>
-                    {best ? t.toFixed(2) : `+${(t - s.times[s.best]).toFixed(2)}`}
-                  </Text>
+                  <View key={i} style={StyleSheet.flatten([styles.cellFill, { width: CELL,
+                    backgroundColor: best ? theme.timing.best : deltaWash(theme, gap, biggest) }])}>
+                    <Text style={StyleSheet.flatten([styles.cell, best && styles.best])}>
+                      {best ? x.toFixed(2) : `+${gap.toFixed(2)}`}
+                    </Text>
+                  </View>
                 );
               })}
-              {ideal && <Text style={[styles.cell, { width: CELL }]}>{s.times[s.best].toFixed(2)}</Text>}
+              {ideal && (
+                <View style={StyleSheet.flatten([styles.cellFill, { width: CELL }])}>
+                  <Text style={styles.cell}>{s.times[s.best].toFixed(2)}</Text>
+                </View>
+              )}
             </Pressable>
           ))}
-          <View style={styles.row}>
-            <Text style={[styles.cell, styles.first, styles.rowName]}>Lap</Text>
+          <View style={StyleSheet.flatten([styles.row, styles.footFirst])}>
+            <Text style={StyleSheet.flatten([styles.footName, styles.first])}>Lap</Text>
             {data.laps.map((l, i) => (
-              <Text key={i} style={[styles.cell, { width: CELL }, i === data.reference && styles.best]}>
-                {formatLap(l.time)}
-              </Text>
+              <View key={i} style={StyleSheet.flatten([styles.cellFill, { width: CELL }])}>
+                <Text style={StyleSheet.flatten([styles.cell, styles.strong])}>{formatLap(l.time)}</Text>
+              </View>
             ))}
-            {ideal && <Text style={[styles.cell, { width: CELL }]}>{formatLap(data.ideal.time)}</Text>}
+            {ideal && (
+              <View style={StyleSheet.flatten([styles.cellFill, { width: CELL }])}>
+                <Text style={StyleSheet.flatten([styles.cell, styles.strong])}>{formatLap(data.ideal.time)}</Text>
+              </View>
+            )}
           </View>
           <View style={styles.row}>
-            <Text style={[styles.cell, styles.first, styles.rowName]}>To ideal</Text>
+            <Text style={StyleSheet.flatten([styles.footName, styles.first])}>To ideal</Text>
             {data.laps.map((l, i) => (
-              <Text key={i} style={[styles.cell, { width: CELL }]}>
-                +{l.to_ideal.toFixed(2)}
-              </Text>
+              <View key={i} style={StyleSheet.flatten([styles.cellFill, { width: CELL }])}>
+                <Text style={StyleSheet.flatten([styles.cell, { color: deltaColor(theme, l.to_ideal) ?? theme.text }])}>
+                  +{l.to_ideal.toFixed(2)}
+                </Text>
+              </View>
             ))}
-            {ideal && <Text style={[styles.cell, { width: CELL }]} />}
+            {ideal && <View style={{ width: CELL }} />}
           </View>
         </View>
       </ScrollView>
-      <Text style={styles.note}>
-        Bold: the quickest lap in that section. The others show how much slower they were there. Tap a section to
-        zoom the traces to it.
+      <View style={styles.legend}>
+        <Swatch color={theme.timing.best} label="Quickest of these laps" />
+        <Swatch color={theme.delta.lossSteps[0]} label="Slower" />
+        <Swatch color={theme.delta.lossSteps[theme.delta.lossSteps.length - 1]} label="Much slower" />
+      </View>
+      <Text style={t.small}>
+        Times in seconds. On purple, the quickest lap in that section; the others show how much slower they were there,
+        the deeper the wash the more.
       </Text>
-    </View>
+    </Section>
   );
 });
 
@@ -190,6 +219,7 @@ type TracesProps = {
   onZoom: (code: string | null) => void;
   cursor: number | null;
   onCursor: (i: number | null) => void;
+  no?: number;
 };
 
 const CHARTS: { role: TraceRole; title: string; unit: string; height: number; domain?: [number, number] }[] = [
@@ -202,8 +232,9 @@ const CHARTS: { role: TraceRole; title: string; unit: string; height: number; do
 
 /** Every lap on one distance axis: time gained or lost against the reference, then speed, pedals, steering and
  * gear, with one crosshair across all of them. Zoom to a section to see a corner in detail. */
-export function CompareTraces({ data, colors, ideal, zoom, onZoom, cursor, onCursor }: TracesProps) {
-  const tint = useThemeColor({}, 'tint');
+export function CompareTraces({ data, colors, ideal, zoom, onZoom, cursor, onCursor, no = 4 }: TracesProps) {
+  const styles = useStyles();
+  const t = useText();
   const tr = data.traces;
   const section = data.sections.find((s) => s.code === zoom) ?? null;
   const [i0, i1] = useMemo(() => {
@@ -220,8 +251,8 @@ export function CompareTraces({ data, colors, ideal, zoom, onZoom, cursor, onCur
 
   // the reference's own line is the zero line; in a zoomed section the gap counts from the section's start
   const delta = useMemo(() => {
-    const sliced = (t: number[]) => {
-      const out = t.slice(i0, i1 + 1).map((v, k) => v - ref.t[i0 + k]);
+    const sliced = (x: number[]) => {
+      const out = x.slice(i0, i1 + 1).map((v, k) => v - ref.t[i0 + k]);
       return out.map((v) => v - out[0]);
     };
     // the ideal lap first, so it is drawn under the laps: where it is one of them, that lap stays visible
@@ -243,14 +274,13 @@ export function CompareTraces({ data, colors, ideal, zoom, onZoom, cursor, onCur
   const here = at != null ? data.sections.find((s) => at >= s.start_m && at <= s.end_m)?.code : null;
 
   return (
-    <View style={styles.section}>
-      <Text style={styles.h2}>Traces</Text>
-      <View style={styles.chips}>
-        {[null, ...data.sections.map((s) => s.code)].map((code) => (
-          <Pressable key={code ?? 'lap'} onPress={() => onZoom(code)}
-            style={StyleSheet.flatten([styles.chip, code === zoom && { borderColor: tint }])}>
-            <Text style={code === zoom ? { color: tint } : undefined}>{code ?? 'Whole lap'}</Text>
-          </Pressable>
+    <Section no={no} title="Traces" dek="Every lap on one distance axis, one crosshair across all the charts. Zoom to a section to see its corners.">
+      <Tabs label="Zoom" value={zoom} onChange={onZoom} style={styles.tabs}
+        items={[null, ...data.sections.map((s) => s.code)].map((code) => ({ key: code, label: code ?? 'Whole lap' }))} />
+      <View style={styles.legend}>
+        {ideal && <Swatch color={colors.ideal} label="Ideal lap" width={14} height={4} />}
+        {data.laps.map((l, i) => (
+          <Swatch key={i} color={colors.laps[i]} label={`L${l.lap} · ${l.session}`} width={14} height={4} />
         ))}
       </View>
       <Text style={styles.at}>
@@ -260,66 +290,68 @@ export function CompareTraces({ data, colors, ideal, zoom, onZoom, cursor, onCur
             ? `${section.code}: ${section.start_m.toLocaleString()} to ${section.end_m.toLocaleString()} m`
             : `Whole lap: ${data.length_m.toLocaleString()} m`}
       </Text>
-      <TraceChart {...shared} title={`Time vs ${refName}`} unit="s" zeroLine height={120} series={delta} />
-      {CHARTS.filter((c) => tr.roles.includes(c.role)).map((c) => {
-        const series = seriesOf(c.role);
-        let domain = c.domain;
-        if (c.role === 'gear') {
-          // whole gears on the axis: a range of at least five keeps the labels whole numbers
-          const top = Math.max(...series.flatMap((s) => s.values));
-          domain = [Math.min(...series.flatMap((s) => s.values), top - 5), top];
-        }
-        return (
-          <TraceChart key={c.role} {...shared} title={c.title} unit={c.unit} height={c.height} domain={domain}
-            series={series} />
-        );
-      })}
-      <Text style={styles.note}>
+      <View style={styles.charts}>
+        <TraceChart {...shared} title={`Time vs ${refName}`} unit="s" zeroLine height={120} series={delta} />
+        {CHARTS.filter((c) => tr.roles.includes(c.role)).map((c) => {
+          const series = seriesOf(c.role);
+          let domain = c.domain;
+          if (c.role === 'gear') {
+            // whole gears on the axis: a range of at least five keeps the labels whole numbers
+            const top = Math.max(...series.flatMap((s) => s.values));
+            domain = [Math.min(...series.flatMap((s) => s.values), top - 5), top];
+          }
+          return (
+            <TraceChart key={c.role} {...shared} title={c.title} unit={c.unit} height={c.height} domain={domain}
+              series={series} />
+          );
+        })}
+      </View>
+      <Text style={StyleSheet.flatten([t.small, styles.measure])}>
         Time: above zero, a lap is behind {refName} at that point
         {section ? ` (counted from the start of ${section.code})` : ''}. Drag across a chart to read every lap at the
         same point.{data.aligned_by === 'gps' ? ' The laps are placed on one GPS line, so they meet metre for metre.' : ''}
         {data.channels.gear ? ` Gear is the logged ${data.channels.gear} channel.` : ''}
         {data.numbering === 'detected' ? ` ${DETECTED_CORNERS_NOTE}` : ''}
       </Text>
-    </View>
+    </Section>
   );
 }
 
-const styles = StyleSheet.create({
-  section: { gap: 10, backgroundColor: 'transparent' },
-  h2: { fontSize: 18, fontWeight: '700' },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: 1,
-    borderColor: '#8884',
-    borderRadius: 16,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  key: { width: 14, height: 3, borderRadius: 2 },
-  lead: { lineHeight: 20 },
-  card: { borderWidth: 1, borderColor: '#8883', borderRadius: 10, padding: 12, gap: 6 },
-  cardHead: { flexDirection: 'row', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' },
-  code: { fontSize: 20, fontWeight: '700' },
-  loss: { fontSize: 20, fontWeight: '600' },
-  phase: { borderWidth: 1, borderColor: '#8886', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 1 },
-  phaseText: { fontSize: 13 },
+const useStyles = themed((c) => ({
+  key: { width: 14, height: 4 },
+  tabs: { marginBottom: 16 },
+  measure: { maxWidth: 820 },
+  shrink: { flexShrink: 1 },
+  cols: { flexDirection: 'row', alignItems: 'stretch', marginTop: 18, borderTopWidth: 1, borderColor: c.rule },
+  colsPhone: { marginTop: 18, borderTopWidth: 1, borderColor: c.rule },
+  col: { flex: 1, minWidth: 0, gap: 10, paddingTop: 14, paddingHorizontal: 18 },
+  colPhone: { gap: 10, paddingVertical: 14 },
+  colRule: { borderLeftWidth: 1, borderColor: c.rule },
+  colTop: { borderTopWidth: 1, borderColor: c.separator },
+  colHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  colNo: { backgroundColor: c.rule, paddingHorizontal: 6, paddingTop: 3, paddingBottom: 2 },
+  colNoText: { fontFamily: Fonts.display, fontSize: 15, lineHeight: 18, color: c.background },
+  code: { fontFamily: Fonts.display, fontSize: 30, lineHeight: 34, textTransform: 'uppercase', color: c.text },
   versus: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  why: { lineHeight: 20 },
-  show: { fontSize: 13, opacity: 0.6 },
-  sub: { opacity: 0.7, flexShrink: 1 },
-  note: { fontSize: 12, opacity: 0.6, lineHeight: 17 },
-  row: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderColor: '#8882' },
-  cell: { fontVariant: ['tabular-nums'], fontSize: 13, paddingVertical: 6, paddingHorizontal: 6, textAlign: 'right' },
-  cellBox: { paddingVertical: 4, paddingHorizontal: 6, alignItems: 'flex-end', gap: 2 },
-  colHead: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  colSub: { fontSize: 11, opacity: 0.6, maxWidth: CELL - 8 },
-  first: { width: 76, textAlign: 'left' },
-  head: { fontWeight: '600', fontSize: 13 },
-  rowName: { fontWeight: '600' },
-  best: { fontWeight: '700' },
-  at: { opacity: 0.7, fontVariant: ['tabular-nums'] },
-});
+  show: { ...Type.link, fontSize: 12, letterSpacing: 1.2, color: c.text, alignSelf: 'flex-start', borderBottomWidth: 2,
+    borderColor: c.rule, paddingBottom: 1, marginTop: 2 },
+  also: { marginTop: 14 },
+  // the section table: hairlines between rows, an ink rule under the head, colour as flat blocks in the cells
+  headRow: { flexDirection: 'row', alignItems: 'flex-end', borderBottomWidth: 1, borderColor: c.rule },
+  row: { flexDirection: 'row', alignItems: 'stretch', height: 33, borderBottomWidth: 1, borderColor: c.separator },
+  footFirst: { borderTopWidth: 3, borderColor: c.rule },
+  th: { ...Type.label, fontSize: 11, color: c.text },
+  cellBox: { paddingVertical: 5, paddingHorizontal: 6, alignItems: 'flex-end', gap: 2 },
+  colHeadKey: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  colSub: { ...Type.label, fontSize: 9, letterSpacing: 0.6, color: c.textMuted, maxWidth: CELL - 8 },
+  first: { width: 80, paddingRight: 6, alignSelf: 'center', textAlign: 'left' },
+  rowName: { fontFamily: Fonts.display, fontSize: 17, lineHeight: 20, color: c.text },
+  footName: { ...Type.label, fontSize: 11, color: c.text },
+  cellFill: { justifyContent: 'center', borderRightWidth: 2, borderColor: c.background },
+  cell: { ...Type.number, fontSize: 14, paddingHorizontal: 6, textAlign: 'right', color: c.text },
+  best: { fontFamily: face('label', 700), color: c.timing.onBest },
+  strong: { fontFamily: face('label', 700) },
+  legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 22, rowGap: 8, marginTop: 14, marginBottom: 6 },
+  at: { ...Type.number, fontSize: 13, color: c.textSecondary, marginTop: 10, marginBottom: 6 },
+  charts: { gap: 14 },
+}));

@@ -1,10 +1,14 @@
 // The pieces of the driver comparison: where each driver gains or loses per section, every lap's section time,
-// the technique behind a section's delta, and each driver's habits that cost time.
+// the technique behind a section's delta, and each driver's habits that cost time. In the programme's chrome: square
+// bars from an ink centre line, hairlines between rows, Archivo capitals for heads; each driver's colour is a flat
+// square key beside their name.
 import { useState } from 'react';
 import { GestureResponderEvent, LayoutChangeEvent, Platform, Pressable, StyleSheet } from 'react-native';
 import Svg, { Circle, Line, Text as SvgText } from 'react-native-svg';
 
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { useText } from '@/components/Picks';
+import { TextLink } from '@/components/Programme';
+import { Text, View } from '@/components/Themed';
 import {
   Comparison,
   differenceWords,
@@ -19,10 +23,14 @@ import {
   TechniqueRow,
   valueWords,
 } from '@/lib/drivers';
+import { face, Fonts, themed, Type, useTheme } from '@/constants/Theme';
 
 type Colors = Record<Side, string>;
 
-const Dot = ({ color }: { color: string }) => <View style={StyleSheet.flatten([styles.dot, { backgroundColor: color }])} />;
+/** A driver's colour: a flat square beside their name. */
+export const Dot = ({ color, size = 10 }: { color: string; size?: number }) => (
+  <View style={{ width: size, height: size, backgroundColor: color }} />
+);
 
 // ---------- where the time goes: one diverging bar per section, in lap order ----------
 
@@ -32,8 +40,9 @@ export function SectionDeltaChart({ result, colors, selected, onSelect }: {
   selected: string | null;
   onSelect: (code: string) => void;
 }) {
+  const styles = useStyles();
+  const t = useText();
   const [hover, setHover] = useState<string | null>(null);
-  const muted = useThemeColor({}, 'text');
   const { labels } = result;
   const max = Math.max(0.05, ...result.sections.map((s) => Math.abs(s.delta_s)));
   return (
@@ -42,58 +51,61 @@ export function SectionDeltaChart({ result, colors, selected, onSelect }: {
         <View style={styles.legendItem}>
           <Dot color={colors.a} />
           <Text style={styles.legendText} numberOfLines={1}>
-            {labels.a} quicker
+            ← {labels.a} quicker
           </Text>
         </View>
         <View style={styles.legendItem}>
           <Text style={styles.legendText} numberOfLines={1}>
-            {labels.b} quicker
+            {labels.b} quicker →
           </Text>
           <Dot color={colors.b} />
         </View>
       </View>
-      {result.sections.map((s) => {
-        const side = s.faster;
-        const width = `${(Math.abs(s.delta_s) / max) * 50}%` as const;
-        const isOn = selected === s.code;
-        return (
-          <Pressable
-            key={s.code}
-            onPress={() => onSelect(s.code)}
-            onHoverIn={() => setHover(s.code)}
-            onHoverOut={() => setHover((h) => (h === s.code ? null : h))}
-            accessibilityRole="button"
-            accessibilityLabel={sectionWords(s, labels)}
-            style={StyleSheet.flatten([
-              styles.barRow,
-              hover === s.code && styles.hover,
-              isOn && styles.selected,
-            ])}>
-            <View style={styles.barLine}>
-              <Text style={styles.code} numberOfLines={1}>
-                {s.code}
-              </Text>
-              <View style={styles.track}>
-                <View style={StyleSheet.flatten([styles.baseline, { backgroundColor: muted }])} />
-                <View
-                  style={StyleSheet.flatten([
-                    styles.bar,
-                    side === 'a' ? styles.barLeft : styles.barRight,
-                    { width, backgroundColor: colors[side], opacity: s.clear ? 1 : 0.35 },
-                  ])}
-                />
+      <View style={styles.rows}>
+        {result.sections.map((s) => {
+          const side = s.faster;
+          const width = `${(Math.abs(s.delta_s) / max) * 50}%` as const;
+          const isOn = selected === s.code;
+          return (
+            <Pressable
+              key={s.code}
+              onPress={() => onSelect(s.code)}
+              onHoverIn={() => setHover(s.code)}
+              onHoverOut={() => setHover((h) => (h === s.code ? null : h))}
+              accessibilityRole="button"
+              accessibilityState={{ selected: isOn }}
+              accessibilityLabel={sectionWords(s, labels)}
+              style={StyleSheet.flatten([
+                styles.barRow,
+                hover === s.code && styles.hover,
+                isOn && styles.selected,
+              ])}>
+              <View style={styles.barLine}>
+                <Text style={styles.code} numberOfLines={1}>
+                  {s.code}
+                </Text>
+                <View style={styles.track}>
+                  <View style={styles.baseline} />
+                  <View
+                    style={StyleSheet.flatten([
+                      styles.bar,
+                      side === 'a' ? styles.barLeft : styles.barRight,
+                      { width, backgroundColor: colors[side], opacity: s.clear ? 1 : 0.35 },
+                    ])}
+                  />
+                </View>
+                <Text style={styles.value}>{Math.abs(s.delta_s).toFixed(2)} s</Text>
               </View>
-              <Text style={styles.value}>{Math.abs(s.delta_s).toFixed(2)} s</Text>
-            </View>
-            <Text style={StyleSheet.flatten([styles.barSub, !s.clear && styles.dim])} numberOfLines={2}>
-              {s.clear
-                ? `${labels[side]} quicker on ${pct(s.consistency)} of laps, mostly ${PHASE_NAME[s.main_phase]}`
-                : `No clear difference: ${labels[side]} quicker on ${pct(s.consistency)} of laps`}
-            </Text>
-          </Pressable>
-        );
-      })}
-      <Text style={styles.note}>
+              <Text style={StyleSheet.flatten([styles.barSub, !s.clear && styles.dim])} numberOfLines={2}>
+                {s.clear
+                  ? `${labels[side]} quicker on ${pct(s.consistency)} of laps, mostly ${PHASE_NAME[s.main_phase]}`
+                  : `No clear difference: ${labels[side]} quicker on ${pct(s.consistency)} of laps`}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+      <Text style={t.small}>
         Bars: the difference between the two drivers' median section times. Faint bars are sections where the quicker
         driver beats the other's median on fewer than 60% of laps. Tap a section for the laps and the technique.
       </Text>
@@ -112,10 +124,10 @@ export function sectionWords(s: SectionResult, labels: Record<Side, string>): st
 const STRIP = { left: 8, right: 8, row: 34, top: 6, axis: 22 };
 
 export function LapStrip({ result, section, colors }: { result: Comparison; section: SectionResult; colors: Colors }) {
+  const styles = useStyles();
+  const c = useTheme().chart;
   const [width, setWidth] = useState(0);
   const [hit, setHit] = useState<{ side: Side; i: number } | null>(null);
-  const ink = useThemeColor({}, 'text');
-  const surface = useThemeColor({}, 'background');
   const lapsOf = { a: result.laps.filter((l) => l.side === 'a'), b: result.laps.filter((l) => l.side === 'b') };
   const session = (run: string) => result.runs.find((r) => r.run === run)?.session ?? run;
   const all = [...section.times.a, ...section.times.b];
@@ -185,23 +197,23 @@ export function LapStrip({ result, section, colors }: { result: Comparison; sect
         {width > 0 && (
           <Svg width={width} height={height} pointerEvents="none">
             {SIDES.map((side, k) => (
-              <Line key={side} x1={STRIP.left} x2={width - STRIP.right} y1={rowY(k)} y2={rowY(k)} stroke={ink}
-                strokeOpacity={0.08} />
+              <Line key={side} x1={STRIP.left} x2={width - STRIP.right} y1={rowY(k)} y2={rowY(k)} stroke={c.grid}
+                strokeWidth={1} />
             ))}
             {SIDES.map((side, k) =>
               section.times[side].map((v, i) => (
                 <Circle key={`${side}${i}`} cx={x(v)} cy={rowY(k) + jitter(i)} r={hit?.side === side && hit.i === i ? 6 : 4}
-                  fill={colors[side]} stroke={surface} strokeWidth={2} />
+                  fill={colors[side]} stroke={c.surface} strokeWidth={2} />
               )),
             )}
             {SIDES.map((side, k) => (
               <Line key={`m${side}`} x1={x(section.median[side])} x2={x(section.median[side])} y1={rowY(k) - 13}
-                y2={rowY(k) + 13} stroke={ink} strokeWidth={2} strokeLinecap="round" />
+                y2={rowY(k) + 13} stroke={c.ink} strokeWidth={2} />
             ))}
             <Line x1={STRIP.left} x2={width - STRIP.right} y1={height - STRIP.axis + 2} y2={height - STRIP.axis + 2}
-              stroke={ink} strokeOpacity={0.2} />
+              stroke={c.axis} strokeWidth={1} />
             {ticks.map((t, i) => (
-              <SvgText key={i} x={x(t)} y={height - 6} fontSize={10} fill={ink} fillOpacity={0.6}
+              <SvgText key={i} x={x(t)} y={height - 6} fontSize={10} fill={c.muted} fontFamily={Fonts.sans}
                 textAnchor={i === 0 ? 'start' : i === 2 ? 'end' : 'middle'}>
                 {t.toFixed(2)} s
               </SvgText>
@@ -218,12 +230,13 @@ export function LapStrip({ result, section, colors }: { result: Comparison; sect
 const SHOWN = 6;
 
 export function TechniqueList({ result, section, colors }: { result: Comparison; section: SectionResult; colors: Colors }) {
+  const styles = useStyles();
+  const t = useText();
   const [all, setAll] = useState(false);
-  const tint = useThemeColor({}, 'tint');
   const { labels } = result;
   const rows = all ? section.technique : section.technique.slice(0, SHOWN);
   if (section.technique.length === 0) {
-    return <Text style={styles.dim}>Not enough laps on both sides here to compare the technique.</Text>;
+    return <Text style={t.note}>Not enough laps on both sides here to compare the technique.</Text>;
   }
   return (
     <View style={styles.list}>
@@ -240,18 +253,17 @@ export function TechniqueList({ result, section, colors }: { result: Comparison;
                 <Text style={styles.techValue}>{valueWords(r, r[side])}</Text>
               </View>
             ))}
-            <Text style={styles.techDiff}>
+            <Text style={t.note}>
               {labels.a}: {differenceWords(r)}
             </Text>
           </View>
         </View>
       ))}
       {section.technique.length > SHOWN && (
-        <Pressable onPress={() => setAll(!all)} hitSlop={8}>
-          <Text style={{ color: tint }}>{all ? 'Show fewer' : `Show all ${section.technique.length} measures`}</Text>
-        </Pressable>
+        <TextLink small label={all ? 'Show fewer' : `Show all ${section.technique.length} measures`}
+          onPress={() => setAll(!all)} />
       )}
-      <Text style={styles.note}>
+      <Text style={t.small}>
         Positions are metres from the slowest point of the section (− before it). "Worth" is what the difference in
         typical values comes to in section time, judged from how the time moves with it lap to lap. Each is estimated on
         its own, so they overlap, and none is counted as more than the whole difference.
@@ -269,8 +281,9 @@ function worthWords(r: TechniqueRow, labels: Record<Side, string>): string {
 
 // One section's habits for both drivers, or a single line when neither has one there.
 export function SectionHabits({ result, code, colors }: { result: Comparison; code: string; colors: Colors }) {
+  const t = useText();
   const has = (side: Side) => result.habits[side].some((h) => h.sections.some((s) => s.code === code));
-  if (!SIDES.some(has)) return <Text style={styles.dim}>Neither driver has a repeated habit here that costs time.</Text>;
+  if (!SIDES.some(has)) return <Text style={t.note}>Neither driver has a repeated habit here that costs time.</Text>;
   return (
     <>
       {SIDES.filter(has).map((side) => (
@@ -286,18 +299,20 @@ export function HabitList({ result, side, colors, only }: {
   colors: Colors;
   only?: string; // one section's habits
 }) {
+  const styles = useStyles();
+  const t = useText();
   const habits = result.habits[side]
     .map((h) => ({ ...h, sections: only ? h.sections.filter((s) => s.code === only) : h.sections }))
     .filter((h) => h.sections.length > 0);
   const label = result.labels[side];
   return (
-    <View style={styles.list}>
-      <View style={styles.legendItem}>
-        <Dot color={colors[side]} />
+    <View style={styles.habitList}>
+      <View style={styles.owner}>
+        <Dot color={colors[side]} size={12} />
         <Text style={styles.habitOwner}>{label}</Text>
       </View>
       {habits.length === 0 && (
-        <Text style={styles.dim}>{only ? `No repeated habit here that costs time.` : 'No repeated habit that costs time.'}</Text>
+        <Text style={t.note}>{only ? `No repeated habit here that costs time.` : 'No repeated habit that costs time.'}</Text>
       )}
       {habits.map((h) => (
         <HabitCard key={h.kind} habit={h} perLap={!only} />
@@ -307,6 +322,8 @@ export function HabitList({ result, side, colors, only }: {
 }
 
 function HabitCard({ habit, perLap }: { habit: Habit; perLap: boolean }) {
+  const styles = useStyles();
+  const t = useText();
   return (
     <View style={styles.habit}>
       <View style={styles.techHead}>
@@ -319,7 +336,7 @@ function HabitCard({ habit, perLap }: { habit: Habit; perLap: boolean }) {
           each time{s.basis === 'all laps' ? ' (against both drivers’ laps)' : ''} · {habitValueWords(habit, s)}
         </Text>
       ))}
-      <Text style={styles.advice}>{habit.advice}</Text>
+      <Text style={t.note}>{habit.advice}</Text>
     </View>
   );
 }
@@ -340,15 +357,16 @@ const STYLE_ROWS: [string, string, (v: number) => string][] = [
 ];
 
 export function StyleTable({ result, colors }: { result: Comparison; colors: Colors }) {
+  const styles = useStyles();
   const rows = STYLE_ROWS.filter(([k]) => SIDES.every((s) => result.summary[s].style[k] != null));
   return (
-    <View>
-      <View style={styles.tableRow}>
-        <Text style={StyleSheet.flatten([styles.tableLabel, styles.head])}>Per lap (median)</Text>
+    <View style={styles.table}>
+      <View style={styles.tableHead}>
+        <Text style={StyleSheet.flatten([styles.tableLabel, styles.th])}>Per lap (median)</Text>
         {SIDES.map((side) => (
           <View key={side} style={styles.tableCellHead}>
             <Dot color={colors[side]} />
-            <Text style={styles.head} numberOfLines={1}>
+            <Text style={styles.th} numberOfLines={1}>
               {result.labels[side]}
             </Text>
           </View>
@@ -368,45 +386,48 @@ export function StyleTable({ result, colors }: { result: Comparison; colors: Col
   );
 }
 
-const styles = StyleSheet.create({
-  chart: { gap: 6 },
-  dot: { width: 10, height: 10, borderRadius: 5 },
+const useStyles = themed((c) => ({
+  chart: { gap: 10 },
+  rows: { borderTopWidth: 1, borderColor: c.rule },
   legendRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 },
-  legendText: { fontSize: 13, opacity: 0.8, flexShrink: 1 },
-  barRow: { paddingVertical: 6, paddingHorizontal: 6, borderRadius: 6, borderWidth: 1, borderColor: 'transparent', gap: 2 },
-  hover: { backgroundColor: '#8881' },
-  selected: { backgroundColor: '#8881', borderColor: '#8886' },
+  legendText: { ...Type.label, fontFamily: Fonts.label, fontSize: 11, letterSpacing: 0.8, color: c.textSecondary,
+    flexShrink: 1 },
+  barRow: { paddingVertical: 8, paddingHorizontal: 6, gap: 3, borderBottomWidth: 1, borderColor: c.separator },
+  hover: { backgroundColor: c.band },
+  selected: { backgroundColor: c.surfaceRaised },
   barLine: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  code: { width: 66, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  code: { width: 66, fontFamily: Fonts.display, fontSize: 17, lineHeight: 20, color: c.text },
   track: { flex: 1, height: 18, justifyContent: 'center' },
-  baseline: { position: 'absolute', left: '50%', width: 1, top: 0, bottom: 0, opacity: 0.3 },
+  baseline: { position: 'absolute', left: '50%', width: 1, top: 0, bottom: 0, backgroundColor: c.rule },
   bar: { position: 'absolute', height: 12, top: 3 },
-  // the data end is rounded, the end on the baseline square
-  barLeft: { right: '50%', borderTopLeftRadius: 4, borderBottomLeftRadius: 4 },
-  barRight: { left: '50%', borderTopRightRadius: 4, borderBottomRightRadius: 4 },
-  value: { width: 56, textAlign: 'right', fontVariant: ['tabular-nums'] },
-  barSub: { fontSize: 12, opacity: 0.7, marginLeft: 74 },
+  barLeft: { right: '50%' },
+  barRight: { left: '50%' },
+  value: { ...Type.number, width: 56, textAlign: 'right', fontSize: 14, color: c.text },
+  barSub: { fontFamily: Fonts.body, fontSize: 13, lineHeight: 18, color: c.textSecondary, marginLeft: 74 },
   dim: { opacity: 0.5 },
-  note: { fontSize: 12, opacity: 0.6, lineHeight: 17 },
-  readout: { fontSize: 13, minHeight: 36, fontVariant: ['tabular-nums'] },
+  readout: { fontFamily: Fonts.body, fontSize: 14, lineHeight: 19, minHeight: 38, color: c.text },
   list: { gap: 10 },
-  techRow: { gap: 4, paddingBottom: 8, borderBottomWidth: 1, borderColor: '#8882' },
+  techRow: { gap: 5, paddingBottom: 10, borderBottomWidth: 1, borderColor: c.separator },
   techHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' },
-  techLabel: { fontWeight: '600', fontSize: 15, flexShrink: 1 },
-  worth: { fontSize: 13, opacity: 0.7, fontVariant: ['tabular-nums'] },
-  explains: { opacity: 1, fontWeight: '600' },
-  techValues: { flexDirection: 'row', alignItems: 'center', gap: 14, flexWrap: 'wrap' },
-  techValue: { fontVariant: ['tabular-nums'] },
-  techDiff: { opacity: 0.7, fontSize: 13 },
-  habitOwner: { fontWeight: '700', fontSize: 16 },
-  habit: { gap: 4, paddingBottom: 8, borderBottomWidth: 1, borderColor: '#8882' },
-  habitLine: { lineHeight: 20, fontVariant: ['tabular-nums'] },
-  habitCode: { fontWeight: '600' },
-  advice: { opacity: 0.7, fontSize: 13, lineHeight: 18 },
-  tableRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 5, borderBottomWidth: 1, borderColor: '#8882', gap: 8 },
-  tableLabel: { flex: 1 },
-  tableCellHead: { width: 92, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4 },
-  tableCell: { width: 92, textAlign: 'right', fontVariant: ['tabular-nums'] },
-  head: { fontWeight: '600', opacity: 0.7, fontSize: 13 },
-});
+  techLabel: { fontFamily: face('body', 600), fontSize: 16, lineHeight: 21, color: c.text, flexShrink: 1 },
+  worth: { ...Type.number, fontSize: 13, color: c.textSecondary },
+  explains: { fontFamily: face('label', 700), color: c.text },
+  techValues: { flexDirection: 'row', alignItems: 'center', columnGap: 16, rowGap: 4, flexWrap: 'wrap' },
+  techValue: { ...Type.number, fontSize: 14, color: c.text },
+  habitList: { gap: 10 },
+  owner: { flexDirection: 'row', alignItems: 'center', gap: 8, borderBottomWidth: 1, borderColor: c.rule, paddingBottom: 5 },
+  habitOwner: { ...Type.label, fontSize: 13, color: c.text },
+  habit: { gap: 5, paddingBottom: 10, borderBottomWidth: 1, borderColor: c.separator },
+  habitLine: { fontFamily: Fonts.body, fontSize: 15, lineHeight: 21, color: c.text },
+  habitCode: { fontFamily: face('body', 700) },
+  table: { maxWidth: 640 },
+  tableHead: { flexDirection: 'row', alignItems: 'flex-end', paddingBottom: 5, borderBottomWidth: 1, borderColor: c.rule,
+    gap: 8 },
+  tableRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 7, borderBottomWidth: 1,
+    borderColor: c.separator, gap: 8 },
+  tableLabel: { flex: 1, fontFamily: Fonts.body, fontSize: 15, color: c.text },
+  th: { ...Type.label, fontSize: 11, color: c.text, flexShrink: 1 },
+  tableCellHead: { width: 104, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 5 },
+  tableCell: { ...Type.number, width: 104, textAlign: 'right', fontSize: 14, color: c.text },
+}));

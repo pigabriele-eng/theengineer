@@ -1,9 +1,14 @@
-import { Link, Stack } from 'expo-router';
-import { ReactNode, useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
+import { Link, Stack, useLocalSearchParams } from 'expo-router';
+import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
 
-import { Chip, EntryFields, Lists, useLists } from '@/components/EventInfoForm';
-import { Text, View, useThemeColor } from '@/components/Themed';
+import {
+  Choice, Choices, ErrorLine, Field, FormActions, Input, MainButton, Note, PageTitle, Said,
+} from '@/components/Controls';
+import { EntryFields, Lists, useLists } from '@/components/EventInfoForm';
+import { SeasonMatch } from '@/components/SeasonMatch';
+import { Block, Colophon, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
+import { Text, View } from '@/components/Themed';
 import { todayIso } from '@/lib/calendar';
 import { carLong } from '@/lib/garage';
 import { dateRange, parseDay } from '@/lib/events';
@@ -23,24 +28,67 @@ import {
   seriesApi,
   SeriesCalendar,
 } from '@/lib/seasons';
+import { SeasonQuestion, seasonMatchApi } from '@/lib/seasonMatch';
+import { face, Fonts, inkOn, themed, Type, useTheme } from '@/constants/Theme';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const THIS_YEAR = new Date().getFullYear();
+
+// Which seasons are open, remembered on the device the way lib/appearance.ts keeps the Light/Dark choice: only the
+// seasons tapped open or shut are kept, by id; the rest follow the default. No storage (a private window): the default.
+const FOLD_KEY = 'theengineer.seasons.open';
+type Folds = Record<string, boolean>;
+function readFolds(): Folds {
+  try {
+    const v = JSON.parse(globalThis.localStorage?.getItem(FOLD_KEY) ?? '{}');
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  } catch {
+    return {};
+  }
+}
+function saveFolds(f: Folds) {
+  try {
+    globalThis.localStorage?.setItem(FOLD_KEY, JSON.stringify(f));
+  } catch {
+    // not remembered, but still folded or opened for this visit
+  }
+}
+
+/** Open unless tapped shut: this year's seasons, else those of the next year ahead; the rest are folded. */
+function openByDefault(seasons: Season[]): Set<number> {
+  const now = seasons.filter((s) => s.year === THIS_YEAR);
+  const ahead = seasons.filter((s) => s.year > THIS_YEAR).map((s) => s.year);
+  const year = now.length ? THIS_YEAR : ahead.length ? Math.min(...ahead) : null;
+  return new Set(seasons.filter((s) => s.year === year).map((s) => s.id));
+}
+
+/** The questions waiting about a season: which event is one of its rounds (an option names one of its rounds, or the
+ * season) and who drove its rounds' events. */
+function questionsOf(s: Season, questions: SeasonQuestion[]) {
+  const keys = new Set([...s.rounds.map((r) => `round:${r.id}`), `season:${s.id}`]);
+  const events = new Set(s.rounds.map((r) => r.event_id).filter((id): id is number => id != null));
+  return questions.filter((q) => q.options.some((o) => keys.has(o.key)) || (q.kind === 'drivers' && events.has(q.event_id)));
+}
 
 /** Seasons made ahead: a series and a year with our car number and our entry (tyre, car, team, drivers 1 to 4). A
  * series the server can read from its site brings its calendar (every round becomes a planned event under Upcoming,
  * or joins the event already there) and fills our entry from our car's line on the entry list; any other series is
  * made by hand, its rounds typed in. Each event of a season takes its tyre, car, team and drivers from the season
- * unless set on the event. */
+ * unless set on the event. One numbered section per season. */
 export default function SeasonsScreen() {
+  const styles = useStyles();
   const [seasons, setSeasons] = useState<Season[] | null>(null);
   const [series, setSeries] = useState<Series[] | null>(null); // [] when the server can't read any series' site
   const [error, setError] = useState<string | null>(null);
   const [making, setMaking] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [questions, setQuestions] = useState<SeasonQuestion[]>([]);
   const { lists, error: listsError, reload: reloadLists } = useLists();
-  const background = useThemeColor({}, 'background');
-  const tint = useThemeColor({}, 'tint');
+  // folded or open: what was tapped on this device, else the default; the season a link names (?season=) opens
+  const [folds, setFolds] = useState<Folds>(readFolds);
+  const { season: linked } = useLocalSearchParams<{ season?: string }>();
+  const scroll = useRef<ScrollView>(null);
+  const scrolled = useRef(false);
 
   const load = useCallback(() => {
     seasonsApi.list().then(
@@ -50,55 +98,69 @@ export default function SeasonsScreen() {
       },
       (e) => setError((e as Error).message),
     );
+    seasonMatchApi.pending().then((p) => setQuestions(p.questions), () => setQuestions([])); // an older server: none
   }, []);
   useEffect(() => {
     load();
     seriesApi.series().then(setSeries, () => setSeries([])); // 404 on a server without the results module
   }, [load]);
 
+  const defaults = seasons ? openByDefault(seasons) : new Set<number>();
+  const isOpen = (s: Season) => folds[s.id] ?? (String(s.id) === linked || defaults.has(s.id));
+  const setOpen = (id: number, open: boolean) =>
+    setFolds((f) => {
+      const next = { ...f, [id]: open };
+      saveFolds(next);
+      return next;
+    });
+  // the season a link names: once it is laid out, scroll to it
+  const placed = (id: number, y: number) => {
+    if (scrolled.current || String(id) !== linked) return;
+    scrolled.current = true;
+    scroll.current?.scrollTo({ y: Math.max(0, y - 12), animated: false });
+  };
+
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.outer}>
+    <Page scrollRef={scroll}>
       <Stack.Screen options={{ title: 'Seasons' }} />
-      <View style={styles.page}>
-        <Text style={styles.intro}>
-          Make a season for the year: its rounds become planned events under Upcoming, with their dates and venue, and
-          each round&apos;s event takes its tyre, car, team and drivers from the season unless you set them on the event.
-        </Text>
-        {error && <Text style={styles.error}>{error}</Text>}
-        {listsError && <Text style={styles.error}>{listsError}</Text>}
-        {notice && (
-          <Pressable onPress={() => setNotice(null)}>
-            <Text style={styles.notice}>{notice}</Text>
-          </Pressable>
-        )}
-        {making && lists ? (
+      <PageTitle title="Seasons"
+        dek="Make a season for the year: its rounds become planned events under Upcoming, with their dates and venue, and each round’s event takes its tyre, car, team and drivers from the season unless you set them on the event." />
+      <View style={styles.top}>
+        {error && <ErrorLine>{error}</ErrorLine>}
+        {listsError && <ErrorLine>{listsError}</ErrorLine>}
+        {notice && <Said text={notice} onPress={() => setNotice(null)} />}
+        {!making && <MainButton label="+ New season" onPress={() => setMaking(true)} disabled={!lists} />}
+      </View>
+      {making && lists && (
+        <Section no="NEW" title="New season" dek="A series and a year, our car number and what we run.">
           <NewSeason lists={lists} series={series} onListsChanged={reloadLists} onCancel={() => setMaking(false)}
-            onMade={(text) => {
+            onMade={(text, id) => {
               setMaking(false);
               setNotice(text);
+              setOpen(id, true); // a season just made opens
               load();
               reloadLists(); // drivers and a team may have come from the entry list
             }} />
-        ) : (
-          <Pressable onPress={() => setMaking(true)} accessibilityRole="button" disabled={!lists}
-            style={StyleSheet.flatten([styles.newButton, { borderColor: tint }])}>
-            <Text style={StyleSheet.flatten([styles.newText, { color: tint }])}>＋ New season</Text>
-          </Pressable>
-        )}
-        {!seasons && !error && <ActivityIndicator />}
-        {seasons && seasons.length === 0 && !making && (
-          <Text style={styles.empty}>No seasons yet.</Text>
-        )}
-        {seasons && lists && seasons.map((s) => (
-          <SeasonCard key={s.id} season={s} lists={lists} series={series} onListsChanged={reloadLists}
-            onChanged={(text) => {
-              if (text) setNotice(text);
-              load();
-              reloadLists();
-            }} />
-        ))}
-      </View>
-    </ScrollView>
+        </Section>
+      )}
+      {!seasons && !error && <ActivityIndicator style={styles.loading} />}
+      {seasons && seasons.length === 0 && !making && <Note style={styles.empty}>No seasons yet.</Note>}
+      {seasons && lists && seasons.map((s, i) => (
+        <SeasonSection key={s.id} no={i + 1} season={s} lists={lists} series={series} onListsChanged={reloadLists}
+          open={isOpen(s)} onToggle={() => setOpen(s.id, !isOpen(s))} questions={questionsOf(s, questions)}
+          onLayout={(y) => placed(s.id, y)}
+          onChanged={(text) => {
+            if (text) setNotice(text);
+            load();
+            reloadLists();
+          }} />
+      ))}
+      <Colophon left="The Engineer · Seasons" links={[
+        { label: 'Sessions', href: '/' },
+        { label: 'Garage', href: '/garage' },
+        { label: 'Racing calendar', href: '/tools/calendar' },
+      ]} />
+    </Page>
   );
 }
 
@@ -151,8 +213,9 @@ function NewSeason({ lists, series, onListsChanged, onCancel, onMade }: {
   series: Series[] | null;
   onListsChanged: () => void;
   onCancel: () => void;
-  onMade: (text: string) => void;
+  onMade: (text: string, id: number) => void;
 }) {
+  const styles = useStyles();
   const [year, setYear] = useState(THIS_YEAR);
   const [key, setKey] = useState<string | null>(null); // a series the server reads; null: by hand
   const [seriesName, setSeriesName] = useState('');
@@ -162,9 +225,6 @@ function NewSeason({ lists, series, onListsChanged, onCancel, onMade }: {
   const [rounds, setRounds] = useState<DraftRound[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const tint = useThemeColor({}, 'tint');
-  const text = useThemeColor({}, 'text');
-  const background = useThemeColor({}, 'background');
   useEffect(() => {
     if (series?.length && key === null && !seriesName) setKey(series[0].key);
   }, [series]); // eslint-disable-line react-hooks/exhaustive-deps -- once, when the list arrives
@@ -186,73 +246,57 @@ function NewSeason({ lists, series, onListsChanged, onCancel, onMade }: {
       const season = await seasonsApi.create({ name: (name ?? auto).trim() || auto, series: picked?.key ?? null, year,
         car_number: number.trim().replace(/^#/, '') || null, entry, rounds: manual });
       const told = picked ? await fillFromSite(season, setBusy) : roundsSaid(season);
-      onMade(told);
+      onMade(told, season.id);
     } catch (e) {
       setError((e as Error).message);
       setBusy(null);
     }
   };
 
-  const input = StyleSheet.flatten([styles.input, { color: text }]);
   return (
     <View style={styles.form}>
-      <Text style={styles.h2}>New season</Text>
-      <Group label="Year">
-        <View style={styles.chips}>
-          {years.map((y) => <Chip key={y} label={String(y)} on={y === year} onPress={() => setYear(y)} />)}
-        </View>
-      </Group>
-      <Group label="Series">
-        <View style={styles.chips}>
+      <Field label="Year">
+        <Choices>
+          {years.map((y) => <Choice key={y} label={String(y)} on={y === year} onPress={() => setYear(y)} />)}
+        </Choices>
+      </Field>
+      <Field label="Series">
+        <Choices>
           {(series ?? []).map((s) => (
-            <Chip key={s.key} label={s.name} on={key === s.key} onPress={() => setKey(s.key)} />
+            <Choice key={s.key} label={s.name} on={key === s.key} onPress={() => setKey(s.key)} />
           ))}
-          <Chip label={series?.length ? 'Another series, by hand' : 'By hand'} on={key === null}
-            onPress={() => setKey(null)} dashed={!!series?.length} />
-        </View>
-        {series === null && <Text style={styles.note}>Looking for the series this app can read…</Text>}
+          <Choice label={series?.length ? 'Another series, by hand' : 'By hand'} on={key === null}
+            onPress={() => setKey(null)} />
+        </Choices>
+        {series === null && <Note>Looking for the series this app can read…</Note>}
         {picked ? (
-          <Text style={styles.note}>
+          <Note>
             The dates of every round come from the series&apos; site, and our entry from our car&apos;s line on its entry
             lists when they are published.
-          </Text>
+          </Note>
         ) : (
-          <TextInput value={seriesName} onChangeText={setSeriesName} placeholder="Series, e.g. GT4 Germany"
-            placeholderTextColor="#888" maxLength={120} accessibilityLabel="Series name" style={input} />
+          <Input value={seriesName} onChangeText={setSeriesName} placeholder="Series, e.g. GT4 Germany" maxLength={120}
+            accessibilityLabel="Series name" />
         )}
-      </Group>
-      <Group label="Season name">
-        <TextInput value={name ?? auto} onChangeText={setName} maxLength={160} accessibilityLabel="Season name"
-          style={input} />
-      </Group>
-      <Group label="Our car number">
-        <TextInput value={number} onChangeText={setNumber} placeholder="12" placeholderTextColor="#888" maxLength={8}
-          accessibilityLabel="Our car number" style={StyleSheet.flatten([input, styles.number])} />
-      </Group>
+      </Field>
+      <View style={styles.pair}>
+        <Field label="Season name" style={styles.grow}>
+          <Input value={name ?? auto} onChangeText={setName} maxLength={160} accessibilityLabel="Season name" />
+        </Field>
+        <Field label="Our car number">
+          <Input value={number} onChangeText={setNumber} placeholder="12" maxLength={8} accessibilityLabel="Our car number"
+            style={styles.number} />
+        </Field>
+      </View>
       <Text style={styles.h3}>Our entry</Text>
       <EntryFields value={entry} onChange={setEntry} lists={lists} onListsChanged={onListsChanged} />
       {!picked && <RoundsEditor rounds={rounds} onChange={setRounds} />}
-      {error && <Text style={styles.error}>{error}</Text>}
-      <View style={styles.buttons}>
-        <Pressable onPress={make} disabled={busy != null} accessibilityRole="button"
-          style={StyleSheet.flatten([styles.save, { backgroundColor: tint }])}>
-          {busy ? <ActivityIndicator color={background} />
-            : <Text style={StyleSheet.flatten([styles.saveText, { color: background }])}>Make the season</Text>}
-        </Pressable>
-        <Pressable onPress={onCancel} hitSlop={8} accessibilityRole="button" disabled={busy != null}>
-          <Text style={{ color: tint }}>Cancel</Text>
-        </Pressable>
-      </View>
-      {busy && <Text style={styles.note}>{busy}</Text>}
-    </View>
-  );
-}
-
-function Group({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <View style={styles.group}>
-      <Text style={styles.label}>{label}</Text>
-      {children}
+      {error && <ErrorLine>{error}</ErrorLine>}
+      <FormActions>
+        <MainButton label="Make the season" onPress={make} busy={busy != null} />
+        <TextLink onPress={onCancel} label="Cancel" disabled={busy != null} />
+      </FormActions>
+      {busy && <Note>{busy}</Note>}
     </View>
   );
 }
@@ -277,56 +321,55 @@ function draftRounds(rows: DraftRound[]): RoundFields[] {
 }
 
 function RoundsEditor({ rounds, onChange }: { rounds: DraftRound[]; onChange: (r: DraftRound[]) => void }) {
-  const tint = useThemeColor({}, 'tint');
-  const text = useThemeColor({}, 'text');
+  const styles = useStyles();
   const set = (i: number, patch: Partial<DraftRound>) => onChange(rounds.map((r, j) => (j === i ? { ...r, ...patch } : r)));
-  const input = StyleSheet.flatten([styles.input, styles.roundInput, { color: text }]);
   return (
-    <View style={styles.group}>
-      <Text style={styles.label}>Rounds</Text>
+    <Field label="Rounds">
       {rounds.map((r, i) => (
         <View key={i} style={styles.roundRow}>
           <Text style={styles.roundNo}>R{i + 1}</Text>
-          <TextInput value={r.name} onChangeText={(v) => set(i, { name: v })} placeholder="Name" placeholderTextColor="#888"
-            maxLength={160} accessibilityLabel={`Round ${i + 1} name`} style={StyleSheet.flatten([input, styles.wide])} />
-          <TextInput value={r.venue} onChangeText={(v) => set(i, { venue: v })} placeholder="Venue"
-            placeholderTextColor="#888" maxLength={255} accessibilityLabel={`Round ${i + 1} venue`}
-            style={StyleSheet.flatten([input, styles.wide])} />
-          <TextInput value={r.start} onChangeText={(v) => set(i, { start: v })} placeholder="First day dd/mm/yyyy"
-            placeholderTextColor="#888" maxLength={10} inputMode="numeric" accessibilityLabel={`Round ${i + 1} first day`}
-            style={input} />
-          <TextInput value={r.end} onChangeText={(v) => set(i, { end: v })} placeholder="Last day" placeholderTextColor="#888"
-            maxLength={10} inputMode="numeric" accessibilityLabel={`Round ${i + 1} last day`} style={input} />
-          <Pressable onPress={() => onChange(rounds.filter((_, j) => j !== i))} hitSlop={8} accessibilityRole="button"
-            accessibilityLabel={`Remove round ${i + 1}`}>
-            <Text style={styles.remove}>✕</Text>
-          </Pressable>
+          <View style={styles.roundInputs}>
+            <Input value={r.name} onChangeText={(v) => set(i, { name: v })} placeholder="Name" maxLength={160}
+              accessibilityLabel={`Round ${i + 1} name`} style={StyleSheet.flatten([styles.roundInput, styles.roundWide])} />
+            <Input value={r.venue} onChangeText={(v) => set(i, { venue: v })} placeholder="Venue" maxLength={255}
+              accessibilityLabel={`Round ${i + 1} venue`} style={StyleSheet.flatten([styles.roundInput, styles.roundWide])} />
+            <Input value={r.start} onChangeText={(v) => set(i, { start: v })} placeholder="First day dd/mm/yyyy"
+              maxLength={10} inputMode="numeric" accessibilityLabel={`Round ${i + 1} first day`} style={styles.roundInput} />
+            <Input value={r.end} onChangeText={(v) => set(i, { end: v })} placeholder="Last day" maxLength={10}
+              inputMode="numeric" accessibilityLabel={`Round ${i + 1} last day`} style={styles.roundInput} />
+          </View>
+          <TextLink onPress={() => onChange(rounds.filter((_, j) => j !== i))} label="Remove" small />
         </View>
       ))}
-      <Pressable onPress={() => onChange([...rounds, EMPTY_ROUND])} accessibilityRole="button" hitSlop={6}
-        style={styles.addRound}>
-        <Text style={{ color: tint, fontWeight: '600' }}>＋ Add a round</Text>
-      </Pressable>
-      <Text style={styles.note}>Each round becomes a planned event: logs uploaded at its venue on its days go into it.</Text>
-    </View>
+      <View style={styles.addRound}>
+        <TextLink onPress={() => onChange([...rounds, EMPTY_ROUND])} label="+ Add a round" small />
+      </View>
+      <Note>Each round becomes a planned event: logs uploaded at its venue on its days go into it.</Note>
+    </Field>
   );
 }
 
 // ---------- a season ----------
 
-function SeasonCard({ season, lists, series, onListsChanged, onChanged }: {
+function SeasonSection({ no, season, lists, series, open, onToggle, questions, onLayout, onListsChanged, onChanged }: {
+  no: number;
   season: Season;
   lists: Lists;
   series: Series[] | null;
+  open: boolean;
+  onToggle: () => void;
+  questions: SeasonQuestion[]; // waiting about this season
+  onLayout: (y: number) => void;
   onListsChanged: () => void;
   onChanged: (text?: string) => void;
 }) {
+  const styles = useStyles();
+  const wide = useWide();
   const [editing, setEditing] = useState<'entry' | 'rounds' | null>(null);
   const [cal, setCal] = useState<SeriesCalendar | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [asking, setAsking] = useState(false);
-  const tint = useThemeColor({}, 'tint');
   const fromSite = season.series != null && (series ?? []).some((s) => s.key === season.series);
   useEffect(() => {
     if (fromSite) seriesApi.calendar(season.series!, season.year).then(setCal, () => setCal(null));
@@ -357,86 +400,144 @@ function SeasonCard({ season, lists, series, onListsChanged, onChanged }: {
   const { garage, tyres } = lists;
   const e = season.entry;
   const car = garage.cars.find((c) => c.id === e.car_id);
-  const entryWords = [
-    tyres.find((t) => t.id === e.tyre_kind_id)?.label,
-    car ? carLong(car) : lists.vehicles.find((v) => v.id === e.vehicle_model_id)?.name,
-    garage.teams.find((t) => t.id === e.team_id)?.name,
-    e.drivers.length ? e.drivers.map((id, i) => `${i + 1} ${garage.drivers.find((d) => d.id === id)?.name ?? '?'}`).join('  ') : null,
+  const entry: [string, string | null][] = [
+    ['Tyre', tyres.find((t) => t.id === e.tyre_kind_id)?.label ?? null],
+    ['Car', car ? carLong(car) : lists.vehicles.find((v) => v.id === e.vehicle_model_id)?.name ?? null],
+    ['Team', garage.teams.find((t) => t.id === e.team_id)?.name ?? null],
+    ['Drivers', e.drivers.length
+      ? e.drivers.map((id, i) => `${i + 1} ${garage.drivers.find((d) => d.id === id)?.name ?? '?'}`).join('  ') : null],
   ];
   return (
-    <View style={styles.card}>
-      <Text style={styles.cardTitle}>{season.name}</Text>
-      <Text style={styles.sub}>
-        {[season.car_number ? `#${season.car_number}` : 'no car number', fromSite ? `${seriesName ?? season.series}, from its site` : 'made by hand',
-          plural(season.rounds.length, 'round')].join(' · ')}
-      </Text>
-      {editing === 'entry' ? (
-        <EntryEditor season={season} lists={lists} onListsChanged={onListsChanged} onCancel={() => setEditing(null)}
-          onSaved={() => {
-            setEditing(null);
-            onChanged();
-          }} />
-      ) : (
-        <Pressable onPress={() => setEditing('entry')} accessibilityRole="button" accessibilityLabel="Edit our entry"
-          style={styles.entry}>
-          <Text style={styles.label}>Our entry</Text>
-          <Text style={styles.entryText}>
-            {entryWords.map((w, i) => (
-              <Text key={i} style={w ? undefined : styles.dim}>
-                {i ? '  ·  ' : ''}{w ?? ['no tyre', 'no car', 'no team', 'no drivers'][i]}
-              </Text>
-            ))}
+    <View style={wide ? styles.season : styles.seasonPhone} onLayout={(e) => onLayout(e.nativeEvent.layout.y)}>
+      <SeasonHead no={no} season={season} open={open} onToggle={onToggle} questions={questions.length} />
+      {open && (
+        <View style={wide ? styles.seasonBody : styles.seasonBodyPhone}>
+          <Text style={wide ? styles.seasonDek : styles.seasonDekPhone}>
+            {[season.car_number ? `Car #${season.car_number}` : 'No car number',
+              fromSite ? `${seriesName ?? season.series}, from its site` : 'made by hand'].join(' · ')}
           </Text>
-          <Text style={{ color: tint, fontSize: 13 }}>Edit</Text>
-        </Pressable>
-      )}
-      {editing === 'rounds' ? (
-        <AddRounds season={season} onCancel={() => setEditing(null)} onSaved={(text) => {
-          setEditing(null);
-          onChanged(text);
-        }} />
-      ) : (
-        <View style={styles.rounds}>
-          {season.rounds.map((r) => (
-            <RoundRow key={r.id} r={r} season={season} entries={r.round_id ? counts.get(r.round_id) ?? 0 : 0} />
-          ))}
-          {season.rounds.length === 0 && (
-            <Text style={styles.note}>No rounds yet.{fromSite ? ' Update from the series’ site, or add them by hand.' : ''}</Text>
+          {questions.length > 0 && (
+            <View style={styles.questions}>
+              {[...new Set(questions.map((q) => q.event_id))].map((id) => (
+                <SeasonMatch key={id} eventId={id} onChanged={() => onChanged()} />
+              ))}
+            </View>
           )}
+          {editing === 'entry' ? (
+            <View style={styles.editor}>
+              <Label>Our entry</Label>
+              <EntryEditor season={season} lists={lists} onListsChanged={onListsChanged} onCancel={() => setEditing(null)}
+                onSaved={() => {
+                  setEditing(null);
+                  onChanged();
+                }} />
+            </View>
+          ) : (
+            <View style={styles.entryBlock}>
+              <View style={styles.entryHead}>
+                <Label>Our entry</Label>
+                <TextLink onPress={() => setEditing('entry')} label="Edit" small />
+              </View>
+              <View style={wide ? styles.entryStrip : styles.entryLines}>
+                {entry.map(([label, value], i) => (
+                  <View key={label} style={StyleSheet.flatten([wide ? styles.entryCell : styles.entryLine,
+                    wide && i === 0 && styles.entryCellFirst, wide && i === entry.length - 1 && styles.entryCellLast])}>
+                    <Text style={styles.entryLabel}>{label}</Text>
+                    <Text style={StyleSheet.flatten([styles.entryValue, !wide && styles.right, !value && styles.unset])}>
+                      {value ?? 'not set'}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+          {editing === 'rounds' ? (
+            <View style={styles.editor}>
+              <AddRounds season={season} onCancel={() => setEditing(null)} onSaved={(text) => {
+                setEditing(null);
+                onChanged(text);
+              }} />
+            </View>
+          ) : (
+            <View style={styles.rounds}>
+              <View style={styles.roundsHead}>
+                <Label>Rounds</Label>
+                <Label muted>{fromSite ? 'Entry lists from the series’ site' : ''}</Label>
+              </View>
+              {season.rounds.map((r) => (
+                <RoundRow key={r.id} r={r} season={season} entries={r.round_id ? counts.get(r.round_id) ?? 0 : 0} />
+              ))}
+              {season.rounds.length === 0 && (
+                <Note style={styles.noRounds}>
+                  No rounds yet.{fromSite ? ' Update from the series’ site, or add them by hand.' : ''}
+                </Note>
+              )}
+            </View>
+          )}
+          {error && <ErrorLine>{error}</ErrorLine>}
+          {busy && <Note>{busy}</Note>}
+          <View style={styles.actions}>
+            {fromSite && (busy ? <ActivityIndicator /> : <TextLink onPress={update} label="Update from the series’ site" red arrow />)}
+            {editing !== 'rounds' && <TextLink onPress={() => setEditing('rounds')} label="+ Add a round" />}
+            {asking ? (
+              <View style={styles.confirm}>
+                <Text style={styles.confirmText}>Delete {season.name} and its planned events without data?</Text>
+                <FormActions>
+                  <MainButton danger label="Delete the season" onPress={remove} />
+                  <TextLink onPress={() => setAsking(false)} label="Keep it" />
+                </FormActions>
+              </View>
+            ) : (
+              <TextLink onPress={() => setAsking(true)} label="Delete season" small />
+            )}
+          </View>
         </View>
       )}
-      {error && <Text style={styles.error}>{error}</Text>}
-      {busy && <Text style={styles.note}>{busy}</Text>}
-      <View style={styles.actions}>
-        {fromSite && (
-          <Pressable onPress={update} disabled={busy != null} accessibilityRole="button"
-            style={StyleSheet.flatten([styles.action, { borderColor: tint }])}>
-            {busy ? <ActivityIndicator color={tint} />
-              : <Text style={StyleSheet.flatten([styles.actionText, { color: tint }])}>Update from the series’ site</Text>}
-          </Pressable>
-        )}
-        {editing !== 'rounds' && (
-          <Pressable onPress={() => setEditing('rounds')} accessibilityRole="button"
-            style={StyleSheet.flatten([styles.action, styles.quiet])}>
-            <Text style={styles.actionText}>Add a round</Text>
-          </Pressable>
-        )}
-        <Pressable onPress={() => (asking ? remove() : setAsking(true))} accessibilityRole="button"
-          style={StyleSheet.flatten([styles.action, styles.quiet, asking && styles.danger])}>
-          <Text style={StyleSheet.flatten([styles.actionText, asking && styles.dangerText])}>
-            {asking ? 'Tap again: delete it and its planned events without data' : 'Delete season'}
-          </Text>
-        </Pressable>
-      </View>
     </View>
   );
 }
 
+/** A season's heading, folded or open (tap it): the thick rule, its number in an ink block, its name, the year and how
+ * many rounds, a red block when questions about it are waiting, and the ▸ / ▾ mark. */
+function SeasonHead({ no, season, open, onToggle, questions }: {
+  no: number;
+  season: Season;
+  open: boolean;
+  onToggle: () => void;
+  questions: number;
+}) {
+  const styles = useStyles();
+  const wide = useWide();
+  const c = useTheme();
+  const facts = `${season.year} · ${plural(season.rounds.length, 'round')}`;
+  const asked = questions ? plural(questions, 'open question') : null;
+  return (
+    <Pressable onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded: open }}
+      accessibilityLabel={`${season.name}, ${facts}${asked ? `, ${asked}` : ''}`}
+      accessibilityHint={open ? 'Folds the season' : 'Opens the season'}>
+      <View style={styles.foldRule} />
+      <View style={wide ? styles.foldHead : styles.foldHeadPhone}>
+        <View style={styles.foldNo}><Text style={styles.foldNoText}>{String(no).padStart(2, '0')}</Text></View>
+        <View style={styles.foldWords}>
+          <Text style={wide ? styles.foldTitle : styles.foldTitlePhone}>{season.name}</Text>
+          <View style={styles.foldFacts}>
+            <Text style={styles.foldFact}>{facts}</Text>
+            {asked ? <Block label={asked} color={c.mark} ink={inkOn(c.mark)} /> : null}
+          </View>
+        </View>
+        <Text style={wide ? styles.foldMark : styles.foldMarkPhone}>{open ? '▾' : '▸'}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
 function RoundRow({ r, season, entries }: { r: SeasonRound; season: Season; entries: number }) {
+  const styles = useStyles();
+  const wide = useWide();
+  const c = useTheme();
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<EntryRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const tint = useThemeColor({}, 'tint');
   const toggle = () => {
     setOpen(!open);
     if (!rows && season.series && r.round_id) {
@@ -444,44 +545,40 @@ function RoundRow({ r, season, entries }: { r: SeasonRound; season: Season; entr
     }
   };
   const ours = (season.car_number ?? '').trim();
+  const today = todayIso();
+  const state = r.event_id == null ? 'its event was deleted'
+    : r.has_data ? 'has data' : (r.end ?? r.start ?? today) < today ? 'no data' : 'planned';
+  const name: ReactNode = <Text style={wide ? styles.roundName : styles.roundNamePhone} numberOfLines={2}>{r.name}</Text>;
   return (
     <View style={styles.round}>
       <View style={styles.roundHead}>
-        <Text style={styles.order}>R{r.order}</Text>
+        <View style={styles.roundCode}><Text style={styles.roundCodeText}>R{r.order}</Text></View>
         <View style={styles.roundText}>
           {r.event_id != null ? (
             // Link asChild hands its child's style to a web anchor, which can't take a style array: one object
             <Link href={{ pathname: '/event/[id]', params: { id: r.event_id } }} asChild>
-              <Pressable accessibilityRole="link">
-                <Text style={StyleSheet.flatten([styles.roundName, { color: tint }])} numberOfLines={1}>{r.name} ›</Text>
-              </Pressable>
+              <Pressable accessibilityRole="link" style={styles.roundLink}>{name}</Pressable>
             </Link>
-          ) : (
-            <Text style={styles.roundName} numberOfLines={1}>{r.name}</Text>
-          )}
-          <Text style={styles.sub} numberOfLines={2}>
-            {[dateRange(r.start, r.end) ?? 'days not known', r.event_id == null ? 'its event was deleted'
-              : r.has_data ? 'has data' : (r.end ?? r.start ?? todayIso()) < todayIso() ? 'no data' : 'planned'].join(' · ')}
+          ) : name}
+          <Text style={styles.roundSub} numberOfLines={2}>
+            {[dateRange(r.start, r.end) ?? 'days not known', state].join(' · ')}
           </Text>
         </View>
-        {entries > 0 && (
-          <Pressable onPress={toggle} accessibilityRole="button" hitSlop={6}>
-            <Text style={{ color: tint, fontSize: 13 }}>{open ? 'Hide' : `Entry list (${entries})`}</Text>
-          </Pressable>
-        )}
+        {entries > 0 && <TextLink onPress={toggle} label={open ? 'Hide' : `Entry list (${entries})`} small />}
       </View>
       {open && (
-        <View style={styles.entries}>
-          {!rows && !error && <ActivityIndicator />}
-          {error && <Text style={styles.error}>{error}</Text>}
+        <View style={wide ? styles.entries : styles.entriesPhone}>
+          {!rows && !error && <ActivityIndicator style={styles.loadingSmall} />}
+          {error && <ErrorLine>{error}</ErrorLine>}
           {rows?.map((e) => {
             const us = ours !== '' && e.car_number.trim() === ours;
             return (
-              <View key={e.car_number} style={StyleSheet.flatten([styles.entryRow, us && { borderColor: tint, borderWidth: 1 }])}>
-                <Text style={StyleSheet.flatten([styles.carNo, us && { color: tint }])}>#{e.car_number}</Text>
+              <View key={e.car_number} style={StyleSheet.flatten([styles.entryRow, us && styles.entryRowUs])}>
+                {us ? <Block label={`#${e.car_number}`} color={c.mark} ink={inkOn(c.mark)} size={13} style={styles.carNoBlock} />
+                  : <Text style={styles.carNo}>#{e.car_number}</Text>}
                 <View style={styles.roundText}>
                   <Text style={styles.entryDrivers} numberOfLines={2}>{e.drivers.join(' / ') || '–'}</Text>
-                  <Text style={styles.sub} numberOfLines={1}>
+                  <Text style={styles.roundSub} numberOfLines={1}>
                     {[e.team, e.car_model, e.car_class].filter(Boolean).join(' · ')}
                   </Text>
                 </View>
@@ -501,13 +598,11 @@ function EntryEditor({ season, lists, onListsChanged, onCancel, onSaved }: {
   onCancel: () => void;
   onSaved: () => void;
 }) {
+  const styles = useStyles();
   const [entry, setEntry] = useState<Entry>(season.entry);
   const [number, setNumber] = useState(season.car_number ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const tint = useThemeColor({}, 'tint');
-  const text = useThemeColor({}, 'text');
-  const background = useThemeColor({}, 'background');
   const save = async () => {
     setBusy(true);
     try {
@@ -519,33 +614,27 @@ function EntryEditor({ season, lists, onListsChanged, onCancel, onSaved }: {
     }
   };
   return (
-    <View style={styles.editor}>
-      <Group label="Our car number">
-        <TextInput value={number} onChangeText={setNumber} placeholder="12" placeholderTextColor="#888" maxLength={8}
-          accessibilityLabel="Our car number" style={StyleSheet.flatten([styles.input, styles.number, { color: text }])} />
-      </Group>
+    <View style={styles.form}>
+      <Field label="Our car number">
+        <Input value={number} onChangeText={setNumber} placeholder="12" maxLength={8} accessibilityLabel="Our car number"
+          style={styles.number} />
+      </Field>
       <EntryFields value={entry} onChange={setEntry} lists={lists} onListsChanged={onListsChanged} />
-      {error && <Text style={styles.error}>{error}</Text>}
-      <View style={styles.buttons}>
-        <Pressable onPress={save} disabled={busy} accessibilityRole="button"
-          style={StyleSheet.flatten([styles.save, { backgroundColor: tint }])}>
-          {busy ? <ActivityIndicator color={background} />
-            : <Text style={StyleSheet.flatten([styles.saveText, { color: background }])}>Save</Text>}
-        </Pressable>
-        <Pressable onPress={onCancel} hitSlop={8} accessibilityRole="button">
-          <Text style={{ color: tint }}>Cancel</Text>
-        </Pressable>
-      </View>
+      {error && <ErrorLine>{error}</ErrorLine>}
+      <FormActions>
+        <MainButton label="Save" onPress={save} busy={busy} />
+        <TextLink onPress={onCancel} label="Cancel" />
+      </FormActions>
     </View>
   );
 }
 
 /** Rounds added by hand to a season (the ones it has stay). */
 function AddRounds({ season, onCancel, onSaved }: { season: Season; onCancel: () => void; onSaved: (text: string) => void }) {
+  const styles = useStyles();
   const [rows, setRows] = useState<DraftRound[]>([EMPTY_ROUND]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const tint = useThemeColor({}, 'tint');
   const save = async () => {
     setError(null);
     let added: RoundFields[];
@@ -568,73 +657,102 @@ function AddRounds({ season, onCancel, onSaved }: { season: Season; onCancel: ()
     }
   };
   return (
-    <View style={styles.editor}>
+    <View style={styles.form}>
       <RoundsEditor rounds={rows} onChange={setRows} />
-      {error && <Text style={styles.error}>{error}</Text>}
-      <View style={styles.buttons}>
-        <Pressable onPress={save} disabled={busy} accessibilityRole="button"
-          style={StyleSheet.flatten([styles.action, { borderColor: tint }])}>
-          {busy ? <ActivityIndicator color={tint} />
-            : <Text style={StyleSheet.flatten([styles.actionText, { color: tint }])}>Save the rounds</Text>}
-        </Pressable>
-        <Pressable onPress={onCancel} hitSlop={8} accessibilityRole="button">
-          <Text style={{ color: tint }}>Cancel</Text>
-        </Pressable>
-      </View>
+      {error && <ErrorLine>{error}</ErrorLine>}
+      <FormActions>
+        <MainButton label="Save the rounds" onPress={save} busy={busy} />
+        <TextLink onPress={onCancel} label="Cancel" />
+      </FormActions>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  outer: { padding: 16, paddingBottom: 32 },
-  page: { width: '100%', maxWidth: 900, alignSelf: 'center', gap: 14 },
-  intro: { opacity: 0.7, lineHeight: 20 },
-  error: { color: '#c8372d' },
-  notice: { fontSize: 13, opacity: 0.85, borderLeftWidth: 3, borderColor: '#8886', paddingLeft: 8 },
-  empty: { opacity: 0.6, textAlign: 'center', marginTop: 12 },
-  newButton: { borderWidth: 1, borderRadius: 8, paddingVertical: 10, alignItems: 'center' },
-  newText: { fontWeight: '600', fontSize: 15 },
-  form: { borderWidth: 1, borderColor: '#8884', borderRadius: 10, padding: 12, gap: 14 },
-  h2: { fontSize: 18, fontWeight: '700' },
-  h3: { fontSize: 15, fontWeight: '700', marginTop: 4 },
-  group: { gap: 6, backgroundColor: 'transparent' },
-  label: { fontSize: 11, fontWeight: '700', opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, backgroundColor: 'transparent' },
-  note: { fontSize: 12, opacity: 0.6 },
-  input: { borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 15 },
-  number: { width: 90 },
-  buttons: { flexDirection: 'row', alignItems: 'center', gap: 16, flexWrap: 'wrap', backgroundColor: 'transparent' },
-  save: { borderRadius: 8, paddingHorizontal: 18, paddingVertical: 9, minWidth: 80, alignItems: 'center' },
-  saveText: { fontWeight: '600' },
-  roundRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, backgroundColor: 'transparent',
-    borderBottomWidth: 1, borderColor: '#8882', paddingBottom: 6 },
-  roundNo: { width: 26, fontWeight: '700', opacity: 0.7 },
-  roundInput: { paddingVertical: 6, fontSize: 14, flexGrow: 1, flexBasis: 110, minWidth: 100 },
-  wide: { flexBasis: 160 },
-  remove: { color: '#c8372d', fontSize: 16, paddingHorizontal: 4 },
-  addRound: { alignSelf: 'flex-start', paddingVertical: 4 },
-  card: { borderWidth: 1, borderColor: '#8884', borderRadius: 10, padding: 12, gap: 10 },
-  cardTitle: { fontSize: 18, fontWeight: '700' },
-  sub: { opacity: 0.65, fontSize: 13 },
-  dim: { opacity: 0.45 },
-  entry: { gap: 3, borderLeftWidth: 3, borderColor: '#8884', paddingLeft: 8 },
-  entryText: { fontSize: 14 },
-  editor: { gap: 12, backgroundColor: 'transparent' },
-  rounds: { gap: 0, backgroundColor: 'transparent' },
-  round: { borderBottomWidth: 1, borderColor: '#8882', paddingVertical: 7, gap: 6, backgroundColor: 'transparent' },
-  roundHead: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'transparent' },
-  order: { width: 30, fontWeight: '700', opacity: 0.6, fontVariant: ['tabular-nums'] },
-  roundText: { flex: 1, gap: 1, backgroundColor: 'transparent' },
-  roundName: { fontSize: 15, fontWeight: '600' },
-  entries: { gap: 4, paddingLeft: 30, backgroundColor: 'transparent' },
-  entryRow: { flexDirection: 'row', gap: 10, alignItems: 'center', paddingHorizontal: 6, paddingVertical: 4,
-    borderRadius: 6, borderColor: 'transparent' },
-  carNo: { width: 44, fontWeight: '700', fontVariant: ['tabular-nums'] },
-  entryDrivers: { fontSize: 14 },
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, backgroundColor: 'transparent' },
-  action: { borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 7 },
-  actionText: { fontWeight: '600', fontSize: 14 },
-  quiet: { borderStyle: 'dashed' },
-  danger: { borderColor: '#c8372d', borderStyle: 'solid' },
-  dangerText: { color: '#c8372d' },
-});
+const useStyles = themed((c) => ({
+  top: { marginTop: 18, gap: 14, alignItems: 'flex-start' },
+  loading: { marginTop: 28, alignSelf: 'flex-start' },
+  loadingSmall: { alignSelf: 'flex-start' },
+  empty: { marginTop: 24 },
+
+  // forms
+  form: { gap: 22, maxWidth: 900 },
+  editor: { gap: 12, marginBottom: 8 },
+  pair: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 24, rowGap: 18 },
+  grow: { flex: 1, minWidth: 220 },
+  number: { width: 96 },
+  h3: { fontFamily: Fonts.display, fontSize: 24, lineHeight: 27, textTransform: 'uppercase', color: c.text,
+    borderTopWidth: 1, borderColor: c.rule, paddingTop: 10 },
+  roundRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, borderBottomWidth: 1, borderColor: c.separator,
+    paddingBottom: 10, marginBottom: 4 },
+  roundNo: { fontFamily: Fonts.display, fontSize: 20, lineHeight: 34, width: 32, color: c.text },
+  roundInputs: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', columnGap: 14, rowGap: 6 },
+  roundInput: { flexGrow: 1, flexBasis: 120, minWidth: 110, fontSize: 15 },
+  roundWide: { flexBasis: 170 },
+  addRound: { marginTop: 6, marginBottom: 4 },
+
+  // a season: its heading, folded or open
+  season: { marginTop: 40 },
+  seasonPhone: { marginTop: 30 },
+  foldRule: { height: 6, backgroundColor: c.rule },
+  foldHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 20, paddingTop: 10 },
+  foldHeadPhone: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, paddingTop: 10 },
+  foldNo: { backgroundColor: c.rule, paddingHorizontal: 8, paddingTop: 6, paddingBottom: 5 },
+  foldNoText: { fontFamily: Fonts.display, fontSize: 22, lineHeight: 24, letterSpacing: 0.9, color: c.background },
+  foldWords: { flex: 1, minWidth: 0, gap: 6 },
+  foldTitle: { fontFamily: Fonts.display, fontSize: 44, lineHeight: 46, textTransform: 'uppercase', color: c.text },
+  foldTitlePhone: { fontFamily: Fonts.display, fontSize: 27, lineHeight: 30, textTransform: 'uppercase', color: c.text },
+  foldFacts: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 6 },
+  foldFact: { ...Type.label, fontFamily: Fonts.label, fontSize: 13, letterSpacing: 1.2, color: c.textSecondary,
+    fontVariant: ['tabular-nums'] },
+  foldMark: { fontFamily: Fonts.label, fontSize: 26, lineHeight: 46, color: c.text, width: 26, textAlign: 'right' },
+  foldMarkPhone: { fontFamily: Fonts.label, fontSize: 22, lineHeight: 30, color: c.text, width: 20, textAlign: 'right' },
+  seasonBody: { marginTop: 16 },
+  seasonBodyPhone: { marginTop: 12 },
+  seasonDek: { fontFamily: Type.dek.fontFamily, fontSize: 17, lineHeight: 24, color: c.textSecondary, marginBottom: 20 },
+  seasonDekPhone: { fontFamily: Type.dek.fontFamily, fontSize: 16, lineHeight: 22, color: c.textSecondary,
+    marginBottom: 16 },
+  questions: { gap: 18, marginBottom: 24, maxWidth: 760 },
+
+  // a season: our entry
+  entryBlock: { marginBottom: 22 },
+  entryHead: { flexDirection: 'row', alignItems: 'center', gap: 18, marginBottom: 8 },
+  entryStrip: { flexDirection: 'row', borderTopWidth: 1, borderBottomWidth: 1, borderColor: c.rule },
+  entryCell: { flex: 1, minWidth: 0, paddingVertical: 10, paddingHorizontal: 14, borderRightWidth: 1, borderColor: c.rule,
+    gap: 4 },
+  entryCellFirst: { paddingLeft: 0 },
+  entryCellLast: { borderRightWidth: 0 },
+  entryLines: { borderTopWidth: 1, borderColor: c.rule },
+  entryLine: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 14, borderBottomWidth: 1,
+    borderColor: c.separator, paddingTop: 8, paddingBottom: 7 },
+  entryLabel: { ...Type.label, fontFamily: Fonts.label, color: c.text },
+  entryValue: { fontFamily: Type.label.fontFamily, fontSize: 16, lineHeight: 21, color: c.text, flexShrink: 1 },
+  right: { textAlign: 'right' },
+  unset: { fontFamily: Type.dek.fontFamily, color: c.textMuted },
+
+  // a season: its rounds
+  rounds: {},
+  roundsHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, borderTopWidth: 3,
+    borderBottomWidth: 1, borderColor: c.rule, paddingTop: 7, paddingBottom: 6 },
+  noRounds: { marginTop: 10 },
+  round: { borderBottomWidth: 1, borderColor: c.separator, paddingTop: 11, paddingBottom: 10, gap: 10 },
+  roundHead: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  roundCode: { width: 46, alignItems: 'center', backgroundColor: c.rule, paddingTop: 4, paddingBottom: 3 },
+  roundCodeText: { fontFamily: Fonts.display, fontSize: 20, lineHeight: 22, color: c.background },
+  roundText: { flex: 1, minWidth: 0, gap: 2 },
+  roundLink: { alignSelf: 'flex-start' },
+  roundName: { fontFamily: Fonts.display, fontSize: 26, lineHeight: 29, textTransform: 'uppercase', color: c.text },
+  roundNamePhone: { fontFamily: Fonts.display, fontSize: 21, lineHeight: 24, textTransform: 'uppercase', color: c.text },
+  roundSub: { fontFamily: Fonts.body, fontSize: 15, lineHeight: 20, color: c.textSecondary },
+  entries: { paddingLeft: 60, gap: 0 },
+  entriesPhone: { gap: 0 },
+  entryRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 6, borderTopWidth: 1,
+    borderColor: c.separator },
+  entryRowUs: { backgroundColor: c.band },
+  carNo: { width: 52, fontFamily: Type.label.fontFamily, fontSize: 15, fontVariant: ['tabular-nums'], color: c.text },
+  carNoBlock: { width: 52, alignItems: 'center' },
+  entryDrivers: { fontFamily: face('label', 600), fontSize: 15, color: c.text },
+
+  actions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 22, rowGap: 14, marginTop: 18 },
+  confirm: { width: '100%', gap: 10, borderTopWidth: 1, borderColor: c.rule, paddingTop: 10 },
+  confirmText: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 24, color: c.text },
+}));

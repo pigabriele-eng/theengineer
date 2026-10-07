@@ -3,13 +3,16 @@
 // shared scale. The groups hold about the same number of laps each, so they are spaced evenly and labelled by
 // their edges; the window with the most grip is shaded when the data show one.
 import { useState } from 'react';
-import { Pressable, StyleSheet } from 'react-native';
+import { StyleSheet } from 'react-native';
 import Svg, { Circle, G, Line, Rect, Text as SvgText } from 'react-native-svg';
 
 import { Readout, useChartColors } from '@/components/report/GripCharts';
+import { Swatch, TextLink } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
-import { CHART_FONT, tableStyles, useAxleColors, usePointer } from '@/components/TyreCurve';
+import { useTableStyles } from '@/components/ToolForm';
+import { CHART_FONT, useAxleColors, usePointer } from '@/components/TyreCurve';
 import { AXLES, Axle, Condition, ConditionGroup, ConditionKey, GripWindow, gripNum, gripPct } from '@/lib/tyreModel';
+import { Fonts, themed, Type } from '@/constants/Theme';
 
 const NAMES: Record<Axle, string> = { front: 'Front', rear: 'Rear' };
 const AXIS: Record<ConditionKey, string> = {
@@ -51,6 +54,7 @@ const inWindow = (g: ConditionGroup, w: GripWindow | null) =>
   !!w && (w.confidence === 'high' || w.confidence === 'medium') && g.from >= w.from - 1e-9 && g.to <= w.to + 1e-9;
 
 export function GripByCondition({ cond, condKey }: { cond: Condition; condKey: ConditionKey }) {
+  const styles = useStyles();
   const [table, setTable] = useState(false);
   const [width, setWidth] = useState(0);
   const wide = width >= 760;
@@ -79,9 +83,7 @@ export function GripByCondition({ cond, condKey }: { cond: Condition; condKey: C
         are drawn again at random (none from fewer than 3 sessions). Shaded: the range with the most grip, when the
         data show one.
       </Text>
-      <Pressable onPress={() => setTable((t) => !t)} accessibilityRole="button">
-        <Text style={tableStyles.link}>{table ? 'Hide the table' : 'Show as a table'}</Text>
-      </Pressable>
+      <TextLink small onPress={() => setTable((t) => !t)} label={table ? 'Hide the table' : 'Show as a table'} />
       {table && <GroupTable cond={cond} condKey={condKey} />}
     </View>
   );
@@ -96,6 +98,7 @@ function Panel({ axle, groups, window, condKey, domain }: {
   condKey: ConditionKey;
   domain: [number, number];
 }) {
+  const styles = useStyles();
   const c = useChartColors();
   const color = useAxleColors()[axle];
   const { width, at, props } = usePointer();
@@ -118,7 +121,7 @@ function Panel({ axle, groups, window, condKey, domain }: {
   return (
     <View style={styles.panel}>
       <View style={styles.panelHead}>
-        <View style={[styles.swatch, { backgroundColor: color }]} />
+        <Swatch color={color} width={14} height={14} />
         <Text style={styles.subhead}>{NAMES[axle]} axle</Text>
       </View>
       <Readout hint="Touch a group to read it.">
@@ -143,8 +146,8 @@ function Panel({ axle, groups, window, condKey, domain }: {
             )}
             {ticks.map((v) => (
               <G key={v}>
-                <Line x1={PAD.l} x2={width - PAD.r} y1={Y(v)} y2={Y(v)} stroke={Math.abs(v) < 1e-9 ? c.ink2 : c.grid}
-                  strokeWidth={1} strokeOpacity={Math.abs(v) < 1e-9 ? 0.6 : 1} />
+                <Line x1={PAD.l} x2={width - PAD.r} y1={Y(v)} y2={Y(v)} stroke={Math.abs(v) < 1e-9 ? c.ink : c.grid}
+                  strokeWidth={1} />
                 <SvgText x={PAD.l - 5} y={Y(v) + 4} fontSize={10} fill={c.muted} textAnchor="end" fontFamily={CHART_FONT}>
                   {Math.abs(v) < 1e-9 ? 'avg' : gripPct(v, 0).replace(' %', '%')}
                 </SvgText>
@@ -196,49 +199,55 @@ function Panel({ axle, groups, window, condKey, domain }: {
 }
 
 function GroupTable({ cond, condKey }: { cond: Condition; condKey: ConditionKey }) {
+  const styles = useStyles();
+  const t = useTableStyles();
+  const colors = useAxleColors();
   const head = condKey === 'tyre_laps' ? 'Laps on tyre' : `${cond.label} (${cond.unit})`;
   return (
-    <View style={tableStyles.table}>
-      <View style={tableStyles.tr}>
-        <Text style={[tableStyles.td, tableStyles.th, styles.axleCol]}>Axle</Text>
-        <Text style={[tableStyles.td, tableStyles.th, styles.wide]}>{head}</Text>
-        <Text style={[tableStyles.td, tableStyles.th, tableStyles.num]}>Grip</Text>
-        <Text style={[tableStyles.td, tableStyles.th, tableStyles.num, styles.wide]}>Middle 90 %</Text>
-        <Text style={[tableStyles.td, tableStyles.th, tableStyles.num]}>Laps</Text>
+    <View style={t.table}>
+      <View style={t.head}>
+        <Text style={StyleSheet.flatten([t.th, styles.axleCol])}>Axle</Text>
+        <Text style={StyleSheet.flatten([t.th, styles.wide])}>{head}</Text>
+        <Text style={StyleSheet.flatten([t.th, t.num, styles.col])}>Grip</Text>
+        <Text style={StyleSheet.flatten([t.th, t.num, styles.wide])}>Middle 90 %</Text>
+        <Text style={StyleSheet.flatten([t.th, t.num, styles.col])}>Laps</Text>
       </View>
       {AXLES.flatMap((a) =>
         cond[a].bins.map((b, i) => (
-          <View key={`${a}${i}`} style={tableStyles.tr}>
-            <Text style={[tableStyles.td, styles.axleCol]}>{NAMES[a]}</Text>
-            <Text style={[tableStyles.td, styles.wide]}>
+          <View key={`${a}${i}`} style={t.row}>
+            <View style={StyleSheet.flatten([styles.axleCol, styles.axleCell])}>
+              <Swatch color={colors[a]} width={10} height={10} />
+              <Text style={t.name}>{NAMES[a]}</Text>
+            </View>
+            <Text style={StyleSheet.flatten([t.td, styles.wide])}>
               {groupRange(condKey, b)}
               {inWindow(b, cond[a].window) ? ' ★' : ''}
             </Text>
-            <Text style={[tableStyles.td, tableStyles.num]}>{b.grip == null ? '–' : gripPct(b.grip)}</Text>
-            <Text style={[tableStyles.td, tableStyles.num, styles.wide]}>
+            <Text style={StyleSheet.flatten([t.td, t.num, styles.col])}>{b.grip == null ? '–' : gripPct(b.grip)}</Text>
+            <Text style={StyleSheet.flatten([t.td, t.num, styles.wide])}>
               {b.low == null || b.high == null ? '–' : `${gripNum(b.low, 0)} to ${gripNum(b.high, 0)} %`}
             </Text>
-            <Text style={[tableStyles.td, tableStyles.num]}>{b.laps}</Text>
+            <Text style={StyleSheet.flatten([t.td, t.num, styles.col])}>{b.laps}</Text>
           </View>
         )),
       )}
-      <Text style={[tableStyles.td, styles.foot]}>★ in the range with the most grip. –: too few laps or sessions.</Text>
+      <Text style={t.foot}>★ in the range with the most grip. –: too few laps or sessions.</Text>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  wrap: { gap: 12 },
-  panels: { gap: 12 },
-  panelsWide: { flexDirection: 'row', gap: 24 },
+const useStyles = themed((c) => ({
+  wrap: { gap: 14 },
+  panels: { gap: 20 },
+  panelsWide: { flexDirection: 'row', gap: 32 },
   panelWide: { flex: 1, minWidth: 0 },
-  panel: { gap: 4 },
-  panelHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  swatch: { width: 10, height: 10, borderRadius: 5 },
-  subhead: { fontWeight: '600' },
-  sub: { opacity: 0.7 },
-  legendText: { fontSize: 12, opacity: 0.75 },
-  axleCol: { flex: 0.8 },
-  wide: { flex: 1.6 },
-  foot: { fontSize: 12, opacity: 0.7 },
-});
+  panel: { gap: 6 },
+  panelHead: { flexDirection: 'row', alignItems: 'center', gap: 9, borderTopWidth: 3, borderColor: c.rule, paddingTop: 8 },
+  subhead: { ...Type.label, fontSize: 14, letterSpacing: 1.4, color: c.text },
+  sub: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 23, color: c.textSecondary },
+  legendText: { fontFamily: Type.dek.fontFamily, fontSize: 14, lineHeight: 20, color: c.textSecondary },
+  axleCol: { flex: 0.9, minWidth: 0 },
+  axleCell: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  col: { flex: 0.8, minWidth: 0 },
+  wide: { flex: 1.5, minWidth: 0 },
+}));

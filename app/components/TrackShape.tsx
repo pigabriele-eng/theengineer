@@ -21,17 +21,16 @@ import {
   ShapeKind,
   TrackShapeData,
 } from '@/lib/trackshape';
+import { byScheme, Fonts, Radius, themed } from '@/constants/Theme';
 
-export const SHAPE_COLORS = {
-  light: { line: '#2a78d6', banked: '#eb6834', rise: '#1baf7a', grid: '#e1e0d9', axis: '#898781',
-    ink: '#0b0b0b', secondary: '#52514e' },
-  dark: { line: '#3987e5', banked: '#d95926', rise: '#199e70', grid: '#2c2c2a', axis: '#898781',
-    ink: '#ffffff', secondary: '#c3c2b7' },
-};
+export const SHAPE_COLORS = byScheme((c) => ({
+  line: c.chart.series[0], banked: c.chart.series[1], rise: c.chart.series[2], grid: c.chart.grid, axis: c.chart.muted,
+  ink: c.chart.ink, secondary: c.chart.ink2,
+}));
 export const useShapeColors = () => SHAPE_COLORS[useColorScheme() === 'dark' ? 'dark' : 'light'];
 
 // SVG text on the web falls back to a serif face; use the system sans like the rest of the app
-const SANS = Platform.select({ web: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif' });
+const SANS = Fonts.sans;
 
 export type ShapeState =
   | { status: 'loading' }
@@ -70,8 +69,9 @@ export const glyph = (kind: ShapeKind, x: number, y: number, r: number) =>
 
 /** The legend keys for the kinds found: an orange stretch for banking, ▲ and ▼ for crests and compressions. */
 export function ShapeLegend({ shape }: { shape: TrackShapeData }) {
+  const styles = useStyles();
   const c = useShapeColors();
-  const surface = useThemeColor({}, 'background');
+  const surface = useThemeColor({}, 'surface');
   const kinds = (['banked', 'crest', 'compression'] as ShapeKind[]).filter((k) => shape.features.some((f) => f.kind === k));
   if (!kinds.length) {
     return <Text style={styles.small}>No banked corners, crests or compressions found.</Text>;
@@ -101,8 +101,9 @@ const ROW = 13; // a second row of corner names
  * banked stretches shaded and crests and compressions marked on the line. Hover (web) or drag (touch) to read the
  * height, bank and vertical load at any point; onCursor tells the map where that is. */
 export function ElevationStrip({ shape, onCursor }: { shape: TrackShapeData; onCursor?: (m: number | null) => void }) {
+  const styles = useStyles();
   const c = useShapeColors();
-  const surface = useThemeColor({}, 'background');
+  const surface = useThemeColor({}, 'surface');
   const [width, setWidth] = useState(0);
   const [cursor, setCursor] = useState<number | null>(null);
   const elev = shape.elevation_m;
@@ -275,6 +276,7 @@ export function ElevationStrip({ shape, onCursor }: { shape: TrackShapeData; onC
 /** Under the map: the height strip (when the logs can tell the height), the features found in words, and what it
  * was learned from. */
 export function ShapePanel({ shape, onCursor }: { shape: TrackShapeData; onCursor?: (m: number | null) => void }) {
+  const styles = useStyles();
   const height = shape.elevation_m.filter((v) => v != null && Number.isFinite(v)).length >= 2;
   const from = `${shape.laps} quick ${shape.laps === 1 ? 'lap' : 'laps'}${shape.sessions > 1
     ? ` in ${shape.sessions} sessions` : ''}`;
@@ -294,6 +296,7 @@ export function ShapePanel({ shape, onCursor }: { shape: TrackShapeData; onCurso
 
 /** Each kind found, with the corners it is in and its strongest value there: the strip and map in words. */
 export function FeatureSummary({ features }: { features: ShapeFeature[] }) {
+  const styles = useStyles();
   const rows = (['banked', 'crest', 'compression'] as ShapeKind[]).map((kind) => {
     const by = new Map<string, ShapeFeature>();
     for (const f of features.filter((x) => x.kind === kind)) {
@@ -317,7 +320,7 @@ export function FeatureSummary({ features }: { features: ShapeFeature[] }) {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = themed((c) => ({
   wrap: { gap: 6 },
   title: { fontSize: 13, fontWeight: '600' },
   legend: { flexDirection: 'row', alignItems: 'center', gap: 12, flexWrap: 'wrap' },
@@ -326,10 +329,10 @@ const styles = StyleSheet.create({
   summary: { gap: 2 },
   summaryRow: { fontSize: 13, fontVariant: ['tabular-nums'] },
   summaryKind: { fontWeight: '600' },
-  tip: { position: 'absolute', borderWidth: 1, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 6, gap: 2,
+  tip: { position: 'absolute', borderWidth: 1, borderRadius: Radius.control, paddingHorizontal: 8, paddingVertical: 6, gap: 2,
     minWidth: 130 },
   tipHead: { fontSize: 11, opacity: 0.7, fontVariant: ['tabular-nums'] },
   tipRow: { fontSize: 12 },
   tipValue: { fontSize: 12, fontWeight: '700', fontVariant: ['tabular-nums'] },
   tipLabel: { fontSize: 12, opacity: 0.7 },
-});
+}));

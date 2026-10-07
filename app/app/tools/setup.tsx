@@ -1,8 +1,22 @@
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
+import { Stack, useLocalSearchParams } from 'expo-router';
+import { ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { Pressable, StyleSheet } from 'react-native';
 
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { Block, Colophon, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
+import { Text, View } from '@/components/Themed';
+import {
+  Actions,
+  ErrorLine,
+  Field,
+  MainAction,
+  Note,
+  Opening,
+  Options,
+  Stepper,
+  SubHead,
+  WarnLine,
+  Working,
+} from '@/components/ToolForm';
 import { api, formatLap, Session } from '@/lib/api';
 import { toolLists, VehicleItem } from '@/lib/toolLists';
 import {
@@ -20,30 +34,25 @@ import {
   Template,
   TemplateRow,
 } from '@/lib/setup';
+import { face, Fonts, inkOn, themed, Type, useTheme } from '@/constants/Theme';
 
 type Tab = 'sheet' | 'runs' | 'ideas';
-const TABS: [Tab, string][] = [
-  ['sheet', 'Sheet'],
-  ['runs', 'Runs'],
-  ['ideas', 'Suggestions'],
+const TABS: { value: Tab; label: string }[] = [
+  { value: 'sheet', label: 'Sheet' },
+  { value: 'runs', label: 'Runs' },
+  { value: 'ideas', label: 'Suggestions' },
 ];
-const FASTER = '#2e9d57';
-const SLOWER = '#c8372d';
-const WARN = '#b26b00';
 
 // Setup: a sheet per session on the car's template, what changed from run to run against lap time and balance,
 // and setup changes to try from the driver's feedback. Open with ?session=<id> (and &tab=runs or ideas).
 export default function SetupScreen() {
+  const styles = useStyles();
   const params = useLocalSearchParams<{ session?: string; tab?: string }>();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [withSheets, setWithSheets] = useState<Set<number>>(new Set());
   const [picked, setPicked] = useState<number | null>(params.session ? Number(params.session) : null);
   const [tab, setTab] = useState<Tab>(params.tab === 'runs' || params.tab === 'ideas' ? params.tab : 'sheet');
   const [error, setError] = useState<string | null>(null);
-  const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
-  const chipScroll = useRef<ScrollView>(null);
-  const scrolled = useRef(false);
 
   const refreshSheets = useCallback(() => {
     setupApi.withSheets().then((rows) => setWithSheets(new Set(rows.map((r) => r.session_id))), () => {});
@@ -87,64 +96,37 @@ export default function SetupScreen() {
     setTab(next);
   };
   const current = sessions.find((s) => s.id === picked);
+  const eventId = (current as (Session & { event_id?: number | null }) | undefined)?.event_id ?? null;
 
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.container}>
+    <Page keyboardShouldPersistTaps="handled">
       <Stack.Screen options={{ title: current ? `Setup · ${current.name ?? `Session ${current.id}`}` : 'Setup' }} />
-      <Text style={styles.intro}>
-        One setup sheet per run. Copy the last run and change what you changed, then see it against lap time and
-        balance, and get setup changes to try from the debrief and the data.
-      </Text>
+      <Opening title={current ? `Setup · ${current.name ?? `Session ${current.id}`}` : 'Setup'}
+        dek="One setup sheet per run. Copy the last run and change what you changed, then see it against lap time and balance, and get setup changes to try from the debrief and the data." />
 
-      <ScrollView
-        ref={chipScroll}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.chips}>
-        {sessions.map((s) => (
-          <Pressable
-            key={s.id}
-            onPress={() => pick(s.id)}
-            // the run opened from a session page may sit far along the strip: bring it into view once
-            onLayout={(e) => {
-              if (s.id === picked && !scrolled.current) {
-                scrolled.current = true;
-                chipScroll.current?.scrollTo({ x: Math.max(0, e.nativeEvent.layout.x - 16), animated: false });
-              }
-            }}
-            style={[styles.chip, s.id === picked && { borderColor: tint }]}>
-            <Text style={s.id === picked ? { color: tint } : undefined}>{s.name ?? `Session ${s.id}`}</Text>
-            <Text style={styles.chipSub}>
-              {formatLap(s.best_lap_s)}
-              {withSheets.has(s.id) ? ' · sheet' : ''}
-            </Text>
-          </Pressable>
-        ))}
-      </ScrollView>
-      {sessions.length === 0 && !error && <Text style={styles.dim}>No sessions yet. Import a test first.</Text>}
-      {error && <Text style={styles.error}>{error}</Text>}
+      <View style={styles.runs}>
+        <SubHead>Run</SubHead>
+        {sessions.length > 0 && (
+          <Options label="Run" value={picked} onPick={(id) => pick(id)}
+            options={sessions.map((s) => ({
+              value: s.id,
+              label: s.name ?? `Session ${s.id}`,
+              sub: `${formatLap(s.best_lap_s)}${withSheets.has(s.id) ? ' · sheet' : ''}`,
+            }))} />
+        )}
+        {sessions.length === 0 && !error && <Note small>No sessions yet. Import a test first.</Note>}
+        {error ? <ErrorLine>{error}</ErrorLine> : null}
+      </View>
 
       <View style={styles.tabs}>
-        {TABS.map(([key, label]) => (
-          <Pressable
-            key={key}
-            onPress={() => setTab(key)}
-            style={[styles.tab, tab === key && { borderColor: tint, backgroundColor: 'transparent' }]}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: tab === key }}>
-            <Text style={[styles.tabText, tab === key && { color: tint }]}>{label}</Text>
-          </Pressable>
-        ))}
+        <Options big label="Setup" value={tab} onPick={setTab} options={TABS} />
       </View>
 
       {picked != null && tab !== 'runs' && (
-        <VehiclePicker
-          vehicles={vehicles}
-          vehicleId={vehicleId}
-          runVehicle={runVehicle}
-          eventId={(current as (Session & { event_id?: number | null }) | undefined)?.event_id ?? null}
-          onPick={setVehicleId}
-        />
+        <Section no={1} title="Vehicle" dek="Its stored specs are what the vehicle model and the suggestions start from, and a new sheet takes its template.">
+          <VehiclePicker vehicles={vehicles} vehicleId={vehicleId} runVehicle={runVehicle} eventId={eventId}
+            onPick={setVehicleId} />
+        </Section>
       )}
       {picked != null && tab === 'sheet' && (
         <SheetEditor key={picked} sessionId={picked} vehicle={vehicle} onSaved={refreshSheets} />
@@ -153,7 +135,13 @@ export default function SetupScreen() {
         <RunsView key={picked} sessionId={picked} onPick={(id) => pick(id, 'sheet')} />
       )}
       {picked != null && tab === 'ideas' && <IdeasView key={picked} sessionId={picked} vehicleId={vehicleId} />}
-    </ScrollView>
+
+      <Colophon left="The Engineer · Setup" links={[
+        { label: 'Vehicle model', href: '/tools/vehicle' },
+        { label: 'Tyre pressures', href: '/tools/pressures' },
+        { label: 'Garage', href: '/garage' },
+      ]} />
+    </Page>
   );
 }
 
@@ -177,59 +165,34 @@ function VehiclePicker({
   eventId: number | null;
   onPick: (id: number | null) => void;
 }) {
-  const tint = useThemeColor({}, 'tint');
-  const router = useRouter();
+  const styles = useStyles();
   const own = vehicles.find((v) => v.id === runVehicle);
   return (
-    <View style={styles.vehicleBox}>
-      <View style={styles.headRow}>
-        <Text style={styles.subhead}>Vehicle</Text>
-        <Pressable onPress={() => router.push('/garage')} hitSlop={6}>
-          <Text style={{ color: tint }}>Add a vehicle in the garage</Text>
-        </Pressable>
-      </View>
+    <View style={styles.stack}>
       {vehicles.length === 0 ? (
-        <Text style={styles.dim}>No vehicles in the garage yet: the sheet's built-in car values are used.</Text>
+        <Note>No vehicles in the garage yet: the sheet’s built-in car values are used.</Note>
       ) : (
-        <View style={styles.chipsWrap}>
-          {vehicles.map((v) => {
-            const on = v.id === vehicleId;
-            return (
-              <Pressable
-                key={v.id}
-                onPress={() => onPick(on ? runVehicle : v.id)}
-                style={on ? StyleSheet.flatten([styles.smallChip, { borderColor: tint }]) : styles.smallChip}
-                accessibilityRole="button"
-                accessibilityState={{ selected: on }}>
-                <Text style={on ? { color: tint, fontWeight: '600' } : undefined}>{v.name}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
+        <Options label="Vehicle" value={vehicleId} onPick={(id) => onPick(id === vehicleId ? runVehicle : id)}
+          options={vehicles.map((v) => ({ value: v.id, label: v.name, sub: v.id === runVehicle ? 'this run’s' : undefined }))} />
       )}
       {vehicles.length > 0 &&
         (own == null ? (
-          <Text style={styles.dim}>
+          <Note small>
             This run has no vehicle set
-            {eventId != null ? (
-              <>
-                {': '}
-                <Text
-                  style={{ color: tint }}
-                  onPress={() => router.push({ pathname: '/event/[id]', params: { id: eventId } })}>
-                  set it on the event
-                </Text>
-                {' (or link the car to its vehicle in the garage).'}
-              </>
-            ) : (
-              ': link its car to its vehicle in the garage.'
-            )}
-          </Text>
+            {eventId != null ? ': set it on the event (or link the car to its vehicle in the garage).'
+              : ': link its car to its vehicle in the garage.'}
+          </Note>
         ) : vehicleId !== own.id ? (
-          <Text style={styles.dim}>Picked here only: this run's vehicle is {own.name}.</Text>
+          <Note small>Picked here only: this run’s vehicle is {own.name}.</Note>
         ) : (
-          <Text style={styles.dim}>This run's vehicle: its specs feed the vehicle model and the suggestions.</Text>
+          <Note small>This run’s vehicle: its specs feed the vehicle model and the suggestions.</Note>
         ))}
+      <View style={styles.links}>
+        {vehicles.length > 0 && own == null && eventId != null && (
+          <TextLink small arrow label="Set it on the event" href={{ pathname: '/event/[id]', params: { id: eventId } }} />
+        )}
+        <TextLink small arrow label="Add a vehicle in the garage" href="/garage" />
+      </View>
     </View>
   );
 }
@@ -243,6 +206,7 @@ function SheetEditor({
   vehicle: VehicleItem | null;
   onSaved: () => void;
 }) {
+  const styles = useStyles();
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const [template, setTemplate] = useState<Template | null>(null);
   const [templates, setTemplates] = useState<{ key: string; name: string }[]>([]);
@@ -254,9 +218,6 @@ function SheetEditor({
   const [showSources, setShowSources] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const tint = useThemeColor({}, 'tint');
-  const text = useThemeColor({}, 'text');
-  const router = useRouter();
 
   const show = (s: Sheet) => {
     setSheet(s);
@@ -353,129 +314,87 @@ function SheetEditor({
   const prev = sheet?.previous && sheet.previous.template === template?.key ? sheet.previous.values : null;
   const filled = useMemo(() => Object.values(form).filter((v) => v.trim() !== '').length, [form]);
 
-  if (!sheet || !template) return error ? <Text style={styles.error}>{error}</Text> : <ActivityIndicator />;
+  if (!sheet || !template) {
+    return (
+      <Section no={2} title="The sheet">
+        {error ? <ErrorLine>{error}</ErrorLine> : <Working>Reading the sheet…</Working>}
+      </Section>
+    );
+  }
+
+  const actions = (bottom?: boolean) => (
+    <Actions style={bottom ? styles.sheetActionsBottom : styles.sheetActions}>
+      <MainAction label="Save" onPress={save} busy={busy} />
+      {sheet.previous && (
+        <TextLink onPress={copy} disabled={busy}
+          label={confirmCopy ? 'Tap again to replace this sheet' : `Copy from ${sheet.previous.name ?? 'previous run'}`}
+          red={confirmCopy} />
+      )}
+      {dirty && <Note small>Unsaved changes</Note>}
+      {message && !dirty ? <Text style={styles.saved}>{message}</Text> : null}
+    </Actions>
+  );
 
   return (
-    <View style={styles.section}>
-      <View style={styles.headRow}>
-        <View style={styles.flex}>
-          <Text style={styles.h2}>{template.name}</Text>
-          <Text style={styles.dim}>
-            {sheet.exists ? `${filled} values` : 'No sheet for this run yet'}
-            {sheet.previous ? ` · previous run with a sheet: ${sheet.previous.name ?? 'session ' + sheet.previous.session_id}` : ''}
-          </Text>
-        </View>
-      </View>
-
+    <Section no={2} title="The sheet"
+      dek={`${template.name}. ${sheet.exists ? `${filled} values` : 'No sheet for this run yet'}${sheet.previous ? `; the previous run with a sheet is ${sheet.previous.name ?? `session ${sheet.previous.session_id}`}` : ''}.`}>
       {!sheet.exists && templates.length > 1 && (
-        <View style={styles.chipsWrap}>
-          {templates.map((t) => (
-            <Pressable
-              key={t.key}
-              onPress={() => setSheet({ ...sheet, template: t.key })}
-              style={[styles.smallChip, t.key === template.key && { borderColor: tint }]}>
-              <Text style={t.key === template.key ? { color: tint } : undefined}>{t.name}</Text>
-            </Pressable>
-          ))}
+        <View style={styles.templates}>
+          <Label small muted>Template</Label>
+          <Options label="Template" value={template.key} onPick={(key) => setSheet({ ...sheet, template: key })}
+            options={templates.map((t) => ({ value: t.key, label: t.name }))} />
         </View>
       )}
 
-      <View style={styles.actions}>
-        {sheet.previous && (
-          <Pressable
-            style={StyleSheet.flatten([styles.button, styles.outline, { borderColor: tint }])}
-            onPress={copy}
-            disabled={busy}>
-            <Text style={[styles.buttonText, { color: tint }]}>
-              {confirmCopy ? 'Tap again to replace this sheet' : `Copy from ${sheet.previous.name ?? 'previous run'}`}
-            </Text>
-          </Pressable>
-        )}
-        <Pressable style={[styles.button, { backgroundColor: tint }]} onPress={save} disabled={busy}>
-          {busy ? <ActivityIndicator color={onTint(tint)} /> : <Text style={[styles.buttonText, { color: onTint(tint) }]}>Save</Text>}
-        </Pressable>
-      </View>
-      {dirty && <Text style={styles.dim}>Unsaved changes</Text>}
-      {message && !dirty && <Text style={{ color: tint }}>{message}</Text>}
-      {error && <Text style={styles.error}>{error}</Text>}
+      {actions()}
+      {error ? <View style={styles.gapTop}><ErrorLine>{error}</ErrorLine></View> : null}
 
       {sheet.changes.length > 0 && !dirty && (
-        <View style={styles.card}>
-          <Text style={styles.subhead}>Changed from {sheet.previous?.name ?? 'the previous run'}</Text>
+        <View style={styles.changes}>
+          <SubHead>Changed from {sheet.previous?.name ?? 'the previous run'}</SubHead>
           {sheet.changes.map((c) => (
-            <Text key={c.key}>{c.text}</Text>
+            <Text key={c.key} style={styles.changeLine}>{c.text}</Text>
           ))}
         </View>
       )}
       {sheet.warnings.length > 0 && !dirty && (
-        <View style={styles.card}>
-          {sheet.warnings.map((w) => (
-            <Text key={w.key} style={{ color: WARN }}>
-              {w.text}
-            </Text>
-          ))}
+        <View style={styles.changes}>
+          {sheet.warnings.map((w) => <WarnLine key={w.key}>{w.text}</WarnLine>)}
         </View>
       )}
 
-      <View style={styles.linkRow}>
-        <Pressable onPress={() => setShowSources((s) => !s)} hitSlop={6}>
-          <Text style={{ color: tint }}>{showSources ? 'Hide' : 'Show'} where each item comes from</Text>
-        </Pressable>
+      <View style={styles.links}>
+        <TextLink small onPress={() => setShowSources((s) => !s)}
+          label={showSources ? 'Hide where each item comes from' : 'Show where each item comes from'} />
         {sheet.exists && (template.vehicle_preset || vehicle) && (
-          <Pressable
-            onPress={() =>
-              router.push({
-                pathname: '/tools/vehicle',
-                params: vehicle ? { session: sessionId, vehicle: vehicle.id } : { session: sessionId },
-              })
-            }
-            hitSlop={6}>
-            <Text style={{ color: tint }}>Open in the vehicle model</Text>
-          </Pressable>
+          <TextLink small arrow label="Open in the vehicle model"
+            href={{ pathname: '/tools/vehicle', params: vehicle ? { session: sessionId, vehicle: vehicle.id } : { session: sessionId } }} />
         )}
       </View>
 
       {template.groups.map((g) => (
         <View key={g.name} style={styles.group}>
-          <Text style={styles.groupName}>{g.name}</Text>
+          <SubHead>{g.name}</SubHead>
           {g.rows.map((row) => (
-            <RowEditor
-              key={row.key}
-              row={row}
-              form={form}
-              prev={filled > 0 ? prev : null}
-              showSources={showSources}
-              setField={setField}
-              text={text}
-              tint={tint}
-            />
+            <RowEditor key={row.key} row={row} form={form} prev={filled > 0 ? prev : null} showSources={showSources}
+              setField={setField} />
           ))}
         </View>
       ))}
 
       <View style={styles.group}>
-        <Text style={styles.groupName}>Notes</Text>
-        <TextInput
-          style={[styles.input, styles.notes, { color: text }]}
-          value={notes}
+        <SubHead>Notes</SubHead>
+        <Field boxed value={notes} multiline keyboardType="default" accessibilityLabel="Notes"
           onChangeText={(t) => {
             setNotes(t);
             setDirty(true);
           }}
-          placeholder="Anything else about this run's setup"
-          placeholderTextColor="#8888"
-          multiline
-        />
+          placeholder="Anything else about this run’s setup" inputStyle={styles.notes} />
       </View>
-      <Pressable style={[styles.button, { backgroundColor: tint }]} onPress={save} disabled={busy}>
-        <Text style={[styles.buttonText, { color: onTint(tint) }]}>Save</Text>
-      </Pressable>
-    </View>
+      {actions(true)}
+    </Section>
   );
 }
-
-// White text on the light theme's blue, black text on the dark theme's white tint.
-const onTint = (tint: string) => (tint.toLowerCase() === '#fff' || tint.toLowerCase() === '#ffffff' ? '#000' : '#fff');
 
 function RowEditor({
   row,
@@ -483,81 +402,67 @@ function RowEditor({
   prev,
   showSources,
   setField,
-  text,
-  tint,
 }: {
   row: TemplateRow;
   form: Record<string, string>;
   prev: Record<string, number> | null;
   showSources: boolean;
   setField: (key: string, value: string) => void;
-  text: string;
-  tint: string;
 }) {
-  const cells = row.layout === 'corner' ? [row.fields.slice(0, 2), row.fields.slice(2)] : [row.fields];
+  const styles = useStyles();
+  const wide = useWide();
+  // four corners, or options, go under the name on a phone; one or two values sit beside it
+  const under = !wide && (row.layout === 'corner' || row.kind === 'choice');
+  const unit = [row.unit && row.kind !== 'choice' ? row.unit : '', row.confidence !== 'published' ? row.confidence : '']
+    .filter(Boolean).join(' · ');
   return (
     <View style={styles.row}>
-      <View style={styles.rowHead}>
-        <Text style={styles.rowLabel}>{row.label}</Text>
-        <Text style={styles.unit}>
-          {row.unit && row.kind !== 'choice' ? row.unit : ''}
-          {row.confidence !== 'published' ? `${row.unit && row.kind !== 'choice' ? ' · ' : ''}${row.confidence}` : ''}
-        </Text>
-      </View>
-      {cells.map((line, i) => (
-        <View key={i} style={styles.cells}>
-          {line.map((f) => {
+      <View style={under ? undefined : styles.rowLine}>
+        <View style={under ? styles.rowNameUnder : styles.rowName}>
+          <Text style={styles.rowLabel}>{row.label}</Text>
+          {unit ? <Text style={styles.rowUnit}>{unit}</Text> : null}
+        </View>
+        <View style={under ? (row.layout === 'corner' ? styles.cellsCorner : styles.cellsUnder)
+          : row.kind === 'choice' ? styles.cellsChoice : styles.cells}>
+          {row.fields.map((f) => {
             const value = form[f.key] ?? '';
             const before = prev?.[f.key];
             const now = value.trim() === '' ? null : Number(value.replace(',', '.'));
             const changed = prev != null && (before ?? null) !== now;
             return (
-              <View key={f.key} style={[styles.cell, row.kind === 'choice' && styles.wideCell]}>
-                {f.at && <Text style={styles.at}>{POSITION_LABEL[f.at]}</Text>}
-                <FieldInput row={row} value={value} onChange={(v) => setField(f.key, v)} text={text} tint={tint} />
-                {changed && (
-                  <Text style={[styles.was, { color: tint }]}>was {showValue(row, before)}</Text>
-                )}
+              <View key={f.key} style={under && row.layout === 'corner' ? styles.cellHalf : styles.cell}>
+                {f.at ? <Text style={styles.at}>{POSITION_LABEL[f.at]}</Text> : null}
+                <FieldInput row={row} at={f.at} value={value} changed={changed} onChange={(v) => setField(f.key, v)} />
+                {changed ? <Text style={styles.was}>was {showValue(row, before)}</Text> : null}
               </View>
             );
           })}
         </View>
-      ))}
-      {showSources && row.note ? <Text style={styles.note}>{row.note}</Text> : null}
+      </View>
+      {showSources && row.note ? <Text style={styles.source}>{row.note}</Text> : null}
     </View>
   );
 }
 
 function FieldInput({
   row,
+  at,
   value,
+  changed,
   onChange,
-  text,
-  tint,
 }: {
   row: TemplateRow;
+  at: string | null;
   value: string;
+  changed: boolean;
   onChange: (v: string) => void;
-  text: string;
-  tint: string;
 }) {
+  const name = at ? `${row.label} ${POSITION_LABEL[at]}` : row.label;
   if (row.kind === 'choice') {
     return (
-      <View style={styles.options}>
-        {row.options.map((o) => {
-          const on = value === String(o.value);
-          return (
-            <Pressable
-              key={o.value}
-              onPress={() => onChange(on ? '' : String(o.value))}
-              style={[styles.option, on && { borderColor: tint }]}
-              accessibilityRole="button"
-              accessibilityState={{ selected: on }}>
-              <Text style={on ? { color: tint, fontWeight: '600' } : undefined}>{o.label}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
+      <Options label={name} value={value === '' ? null : Number(value)}
+        onPick={(v) => onChange(value === String(v) ? '' : String(v))}
+        options={row.options.map((o) => ({ value: o.value, label: o.label }))} />
     );
   }
   if (row.kind === 'position') {
@@ -569,37 +474,18 @@ function FieldInput({
       if (row.max != null && next > row.max) next = row.max;
       onChange(String(next));
     };
-    return (
-      <View style={styles.stepper}>
-        <Pressable onPress={() => step(-1)} hitSlop={8} accessibilityLabel={`${row.label} down`}>
-          <Text style={[styles.step, { color: tint }]}>−</Text>
-        </Pressable>
-        <Text style={styles.stepValue}>
-          {n == null ? '–' : n}
-          {row.max != null ? <Text style={styles.unit}> /{row.max}</Text> : null}
-        </Text>
-        <Pressable onPress={() => step(1)} hitSlop={8} accessibilityLabel={`${row.label} up`}>
-          <Text style={[styles.step, { color: tint }]}>+</Text>
-        </Pressable>
-      </View>
-    );
+    return <Stepper label={name} value={n == null ? '–' : String(n)} of={row.max != null ? `/${row.max}` : undefined} onStep={step} />;
   }
   return (
-    <TextInput
-      style={[styles.input, { color: text }]}
-      value={value}
-      onChangeText={onChange}
-      keyboardType="numbers-and-punctuation"
-      selectTextOnFocus
-      placeholder="–"
-      placeholderTextColor="#8888"
-    />
+    <Field width={84} align="right" value={value} onChangeText={onChange} keyboardType="numbers-and-punctuation"
+      selectTextOnFocus placeholder="–" marked={changed} accessibilityLabel={`${name}${row.unit ? `, ${row.unit}` : ''}`} />
   );
 }
 
 // ---------- runs against results ----------
 
 function RunsView({ sessionId, onPick }: { sessionId: number; onPick: (id: number) => void }) {
+  const styles = useStyles();
   const [hist, setHist] = useState<History | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -631,81 +517,76 @@ function RunsView({ sessionId, onPick }: { sessionId: number; onPick: (id: numbe
     };
   }, [sessionId]);
 
-  if (error) return <Text style={styles.error}>{error}</Text>;
-  if (!hist) return <ActivityIndicator />;
-  const estimated = hist.runs.some((r) => r.summary?.steering?.confidence === 'estimate');
+  const estimated = hist?.runs.some((r) => r.summary?.steering?.confidence === 'estimate') ?? false;
   return (
-    <View style={styles.section}>
-      <Text style={styles.dim}>
-        Every run of this test in order. Each one is set against the last run before it with a sheet and clean laps:
-        what changed on the car, and what the lap times and the balance did.
-      </Text>
-      {progress && (
-        <View style={styles.progress}>
-          <ActivityIndicator />
-          <Text style={styles.dim}>
-            Reading the balance from the logs: {progress.done + 1} of {progress.total}
-          </Text>
+    <Section no={1} title="Runs against results"
+      dek="Every run of this test in order, each set against the last run before it with a sheet and clean laps: what changed on the car, and what the lap times and the balance did.">
+      {error ? <ErrorLine>{error}</ErrorLine> : null}
+      {!hist && !error && <Working>Reading the runs…</Working>}
+      {progress && <Working>Reading the balance from the logs: {progress.done + 1} of {progress.total}</Working>}
+      {hist && (
+        <View style={styles.runList}>
+          {hist.runs.map((r) => (
+            <RunBlock key={r.session_id} run={r} current={r.session_id === sessionId} onPick={onPick} />
+          ))}
         </View>
       )}
-      {hist.runs.map((r) => (
-        <RunCard key={r.session_id} run={r} current={r.session_id === sessionId} onPick={onPick} />
-      ))}
-      <Text style={styles.note}>
-        Best and Top 3 (the mean of the three quickest clean laps), with the change from the run it is compared with:
-        green is quicker. The balance is the balance report's: steering beyond what the corner needs, in road wheel
-        degrees. Per g is the car's own understeer per g of cornering (lower is less understeer overall). Entry (on the
-        brakes), mid-corner and exit (on the throttle) are the balance against that normal while cornering on the
-        clean laps: + the front pushes more than normal, − the rear slides. TC and ABS: seconds working per clean lap.
-        {estimated ? ' The steering ratio behind it is an estimate, so compare runs rather than reading one alone.' : ''}
-      </Text>
-    </View>
+      {hist && (
+        <Note small style={styles.gapTop}>
+          Best and Top 3 (the mean of the three quickest clean laps), with the change from the run it is compared with:
+          green is quicker. The balance is the balance report’s: steering beyond what the corner needs, in road wheel
+          degrees. Per g is the car’s own understeer per g of cornering (lower is less understeer overall). Entry (on
+          the brakes), mid-corner and exit (on the throttle) are the balance against that normal while cornering on the
+          clean laps: + the front pushes more than normal, − the rear slides. TC and ABS: seconds working per clean lap.
+          {estimated ? ' The steering ratio behind it is an estimate, so compare runs rather than reading one alone.' : ''}
+        </Note>
+      )}
+    </Section>
   );
 }
 
-function RunCard({ run, current, onPick }: { run: HistoryRun; current: boolean; onPick: (id: number) => void }) {
-  const tint = useThemeColor({}, 'tint');
+function RunBlock({ run, current, onPick }: { run: HistoryRun; current: boolean; onPick: (id: number) => void }) {
+  const c = useTheme();
+  const styles = useStyles();
+  const wide = useWide();
   const d = run.deltas;
   const b = run.summary?.balance;
-  const lapColor = (x: number | null | undefined) =>
-    x == null || Math.abs(x) < 0.005 ? undefined : x < 0 ? FASTER : SLOWER;
+  // a lap time's change: a flat block, green quicker and red slower
+  const lapBlock = (x: number | null | undefined) =>
+    x == null || Math.abs(x) < 0.005 ? undefined : x < 0 ? c.delta.gain : c.delta.loss;
   return (
-    <Pressable
-      onPress={() => onPick(run.session_id)}
-      style={[styles.card, current && { borderColor: tint, borderWidth: 2 }]}
-      accessibilityRole="button">
-      <View style={styles.headRow}>
-        <Text style={[styles.runName, current && { color: tint }]}>{run.name ?? `Session ${run.session_id}`}</Text>
-        <Text style={styles.dim}>{runDate(run.run_time)}</Text>
+    <Pressable onPress={() => onPick(run.session_id)} accessibilityRole="button"
+      accessibilityLabel={`${run.name ?? `Session ${run.session_id}`}: open its sheet`}
+      style={StyleSheet.flatten([styles.run, current && styles.runCurrent])}>
+      <View style={styles.runHead}>
+        <Text style={wide ? styles.runName : styles.runNamePhone}>{run.name ?? `Session ${run.session_id}`}</Text>
+        {current && <Block label="This run" color={c.rule} ink={c.background} />}
+        <Text style={styles.runDate}>{runDate(run.run_time)}</Text>
       </View>
       {run.has_setup ? (
         run.compared_with ? (
           run.changes.length ? (
-            <View>
-              <Text style={styles.dim}>Changed from {run.compared_with.name}:</Text>
-              {run.changes.map((c) => (
-                <Text key={c.key} style={styles.change}>
-                  {c.text}
-                </Text>
-              ))}
+            <View style={styles.runChanges}>
+              <Note small>Changed from {run.compared_with.name}:</Note>
+              {run.changes.map((ch) => <Text key={ch.key} style={styles.changeText}>{ch.text}</Text>)}
             </View>
           ) : (
-            <Text style={styles.dim}>Same setup as {run.compared_with.name}</Text>
+            <Note small>Same setup as {run.compared_with.name}</Note>
           )
         ) : (
-          <Text style={styles.dim}>First sheet of the test</Text>
+          <Note small>First sheet of the test</Note>
         )
       ) : (
-        <Text style={styles.dim}>No setup sheet</Text>
+        <Note small>No setup sheet</Note>
       )}
       {run.laps.clean_laps === 0 ? (
-        <Text style={styles.dim}>No clean laps</Text>
+        <Note small>No clean laps</Note>
       ) : (
         <View style={styles.stats}>
           {/* three groups that wrap as a whole: lap times, balance, driver aids */}
           <View style={styles.statGroup}>
-            <Stat label="Best" value={formatLap(run.laps.best_s)} delta={signed(d?.best_s)} color={lapColor(d?.best_s)} />
-            <Stat label="Top 3" value={formatLap(run.laps.top3_s)} delta={signed(d?.top3_s)} color={lapColor(d?.top3_s)} />
+            <Stat label="Best" value={formatLap(run.laps.best_s)} delta={signed(d?.best_s)} fill={lapBlock(d?.best_s)} />
+            <Stat label="Top 3" value={formatLap(run.laps.top3_s)} delta={signed(d?.top3_s)} fill={lapBlock(d?.top3_s)} />
             <Stat label="Laps" value={String(run.laps.clean_laps)} />
           </View>
           {b ? (
@@ -716,7 +597,7 @@ function RunCard({ run, current, onPick }: { run: HistoryRun; current: boolean; 
               <Stat label="Exit" value={fmt(b.exit, true)} delta={signed(d?.balance.exit)} />
             </View>
           ) : run.needs_summary ? (
-            <Stat label="Balance" value="…" />
+            <View style={styles.statGroup}><Stat label="Balance" value="…" /></View>
           ) : null}
           {(run.summary?.tc_s_per_lap != null || run.summary?.abs_s_per_lap != null) && (
             <View style={styles.statGroup}>
@@ -737,12 +618,23 @@ function RunCard({ run, current, onPick }: { run: HistoryRun; current: boolean; 
 // a balance against the car's normal carries its sign; per g is a plain amount
 const fmt = (x: number | null | undefined, sign = false) => (x == null ? '–' : sign ? signed(x) : x.toFixed(2));
 
-function Stat({ label, value, delta, color }: { label: string; value: string; delta?: string; color?: string }) {
+/** A figure of a run: its label in Archivo capitals, the value in tabular Archivo, and its change from the run it is
+ * compared with (a lap time's in a flat green or red block). */
+function Stat({ label, value, delta, fill }: { label: string; value: string; delta?: string; fill?: string }) {
+  const styles = useStyles();
   return (
     <View style={styles.stat}>
       <Text style={styles.statLabel}>{label}</Text>
       <Text style={styles.statValue}>{value}</Text>
-      {delta != null && delta !== '–' && <Text style={[styles.statDelta, color ? { color } : styles.dim]}>{delta}</Text>}
+      {delta != null && delta !== '–' ? (
+        fill ? (
+          <View style={StyleSheet.flatten([styles.statBlock, { backgroundColor: fill }])}>
+            <Text style={StyleSheet.flatten([styles.statDelta, { color: inkOn(fill) }])}>{delta}</Text>
+          </View>
+        ) : (
+          <Text style={StyleSheet.flatten([styles.statDelta, styles.statDeltaPlain])}>{delta}</Text>
+        )
+      ) : null}
     </View>
   );
 }
@@ -750,9 +642,10 @@ function Stat({ label, value, delta, color }: { label: string; value: string; de
 // ---------- suggestions ----------
 
 function IdeasView({ sessionId, vehicleId }: { sessionId: number; vehicleId: number | null }) {
+  const styles = useStyles();
+  const wide = useWide();
   const [data, setData] = useState<Suggestions | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const tint = useThemeColor({}, 'tint');
 
   useEffect(() => {
     let live = true;
@@ -767,140 +660,118 @@ function IdeasView({ sessionId, vehicleId }: { sessionId: number; vehicleId: num
     };
   }, [sessionId, vehicleId]);
 
-  if (error) return <Text style={styles.error}>{error}</Text>;
-  if (!data) return <ActivityIndicator />;
+  const dek = 'Best first, in one list from what the driver said and what the balance report reads in this run’s log. Each says why, what to expect and what to watch, and where the driver and the data disagree. Change one thing at a time.';
+  if (error || !data) {
+    return (
+      <Section no={2} title="Setup changes to try" dek={dek}>
+        {error ? <ErrorLine>{error}</ErrorLine> : <Working>Reading the debrief and the data…</Working>}
+      </Section>
+    );
+  }
   const said = data.observations.filter((o) => o.source === 'driver');
   const other = data.observations.filter((o) => o.source !== 'driver');
+  let no = 2;
   return (
-    <View style={styles.section}>
-      <Text style={styles.dim}>
-        Setup changes to try, best first, in one list from what the driver said and what the balance report reads in
-        this run's log. Each says why, what to expect and what to watch, and where the driver and the data disagree.
-        Change one thing at a time.
-      </Text>
-      {data.data?.headline ? (
-        <View style={styles.card}>
-          <Text style={styles.subhead}>From the data</Text>
-          <Text>{data.data.headline}</Text>
-          {data.data.notes.map((n) => (
-            <Text key={n} style={styles.note}>
-              {n}
-            </Text>
-          ))}
-        </View>
-      ) : null}
-      {data.notes.map((n) => (
-        <Text key={n} style={styles.note}>
-          {n}
-        </Text>
-      ))}
-      {data.suggestions.length === 0 && (data.observations.length > 0 || data.data) && (
-        <Text>Nothing in the feedback or the data points clearly to a setup change.</Text>
-      )}
-      {data.suggestions.map((s) => (
-        <View key={s.lever} style={styles.card}>
-          <View style={styles.headRow}>
-            <Text style={[styles.rank, { color: tint }]}>{s.rank}</Text>
-            <Text style={[styles.runName, styles.flex]}>{s.title}</Text>
-            <Text style={[styles.source, s.agreement === 'disagree' && { color: WARN, opacity: 1 }]}>
-              {AGREEMENT[s.agreement]}
-            </Text>
+    <>
+      <Section no={no} title="Setup changes to try" dek={dek}>
+        {data.data?.headline ? (
+          <View style={styles.headline}>
+            <Label small>From the data</Label>
+            <Text style={wide ? styles.headlineText : styles.headlineTextPhone}>{data.data.headline}</Text>
+            {data.data.notes.map((n) => <Note key={n} small>{n}</Note>)}
           </View>
-          {s.changes.map((c) => (
-            <Text key={c.key} style={styles.change}>
-              {c.text}
-            </Text>
-          ))}
-          {s.reason ? (
-            <Text>
-              <Text style={styles.bold}>Why: </Text>
-              {s.reason}
-            </Text>
-          ) : null}
-          {s.report ? (
-            <Text>
-              <Text style={styles.bold}>Balance report's no. {s.report.rank}: </Text>
-              {s.report.why}
-            </Text>
-          ) : s.data_shows ? (
-            <Text>
-              <Text style={styles.bold}>The data shows: </Text>
-              {s.data_shows}
-            </Text>
-          ) : null}
-          {s.confirmed.length > 0 && (
-            <Text>
-              <Text style={styles.bold}>The data agrees: </Text>
-              {s.confirmed.join(' ')}
-            </Text>
-          )}
-          {s.disagree.map((t) => (
-            <Text key={t} style={{ color: WARN }}>
-              <Text style={[styles.bold, { color: WARN }]}>Disagree: </Text>
-              {t}
-            </Text>
-          ))}
-          <Text>
-            <Text style={styles.bold}>Expect: </Text>
-            {s.expected}
-            {s.model ? ` ${s.model}` : ''}
-          </Text>
-          {s.watch ? (
-            <Text>
-              <Text style={styles.bold}>Watch: </Text>
-              {s.watch}
-            </Text>
-          ) : null}
-        </View>
-      ))}
+        ) : null}
+        {data.notes.map((n) => <Note key={n} small style={styles.gapTop}>{n}</Note>)}
+        {data.suggestions.length === 0 && (data.observations.length > 0 || data.data) && (
+          <Note style={styles.gapTop}>Nothing in the feedback or the data points clearly to a setup change.</Note>
+        )}
+        {data.suggestions.map((s) => <Idea key={s.lever} s={s} />)}
+      </Section>
       {said.length > 0 && (
-        <View style={styles.group}>
-          <Text style={styles.groupName}>What the driver said</Text>
+        <Section no={++no} title="What the driver said" dek="Each remark, and what the data make of it.">
           {said.map((o, i) => (
             <View key={i} style={styles.obs}>
-              <Text style={styles.bold}>
+              <Text style={styles.obsLabel}>
                 {o.label}
                 {o.speed && o.corner ? ` (${o.speed} corner)` : ''}
               </Text>
-              <Text style={styles.dim}>“{o.text}”</Text>
+              <Text style={styles.quote}>“{o.text}”</Text>
               {o.check ? (
-                <Text style={[styles.note, o.check.verdict === 'disagree' && { color: WARN, opacity: 1 }]}>
-                  Data: {VERDICT[o.check.verdict]}. {o.check.text}
+                <Text style={o.check.verdict === 'disagree' ? styles.checkWarn : styles.check}>
+                  <Text style={styles.checkLabel}>Data: </Text>
+                  {VERDICT[o.check.verdict]}. {o.check.text}
                 </Text>
               ) : null}
             </View>
           ))}
           {data.skipped_points.length > 0 && (
-            <Text style={styles.note}>
+            <Note small style={styles.gapTop}>
               {data.skipped_points.length} other debrief point{data.skipped_points.length > 1 ? 's' : ''} had nothing
               for the setup.
-            </Text>
+            </Note>
           )}
-        </View>
+        </Section>
       )}
       {data.measured.length + other.length > 0 && (
-        <View style={styles.group}>
-          <Text style={styles.groupName}>What the data shows</Text>
+        <Section no={++no} title="What the data show"
+          dek="Each corner’s balance against the car’s normal where it is clear (0.8° or more), and where traction control or rear wheel slip says the rear can’t take the power.">
           {[...data.measured, ...other].map((o, i) => (
-            <Text key={i} style={styles.measured}>
-              {o.text || o.label}
-            </Text>
+            <Text key={i} style={StyleSheet.flatten([styles.measured, i === 0 && styles.measuredFirst])}>{o.text || o.label}</Text>
           ))}
-          <Text style={styles.note}>
-            Each corner's balance against the car's normal where it is clear (0.8° or more), and where traction control
-            or rear wheel slip says the rear can't take the power.
-          </Text>
-        </View>
+        </Section>
       )}
+    </>
+  );
+}
+
+/** One suggestion: its rank in an ink block, the change in Anton, the levers, then why, what to expect and what to
+ * watch. */
+function Idea({ s }: { s: Suggestion }) {
+  const c = useTheme();
+  const styles = useStyles();
+  const wide = useWide();
+  const tone = s.agreement === 'disagree' ? c.warning : s.agreement === 'both' ? c.rule : c.band;
+  return (
+    <View style={styles.idea}>
+      <View style={styles.ideaHead}>
+        <View style={styles.rank}><Text style={styles.rankText}>{s.rank}</Text></View>
+        <View style={styles.ideaWords}>
+          <Text style={wide ? styles.ideaTitle : styles.ideaTitlePhone}>{s.title}</Text>
+          <Block label={AGREEMENT[s.agreement]} color={tone} ink={tone === c.band ? c.text : inkOn(tone)} style={styles.agree} />
+        </View>
+      </View>
+      {s.changes.map((ch) => <Text key={ch.key} style={styles.changeText}>{ch.text}</Text>)}
+      <View style={styles.ideaBody}>
+        {s.reason ? <Line label="Why">{s.reason}</Line> : null}
+        {s.report ? (
+          <Line label={`Balance report’s no. ${s.report.rank}`}>{s.report.why}</Line>
+        ) : s.data_shows ? (
+          <Line label="The data shows">{s.data_shows}</Line>
+        ) : null}
+        {s.confirmed.length > 0 && <Line label="The data agrees">{s.confirmed.join(' ')}</Line>}
+        {s.disagree.map((t) => <Line key={t} label="Disagree" warn>{t}</Line>)}
+        <Line label="Expect">{s.expected}{s.model ? ` ${s.model}` : ''}</Line>
+        {s.watch ? <Line label="Watch">{s.watch}</Line> : null}
+      </View>
     </View>
   );
 }
 
+function Line({ label, children, warn }: { label: string; children: ReactNode; warn?: boolean }) {
+  const styles = useStyles();
+  return (
+    <Text style={warn ? styles.lineWarn : styles.line}>
+      <Text style={warn ? styles.lineLabelWarn : styles.lineLabel}>{`${label}  `}</Text>
+      {children}
+    </Text>
+  );
+}
+
 const AGREEMENT: Record<Suggestion['agreement'], string> = {
-  both: 'driver + data agree',
-  driver: 'driver',
-  data: 'data',
-  disagree: 'driver and data disagree',
+  both: 'Driver + data agree',
+  driver: 'Driver',
+  data: 'Data',
+  disagree: 'Driver and data disagree',
 };
 
 const VERDICT: Record<NonNullable<Observation['check']>['verdict'], string> = {
@@ -911,78 +782,82 @@ const VERDICT: Record<NonNullable<Observation['check']>['verdict'], string> = {
   unmeasured: 'not measured',
 };
 
-const styles = StyleSheet.create({
-  container: { padding: 16, gap: 12, paddingBottom: 48, width: '100%', maxWidth: 860, alignSelf: 'center' },
-  intro: { opacity: 0.75 },
-  chips: { gap: 8 },
-  chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6 },
-  chipSub: { fontSize: 12, opacity: 0.6, fontVariant: ['tabular-nums'] },
-  chipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  smallChip: { borderWidth: 1, borderColor: '#8884', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 4 },
-  tabs: { flexDirection: 'row', gap: 8 },
-  tab: { flex: 1, borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingVertical: 8, alignItems: 'center' },
-  tabText: { fontWeight: '600' },
-  vehicleBox: { gap: 6 },
-  section: { gap: 10 },
-  headRow: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, backgroundColor: 'transparent' },
-  flex: { flex: 1, backgroundColor: 'transparent' },
-  h2: { fontSize: 18, fontWeight: '700' },
-  dim: { opacity: 0.65 },
-  error: { color: '#c8372d' },
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  button: { borderRadius: 8, paddingVertical: 12, paddingHorizontal: 18, alignItems: 'center', flexGrow: 1 },
-  outline: { borderWidth: 1, backgroundColor: 'transparent' },
-  buttonText: { fontWeight: '600', fontSize: 16 },
-  card: { gap: 6, padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#8883' },
-  subhead: { fontWeight: '600' },
-  linkRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 },
-  group: { gap: 2 },
-  groupName: {
-    fontSize: 13,
-    fontWeight: '600',
-    opacity: 0.6,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginTop: 8,
-  },
-  row: { paddingVertical: 8, borderBottomWidth: 1, borderColor: '#8882', gap: 6 },
-  rowHead: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
-  rowLabel: { fontSize: 16, fontWeight: '500' },
-  unit: { fontSize: 12, opacity: 0.6 },
-  cells: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  cell: { flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 150, flexGrow: 1, flexBasis: 150 },
-  wideCell: { minWidth: 250, flexBasis: 250 }, // three option chips and the axle label
-  at: { width: 34, fontSize: 13, opacity: 0.6 },
-  was: { fontSize: 12 },
-  note: { fontSize: 12, opacity: 0.7, lineHeight: 17 },
-  input: {
-    borderWidth: 1,
-    borderColor: '#8884',
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    width: 76,
-    textAlign: 'right',
-    fontVariant: ['tabular-nums'],
-  },
-  notes: { width: '100%', minHeight: 64, textAlign: 'left', textAlignVertical: 'top' },
-  options: { flexDirection: 'row', gap: 6 },
-  option: { borderWidth: 1, borderColor: '#8884', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 4 },
-  stepper: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  step: { fontSize: 24, fontWeight: '600', paddingHorizontal: 6 },
-  stepValue: { fontVariant: ['tabular-nums'], minWidth: 36, textAlign: 'center', fontSize: 16 },
-  progress: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  runName: { fontSize: 16, fontWeight: '600' },
-  change: { fontWeight: '600' },
-  stats: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 28, rowGap: 8, backgroundColor: 'transparent' },
-  statGroup: { flexDirection: 'row', columnGap: 16, backgroundColor: 'transparent' },
-  stat: { minWidth: 56, backgroundColor: 'transparent' },
-  statLabel: { fontSize: 11, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.4 },
-  statValue: { fontSize: 15, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  statDelta: { fontSize: 12, fontVariant: ['tabular-nums'] },
-  rank: { fontSize: 20, fontWeight: '700', width: 22 },
-  source: { fontSize: 12, opacity: 0.6 },
-  bold: { fontWeight: '600' },
-  obs: { paddingVertical: 4, gap: 1 },
-  measured: { paddingVertical: 2, fontVariant: ['tabular-nums'] },
-});
+const useStyles = themed((c) => ({
+  runs: { marginTop: 22 },
+  tabs: { marginTop: 22, borderBottomWidth: 1, borderColor: c.rule },
+  stack: { gap: 12 },
+  links: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 22, rowGap: 10, marginTop: 4 },
+  gapTop: { marginTop: 12 },
+  templates: { gap: 8, marginBottom: 6 },
+  sheetActions: { marginTop: 4, marginBottom: 18 },
+  sheetActionsBottom: { marginTop: 22 },
+  saved: { ...Type.label, fontSize: 12, color: c.success },
+  changes: { marginBottom: 18, gap: 4 },
+  changeLine: { fontFamily: Fonts.label, fontSize: 15, lineHeight: 20, color: c.text, borderBottomWidth: 1,
+    borderColor: c.separator, paddingVertical: 5 },
+  group: { marginTop: 26 },
+  notes: { minHeight: 90 },
+
+  // a line of the sheet
+  row: { borderBottomWidth: 1, borderColor: c.separator, paddingTop: 9, paddingBottom: 10 },
+  rowLine: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  rowName: { flex: 1, minWidth: 0 },
+  rowNameUnder: { marginBottom: 8 },
+  rowLabel: { fontFamily: Fonts.label, fontSize: 15, lineHeight: 19, color: c.text },
+  rowUnit: { fontFamily: Fonts.label, fontSize: 12, lineHeight: 16, color: c.textMuted, marginTop: 1 },
+  cells: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', columnGap: 18, rowGap: 10 },
+  cellsChoice: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', columnGap: 44, rowGap: 10 },
+  cellsUnder: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 22, rowGap: 10 },
+  cellsCorner: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 10 },
+  cell: { alignItems: 'flex-start', minWidth: 84 },
+  cellHalf: { width: '50%', alignItems: 'flex-start', paddingRight: 14 },
+  at: { ...Type.label, fontFamily: Fonts.label, fontSize: 10, letterSpacing: 1.2, color: c.textMuted, marginBottom: 2 },
+  was: { fontFamily: Fonts.label, fontSize: 12, fontVariant: ['tabular-nums'], color: c.textSecondary, marginTop: 3 },
+  source: { fontFamily: Type.dek.fontFamily, fontSize: 14, lineHeight: 19, color: c.textSecondary, marginTop: 6 },
+
+  // runs
+  runList: { borderTopWidth: 1, borderColor: c.rule },
+  run: { borderBottomWidth: 1, borderColor: c.rule, paddingTop: 14, paddingBottom: 16, gap: 6 },
+  runCurrent: { borderBottomWidth: 3 },
+  runHead: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', columnGap: 12, rowGap: 4 },
+  runName: { fontFamily: Fonts.display, fontSize: 30, lineHeight: 32, textTransform: 'uppercase', color: c.text },
+  runNamePhone: { fontFamily: Fonts.display, fontSize: 26, lineHeight: 28, textTransform: 'uppercase', color: c.text },
+  runDate: { ...Type.label, fontFamily: Fonts.label, fontSize: 12, color: c.textSecondary, marginLeft: 'auto' },
+  runChanges: { gap: 2 },
+  changeText: { fontFamily: Type.label.fontFamily, fontSize: 15, lineHeight: 21, color: c.text },
+  stats: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 30, rowGap: 12, marginTop: 6 },
+  statGroup: { flexDirection: 'row', columnGap: 18, borderTopWidth: 1, borderColor: c.rule, paddingTop: 6 },
+  stat: { minWidth: 52 },
+  statLabel: { ...Type.label, fontFamily: Fonts.label, fontSize: 10, letterSpacing: 1.1, color: c.textSecondary },
+  statValue: { fontFamily: Fonts.mono, fontSize: 18, lineHeight: 23, fontVariant: ['tabular-nums'], color: c.text },
+  statBlock: { alignSelf: 'flex-start', paddingHorizontal: 5, paddingTop: 1, marginTop: 2 },
+  statDelta: { fontFamily: Fonts.mono, fontSize: 13, lineHeight: 17, fontVariant: ['tabular-nums'] },
+  statDeltaPlain: { color: c.textSecondary, marginTop: 2 },
+
+  // suggestions
+  headline: { gap: 6, borderLeftWidth: 6, borderColor: c.rule, paddingLeft: 14, marginBottom: 10 },
+  headlineText: { fontFamily: face('body', 500), fontSize: 22, lineHeight: 31, color: c.text, maxWidth: 820 },
+  headlineTextPhone: { fontFamily: face('body', 500), fontSize: 19, lineHeight: 27, color: c.text },
+  idea: { borderTopWidth: 3, borderColor: c.rule, paddingTop: 12, marginTop: 22, gap: 6 },
+  ideaHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  rank: { backgroundColor: c.rule, paddingHorizontal: 9, paddingTop: 4, paddingBottom: 3, minWidth: 34, alignItems: 'center' },
+  rankText: { fontFamily: Fonts.display, fontSize: 24, lineHeight: 28, color: c.background },
+  ideaWords: { flex: 1, minWidth: 0, gap: 6 },
+  ideaTitle: { fontFamily: Fonts.display, fontSize: 30, lineHeight: 32, textTransform: 'uppercase', color: c.text },
+  ideaTitlePhone: { fontFamily: Fonts.display, fontSize: 24, lineHeight: 27, textTransform: 'uppercase', color: c.text },
+  agree: { marginBottom: 2 },
+  ideaBody: { gap: 6, marginTop: 4, maxWidth: 820 },
+  line: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 23, color: c.text },
+  lineWarn: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 23, color: c.warning },
+  lineLabel: { ...Type.label, fontSize: 12, color: c.text },
+  lineLabelWarn: { ...Type.label, fontSize: 12, color: c.warning },
+  obs: { borderBottomWidth: 1, borderColor: c.separator, paddingVertical: 10, gap: 3 },
+  obsLabel: { fontFamily: Type.label.fontFamily, fontSize: 15, color: c.text },
+  quote: { fontFamily: Type.dek.fontFamily, fontSize: 16, lineHeight: 23, color: c.textSecondary },
+  check: { fontFamily: Fonts.body, fontSize: 14, lineHeight: 20, color: c.text },
+  checkWarn: { fontFamily: Fonts.body, fontSize: 14, lineHeight: 20, color: c.warning },
+  checkLabel: { ...Type.label, fontSize: 11 },
+  measured: { fontFamily: Fonts.label, fontSize: 15, lineHeight: 21, fontVariant: ['tabular-nums'], color: c.text,
+    borderBottomWidth: 1, borderColor: c.separator, paddingVertical: 7 },
+  measuredFirst: { borderTopWidth: 2, borderTopColor: c.rule },
+}));

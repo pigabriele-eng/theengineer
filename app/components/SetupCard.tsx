@@ -1,18 +1,22 @@
-// The Setup section of the session page: is there a sheet, what changed from the previous run, and the way in.
-import { Link, useFocusEffect, useRouter } from 'expo-router';
+// The Setup part of the session page: is there a sheet, what changed from the previous run, and the way in. A ruled
+// sub-head ("SETUP" in Archivo capitals over a 3 px ink rule), the changes on faint rules, and text links. `bare`
+// leaves the sub-head out, for a page that sets the card inside a numbered section of its own.
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { TextLink } from '@/components/Programme';
+import { Text, View } from '@/components/Themed';
+import { ErrorLine, Note, SubHead, Working } from '@/components/ToolForm';
 import { setupApi, Sheet } from '@/lib/setup';
+import { Fonts, themed } from '@/constants/Theme';
 
 const SHOWN = 4;
 
-export function SetupCard({ sessionId }: { sessionId: number }) {
+export function SetupCard({ sessionId, bare }: { sessionId: number; bare?: boolean }) {
+  const styles = useStyles();
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const tint = useThemeColor({}, 'tint');
   const router = useRouter();
 
   // Again on coming back from the sheet, so the summary is current.
@@ -55,64 +59,36 @@ export function SetupCard({ sessionId }: { sessionId: number }) {
           : `${count} values · same setup as ${prev}.`;
 
   return (
-    <View style={styles.section}>
-      <Text style={styles.h2}>Setup</Text>
-      {!sheet && !error && <ActivityIndicator style={styles.left} />}
-      {line ? <Text style={styles.sub}>{line}</Text> : null}
-      {sheet?.changes.slice(0, SHOWN).map((c) => (
-        <Text key={c.key} style={styles.change}>
-          {c.text}
-        </Text>
-      ))}
-      {sheet && sheet.changes.length > SHOWN && (
-        <Text style={styles.sub}>and {sheet.changes.length - SHOWN} more</Text>
+    <View style={styles.wrap}>
+      {bare ? null : <SubHead>Setup</SubHead>}
+      {!sheet && !error && <Working />}
+      {line ? <Note small>{line}</Note> : null}
+      {sheet && sheet.changes.length > 0 && (
+        <View style={styles.changes}>
+          {sheet.changes.slice(0, SHOWN).map((c) => (
+            <Text key={c.key} style={styles.change}>{c.text}</Text>
+          ))}
+        </View>
       )}
-      {error && <Text style={styles.error}>{error}</Text>}
+      {sheet && sheet.changes.length > SHOWN && <Note small>and {sheet.changes.length - SHOWN} more</Note>}
+      {error ? <ErrorLine>{error}</ErrorLine> : null}
       <View style={styles.actions}>
         {sheet && !sheet.exists && sheet.previous && (
-          <Pressable
-            style={StyleSheet.flatten([styles.button, { borderColor: tint }])}
-            onPress={copy}
-            disabled={busy}>
-            {busy ? (
-              <ActivityIndicator color={tint} />
-            ) : (
-              <Text style={[styles.buttonText, { color: tint }]}>Copy from {prev}</Text>
-            )}
-          </Pressable>
+          <TextLink onPress={copy} disabled={busy} red label={busy ? 'Copying…' : `Copy from ${prev}`} />
         )}
-        {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
-        <Link href={{ pathname: '/tools/setup', params: { session: sessionId } }} asChild>
-          <Pressable style={StyleSheet.flatten([styles.button, { borderColor: tint }])}>
-            <Text style={[styles.buttonText, { color: tint }]}>{sheet?.exists ? 'Setup sheet' : 'Fill in the sheet'}</Text>
-          </Pressable>
-        </Link>
-        <Link href={{ pathname: '/tools/setup', params: { session: sessionId, tab: 'ideas' } }} asChild>
-          <Pressable style={StyleSheet.flatten([styles.button, { borderColor: tint }])}>
-            <Text style={[styles.buttonText, { color: tint }]}>Setup suggestions</Text>
-          </Pressable>
-        </Link>
+        <TextLink href={{ pathname: '/tools/setup', params: { session: sessionId } }}
+          label={sheet?.exists ? 'Setup sheet' : 'Fill in the sheet'} arrow red={!(sheet && !sheet.exists && sheet.previous)} />
+        <TextLink href={{ pathname: '/tools/setup', params: { session: sessionId, tab: 'ideas' } }} label="Setup suggestions"
+          arrow />
       </View>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  section: { gap: 6 },
-  h2: { fontSize: 18, fontWeight: '700' },
-  left: { alignSelf: 'flex-start' },
-  sub: { opacity: 0.7 },
-  change: { fontWeight: '600' },
-  error: { color: '#c8372d' },
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 4 },
-  button: {
-    borderRadius: 8,
-    borderWidth: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    alignItems: 'center',
-    flexGrow: 1,
-    backgroundColor: 'transparent',
-  },
-  buttonText: { fontWeight: '600', fontSize: 15 },
-});
+const useStyles = themed((c) => ({
+  wrap: { gap: 6 },
+  changes: { marginTop: 4 },
+  change: { fontFamily: Fonts.label, fontSize: 15, lineHeight: 20, color: c.text, borderBottomWidth: 1,
+    borderColor: c.separator, paddingVertical: 6 },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 22, rowGap: 12, marginTop: 10 },
+}));

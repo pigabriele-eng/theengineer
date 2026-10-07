@@ -8,9 +8,11 @@ import {
 import * as DocumentPicker from 'expo-document-picker';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, TextInput, TextStyle } from 'react-native';
 
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { MainAction, PageHead, Tabs, useText } from '@/components/Picks';
+import { Colophon, Fig, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
+import { Text, View } from '@/components/Themed';
 import {
   api,
   DebriefLanguage,
@@ -20,6 +22,7 @@ import {
   sectionName,
   Session,
 } from '@/lib/api';
+import { Fonts, themed, useTheme } from '@/constants/Theme';
 
 const MODES: [DebriefMode, string][] = [
   ['individual', 'One driver'],
@@ -38,6 +41,10 @@ const clock = (ms: number) => {
 };
 
 export default function DebriefScreen() {
+  const styles = useStyles();
+  const t = useText();
+  const wide = useWide();
+  const theme = useTheme();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [mode, setMode] = useState<DebriefMode>('individual');
@@ -47,8 +54,6 @@ export default function DebriefScreen() {
   const [typing, setTyping] = useState(false);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const rec = useAudioRecorderState(recorder, 250);
-  const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
 
   useFocusEffect(
     useCallback(() => {
@@ -108,75 +113,75 @@ export default function DebriefScreen() {
     await send({ uri: a.uri, name: a.name, file: a.file });
   };
 
-  const chip = (selected: boolean) => [styles.chip, selected && { borderColor: tint }];
-  const chipText = (selected: boolean) => (selected ? { color: tint } : undefined);
+  const off = busy || sessionId == null;
+  const session = sessions.find((s) => s.id === sessionId);
 
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.container}>
-      <Text style={styles.h2}>Session</Text>
-      <View style={styles.chips}>
-        {sessions.slice(0, 6).map((s) => (
-          <Pressable key={s.id} onPress={() => setSessionId(s.id)} style={chip(s.id === sessionId)}>
-            <Text style={chipText(s.id === sessionId)}>{s.name ?? `Session ${s.id}`}</Text>
+    <Page keyboardShouldPersistTaps="handled">
+      <PageHead title="Debrief"
+        dek="Record what the driver says after the run. It comes back as points by corner and phase, each one checked against the data." />
+
+      <Section no={1} title="Who and what" dek={session ? `Goes with ${session.name ?? `session ${session.id}`}.` : undefined}>
+        <View style={wide ? styles.setupWide : styles.setup}>
+          {sessions.length > 0 ? (
+            <Tabs label="Session" value={sessionId} onChange={setSessionId} style={wide ? styles.setupMain : undefined}
+              items={sessions.slice(0, 6).map((s) => ({ key: s.id, label: s.name ?? `Session ${s.id}` }))} />
+          ) : (
+            <View style={wide ? styles.setupMain : undefined}>
+              <Label muted small>Session</Label>
+              <Text style={StyleSheet.flatten([t.note, styles.gapTop])}>Create a session on the Sessions page first.</Text>
+            </View>
+          )}
+          <Tabs label="Who is talking" value={mode} onChange={setMode}
+            items={MODES.map(([key, name]) => ({ key, label: name }))} />
+          <Tabs label="Language" value={language} onChange={setLanguage}
+            items={LANGUAGES.map(([key, name]) => ({ key, label: name }))} />
+        </View>
+      </Section>
+
+      <Section no={2} title="Record">
+        <View style={wide ? styles.recordWide : styles.record}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={rec.isRecording ? 'Stop and send' : 'Start recording'}
+            disabled={off}
+            onPress={rec.isRecording ? stop : start}
+            style={StyleSheet.flatten([styles.button, off && styles.dim])}>
+            <View style={rec.isRecording ? styles.stopIcon : styles.recIcon} />
           </Pressable>
-        ))}
-        {sessions.length === 0 && <Text style={styles.note}>Create a session on the Sessions tab first.</Text>}
-      </View>
+          <View style={styles.recordWords}>
+            <Fig label={rec.isRecording ? 'Recording' : 'Length'} value={clock(rec.durationMillis)} size={wide ? 88 : 64} />
+            <Text style={t.italic}>
+              {busy ? 'Sending…' : rec.isRecording ? 'Recording. Tap the square to stop and send.' : 'Tap the red square to record the debrief.'}
+            </Text>
+            {busy && <ActivityIndicator style={styles.left} color={theme.text} />}
+          </View>
+        </View>
+        <View style={styles.links}>
+          <TextLink label="Upload a recording instead" onPress={pick} disabled={busy || rec.isRecording} />
+        </View>
+        {status && <Text style={StyleSheet.flatten([t.error, styles.gapTop])}>{status}</Text>}
+      </Section>
 
-      <Text style={styles.h2}>Who is talking</Text>
-      <View style={styles.chips}>
-        {MODES.map(([key, name]) => (
-          <Pressable key={key} onPress={() => setMode(key)} style={chip(key === mode)}>
-            <Text style={chipText(key === mode)}>{name}</Text>
-          </Pressable>
-        ))}
-      </View>
+      <Section no={3} title="Or type it" dek="Points written by hand, filed under the report's sections.">
+        <TextLink label={typing ? 'Hide typed points' : 'Type points by hand'} onPress={() => setTyping((v) => !v)} />
+        {typing && sessionId != null && <TypedPoints sessionId={sessionId} />}
+      </Section>
 
-      <Text style={styles.h2}>Language</Text>
-      <View style={styles.chips}>
-        {LANGUAGES.map(([key, name]) => (
-          <Pressable key={key} onPress={() => setLanguage(key)} style={chip(key === language)}>
-            <Text style={chipText(key === language)}>{name}</Text>
-          </Pressable>
-        ))}
-      </View>
-
-      <View style={styles.recordBox}>
-        <Text style={styles.clock}>{clock(rec.durationMillis)}</Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={rec.isRecording ? 'Stop and send' : 'Start recording'}
-          disabled={busy || sessionId == null}
-          onPress={rec.isRecording ? stop : start}
-          style={[styles.record, { borderColor: tint, opacity: busy || sessionId == null ? 0.4 : 1 }]}>
-          <View style={[rec.isRecording ? styles.stopIcon : styles.recIcon]} />
-        </Pressable>
-        <Text style={styles.note}>
-          {busy ? 'Sending…' : rec.isRecording ? 'Recording. Tap to stop and send.' : 'Tap to record the debrief.'}
-        </Text>
-        {busy && <ActivityIndicator />}
-      </View>
-
-      <Pressable style={[styles.secondary, { borderColor: tint }]} onPress={pick} disabled={busy || rec.isRecording}>
-        <Text style={{ color: tint, fontWeight: '600' }}>Upload a recording instead</Text>
-      </Pressable>
-      {status && <Text style={styles.error}>{status}</Text>}
-
-      <Pressable onPress={() => setTyping((t) => !t)}>
-        <Text style={[styles.link, { color: tint }]}>{typing ? 'Hide typed points' : 'Or type points by hand'}</Text>
-      </Pressable>
-      {typing && sessionId != null && <TypedPoints sessionId={sessionId} />}
-    </ScrollView>
+      <Colophon left="Debrief" right="Recorded after the run" />
+    </Page>
   );
 }
 
 function TypedPoints({ sessionId }: { sessionId: number }) {
+  const styles = useStyles();
+  const t = useText();
+  const theme = useTheme();
   const [section, setSection] = useState(SECTIONS[0][0]);
   const [draft, setDraft] = useState('');
   const [points, setPoints] = useState<DebriefPointIn[]>([]);
   const [status, setStatus] = useState<string | null>(null);
-  const tint = useThemeColor({}, 'tint');
-  const text = useThemeColor({}, 'text');
+  const [focus, setFocus] = useState(false);
 
   const add = () => {
     if (!draft.trim()) return;
@@ -197,58 +202,62 @@ function TypedPoints({ sessionId }: { sessionId: number }) {
 
   return (
     <View style={styles.typed}>
-      <View style={styles.chips}>
-        {SECTIONS.map(([key, name]) => (
-          <Pressable key={key} onPress={() => setSection(key)} style={[styles.chip, key === section && { borderColor: tint }]}>
-            <Text style={key === section ? { color: tint } : undefined}>{name}</Text>
-          </Pressable>
-        ))}
+      <Tabs label="Section" value={section} onChange={setSection}
+        items={SECTIONS.map(([key, name]) => ({ key, label: name }))} />
+      <View>
+        <Label small style={styles.inputLabel}>The point</Label>
+        <TextInput
+          value={draft}
+          onChangeText={setDraft}
+          onSubmitEditing={add}
+          placeholder="e.g. Entry understeer in T1, worse on new tyres"
+          placeholderTextColor={theme.textMuted}
+          multiline
+          onFocus={() => setFocus(true)}
+          onBlur={() => setFocus(false)}
+          style={StyleSheet.flatten([styles.input, focus && styles.inputFocus])}
+        />
       </View>
-      <TextInput
-        value={draft}
-        onChangeText={setDraft}
-        onSubmitEditing={add}
-        placeholder="e.g. Entry understeer in T1, worse on new tyres"
-        placeholderTextColor="#888"
-        multiline
-        style={[styles.input, { color: text }]}
-      />
-      <Pressable style={[styles.secondary, { borderColor: tint }]} onPress={add}>
-        <Text style={{ color: tint, fontWeight: '600' }}>Add point</Text>
-      </Pressable>
-      {points.map((p, i) => (
-        <View key={i} style={styles.point}>
-          <Text style={styles.pointSection}>{sectionName(p.section)}</Text>
-          <Text>{p.text}</Text>
+      <TextLink label="Add point" onPress={add} disabled={!draft.trim()} />
+      {points.length > 0 && (
+        <View style={styles.points}>
+          {points.map((p, i) => (
+            <View key={i} style={styles.point}>
+              <Label muted small>{sectionName(p.section)}</Label>
+              <Text style={t.body}>{p.text}</Text>
+            </View>
+          ))}
         </View>
-      ))}
-      <Pressable style={[styles.button, { backgroundColor: tint, opacity: points.length ? 1 : 0.4 }]} onPress={save}
-        disabled={!points.length}>
-        <Text style={styles.buttonText}>Save debrief</Text>
-      </Pressable>
-      {status && <Text style={styles.note}>{status}</Text>}
+      )}
+      <MainAction label={`Save debrief${points.length ? ` (${points.length})` : ''}`} onPress={save}
+        disabled={!points.length} />
+      {status && <Text style={t.note}>{status}</Text>}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { padding: 16, gap: 12 },
-  note: { opacity: 0.7, textAlign: 'center' },
-  error: { color: '#c8372d' },
-  h2: { fontSize: 16, fontWeight: '700', marginTop: 4 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { borderWidth: 1, borderColor: '#8884', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 4 },
-  recordBox: { alignItems: 'center', gap: 10, paddingVertical: 16 },
-  clock: { fontSize: 40, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  record: { width: 88, height: 88, borderRadius: 44, borderWidth: 4, alignItems: 'center', justifyContent: 'center' },
-  recIcon: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#d93a2f' },
-  stopIcon: { width: 32, height: 32, borderRadius: 4, backgroundColor: '#d93a2f' },
-  link: { fontWeight: '600', paddingVertical: 4 },
-  typed: { gap: 12 },
-  input: { borderWidth: 1, borderColor: '#8884', borderRadius: 8, padding: 12, minHeight: 80, fontSize: 16 },
-  secondary: { borderWidth: 1, borderRadius: 8, padding: 10, alignItems: 'center' },
-  point: { borderLeftWidth: 3, borderColor: '#8886', paddingLeft: 10, gap: 2 },
-  pointSection: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
-  button: { borderRadius: 8, padding: 14, alignItems: 'center' },
-  buttonText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-});
+const useStyles = themed((c) => ({
+  setup: { gap: 22 },
+  setupWide: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 48, rowGap: 22, alignItems: 'flex-start' },
+  setupMain: { flexBasis: 360, flexGrow: 1, flexShrink: 1, minWidth: 0 },
+  gapTop: { marginTop: 8 },
+  record: { flexDirection: 'row', alignItems: 'center', gap: 20 },
+  recordWide: { flexDirection: 'row', alignItems: 'center', gap: 36 },
+  recordWords: { flexShrink: 1, minWidth: 0, gap: 8 },
+  // the record key: a square ink frame with the red square in it, a smaller ink square to stop
+  button: { width: 96, height: 96, borderWidth: 3, borderColor: c.rule, alignItems: 'center', justifyContent: 'center' },
+  recIcon: { width: 56, height: 56, backgroundColor: c.mark },
+  stopIcon: { width: 34, height: 34, backgroundColor: c.text },
+  dim: { opacity: 0.4 },
+  left: { alignSelf: 'flex-start' },
+  links: { marginTop: 22 },
+  typed: { gap: 18, marginTop: 20, maxWidth: 760 },
+  inputLabel: { marginBottom: 6 },
+  input: { borderWidth: 1, borderColor: c.rule, borderRadius: 0, padding: 12, minHeight: 88, fontSize: 16, lineHeight: 22,
+    fontFamily: Fonts.body, color: c.text, backgroundColor: c.background, textAlignVertical: 'top',
+    // the browser's own focus ring is rounded: a heavier ink frame shows the focus instead
+    outlineWidth: 0 } as TextStyle,
+  inputFocus: { borderWidth: 2, padding: 11 },
+  points: { borderTopWidth: 1, borderColor: c.rule },
+  point: { gap: 3, paddingVertical: 10, borderBottomWidth: 1, borderColor: c.separator },
+}));

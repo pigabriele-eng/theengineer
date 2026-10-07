@@ -3,29 +3,37 @@
 // A dropped folder is opened down to its last file, and each file is handed on with its path from the dropped
 // folder down ("02_ADACGT4_T01_HOC/01_D1S1/a.ld"): the server groups a folder's logs by that path, as it would a
 // zip of the folder. Files of other kinds are left out, with a short note naming what the box takes.
-import { useEffect, useRef, useState } from 'react';
+// In the programme's look: a square box in a heavy ink frame with the headline face, filled in ink while files are
+// dragged over it; while an upload is under way it shows how far it has got (`progress`) in place of the words.
+import { ReactNode, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, View as RNView } from 'react-native';
 
-import { Text, useThemeColor } from '@/components/Themed';
+import { useWide } from '@/components/Programme';
+import { Text } from '@/components/Themed';
+import { Fonts, themed, Type, useTheme } from '@/constants/Theme';
 
 export type Dropped = { file: File; path: string };
 
 const TAKES = 'MoTeC .ld logs with their .ldx, CSV exports (.csv, .txt), zips of them, or folders holding them';
 const hidden = (name: string) => name.startsWith('.') || name === '__MACOSX'; // .DS_Store, Mac resource forks
 
-export function DropZone({ accept, onFiles, onPick, busy, title, hint, minHeight }: {
+export function DropZone({ accept, onFiles, onPick, busy, title, action, hint, minHeight, progress }: {
   accept: string[]; // file name endings taken, lower case with the dot: ['.ld', '.zip', ...]
   onFiles: (files: Dropped[]) => void;
   onPick: () => void; // a click: the file picker
-  busy?: boolean; // an upload is under way: a spinner, and drops wait for it
-  title: string;
+  busy?: boolean; // an upload is under way: drops wait for it
+  title: string; // the headline: "Drop logs, zips or folders here"
+  action?: string; // the underlined words under it: "or click to pick them"
   hint?: string;
   minHeight?: number; // taller than the usual box (the Upload page fills the screen with it)
+  progress?: ReactNode; // shown in the box while busy (else a spinner)
 }) {
+  const styles = useStyles();
+  const wide = useWide();
+  const c = useTheme();
   const box = useRef<RNView>(null);
   const [over, setOver] = useState(false); // files are being dragged over the box
   const [note, setNote] = useState<{ text: string; warn: boolean } | null>(null);
-  const tint = useThemeColor({}, 'tint');
   const latest = useRef({ accept, onFiles, busy });
   latest.current = { accept, onFiles, busy };
 
@@ -103,16 +111,18 @@ export function DropZone({ accept, onFiles, onPick, busy, title, hint, minHeight
   return (
     <RNView ref={box} style={styles.wrap}>
       <Pressable onPress={() => { setNote(null); onPick(); }} disabled={busy} accessibilityRole="button"
-        accessibilityLabel={title}
-        style={StyleSheet.flatten([styles.zone, { borderColor: tint }, minHeight != null && { minHeight }, over && styles.over])}>
+        accessibilityLabel={`${title}${action ? `, ${action}` : ''}`}
+        style={StyleSheet.flatten([styles.zone, busy && progress ? styles.zoneBusy : null,
+          minHeight != null && { minHeight }, over && styles.over])}>
         {busy ? (
-          <ActivityIndicator color={tint} />
+          progress ?? <ActivityIndicator color={c.text} />
         ) : (
           <>
-            <Text style={StyleSheet.flatten([styles.title, { color: tint }])}>
+            <Text style={StyleSheet.flatten([wide ? styles.title : styles.titlePhone, over && styles.onInk])}>
               {over ? 'Drop to upload' : title}
             </Text>
-            {hint ? <Text style={styles.hint}>{hint}</Text> : null}
+            {action && !over ? <Text style={styles.action}>{action}</Text> : null}
+            {hint ? <Text style={StyleSheet.flatten([styles.hint, over && styles.onInk])}>{hint}</Text> : null}
           </>
         )}
       </Pressable>
@@ -166,14 +176,20 @@ async function walk(entry: FileSystemEntry): Promise<Dropped[]> {
   return (await Promise.all(children.map(walk))).flat();
 }
 
-const styles = StyleSheet.create({
-  wrap: { gap: 6 },
+const useStyles = themed((c) => ({
+  wrap: { gap: 8 },
   // three times the first box's height (Gabriele asked for a bigger target)
-  zone: { borderWidth: 2, borderStyle: 'dashed', borderRadius: 12, paddingVertical: 48, paddingHorizontal: 16,
-    alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 252 },
-  over: { borderStyle: 'solid', backgroundColor: '#8882' },
-  title: { fontWeight: '600', fontSize: 20, textAlign: 'center' },
-  hint: { fontSize: 14, opacity: 0.65, textAlign: 'center' },
-  note: { opacity: 0.7 },
-  warn: { color: '#b26b00' },
-});
+  zone: { borderWidth: 3, borderColor: c.rule, paddingVertical: 40, paddingHorizontal: 20, alignItems: 'center',
+    justifyContent: 'center', gap: 14, minHeight: 252 },
+  zoneBusy: { alignItems: 'stretch' },
+  over: { backgroundColor: c.rule },
+  title: { fontFamily: Fonts.display, fontSize: 44, lineHeight: 46, textTransform: 'uppercase', textAlign: 'center',
+    color: c.text, maxWidth: 760 },
+  titlePhone: { fontFamily: Fonts.display, fontSize: 30, lineHeight: 33, textTransform: 'uppercase', textAlign: 'center',
+    color: c.text },
+  action: { ...Type.link, color: c.text, borderBottomWidth: 2, borderColor: c.mark, paddingBottom: 1 },
+  hint: { fontFamily: Type.dek.fontFamily, fontSize: 16, lineHeight: 22, color: c.textSecondary, textAlign: 'center' },
+  onInk: { color: c.background },
+  note: { fontFamily: Fonts.body, fontSize: 15, lineHeight: 21, color: c.textSecondary },
+  warn: { fontFamily: Fonts.body, fontSize: 15, lineHeight: 21, color: c.warning },
+}));

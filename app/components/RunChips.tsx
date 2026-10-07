@@ -22,6 +22,7 @@ import {
   RunFields,
   RunSet,
 } from '@/lib/garage';
+import { Fonts, themed, Type, useTheme } from '@/constants/Theme';
 import { seasonsApi } from '@/lib/seasons';
 
 export type PickerKind = 'driver' | 'car';
@@ -64,13 +65,13 @@ export function RunChips({ run, garage, open, onOpen }: {
   open: PickerKind | null;
   onOpen: (what: PickerKind | null) => void;
 }) {
-  const tint = useThemeColor({}, 'tint');
+  const styles = useStyles();
   // a driver made a moment ago is named by the run until the garage is loaded again
   const driver = garage?.drivers.find((d) => d.id === run.driver_id)
     ?? (run.driver_id != null && run.driver ? { name: run.driver } : undefined);
   const car = garage?.cars.find((c) => c.id === run.car_id);
   const chip = (what: PickerKind, set: boolean) =>
-    StyleSheet.flatten([styles.chip, !set && styles.unset, open === what && { borderColor: tint, borderStyle: 'solid' as const }]);
+    StyleSheet.flatten([styles.chip, !set && styles.unset, open === what && styles.chipOn]);
   return (
     <View style={styles.chips}>
       <Pressable onPress={() => onOpen(open === 'driver' ? null : 'driver')} hitSlop={4} style={chip('driver', !!driver)}
@@ -120,6 +121,8 @@ function DriverList({ run, garage, onPick, onClose, eventDrivers }: {
   onClose: () => void;
   eventDrivers: number[];
 }) {
+  const styles = useStyles();
+  const theme = useTheme();
   const [typing, setTyping] = useState(false);
   const [name, setName] = useState('');
   const tint = useThemeColor({}, 'tint');
@@ -134,8 +137,8 @@ function DriverList({ run, garage, onPick, onClose, eventDrivers }: {
     const on = d.id === run.driver_id;
     return (
       <Pressable key={d.id} onPress={() => onPick({ driver_id: d.id })} accessibilityRole="button"
-        accessibilityState={{ selected: on }} style={StyleSheet.flatten([styles.option, on && { borderColor: tint }])}>
-        <Text style={StyleSheet.flatten([styles.optionText, on && { color: tint }])}>{d.name}</Text>
+        accessibilityState={{ selected: on }} style={StyleSheet.flatten([styles.option, on && styles.optionOn])}>
+        <Text style={styles.optionText}>{d.name}</Text>
       </Pressable>
     );
   };
@@ -162,7 +165,7 @@ function DriverList({ run, garage, onPick, onClose, eventDrivers }: {
       )}
       {typing ? (
         <View style={styles.inputRow}>
-          <TextInput value={name} onChangeText={setName} placeholder="New driver's name" placeholderTextColor="#888"
+          <TextInput value={name} onChangeText={setName} placeholder="New driver's name" placeholderTextColor={theme.textMuted}
             autoFocus maxLength={120} onSubmitEditing={add} accessibilityLabel="New driver's name"
             style={StyleSheet.flatten([styles.input, { color: text }])} />
           <Pressable onPress={add} accessibilityRole="button" style={StyleSheet.flatten([styles.button, { borderColor: tint }])}>
@@ -194,6 +197,8 @@ function CarList({ run, garage, onPick, onClose }: {
   onPick: (fields: RunFields) => Promise<void> | void;
   onClose: () => void;
 }) {
+  const styles = useStyles();
+  const theme = useTheme();
   const [adding, setAdding] = useState(false);
   const [number, setNumber] = useState('');
   const [model, setModel] = useState(garage.models[0] ?? '');
@@ -217,8 +222,8 @@ function CarList({ run, garage, onPick, onClose }: {
     const on = c.id === run.car_id;
     return (
       <Pressable key={c.id} onPress={() => onPick({ car_id: c.id })} accessibilityRole="button"
-        accessibilityState={{ selected: on }} style={StyleSheet.flatten([styles.option, on && { borderColor: tint }])}>
-        <Text style={StyleSheet.flatten([styles.optionText, on && { color: tint }])}>{carLong(c)}</Text>
+        accessibilityState={{ selected: on }} style={StyleSheet.flatten([styles.option, on && styles.optionOn])}>
+        <Text style={styles.optionText}>{carLong(c)}</Text>
         {c.team && <Text style={styles.optionSub}>{c.team}</Text>}
       </Pressable>
     );
@@ -230,10 +235,10 @@ function CarList({ run, garage, onPick, onClose }: {
       {adding ? (
         <View style={styles.newCar}>
           <View style={styles.inputRow}>
-            <TextInput value={number} onChangeText={setNumber} placeholder="No." placeholderTextColor="#888" autoFocus
+            <TextInput value={number} onChangeText={setNumber} placeholder="No." placeholderTextColor={theme.textMuted} autoFocus
               maxLength={8} accessibilityLabel="Car number" onSubmitEditing={add}
               style={StyleSheet.flatten([styles.input, styles.number, { color: text }])} />
-            <TextInput value={model} onChangeText={setModel} placeholder="Model" placeholderTextColor="#888"
+            <TextInput value={model} onChangeText={setModel} placeholder="Model" placeholderTextColor={theme.textMuted}
               maxLength={100} accessibilityLabel="Car model" onSubmitEditing={add}
               style={StyleSheet.flatten([styles.input, { color: text }])} />
             <Pressable onPress={add} disabled={busy} accessibilityRole="button"
@@ -245,8 +250,8 @@ function CarList({ run, garage, onPick, onClose }: {
           {garage.models.length > 1 && (
             <View style={styles.options}>
               {garage.models.map((m) => (
-                <Pressable key={m} onPress={() => setModel(m)} style={StyleSheet.flatten([styles.small, m === model && { borderColor: tint }])}>
-                  <Text style={StyleSheet.flatten([styles.smallText, m === model && { color: tint }])}>{m}</Text>
+                <Pressable key={m} onPress={() => setModel(m)} style={StyleSheet.flatten([styles.small, m === model && styles.smallOn])}>
+                  <Text style={styles.smallText}>{m}</Text>
                 </Pressable>
               ))}
             </View>
@@ -273,24 +278,24 @@ function CarList({ run, garage, onPick, onClose }: {
 }
 
 function PanelHead({ title, onClose }: { title: string; onClose: () => void }) {
-  const tint = useThemeColor({}, 'tint');
+  const styles = useStyles();
   return (
     <View style={styles.panelHead}>
       <Text style={styles.panelTitle} numberOfLines={1}>{title}</Text>
-      <Pressable onPress={onClose} hitSlop={8} accessibilityRole="button">
-        <Text style={{ color: tint }}>Close</Text>
+      <Pressable onPress={onClose} hitSlop={8} accessibilityRole="button" style={styles.textButton}>
+        <Text style={styles.textButtonText}>Close</Text>
       </Pressable>
     </View>
   );
 }
 
 function GarageLink() {
-  const tint = useThemeColor({}, 'tint');
+  const styles = useStyles();
   return (
     // Link asChild hands its child's style to a web anchor, which can't take a style array: one object
     <Link href="/garage" asChild>
       <Pressable style={styles.garageLink} accessibilityRole="link">
-        <Text style={StyleSheet.flatten([styles.garageText, { color: tint }])}>Cars, drivers and teams ›</Text>
+        <Text style={styles.garageText}>Cars, drivers and teams →</Text>
       </Pressable>
     </Link>
   );
@@ -306,6 +311,7 @@ export function RunNameEditor({ id, name, kind, logSession, onSaved, onCancel, s
   onCancel: () => void;
   save: (id: number, body: { name: string; kind: SessionKind }) => Promise<unknown>;
 }) {
+  const styles = useStyles();
   const [value, setValue] = useState(name);
   const [k, setK] = useState<SessionKind>(kind);
   const [busy, setBusy] = useState(false);
@@ -324,27 +330,27 @@ export function RunNameEditor({ id, name, kind, logSession, onSaved, onCancel, s
       setBusy(false);
     }
   };
-  const chip = (on: boolean) => StyleSheet.flatten([styles.small, on && { borderColor: tint }]);
+  const chip = (on: boolean) => StyleSheet.flatten([styles.small, on && styles.smallOn]);
   return (
     <View style={styles.editor}>
       <View style={styles.inputRow}>
         <TextInput value={value} onChangeText={setValue} maxLength={120} autoFocus selectTextOnFocus
           accessibilityLabel="Run name" onSubmitEditing={() => submit()}
-          style={StyleSheet.flatten([styles.input, styles.nameInput, { color: text, borderColor: tint }])} />
+          style={StyleSheet.flatten([styles.input, styles.nameInput, { color: text }])} />
         <Pressable onPress={() => submit()} disabled={busy} accessibilityRole="button"
           style={StyleSheet.flatten([styles.button, { borderColor: tint }])}>
           {busy ? <ActivityIndicator color={tint} />
             : <Text style={StyleSheet.flatten([styles.buttonText, { color: tint }])}>Save</Text>}
         </Pressable>
-        <Pressable onPress={onCancel} hitSlop={8} accessibilityRole="button">
-          <Text style={{ color: tint }}>Cancel</Text>
+        <Pressable onPress={onCancel} hitSlop={8} accessibilityRole="button" style={styles.textButton}>
+          <Text style={styles.textButtonText}>Cancel</Text>
         </Pressable>
       </View>
       <View style={styles.options}>
         {QUICK_LABELS.map((q) => (
           <Pressable key={q.label} onPress={() => submit(q.label, q.kind)} disabled={busy} accessibilityRole="button"
             accessibilityLabel={`Name it ${q.label}`} style={chip(value === q.label)}>
-            <Text style={StyleSheet.flatten([styles.smallText, value === q.label && { color: tint }])}>{q.label}</Text>
+            <Text style={styles.smallText}>{q.label}</Text>
           </Pressable>
         ))}
       </View>
@@ -353,7 +359,7 @@ export function RunNameEditor({ id, name, kind, logSession, onSaved, onCancel, s
         {KINDS.map((kk) => (
           <Pressable key={kk} onPress={() => setK(kk)} accessibilityRole="radio" accessibilityState={{ checked: kk === k }}
             style={chip(kk === k)}>
-            <Text style={StyleSheet.flatten([styles.smallText, kk === k && { color: tint }])}>{KIND_NAMES[kk]}</Text>
+            <Text style={styles.smallText}>{KIND_NAMES[kk]}</Text>
           </Pressable>
         ))}
       </View>
@@ -364,13 +370,15 @@ export function RunNameEditor({ id, name, kind, logSession, onSaved, onCancel, s
 }
 
 /** The session page's top: the run's name (tap it to rename) and kind, its driver and car chips, and their lists. */
-export function RunHeader({ run, kind, logSession, onChanged, eventId }: {
+export function RunHeader({ run, kind, logSession, onChanged, eventId, bare = false }: {
   run: RunRef;
   kind: SessionKind;
   logSession?: string | null;
   onChanged: () => void;
   eventId?: number | null; // its event: the event's drivers 1 to 4 are offered first
+  bare?: boolean; // the page's headline already names the run: one line of kind, Rename, driver and car
 }) {
+  const styles = useStyles();
   const { garage, reload } = useGarage();
   const eventDrivers = useEventDrivers(eventId);
   const [open, setOpen] = useState<PickerKind | null>(null);
@@ -378,6 +386,7 @@ export function RunHeader({ run, kind, logSession, onChanged, eventId }: {
   const [local, setLocal] = useState<Partial<RunRef>>({});
   const [note, setNote] = useState<string | null>(null);
   const tint = useThemeColor({}, 'tint');
+  const theme = useTheme();
   const shown = { ...run, ...local };
   const pick = async (fields: RunFields) => {
     setOpen(null);
@@ -403,6 +412,17 @@ export function RunHeader({ run, kind, logSession, onChanged, eventId }: {
             onChanged();
           }}
           onCancel={() => setEditing(false)} />
+      ) : bare ? (
+        <View style={styles.bareLine}>
+          <View style={StyleSheet.flatten([styles.kind, { backgroundColor: theme.rule }])}>
+            <Text style={StyleSheet.flatten([styles.kindText, { color: theme.background }])}>{KIND_NAMES[kind]}</Text>
+          </View>
+          <Pressable onPress={() => setEditing(true)} accessibilityRole="button" accessibilityLabel={`Rename ${run.name}`}
+            hitSlop={4} style={styles.chip}>
+            <Text style={styles.chipText}>Rename</Text>
+          </Pressable>
+          <RunChips run={shown} garage={garage} open={open} onOpen={setOpen} />
+        </View>
       ) : (
         <View style={styles.titleLine}>
           <Pressable onPress={() => setEditing(true)} accessibilityRole="button" accessibilityLabel={`Rename ${run.name}`}
@@ -410,12 +430,12 @@ export function RunHeader({ run, kind, logSession, onChanged, eventId }: {
             <Text style={styles.title} numberOfLines={2}>{run.name}</Text>
             <Text style={StyleSheet.flatten([styles.pencil, { color: tint }])}>✎</Text>
           </Pressable>
-          <View style={styles.kind}>
-            <Text style={styles.kindText}>{KIND_NAMES[kind]}</Text>
+          <View style={StyleSheet.flatten([styles.kind, { backgroundColor: theme.rule }])}>
+            <Text style={StyleSheet.flatten([styles.kindText, { color: theme.background }])}>{KIND_NAMES[kind]}</Text>
           </View>
         </View>
       )}
-      <RunChips run={shown} garage={garage} open={open} onOpen={setOpen} />
+      {(!bare || editing) && <RunChips run={shown} garage={garage} open={open} onOpen={setOpen} />}
       {open && garage && (
         <RunPicker what={open} run={shown} garage={garage} onPick={pick} onClose={() => setOpen(null)}
           eventDrivers={eventDrivers} />
@@ -429,44 +449,52 @@ export function RunHeader({ run, kind, logSession, onChanged, eventId }: {
   );
 }
 
-const styles = StyleSheet.create({
+// The race programme: no boxes or chips. A driver or car is underlined capitals (red while its list is open, faint
+// when unset), a list opens under a thick ink rule, inputs are a single ink rule, the picked option is underlined red.
+const useStyles = themed((c) => ({
   header: { gap: 8, backgroundColor: 'transparent' },
-  titleLine: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', backgroundColor: 'transparent' },
+  titleLine: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', backgroundColor: 'transparent' },
+  bareLine: { flexDirection: 'row', alignItems: 'center', columnGap: 16, rowGap: 8, flexWrap: 'wrap',
+    backgroundColor: 'transparent' },
   titlePress: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 },
-  title: { fontSize: 22, fontWeight: '700', flexShrink: 1 },
+  title: { fontFamily: Fonts.display, fontSize: 30, lineHeight: 32, textTransform: 'uppercase', flexShrink: 1, color: c.text },
   pencil: { fontSize: 15 },
-  kind: { borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2, backgroundColor: '#8882' },
-  kindText: { fontSize: 12, fontWeight: '600', opacity: 0.8 },
-  notice: { fontSize: 13, opacity: 0.8, borderLeftWidth: 3, borderColor: '#8886', paddingLeft: 8 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, backgroundColor: 'transparent' },
-  chip: { borderWidth: 1, borderColor: '#8886', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 4,
-    maxWidth: 180 },
-  unset: { borderStyle: 'dashed', borderColor: '#8888' },
-  chipText: { fontSize: 13, fontWeight: '600' },
-  dim: { opacity: 0.6 },
-  panel: { borderWidth: 1, borderColor: '#8884', borderRadius: 10, padding: 10, gap: 8, marginBottom: 10 },
+  kind: { paddingHorizontal: 7, paddingTop: 2, paddingBottom: 1 },
+  kindText: { ...Type.label, fontSize: 12, letterSpacing: 1.2 },
+  notice: { fontFamily: Fonts.body, fontSize: 15, lineHeight: 21, color: c.textSecondary, borderLeftWidth: 3,
+    borderColor: c.rule, paddingLeft: 8 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, rowGap: 6, backgroundColor: 'transparent' },
+  chip: { borderBottomWidth: 2, borderColor: c.rule, paddingBottom: 1, maxWidth: 220 },
+  chipOn: { borderColor: c.mark },
+  unset: { borderColor: c.borderStrong, opacity: 0.75 },
+  chipText: { ...Type.link, fontSize: 13, letterSpacing: 1.2, color: c.text },
+  dim: { color: c.textMuted },
+  panel: { borderTopWidth: 3, borderColor: c.rule, paddingTop: 10, gap: 10, marginBottom: 10, backgroundColor: 'transparent' },
   panelHead: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: 'transparent' },
-  panelTitle: { flex: 1, fontWeight: '700', fontSize: 15 },
-  group: { fontSize: 11, fontWeight: '700', opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
-  options: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, backgroundColor: 'transparent' },
-  option: { borderWidth: 1, borderColor: '#8886', borderRadius: 18, paddingHorizontal: 14, paddingVertical: 8 },
-  optionText: { fontSize: 15, fontWeight: '600' },
-  optionSub: { fontSize: 11, opacity: 0.6 },
-  small: { borderWidth: 1, borderColor: '#8884', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 4 },
-  smallText: { fontSize: 14 },
-  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', backgroundColor: 'transparent' },
-  input: { flex: 1, minWidth: 120, borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 10,
-    paddingVertical: 8, fontSize: 15 },
+  panelTitle: { flex: 1, fontFamily: Fonts.body, fontWeight: '600', fontSize: 17, color: c.text },
+  group: { ...Type.label, fontSize: 11, color: c.textMuted },
+  options: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 18, rowGap: 10, backgroundColor: 'transparent' },
+  option: { borderBottomWidth: 3, borderColor: c.separator, paddingBottom: 2 },
+  optionOn: { borderColor: c.mark },
+  optionText: { ...Type.link, fontSize: 14, color: c.text },
+  optionSub: { fontFamily: Fonts.label, fontSize: 11, color: c.textMuted },
+  small: { borderBottomWidth: 2, borderColor: c.separator, paddingBottom: 1 },
+  smallOn: { borderColor: c.mark },
+  smallText: { ...Type.label, fontSize: 13, letterSpacing: 1, color: c.text },
+  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 14, flexWrap: 'wrap', backgroundColor: 'transparent' },
+  input: { flex: 1, minWidth: 120, borderBottomWidth: 1, borderColor: c.rule, paddingHorizontal: 0, paddingVertical: 6,
+    fontFamily: Fonts.body, fontSize: 16, backgroundColor: 'transparent' },
   number: { flex: 0, minWidth: 64, width: 64 },
-  nameInput: { fontSize: 16, fontWeight: '600' },
-  newCar: { gap: 8, backgroundColor: 'transparent' },
-  button: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8, minWidth: 64, alignItems: 'center' },
-  buttonText: { fontWeight: '600' },
-  garageLink: { alignSelf: 'flex-start', paddingVertical: 2 },
-  garageText: { fontSize: 13 },
-  editor: { gap: 8, backgroundColor: 'transparent' },
-  kindLabel: { fontSize: 11, fontWeight: '700', opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5,
-    alignSelf: 'center' },
-  note: { fontSize: 12, opacity: 0.6 },
-  error: { color: '#c8372d' },
-});
+  nameInput: { fontFamily: Fonts.label, fontSize: 17 },
+  newCar: { gap: 10, backgroundColor: 'transparent' },
+  button: { borderBottomWidth: 2, borderColor: c.rule, paddingBottom: 1, minWidth: 40, alignItems: 'center' },
+  buttonText: { ...Type.link },
+  textButton: { borderBottomWidth: 2, borderColor: c.separator, paddingBottom: 1 },
+  textButtonText: { ...Type.link, fontSize: 12, color: c.textSecondary },
+  garageLink: { alignSelf: 'flex-start', borderBottomWidth: 2, borderColor: c.rule, paddingBottom: 1 },
+  garageText: { ...Type.link, fontSize: 12, letterSpacing: 1.2, color: c.text },
+  editor: { gap: 10, backgroundColor: 'transparent' },
+  kindLabel: { ...Type.label, fontSize: 11, color: c.textMuted, alignSelf: 'center' },
+  note: { fontFamily: Fonts.body, fontSize: 14, color: c.textMuted },
+  error: { color: c.error },
+}));

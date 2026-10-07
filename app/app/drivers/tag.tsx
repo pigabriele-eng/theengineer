@@ -1,20 +1,27 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 
+import { ErrorLine, MainButton, Note, PageTitle, Said, Tick } from '@/components/Controls';
 import { Choice, DriverChoice, toPick } from '@/components/DriverPicker';
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { Colophon, Page, Section, TextLink, useWide } from '@/components/Programme';
+import { Text, View } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
 import { todayIso } from '@/lib/calendar';
 import { Driver, driversApi } from '@/lib/drivers';
 import { dateRange, dayLabel, dayTitle, Folder } from '@/lib/events';
 import { firstOpen, loadBlocks, Outing, outingsOf, withoutDriver } from '@/lib/tagging';
+import { Fonts, themed, Type } from '@/constants/Theme';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 // Tag outings with their driver: tick outings (or a whole event or day), pick the driver, set it for all of them.
 // One block per event as the Sessions tab shows them, newest first; the event on now (else the newest) opens.
+// The programme's way: section 01 the driver and the button that sets it, section 02 the outings as ruled rows with
+// square tick boxes.
 export default function TagDriversScreen() {
+  const styles = useStyles();
+  const wide = useWide();
   const [blocks, setBlocks] = useState<Folder[] | null>(null);
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [open, setOpen] = useState<Set<string> | null>(null);
@@ -24,8 +31,6 @@ export default function TagDriversScreen() {
   const [done, setDone] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
-  const tint = useThemeColor({}, 'tint');
-  const background = useThemeColor({}, 'background');
   const { event } = useLocalSearchParams<{ event?: string }>(); // opened for one event (asked who drove it)
 
   const load = useCallback(async () => {
@@ -93,33 +98,22 @@ export default function TagDriversScreen() {
   };
 
   // "Tick all 6", or "Untick all" once they all are
-  const tickAll = (outings: Outing[], label: string) => {
+  const tickAll = (outings: Outing[]) => {
     const ids = outings.map((o) => o.id);
     const all = ids.every((id) => picked.has(id));
-    return (
-      <Pressable onPress={() => toggle(ids, !all)} hitSlop={8} accessibilityRole="button"
-        accessibilityLabel={`${all ? 'Untick' : 'Tick'} all of ${label}`}>
-        <Text style={StyleSheet.flatten([styles.tickAll, { color: tint }])}>{all ? 'Untick all' : `Tick all ${ids.length}`}</Text>
-      </Pressable>
-    );
+    return <TextLink label={all ? 'Untick all' : `Tick all ${ids.length}`} onPress={() => toggle(ids, !all)} small />;
   };
 
   const row = (o: Outing) => {
     const on = picked.has(o.id);
     const who = o.driver ?? driverName(o.driver_id);
     return (
-      <Pressable
-        key={o.id}
-        onPress={() => toggle([o.id], !on)}
-        style={styles.row}
-        accessibilityRole="checkbox"
-        aria-checked={on}>
-        <View style={StyleSheet.flatten([styles.box, on && { backgroundColor: tint, borderColor: tint }])}>
-          {on && <Text style={StyleSheet.flatten([styles.tick, { color: background }])}>✓</Text>}
-        </View>
+      <Pressable key={o.id} onPress={() => toggle([o.id], !on)} style={styles.row} accessibilityRole="checkbox"
+        accessibilityState={{ checked: on }} accessibilityLabel={`${o.name}, ${who ?? 'no driver'}`}>
+        <Tick on={on} />
         <View style={styles.rowText}>
-          <Text style={styles.title}>{o.name}</Text>
-          <Text style={StyleSheet.flatten([styles.sub, !who && styles.dim])}>
+          <Text style={styles.rowTitle} numberOfLines={2}>{o.name}</Text>
+          <Text style={StyleSheet.flatten([styles.rowSub, !who && styles.noDriver])}>
             {[o.time, who ?? 'no driver'].filter(Boolean).join(' · ')}
           </Text>
         </View>
@@ -141,17 +135,17 @@ export default function TagDriversScreen() {
       ticked ? `${ticked} ticked` : null,
     ].filter(Boolean).join(' · ');
     return (
-      <View key={b.key} style={StyleSheet.flatten([styles.block, loose && styles.loose])}>
+      <View key={b.key} style={styles.block}>
         <View style={styles.head}>
           <Pressable onPress={() => flip(b.key)} style={styles.headText} accessibilityRole="button"
             aria-expanded={isOpen} accessibilityLabel={`${b.name}, ${summary}`}>
-            <Text style={styles.chevron}>{isOpen ? '▾' : '▸'}</Text>
+            <Text style={styles.chevron}>{isOpen ? '−' : '+'}</Text>
             <View style={styles.headWords}>
-              <Text style={styles.blockTitle} numberOfLines={2}>{b.name}</Text>
-              <Text style={styles.summary}>{summary}</Text>
+              <Text style={wide ? styles.blockTitle : styles.blockTitlePhone} numberOfLines={2}>{b.name}</Text>
+              <Text style={StyleSheet.flatten([styles.summary, missing > 0 && styles.summaryMissing])}>{summary}</Text>
             </View>
           </Pressable>
-          {tickAll(outings, b.name)}
+          {tickAll(outings)}
         </View>
         {isOpen && b.days.map((d, i) => {
           const title = loose ? (d.date ? dayLabel(d.date, { long: true, year: true }) : 'Date not known') : dayTitle(b.days, i);
@@ -159,7 +153,7 @@ export default function TagDriversScreen() {
             <View key={d.date ?? 'undated'} style={styles.day}>
               <View style={styles.dayHead}>
                 <Text style={styles.dayTitle} numberOfLines={1}>{title}</Text>
-                {tickAll(d.sessions, title)}
+                {tickAll(d.sessions)}
               </View>
               {(d.sessions as Outing[]).map(row)}
             </View>
@@ -169,90 +163,76 @@ export default function TagDriversScreen() {
     );
   };
 
+  const named = choice != null && 'id' in choice ? driverName(choice.id) : null;
   return (
-    <ScrollView style={{ backgroundColor: background }} contentContainerStyle={styles.outer}>
+    <Page>
       <Stack.Screen options={{ title: 'Tag drivers' }} />
-      <View style={styles.page}>
-        <Text style={styles.intro}>
-          Tick the outings one driver drove (or a whole event or day), pick the driver, and set it for all of them at once.
-        </Text>
+      <PageTitle kicker="Drivers" title="Tag drivers"
+        dek="Tick the outings one driver drove (or a whole event or day), pick the driver, and set it for all of them at once." />
 
-        <Text style={styles.h2}>Driver</Text>
-        <DriverChoice
-          drivers={drivers}
-          value={choice}
-          onChange={(c) => {
+      <Section no={1} title="Driver" dek="Who drove the outings you tick.">
+        <View style={styles.driver}>
+          <DriverChoice drivers={drivers} value={choice} onChange={(c) => {
             setChoice(c);
             setConfirmRemove(false);
-          }}
-        />
-        {choice != null && 'id' in choice && (
-          <Pressable onPress={remove} hitSlop={8}>
-            <Text style={styles.remove}>
-              {confirmRemove
-                ? `Tap again to remove ${driverName(choice.id)}: their outings stay, without a driver`
-                : `Remove ${driverName(choice.id)}`}
-            </Text>
-          </Pressable>
-        )}
-
-        <Pressable
-          onPress={apply}
-          disabled={!ready || busy}
-          style={StyleSheet.flatten([styles.button, { backgroundColor: tint }, (!ready || busy) && styles.disabled])}>
-          {busy ? (
-            <ActivityIndicator color={background} />
-          ) : (
-            <Text style={StyleSheet.flatten([styles.buttonText, { color: background }])}>
-              {picked.size === 0
+          }} />
+          {named ? (
+            <View style={styles.removeRow}>
+              <TextLink label={confirmRemove ? `Yes, remove ${named}` : `Remove ${named}`} onPress={remove} small />
+              {confirmRemove ? <Note>Their outings stay, without a driver.</Note> : null}
+              {confirmRemove ? <TextLink label="Keep" onPress={() => setConfirmRemove(false)} small /> : null}
+            </View>
+          ) : null}
+          <View style={styles.apply}>
+            <MainButton onPress={apply} busy={busy} disabled={!ready}
+              label={picked.size === 0
                 ? 'Tick the outings below'
                 : !ready
                   ? `Pick the driver of ${plural(picked.size, 'outing')}`
-                  : `Set ${target} on ${plural(picked.size, 'outing')}`}
-            </Text>
-          )}
-        </Pressable>
-        {done && <Text style={styles.done}>{done}</Text>}
-        {error && <Text style={styles.error}>{error}</Text>}
+                  : `Set ${target} on ${plural(picked.size, 'outing')}`} />
+          </View>
+          {done && <Said text={done} onPress={() => setDone(null)} />}
+          {error && <ErrorLine>{error}</ErrorLine>}
+        </View>
+      </Section>
 
-        {!blocks && !error && <ActivityIndicator />}
+      <Section no={2} title="Outings" dek="By event, newest first. Tap an event to open it.">
+        {!blocks && !error && <ActivityIndicator style={styles.spinner} />}
         {blocks?.map(block)}
-        {blocks?.length === 0 && <Text style={styles.dim}>No outings yet.</Text>}
-      </View>
-    </ScrollView>
+        {blocks?.length === 0 && <Note>No outings yet.</Note>}
+      </Section>
+
+      <Colophon left="Tag drivers" links={[{ label: 'Garage', href: '/garage' }, { label: 'Compare drivers', href: '/drivers/compare' }]} />
+    </Page>
   );
 }
 
-const styles = StyleSheet.create({
-  outer: { padding: 16, paddingBottom: 32 },
-  page: { width: '100%', maxWidth: 820, alignSelf: 'center', gap: 12 },
-  intro: { opacity: 0.7, lineHeight: 20 },
-  h2: { fontSize: 18, fontWeight: '700' },
-  remove: { color: '#c8372d' },
-  button: { borderRadius: 8, padding: 14, alignItems: 'center' },
-  disabled: { opacity: 0.5 },
-  buttonText: { fontWeight: '600', fontSize: 16 },
-  done: { fontWeight: '600' },
-  error: { color: '#c8372d' },
-  block: { borderWidth: 1, borderColor: '#8884', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
-  loose: { borderStyle: 'dashed' },
-  head: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: 'transparent' },
-  headText: { flex: 1, flexDirection: 'row', alignItems: 'flex-start', gap: 8, paddingVertical: 2 },
-  chevron: { fontSize: 16, lineHeight: 22, width: 14, opacity: 0.6 },
-  headWords: { flex: 1, gap: 2, backgroundColor: 'transparent' },
-  blockTitle: { fontSize: 17, fontWeight: '700' },
-  summary: { opacity: 0.65, fontSize: 13, lineHeight: 18 },
-  tickAll: { fontWeight: '600' },
-  day: { marginTop: 10, backgroundColor: 'transparent' },
-  dayHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 12, paddingVertical: 6,
-    backgroundColor: 'transparent' },
-  dayTitle: { flex: 1, fontSize: 13, fontWeight: '600', opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderTopWidth: 1, borderColor: '#8882' },
-  box: { width: 22, height: 22, borderRadius: 4, borderWidth: 2, borderColor: '#8888', alignItems: 'center', justifyContent: 'center' },
-  tick: { fontWeight: '700', fontSize: 14, lineHeight: 16 },
-  rowText: { flex: 1, backgroundColor: 'transparent' },
-  title: { fontSize: 16, fontWeight: '600' },
-  sub: { opacity: 0.7, marginTop: 2 },
-  dim: { opacity: 0.5 },
-  time: { fontSize: 16, fontVariant: ['tabular-nums'] },
-});
+const useStyles = themed((c) => ({
+  driver: { gap: 18 },
+  removeRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 16, rowGap: 6 },
+  apply: { paddingTop: 4 },
+  spinner: { alignSelf: 'flex-start', marginVertical: 12 },
+
+  block: { borderTopWidth: 2, borderColor: c.rule, paddingTop: 12, paddingBottom: 14 },
+  head: { flexDirection: 'row', alignItems: 'flex-start', gap: 14 },
+  headText: { flex: 1, flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  chevron: { fontFamily: Fonts.display, fontSize: 24, lineHeight: 28, width: 16, color: c.text },
+  headWords: { flex: 1, gap: 4 },
+  blockTitle: { fontFamily: Fonts.display, fontSize: 26, lineHeight: 30, textTransform: 'uppercase', color: c.text },
+  blockTitlePhone: { fontFamily: Fonts.display, fontSize: 21, lineHeight: 25, textTransform: 'uppercase', color: c.text },
+  summary: { fontFamily: Fonts.label, fontSize: 13, letterSpacing: 0.4, lineHeight: 18, color: c.textSecondary,
+    fontVariant: ['tabular-nums'] },
+  summaryMissing: { color: c.text },
+
+  day: { marginTop: 12 },
+  dayHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', gap: 12, paddingBottom: 6,
+    borderBottomWidth: 1, borderColor: c.rule },
+  dayTitle: { ...Type.label, fontFamily: Fonts.label, flex: 1, fontSize: 12, letterSpacing: 1.4, color: c.text },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 10, borderBottomWidth: 1,
+    borderColor: c.separator },
+  rowText: { flex: 1, minWidth: 0 },
+  rowTitle: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 22, color: c.text },
+  rowSub: { fontFamily: Fonts.label, fontSize: 13, letterSpacing: 0.3, lineHeight: 18, color: c.textSecondary, marginTop: 2 },
+  noDriver: { color: c.textMuted },
+  time: { fontFamily: Fonts.label, fontSize: 17, color: c.text, fontVariant: ['tabular-nums'] },
+}));

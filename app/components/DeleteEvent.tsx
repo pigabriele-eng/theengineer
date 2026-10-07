@@ -1,14 +1,20 @@
 // Deleting an event, the same on its page and on the Sessions list: with its runs and their logs, for good (it frees
 // their storage), or only the folder (its runs stay, under Not in an event). What a full delete would remove is asked
 // first (server/app/event_delete.py), so the choice says how many runs and how much storage. The runs in no event
-// ("Not in an event") are deleted the same way, all at once.
+// ("Not in an event", id NO_EVENT) are deleted the same way, all at once, with no folder to keep. In the programme's
+// way: the question in Anton, the red line that it can't be undone, then the choices one under the other, each with
+// what it does: the full delete as a red block, removing only the folder and keeping it as text links.
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
+import { ActivityIndicator, ViewStyle } from 'react-native';
 
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { ErrorLine, MainButton, Note, Said } from '@/components/Controls';
+import { Label, TextLink, useWide } from '@/components/Programme';
+import { Text, View } from '@/components/Themed';
 import { EventDeleted, EventSize, eventsApi, NO_EVENT, storageSize } from '@/lib/events';
+import { Fonts, themed } from '@/constants/Theme';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const NOTICE: ViewStyle = { marginTop: 16 };
 
 // The last full delete, said on the Sessions list: after one on its page, the event's page is gone.
 let lastDeleted: EventDeleted | null = null;
@@ -24,13 +30,16 @@ const subscribe = (l: () => void) => {
   };
 };
 
-/** The choice: delete the event with its runs and logs (danger), only the folder (quiet), or keep it. */
+/** The choice: delete the event with its runs and logs (danger), only the folder (quiet), or keep it. NO_EVENT: the
+ * runs in no event, deleted or kept. */
 export function DeleteEvent({ id, name, onDeleted, onCancel }: {
   id: number | typeof NO_EVENT;
   name: string;
   onDeleted: (how: 'runs' | 'folder') => void;
   onCancel: () => void;
 }) {
+  const styles = useStyles();
+  const wide = useWide();
   const [size, setSize] = useState<EventSize | null>(null);
   const [busy, setBusy] = useState<'runs' | 'folder' | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +73,10 @@ export function DeleteEvent({ id, name, onDeleted, onCancel }: {
   const loose = id === NO_EVENT;
   return (
     <View style={styles.box}>
-      <Text style={styles.title}>{loose ? 'Delete the runs not in an event?' : <>Delete &ldquo;{name}&rdquo;?</>}</Text>
+      <Label>{loose ? 'Delete the runs' : 'Delete the event'}</Label>
+      <Text style={wide ? styles.title : styles.titlePhone}>
+        {loose ? 'Delete the runs not in an event?' : <>Delete &ldquo;{name}&rdquo;?</>}
+      </Text>
       {!size && !error && <ActivityIndicator style={styles.spinner} />}
       {size && runs > 0 && (
         <>
@@ -72,64 +84,61 @@ export function DeleteEvent({ id, name, onDeleted, onCancel }: {
             It holds {plural(runs, 'run')} with {plural(size.laps, 'lap')} and {plural(size.logs, 'log')}
             {size.bytes ? `, ${storageSize(size.bytes)} of storage` : ''}.
           </Text>
-          <Text style={StyleSheet.flatten([styles.text, styles.warning])}>
+          <Text style={styles.warning}>
             Deleting the runs can&apos;t be undone: they go for good, with their logs, laps, debriefs, setup sheets and
             everything worked out from them.
           </Text>
-          <Pressable onPress={() => remove('runs')} disabled={busy != null} accessibilityRole="button"
-            style={StyleSheet.flatten([styles.button, styles.danger, busy != null && styles.dim])}>
-            <Text style={styles.dangerText}>
-              {loose ? `Delete these ${plural(runs, 'run')} and their logs${frees}`
-                : `Delete the event, its ${plural(runs, 'run')} and their logs${frees}`}
-            </Text>
-          </Pressable>
-          {!loose && (
-            <Pressable onPress={() => remove('folder')} disabled={busy != null} accessibilityRole="button"
-              style={StyleSheet.flatten([styles.button, styles.quiet, busy != null && styles.dim])}>
-              <Text style={styles.buttonText}>Only remove the folder, keep the runs</Text>
-              <Text style={styles.hint}>They stay, with their logs, under Not in an event.</Text>
-            </Pressable>
+        </>
+      )}
+      {size && runs === 0 && (
+        <Text style={styles.text}>{loose ? 'There are no runs here.' : 'It has no runs: only the event goes.'}</Text>
+      )}
+      {size && (
+        <View style={styles.choices}>
+          {(runs > 0 || !loose) && (
+            <View style={styles.choice}>
+              <MainButton danger busy={busy === 'runs'} disabled={busy != null} onPress={() => remove('runs')}
+                label={loose ? `Delete these ${plural(runs, 'run')} and their logs${frees}`
+                  : runs > 0 ? `Delete the event, its ${plural(runs, 'run')} and their logs${frees}` : 'Delete the event'} />
+            </View>
           )}
-        </>
+          {runs > 0 && !loose && (
+            <View style={styles.choice}>
+              <TextLink label="Only remove the folder, keep the runs" onPress={() => remove('folder')}
+                disabled={busy != null} />
+              <Note>They stay, with their logs, under Not in an event.</Note>
+            </View>
+          )}
+          <View style={styles.choice}>
+            <TextLink label="Keep it" onPress={onCancel} disabled={busy != null} />
+            <Note>Nothing changes.</Note>
+          </View>
+        </View>
       )}
-      {size && runs === 0 && loose && <Text style={styles.text}>There are no runs here.</Text>}
-      {size && runs === 0 && !loose && (
-        <>
-          <Text style={styles.text}>It has no runs: only the event goes.</Text>
-          <Pressable onPress={() => remove('runs')} disabled={busy != null} accessibilityRole="button"
-            style={StyleSheet.flatten([styles.button, styles.danger, busy != null && styles.dim])}>
-            <Text style={styles.dangerText}>Delete the event</Text>
-          </Pressable>
-        </>
-      )}
-      <Pressable onPress={onCancel} disabled={busy != null} accessibilityRole="button" style={styles.button}>
-        <Text style={styles.buttonText}>Keep it</Text>
-      </Pressable>
+      {!size && error && <TextLink label="Keep it" onPress={onCancel} />}
       {busy && (
         <View style={styles.busy}>
           <ActivityIndicator />
-          <Text style={styles.hint}>{busy === 'runs' ? 'Deleting the runs and their logs…' : 'Removing the folder…'}</Text>
+          <Note>{busy === 'runs' ? 'Deleting the runs and their logs…' : 'Removing the folder…'}</Note>
         </View>
       )}
-      {error && <Text style={styles.error}>{error}</Text>}
+      {error && <ErrorLine>{error}</ErrorLine>}
     </View>
   );
 }
 
-/** "✕ Delete" on an event of the Sessions list; the choice opens under it. */
+/** "Delete" on an event of the Sessions list (or on its runs not in an event, NO_EVENT); the choice opens in a ruled band
+ * under it. */
 export function DeleteEventAction({ id, name, onDeleted }: {
   id: number | typeof NO_EVENT;
   name: string;
   onDeleted: () => void;
 }) {
+  const styles = useStyles();
   const [open, setOpen] = useState(false);
-  const tint = useThemeColor({}, 'tint');
   return (
     <>
-      <Pressable onPress={() => setOpen(!open)} hitSlop={8} accessibilityRole="button"
-        accessibilityLabel={`Delete ${name}`} style={styles.link}>
-        <Text style={StyleSheet.flatten([styles.linkText, { color: tint }])}>✕ Delete</Text>
-      </Pressable>
+      <TextLink label={open ? 'Close' : 'Delete'} onPress={() => setOpen(!open)} small />
       {open && (
         <View style={styles.under}>
           <DeleteEvent id={id} name={name} onCancel={() => setOpen(false)}
@@ -143,47 +152,30 @@ export function DeleteEventAction({ id, name, onDeleted }: {
   );
 }
 
-/** What the last full delete removed, until dismissed. */
+/** What the last full delete removed, until dismissed (tap it). */
 export function DeletedNotice() {
   const d = useSyncExternalStore(subscribe, () => lastDeleted, () => lastDeleted);
   if (!d) return null;
   return (
-    <View style={styles.notice}>
-      <Text style={styles.noticeText}>
-        {d.deleted == null ? `Deleted the ${plural(d.runs, 'run')} not in an event` : <>Deleted &ldquo;{d.name}&rdquo; with {plural(d.runs, 'run')}</>}
-        {' '}and {plural(d.files, 'stored file')}{d.bytes ? `: ${storageSize(d.bytes)} freed` : ''}.
-      </Text>
-      <Pressable onPress={() => setLastDeleted(null)} hitSlop={8} accessibilityRole="button"
-        accessibilityLabel="Dismiss">
-        <Text style={styles.hint}>✕</Text>
-      </Pressable>
+    <View style={NOTICE}>
+      <Said onPress={() => setLastDeleted(null)}
+        text={`${d.deleted == null ? `Deleted the ${plural(d.runs, 'run')} not in an event`
+          : `Deleted “${d.name}” with ${plural(d.runs, 'run')}`} and ${plural(d.files, 'stored file')}${
+          d.bytes ? `: ${storageSize(d.bytes)} freed` : ''}.`} />
     </View>
   );
 }
 
-const RED = '#c8372d';
-
-const styles = StyleSheet.create({
-  box: { gap: 10, backgroundColor: 'transparent' },
-  title: { fontSize: 16, fontWeight: '700' },
+const useStyles = themed((c) => ({
+  box: { gap: 12 },
+  title: { fontFamily: Fonts.display, fontSize: 28, lineHeight: 32, textTransform: 'uppercase', color: c.text },
+  titlePhone: { fontFamily: Fonts.display, fontSize: 23, lineHeight: 27, textTransform: 'uppercase', color: c.text },
   spinner: { alignSelf: 'flex-start' },
-  text: { fontSize: 15, lineHeight: 21 },
-  warning: { color: RED },
-  button: { alignSelf: 'flex-start', maxWidth: '100%', borderWidth: 1, borderColor: '#8884', borderRadius: 8,
-    paddingHorizontal: 14, paddingVertical: 9, gap: 2 },
-  danger: { borderColor: RED, backgroundColor: '#c8372d14' },
-  dangerText: { color: RED, fontWeight: '700', fontSize: 15 },
-  quiet: { borderStyle: 'dashed' },
-  buttonText: { fontWeight: '600', fontSize: 15 },
-  hint: { fontSize: 12, opacity: 0.6 },
-  dim: { opacity: 0.5 },
-  busy: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'transparent' },
-  error: { color: RED },
-  link: { paddingVertical: 2 },
-  linkText: { fontWeight: '600', fontSize: 14 },
-  under: { width: '100%', borderTopWidth: 1, borderColor: '#8884', paddingTop: 10, marginTop: 2,
-    backgroundColor: 'transparent' },
-  notice: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, borderLeftWidth: 3, borderColor: RED,
-    paddingLeft: 10, paddingVertical: 4 },
-  noticeText: { flex: 1, fontSize: 14, lineHeight: 20 },
-});
+  text: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 24, color: c.text },
+  warning: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 24, color: c.error, borderLeftWidth: 3,
+    borderColor: c.error, paddingLeft: 10 },
+  choices: { marginTop: 4, borderTopWidth: 1, borderColor: c.rule },
+  choice: { gap: 6, alignItems: 'flex-start', paddingVertical: 12, borderBottomWidth: 1, borderColor: c.separator },
+  busy: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  under: { width: '100%', marginTop: 6, borderTopWidth: 3, borderColor: c.error, paddingTop: 12 },
+}));

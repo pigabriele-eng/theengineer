@@ -1,20 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, TextInput } from 'react-native';
+import { ActivityIndicator } from 'react-native';
 
 import { OfficialSessionCard } from '@/components/OfficialSessionCard';
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { Field, SubHead, usePrepType } from '@/components/PrepParts';
+import { Label, TextLink, useWide } from '@/components/Programme';
+import { Text, View } from '@/components/Themed';
 import { EventResults, resultsApi, roundTitle, SyncState } from '@/lib/results';
+import { face, themed, useTheme } from '@/constants/Theme';
 
 const POLL_MS = 3000;
 
 /** "Official results" on an event's page: the series round it matches, which car is ours (found from the logged laps
- * or set here), a "Get results" button that fetches the official sheets, and one card per official session. */
-export function ResultsPanel({ eventId }: { eventId: number }) {
+ * or set here), "Get results" to fetch the official sheets, and one ruled column per official session. Its own heading,
+ * a sub-head under a thick rule, unless `heading` is false (inside a section of its own); "Get results" then leads the
+ * panel. */
+export function ResultsPanel({ eventId, heading = true }: { eventId: number; heading?: boolean }) {
+  const styles = useStyles();
+  const type = usePrepType();
+  const theme = useTheme();
+  const wide = useWide();
   const [results, setResults] = useState<EventResults | null>(null);
   const [sync, setSync] = useState<SyncState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
-  const tint = useThemeColor({}, 'tint');
   const alive = useRef(true);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -80,33 +88,27 @@ export function ResultsPanel({ eventId }: { eventId: number }) {
   const progress = running && sync && sync.total > 0 ? ` ${sync.done}/${sync.total}` : '';
   const syncErrors = !running ? (sync?.errors ?? []) : [];
   const noCar = results != null && results.car_number == null;
+  const action = (
+    <View style={styles.action}>
+      {running && <ActivityIndicator size="small" color={theme.text} />}
+      <TextLink label={running ? `Fetching…${progress}` : 'Get results'} onPress={getResults} disabled={running} red />
+    </View>
+  );
 
   return (
     <View style={styles.panel}>
-      <View style={styles.headRow}>
-        <Text style={styles.h2}>Official results</Text>
-        <Pressable onPress={getResults} disabled={running} accessibilityRole="button"
-          style={StyleSheet.flatten([styles.button, { borderColor: tint }, running && styles.dim])}>
-          {running && <ActivityIndicator size="small" />}
-          <Text style={StyleSheet.flatten([styles.buttonText, { color: tint }])}>
-            {running ? `Fetching…${progress}` : 'Get results'}
-          </Text>
-        </Pressable>
-      </View>
-      {running && sync?.what && <Text style={styles.small}>{sync.what}</Text>}
-      {!results && !error && <ActivityIndicator />}
-      {results && <Text style={styles.sub}>{roundTitle(results)}</Text>}
+      {heading ? <SubHead title="Official results" right={action} /> : action}
+      {running && sync?.what && <Text style={type.small}>{sync.what}</Text>}
+      {!results && !error && <ActivityIndicator color={theme.text} style={styles.loading} />}
+      {results && <Text style={styles.round}>{roundTitle(results)}</Text>}
 
       {results && !editing && results.car_number != null && (
         <View style={styles.carRow}>
-          <Text style={styles.sub}>
+          <Label>
             Our car #{results.car_number}
-            {results.car_number_from ? ` (${carFrom(results.car_number_from)})` : ''}
-          </Text>
-          <Pressable onPress={() => setEditing(true)} accessibilityRole="button" hitSlop={6}
-            accessibilityLabel="Change our car number">
-            <Text style={StyleSheet.flatten([styles.edit, { color: tint }])}>✎ Change</Text>
-          </Pressable>
+            {results.car_number_from ? <Text style={styles.from}>{`  (${carFrom(results.car_number_from)})`}</Text> : null}
+          </Label>
+          <TextLink label="Change" small onPress={() => setEditing(true)} />
         </View>
       )}
       {results && (editing || noCar) && (
@@ -118,18 +120,18 @@ export function ResultsPanel({ eventId }: { eventId: number }) {
           }} />
       )}
 
-      {results?.note && <Text style={styles.note}>{results.note}</Text>}
-      {error && <Text style={styles.error}>{error}</Text>}
+      {results?.note && <Text style={type.note}>{results.note}</Text>}
+      {error && <Text style={type.error}>{error}</Text>}
       {syncErrors.length > 0 && (
-        <Text style={styles.error}>Some sheets could not be fetched: {syncErrors.slice(0, 3).join('; ')}</Text>
+        <Text style={type.error}>Some sheets could not be fetched: {syncErrors.slice(0, 3).join('; ')}</Text>
       )}
       {results && results.sessions.length === 0 && !results.note && !running && (
-        <Text style={styles.small}>No official results here yet. Tap Get results to fetch them.</Text>
+        <Text style={type.note}>No official results here yet. Get results fetches them.</Text>
       )}
       {results && results.sessions.length > 0 && (
-        <View style={styles.cards}>
+        <View style={wide ? styles.cards : styles.cardsPhone}>
           {results.sessions.map((s) => (
-            <View key={s.id} style={styles.cardBox}>
+            <View key={s.id} style={wide ? styles.cardBox : undefined}>
               <OfficialSessionCard s={s} />
             </View>
           ))}
@@ -150,11 +152,12 @@ function CarEditor({ eventId, initial, prompt, automatic, onCancel, onSaved }: {
   onCancel: () => void;
   onSaved: (r: EventResults) => void;
 }) {
+  const styles = useStyles();
+  const type = usePrepType();
+  const theme = useTheme();
   const [value, setValue] = useState(initial);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const tint = useThemeColor({}, 'tint');
-  const text = useThemeColor({}, 'text');
   const save = async (body: { car_number?: string }) => {
     setBusy(true);
     setError(null);
@@ -169,54 +172,34 @@ function CarEditor({ eventId, initial, prompt, automatic, onCancel, onSaved }: {
   const number = value.trim().replace(/^#/, '');
   return (
     <View style={styles.editor}>
-      {prompt && <Text style={styles.sub}>Which car is yours? Enter its number.</Text>}
-      <View style={styles.carRow}>
-        <Text style={styles.sub}>Our car #</Text>
-        <TextInput value={value} onChangeText={setValue} placeholder="no." placeholderTextColor="#888"
+      <Label>{prompt ? 'Which car is yours? Enter its number' : 'Our car number'}</Label>
+      <View style={styles.fieldRow}>
+        <Text style={styles.hash}>#</Text>
+        <Field value={value} onChangeText={setValue} placeholder="no." width={80}
           keyboardType="number-pad" maxLength={4} autoFocus={!prompt} editable={!busy}
-          onSubmitEditing={() => number && save({ car_number: number })}
-          style={StyleSheet.flatten([styles.input, { color: text }])} />
-        <Pressable onPress={() => number && save({ car_number: number })} disabled={!number || busy}
-          accessibilityRole="button"
-          style={StyleSheet.flatten([styles.button, { borderColor: tint }, (!number || busy) && styles.dim])}>
-          <Text style={StyleSheet.flatten([styles.buttonText, { color: tint }])}>Save</Text>
-        </Pressable>
-        {automatic && (
-          <Pressable onPress={() => save({})} disabled={busy} accessibilityRole="button" style={styles.quiet}>
-            <Text style={styles.buttonText}>Automatic</Text>
-          </Pressable>
-        )}
-        {!prompt && (
-          <Pressable onPress={onCancel} accessibilityRole="button" hitSlop={6}>
-            <Text style={styles.small}>Cancel</Text>
-          </Pressable>
-        )}
+          accessibilityLabel="Our car number" onSubmitEditing={() => number && save({ car_number: number })} />
+        {/* each link in a view of its own: it lines its underline up with the field's rule */}
+        <View><TextLink label="Save" red onPress={() => number && save({ car_number: number })}
+          disabled={!number || busy} /></View>
+        {automatic && <View><TextLink label="Automatic" small onPress={() => save({})} disabled={busy} /></View>}
+        {!prompt && <View><TextLink label="Cancel" small onPress={onCancel} /></View>}
       </View>
-      {error && <Text style={styles.error}>{error}</Text>}
+      {error && <Text style={type.error}>{error}</Text>}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  panel: { gap: 6, backgroundColor: 'transparent' },
-  headRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12,
-    flexWrap: 'wrap', backgroundColor: 'transparent' },
-  h2: { fontSize: 18, fontWeight: '700' },
-  sub: { fontSize: 14, opacity: 0.8 },
-  small: { fontSize: 12, opacity: 0.6 },
-  note: { fontSize: 13, opacity: 0.8, borderLeftWidth: 3, borderColor: '#8886', paddingLeft: 8 },
-  error: { color: '#c8372d', fontSize: 13 },
-  button: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderRadius: 8,
-    paddingHorizontal: 12, paddingVertical: 7 },
-  buttonText: { fontWeight: '600', fontSize: 14 },
-  quiet: { borderWidth: 1, borderStyle: 'dashed', borderColor: '#8884', borderRadius: 8, paddingHorizontal: 12,
-    paddingVertical: 7 },
-  dim: { opacity: 0.5 },
-  carRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', backgroundColor: 'transparent' },
-  edit: { fontSize: 13, fontWeight: '600' },
-  editor: { gap: 6, backgroundColor: 'transparent' },
-  input: { width: 70, borderWidth: 1, borderColor: '#8884', borderRadius: 8, paddingHorizontal: 10,
-    paddingVertical: 6, fontSize: 15 },
-  cards: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, backgroundColor: 'transparent' },
-  cardBox: { flexGrow: 1, flexBasis: 300, minWidth: 260, backgroundColor: 'transparent' },
-});
+const useStyles = themed((c) => ({
+  panel: { gap: 10 },
+  action: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  loading: { alignSelf: 'flex-start' },
+  round: { fontFamily: face('body', 400, true), fontSize: 17, lineHeight: 24, color: c.textSecondary },
+  carRow: { flexDirection: 'row', alignItems: 'center', columnGap: 14, rowGap: 8, flexWrap: 'wrap' },
+  from: { fontFamily: face('label', 500), letterSpacing: 0.4, textTransform: 'none', color: c.textSecondary },
+  editor: { gap: 8, borderTopWidth: 1, borderBottomWidth: 1, borderColor: c.rule, paddingTop: 10, paddingBottom: 12 },
+  fieldRow: { flexDirection: 'row', alignItems: 'flex-end', columnGap: 14, rowGap: 8, flexWrap: 'wrap' },
+  hash: { fontFamily: face('label', 600), fontSize: 20, lineHeight: 30, color: c.text },
+  cards: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 28, rowGap: 22, marginTop: 6 },
+  cardsPhone: { gap: 22, marginTop: 6 },
+  cardBox: { flexGrow: 1, flexBasis: 300, minWidth: 260 },
+}));
