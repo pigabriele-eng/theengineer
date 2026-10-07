@@ -221,7 +221,7 @@ const useStyles = themed((c) => ({
   count: { gap: 14, marginTop: 18, alignItems: 'flex-start' },
   question: { alignSelf: 'stretch', gap: 10, borderTopWidth: 3, borderColor: c.rule, paddingTop: 10 },
   joined: { alignSelf: 'stretch', gap: 8, borderTopWidth: 1, borderColor: c.rule, paddingTop: 10, alignItems: 'flex-start' },
-  kind: { color: c.mark },
+  kind: { color: c.error }, // red words: the red that reads as text
   prompt: { fontFamily: Fonts.display, fontSize: 24, lineHeight: 28, textTransform: 'uppercase', color: c.text },
   promptPhone: { fontFamily: Fonts.display, fontSize: 19, lineHeight: 23, textTransform: 'uppercase', color: c.text },
   summary: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 24, color: c.text },

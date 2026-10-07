@@ -22,7 +22,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 
 import { Text, View } from '@/components/Themed';
-import { Fonts, Focus, Photo, Space, themed, Type, useTheme, WIDE } from '@/constants/Theme';
+import { Fonts, Focus, Photo, Space, TAP, tapRoom, themed, Type, useTheme, WIDE } from '@/constants/Theme';
 import { noPrint, printFill, printHead } from '@/lib/print';
 
 /** True on a wide screen (desktop, tablet): pages take their multi-column layout. */
@@ -91,7 +91,7 @@ export function Masthead() {
         <View style={styles.mastRow}>
           <View style={styles.nameplate}>
             <Link href="/" asChild>
-              <Pressable accessibilityRole="link" accessibilityLabel="The Engineer: sessions">
+              <Pressable accessibilityRole="link" accessibilityLabel="The Engineer: sessions" style={styles.home}>
                 <Text style={styles.mark}>The Engineer</Text>
               </Pressable>
             </Link>
@@ -103,7 +103,7 @@ export function Masthead() {
         <>
           <View style={styles.nameplatePhone}>
             <Link href="/" asChild>
-              <Pressable accessibilityRole="link" accessibilityLabel="The Engineer: sessions">
+              <Pressable accessibilityRole="link" accessibilityLabel="The Engineer: sessions" style={styles.homePhone}>
                 <Text style={styles.markPhone}>The Engineer</Text>
               </Pressable>
             </Link>
@@ -164,18 +164,22 @@ const openLink = (url: string) => {
   else Linking.openURL(url);
 };
 
-/** A photo's credit, tappable: it opens the photo's page with its author and licence. */
-export function Credit({ photo, style, textStyle }: { photo: Photo; style?: ViewStyle; textStyle?: TextStyle }) {
+/** A photo's credit, tappable: it opens the photo's page with its author and licence. `style` places the tappable
+ * box (at least a tap target), `box` is what shows (the credit's own background). */
+export function Credit({ photo, style, box, textStyle }: { photo: Photo; style?: ViewStyle; box?: ViewStyle;
+  textStyle?: TextStyle }) {
+  const styles = useStyles();
   return (
     <Pressable onPress={() => openLink(photo.link)} accessibilityRole="link"
-      accessibilityLabel={`${photo.credit}: open the photo's page`} style={style}>
-      <Text style={textStyle}>{photo.credit}</Text>
+      accessibilityLabel={`${photo.credit}: open the photo's page`} style={StyleSheet.flatten([styles.creditHit, style])}>
+      <View style={box}><Text style={textStyle}>{photo.credit}</Text></View>
     </Pressable>
   );
 }
 
 /** The full-bleed photo at the top of a page: the photo, a dark gradient only behind the headline, the credit in the top
- * right corner, then the kicker (a red tag and the rest, which can link back up), the huge headline and an italic deck. */
+ * right corner, then the kicker (a red tag and the rest, which can link back up), the huge headline and an italic deck.
+ * Every word on the photo sits on a dark scrim (the gradient, or its own dark box), so it reads whatever the photo. */
 export function Hero({ photo, tag, rest, restHref, title, deck, height, deckGap, badge }: {
   photo: Photo;
   tag: string;
@@ -214,14 +218,16 @@ export function Hero({ photo, tag, rest, restHref, title, deck, height, deckGap,
         </Svg>
       </View>
       <Credit photo={photo} style={StyleSheet.flatten([styles.credit, wide ? null : styles.creditPhone])}
-        textStyle={styles.creditText} />
+        box={styles.creditBox} textStyle={styles.creditText} />
       <View style={StyleSheet.flatten([styles.copy, { left: gutter, right: gutter, bottom: wide ? 26 : 18 }])}>
         <View style={styles.kicker}>
           {badge}
           <View style={styles.kickTag}><Text style={styles.kickTagText}>{tag}</Text></View>
           {rest && restHref ? (
             <Link href={restHref} asChild>
-              <Pressable accessibilityRole="link" style={styles.kickRest}>{restText}</Pressable>
+              <Pressable accessibilityRole="link" style={styles.kickHit}>
+                <View style={styles.kickRest}>{restText}</View>
+              </Pressable>
             </Link>
           ) : rest ? <View style={styles.kickRest}>{restText}</View> : null}
         </View>
@@ -361,11 +367,13 @@ export function TextLink({ label, href, onPress, red, arrow, small, disabled, pr
   print?: boolean;
 }) {
   const styles = useStyles();
+  // the pressable box is a full tap target around the underlined word, without moving it (constants/Theme.ts tapRoom)
   const body = (
-    <Pressable onPress={onPress} disabled={disabled} accessibilityRole={href ? 'link' : 'button'} hitSlop={6}
-      {...(print ? null : noPrint)}
-      style={StyleSheet.flatten([styles.tlink, red && styles.tlinkRed, disabled && styles.dim])}>
-      <Text style={small ? styles.tlinkTextSmall : styles.tlinkText}>{label}{arrow ? ' →' : ''}</Text>
+    <Pressable onPress={onPress} disabled={disabled} accessibilityRole={href ? 'link' : 'button'}
+      {...(print ? null : noPrint)} style={StyleSheet.flatten([styles.tlinkHit, disabled && styles.dim])}>
+      <View style={StyleSheet.flatten([styles.tlink, red && styles.tlinkRed])}>
+        <Text style={small ? styles.tlinkTextSmall : styles.tlinkText}>{label}{arrow ? ' →' : ''}</Text>
+      </View>
     </Pressable>
   );
   // Link asChild hands its child's style to a web anchor, which can't take a style array: one object (flattened above)
@@ -373,7 +381,7 @@ export function TextLink({ label, href, onPress, red, arrow, small, disabled, pr
 }
 
 /** A flat block of colour with a word on it (GOLD, FASTEST, PIT, Q...). */
-export function Block({ label, color, ink, size = 12, style }: { label: string; color: string; ink: string;
+export function Block({ label, color, ink, size = 13, style }: { label: string; color: string; ink: string;
   size?: number; style?: ViewStyle }) {
   const styles = useStyles();
   return (
@@ -432,7 +440,7 @@ export function Colophon({ left, right, links }: { left: string; right?: string;
             <View key={l.label} style={styles.colLink}>
               {i > 0 && <Text style={StyleSheet.flatten([styles.label, styles.muted])}>·</Text>}
               <Link href={l.href} asChild>
-                <Pressable accessibilityRole="link" hitSlop={6}>
+                <Pressable accessibilityRole="link" style={styles.colHit}>
                   <Text style={StyleSheet.flatten([styles.label, styles.muted])}>{l.label}</Text>
                 </Pressable>
               </Link>
@@ -454,11 +462,15 @@ const useStyles = themed((c) => ({
   nameplatePhone: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', paddingBottom: 8 },
   mark: { fontFamily: Fonts.display, fontSize: 34, lineHeight: 38, textTransform: 'uppercase', color: c.text },
   markPhone: { fontFamily: Fonts.display, fontSize: 28, lineHeight: 32, textTransform: 'uppercase', color: c.text },
-  issue: { ...Type.label, fontSize: 11, color: c.textSecondary },
+  issue: { ...Type.label, fontSize: 13, color: c.textSecondary },
+  // the nameplate's link, a full tap target (it is 32 to 38 px tall as drawn)
+  home: tapRoom(6),
+  homePhone: tapRoom(6),
   nav: { flexDirection: 'row', gap: 28 },
   navPhone: { flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderColor: c.rule, paddingTop: 8,
     paddingBottom: 6 },
-  navItem: { paddingBottom: 4, borderBottomWidth: 4, borderColor: 'transparent' },
+  // a full tap target: the room is above the word, the red underline stays under it
+  navItem: { paddingBottom: 4, borderBottomWidth: 4, borderColor: 'transparent', paddingTop: 19, marginTop: -19, minWidth: TAP },
   navOn: { borderColor: c.mark },
   navText: { ...Type.label, fontSize: 14, letterSpacing: 2, color: c.text },
   navTextPhone: { ...Type.label, fontSize: 13, letterSpacing: 1.6, color: c.text },
@@ -469,17 +481,22 @@ const useStyles = themed((c) => ({
   // hero
   hero: { position: 'relative', overflow: 'hidden', backgroundColor: '#2a2a28' },
   shade: { position: 'absolute', left: 0, right: 0, bottom: 0 },
-  credit: { position: 'absolute', right: 10, top: 10, maxWidth: '70%', backgroundColor: 'rgba(10,10,10,0.45)',
-    paddingHorizontal: 6, paddingVertical: 2 },
+  creditHit: { minHeight: TAP, minWidth: TAP, justifyContent: 'center' },
+  credit: { position: 'absolute', right: 0, top: 0, maxWidth: '70%', padding: 10, justifyContent: 'flex-start',
+    alignItems: 'flex-end' },
   creditPhone: { maxWidth: '62%' },
-  creditText: { fontFamily: Fonts.label, fontSize: 10, letterSpacing: 0.6, color: 'rgba(255,255,255,0.88)', textAlign: 'right' },
+  creditBox: { backgroundColor: 'rgba(10,10,10,0.72)', paddingHorizontal: 6, paddingVertical: 2 },
+  creditText: { fontFamily: Fonts.label, fontSize: 12, letterSpacing: 0.6, color: PHOTO_INK, textAlign: 'right' },
   copy: { position: 'absolute' },
   kicker: { flexDirection: 'row', alignItems: 'stretch', marginBottom: 12, flexWrap: 'wrap' },
   kickTag: { backgroundColor: c.mark, paddingHorizontal: 9, paddingTop: 5, paddingBottom: 4, justifyContent: 'center' },
-  kickTagText: { ...Type.label, fontSize: 12, letterSpacing: 1.7, color: '#ffffff' },
+  kickTagText: { ...Type.label, fontSize: 13, letterSpacing: 1.7, color: '#ffffff' },
+  // its own dark scrim: the photo behind it can be anything
   kickRest: { borderWidth: 1, borderLeftWidth: 0, borderColor: 'rgba(247,244,236,0.85)', paddingHorizontal: 10, paddingTop: 5,
-    paddingBottom: 4, justifyContent: 'center', flexShrink: 1 },
-  kickRestText: { ...Type.label, fontFamily: Fonts.label, fontSize: 12, letterSpacing: 1.7, color: PHOTO_INK },
+    paddingBottom: 4, justifyContent: 'center', flexShrink: 1, backgroundColor: 'rgba(10,10,10,0.6)' },
+  // the link back up: a full tap target around its box, which stays as drawn
+  kickHit: { flexShrink: 1, ...tapRoom(8) },
+  kickRestText: { ...Type.label, fontFamily: Fonts.label, fontSize: 13, letterSpacing: 1.7, color: PHOTO_INK },
   headline: { fontFamily: Fonts.display, textTransform: 'uppercase', color: PHOTO_INK, textShadowColor: 'rgba(0,0,0,0.35)',
     textShadowRadius: 18, textShadowOffset: { width: 0, height: 1 } },
   deck: { fontFamily: Type.dek.fontFamily, fontSize: 19, lineHeight: 26, color: '#EFEBE0', marginTop: 10, maxWidth: 640,
@@ -493,8 +510,8 @@ const useStyles = themed((c) => ({
   folioItem: { paddingTop: 11, paddingBottom: 10, paddingRight: 18, marginRight: 18, borderRightWidth: 1, borderColor: c.rule },
   folioItemPhone: { paddingTop: 7, paddingBottom: 6, borderBottomWidth: 1, borderColor: c.separator },
   folioLast: { borderRightWidth: 0, borderBottomWidth: 0, marginRight: 0 },
-  folioText: { ...Type.label, fontFamily: Fonts.label, fontSize: 12, letterSpacing: 1.2, color: c.text },
-  folioTextPhone: { ...Type.label, fontFamily: Fonts.label, fontSize: 11, letterSpacing: 1.1, color: c.text },
+  folioText: { ...Type.label, fontFamily: Fonts.label, fontSize: 13, letterSpacing: 1.2, color: c.text },
+  folioTextPhone: { ...Type.label, fontFamily: Fonts.label, fontSize: 13, letterSpacing: 1.1, color: c.text },
   bold: { fontFamily: Type.label.fontFamily },
 
   // page
@@ -516,36 +533,40 @@ const useStyles = themed((c) => ({
 
   // type
   label: { ...Type.label, fontFamily: Fonts.label, color: c.text },
-  labelSmall: { fontSize: 11 },
+  labelSmall: { fontSize: 13, letterSpacing: 1 },
   muted: { color: c.textMuted },
   dim: { opacity: 0.45 },
-  figLabel: { ...Type.label, fontSize: 12, letterSpacing: 1.4, marginBottom: 8, color: c.text },
+  figLabel: { ...Type.label, fontSize: 13, letterSpacing: 1.4, marginBottom: 8, color: c.text },
   fig: { fontFamily: Fonts.display, color: c.text, letterSpacing: 0.2 },
   figUnit: { fontFamily: Fonts.display, letterSpacing: 0.4, color: c.text },
-  figNote: { fontFamily: Type.dek.fontFamily, fontSize: 15, lineHeight: 21, color: c.textSecondary, marginTop: 8 },
+  figNote: { fontFamily: Type.dek.fontFamily, fontSize: 16, lineHeight: 22, color: c.textSecondary, marginTop: 8 },
 
   // links and blocks
+  // the word is 21 px tall with its underline: 12 px of room above and below make it a 44 px tap target
+  tlinkHit: { alignSelf: 'flex-start', minWidth: TAP, ...tapRoom(12) },
   tlink: { alignSelf: 'flex-start', borderBottomWidth: 2, borderColor: c.rule, paddingBottom: 1 },
   tlinkRed: { borderColor: c.mark },
-  tlinkText: { ...Type.link, color: c.text },
-  tlinkTextSmall: { ...Type.link, fontSize: 12, letterSpacing: 1.2, color: c.text },
+  tlinkText: { ...Type.link, lineHeight: 18, color: c.text },
+  tlinkTextSmall: { ...Type.link, fontSize: 13, lineHeight: 17, letterSpacing: 1.2, color: c.text },
   block: { alignSelf: 'flex-start', paddingHorizontal: 7, paddingTop: 2, paddingBottom: 1 },
   blockText: { ...Type.label, fontFamily: face700(), letterSpacing: 1.2 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 7 },
-  legendText: { ...Type.label, fontFamily: Fonts.label, fontSize: 12, letterSpacing: 0.7, color: c.text },
+  legendText: { ...Type.label, fontFamily: Fonts.label, fontSize: 13, letterSpacing: 0.7, color: c.text },
   spec: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, borderBottomWidth: 1,
     borderColor: c.separator, paddingTop: 8, paddingBottom: 7 },
   specValue: { fontFamily: face700(), fontSize: 15, textAlign: 'right', flexShrink: 1, color: c.text },
 
   // inset photo
   inset: { borderWidth: 2, borderColor: c.rule, backgroundColor: c.rule },
-  caption: { paddingHorizontal: 6, paddingTop: 4, paddingBottom: 3 },
-  captionText: { fontFamily: Fonts.label, fontSize: 10, letterSpacing: 0.4, color: c.background },
+  // 12 px of room above and below (over the photo, past the frame) make the credit a tap target, as drawn
+  caption: { paddingHorizontal: 6, paddingTop: 16, paddingBottom: 15, marginVertical: -12 },
+  captionText: { fontFamily: Fonts.label, fontSize: 12, letterSpacing: 0.4, color: c.background },
 
   colophon: { marginTop: 40, borderTopWidth: 6, borderColor: c.rule, paddingTop: 10, flexDirection: 'row', flexWrap: 'wrap',
     justifyContent: 'space-between', gap: 8 },
   colLinks: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   colLink: { flexDirection: 'row', gap: 6 },
+  colHit: { minWidth: TAP, ...tapRoom(14) },
 }));
 
 function face700() {

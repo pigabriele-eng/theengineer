@@ -18,6 +18,7 @@ import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
 import { Fonts } from '@/constants/Theme';
 import { authEnabled, useAuthSession } from '@/lib/auth';
+import { installFocusRing } from '@/lib/focusRing';
 import { NoteLaunch } from '@/lib/openCurrent';
 import { installPrint } from '@/lib/print';
 
@@ -101,6 +102,7 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
     document.documentElement.style.colorScheme = colorScheme;
     document.body.style.backgroundColor = c.background;
+    installFocusRing(c.text);
   }, [colorScheme, c]);
 
   // Without Supabase configured, signedIn is always true and there is no sign-in screen.

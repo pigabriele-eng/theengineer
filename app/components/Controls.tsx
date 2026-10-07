@@ -8,7 +8,7 @@ import { ActivityIndicator, Pressable, StyleSheet, TextInput, TextInputProps, Te
 
 import { useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
-import { Fonts, themed, Type, useTheme } from '@/constants/Theme';
+import { Fonts, TAP, tapRoom, themed, Type, useTheme } from '@/constants/Theme';
 import { noPrint } from '@/lib/print';
 
 /** The head of a page without a photo (it keeps the bar above it): a grey kicker, the page's name in Anton and its
@@ -79,14 +79,16 @@ export function Choice({ label, sub, on, onPress, add, disabled }: {
 }) {
   const styles = useStyles();
   return (
-    // on paper only the picked word is left
+    // on paper only the picked word is left; the pressable box is a full tap target around the word
     <Pressable onPress={onPress} disabled={disabled} accessibilityRole={add ? 'button' : 'radio'}
-      accessibilityState={{ selected: on, disabled }} hitSlop={4} {...(on && !add ? null : noPrint)}
-      style={StyleSheet.flatten([styles.choice, on && styles.choiceOn, add && styles.choiceAdd, disabled && styles.dim])}>
-      <Text style={StyleSheet.flatten([styles.choiceText, (on || add) && styles.choiceTextOn])} numberOfLines={1}>
-        {label}
-      </Text>
-      {sub ? <Text style={styles.choiceSub} numberOfLines={1}>{sub}</Text> : null}
+      accessibilityState={{ selected: on, checked: add ? undefined : on, disabled }} {...(on && !add ? null : noPrint)}
+      style={StyleSheet.flatten([styles.choiceHit, disabled && styles.dim])}>
+      <View style={StyleSheet.flatten([styles.choice, on && styles.choiceOn, add && styles.choiceAdd])}>
+        <Text style={StyleSheet.flatten([styles.choiceText, (on || add) && styles.choiceTextOn])} numberOfLines={1}>
+          {label}
+        </Text>
+        {sub ? <Text style={styles.choiceSub} numberOfLines={1}>{sub}</Text> : null}
+      </View>
     </Pressable>
   );
 }
@@ -115,8 +117,9 @@ export function Tick({ on, onPress, disabled, label, size = 22 }: {
   );
   if (!onPress) return box;
   return (
-    <Pressable onPress={onPress} disabled={disabled} hitSlop={10} accessibilityRole="checkbox"
-      accessibilityState={{ checked: on, disabled }} accessibilityLabel={label}>
+    <Pressable onPress={onPress} disabled={disabled} accessibilityRole="checkbox"
+      accessibilityState={{ checked: on, disabled }} accessibilityLabel={label}
+      style={tapRoom(Math.max(0, (TAP - size) / 2), Math.max(0, (TAP - size) / 2))}>
       {box}
     </Pressable>
   );
@@ -168,8 +171,11 @@ export function Said({ text, error, warn, onPress }: { text: string; error?: boo
       <Text style={StyleSheet.flatten([styles.saidText, error && styles.errorText, warn && styles.warnText])}>{text}</Text>
     </View>
   );
-  return onPress ? <Pressable onPress={onPress} accessibilityRole="button" accessibilityHint="Hides this line">{line}</Pressable>
-    : line;
+  return onPress ? (
+    <Pressable onPress={onPress} accessibilityRole="button" accessibilityHint="Hides this line" style={styles.saidHit}>
+      {line}
+    </Pressable>
+  ) : line;
 }
 
 /** A short line of help or what is going on: Newsreader, grey. */
@@ -200,7 +206,7 @@ export function ProgressBar({ share, failed, label }: { share: number | null; fa
 const useStyles = themed((c) => ({
   head: { paddingTop: 26 },
   headPhone: { paddingTop: 18 },
-  kicker: { ...Type.label, fontFamily: Fonts.label, fontSize: 12, letterSpacing: 1.6, color: c.textMuted, marginBottom: 6 },
+  kicker: { ...Type.label, fontFamily: Fonts.label, fontSize: 13, letterSpacing: 1.6, color: c.textMuted, marginBottom: 6 },
   title: { ...Type.title, color: c.text },
   titlePhone: { ...Type.title, fontSize: 36, lineHeight: 38, color: c.text },
   dek: { ...Type.dek, color: c.textSecondary, marginTop: 8, maxWidth: 680 },
@@ -209,8 +215,8 @@ const useStyles = themed((c) => ({
   field: { gap: 6, borderLeftWidth: 0, borderColor: c.mark },
   fieldFocus: { borderLeftWidth: 3, paddingLeft: 10 },
   fieldHead: { flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', columnGap: 10, rowGap: 2 },
-  label: { ...Type.label, fontFamily: Fonts.label, fontSize: 12, letterSpacing: 1.4, color: c.text },
-  labelFocus: { color: c.mark },
+  label: { ...Type.label, fontFamily: Fonts.label, fontSize: 13, letterSpacing: 1.4, color: c.text },
+  labelFocus: { color: c.error },
   from: { fontFamily: Type.dek.fontFamily, fontSize: 14, lineHeight: 19, color: c.textSecondary },
 
   input: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 22, paddingHorizontal: 0, paddingTop: 6, paddingBottom: 6,
@@ -220,32 +226,35 @@ const useStyles = themed((c) => ({
   inputFocus: { borderColor: c.mark },
 
   choices: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', columnGap: 18, rowGap: 12 },
-  choice: { maxWidth: '100%', paddingBottom: 2, borderBottomWidth: 3, borderColor: 'transparent' },
+  // the word is about 22 px tall with its underline: 11 px of room above and below make a 44 px tap target
+  choiceHit: { maxWidth: '100%', minWidth: TAP, ...tapRoom(11) },
+  choice: { alignSelf: 'flex-start', maxWidth: '100%', paddingBottom: 2, borderBottomWidth: 3, borderColor: 'transparent' },
   choiceOn: { borderColor: c.mark },
   choiceAdd: { borderBottomWidth: 2, borderColor: c.rule },
   choiceText: { ...Type.label, fontFamily: Fonts.label, fontSize: 14, letterSpacing: 1.2, color: c.textMuted },
   choiceTextOn: { color: c.text },
-  choiceSub: { fontFamily: Fonts.label, fontSize: 12, letterSpacing: 0.4, color: c.textSecondary, marginTop: 1 },
+  choiceSub: { fontFamily: Fonts.label, fontSize: 13, letterSpacing: 0.4, color: c.textSecondary, marginTop: 1 },
 
   tick: { borderWidth: 2, borderColor: c.rule, alignItems: 'center', justifyContent: 'center' },
   tickOn: { backgroundColor: c.rule },
   tickMark: { fontFamily: Fonts.label, color: c.background, textAlign: 'center' },
 
-  main: { alignSelf: 'flex-start', maxWidth: '100%', minWidth: 120, minHeight: 42, alignItems: 'center', justifyContent: 'center',
+  main: { alignSelf: 'flex-start', maxWidth: '100%', minWidth: 120, minHeight: TAP, alignItems: 'center', justifyContent: 'center',
     backgroundColor: c.rule, paddingHorizontal: 18, paddingVertical: 10 },
   mainDanger: { backgroundColor: c.error },
   mainText: { ...Type.link, color: c.background, textAlign: 'center' },
-  mainSub: { fontFamily: Fonts.label, fontSize: 12, letterSpacing: 0.3, lineHeight: 16, color: c.background,
+  mainSub: { fontFamily: Fonts.label, fontSize: 13, letterSpacing: 0.3, lineHeight: 17, color: c.background,
     textAlign: 'center', marginTop: 2, opacity: 0.85 },
   actions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'stretch', columnGap: 22, rowGap: 12, marginTop: 4 },
   actionCell: { justifyContent: 'center', maxWidth: '100%' },
 
   said: { borderLeftWidth: 3, borderColor: c.rule, paddingLeft: 10, paddingVertical: 2 },
+  saidHit: tapRoom(9),
   saidError: { borderColor: c.error },
   saidText: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 22, color: c.text },
   errorText: { color: c.error },
   warnText: { color: c.warning },
-  note: { fontFamily: Type.dek.fontFamily, fontSize: 15, lineHeight: 21, color: c.textSecondary },
+  note: { fontFamily: Type.dek.fontFamily, fontSize: 16, lineHeight: 22, color: c.textSecondary },
   error: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 22, color: c.error },
   dim: { opacity: 0.45 },
 
