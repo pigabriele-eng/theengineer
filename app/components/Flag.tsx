@@ -1,12 +1,14 @@
-// A country's flag, drawn from the geometry in lib/countries.ts: the plate (the flag 3:2 with a hairline ink edge, as
-// a timing screen shows it), the flag stretched to fill a block, and the national colours as bands for a stripe or a
-// rule. Square edges only. Never emoji flags: Windows shows them as two letters.
-import { StyleSheet, ViewStyle } from 'react-native';
+// An event's country as a timing screen shows it: the flag, drawn from the geometry in lib/countries.ts, and the three
+// letters (GER, NED, FRA). The plate is the flag 3:2 inside a hairline ink edge, square-cornered; CountryTag sets it
+// before an event's name, HeroCountry first in a photo hero's kicker. Never emoji flags: Windows shows them as letters.
 import Svg, { Circle, Line, Polygon, Rect } from 'react-native-svg';
 
-import { View } from '@/components/Themed';
-import { useTheme } from '@/constants/Theme';
+import { useWide } from '@/components/Programme';
+import { Text, View } from '@/components/Themed';
+import { themed, Type, useTheme } from '@/constants/Theme';
 import { Country, FLAG_H, FLAG_W, FlagShape } from '@/lib/countries';
+
+const PHOTO_INK = '#F7F4EC'; // text on a photo, in both schemes (as components/Programme.tsx)
 
 function Shape({ s }: { s: FlagShape }) {
   if ('rect' in s) {
@@ -23,14 +25,14 @@ function Shape({ s }: { s: FlagShape }) {
   return <Circle cx={cx} cy={cy} r={r} fill={s.fill ?? 'none'} stroke={s.stroke} strokeWidth={s.width} />;
 }
 
-/** The flag drawn on its board, `width` wide and two thirds of that high, inside a hairline ink edge (so a white or a
- * black band still has an edge on the paper of either scheme). */
-export function FlagPlate({ country, width, edge = true }: { country: Country; width: number; edge?: boolean }) {
+/** The flag drawn on its board, `width` wide and two thirds of that high, inside a hairline edge (ink on the paper,
+ * so a white or a black band still has an edge in either scheme). */
+export function FlagPlate({ country, width, edge }: { country: Country; width: number; edge?: string }) {
   const c = useTheme();
   const height = Math.round((width * FLAG_H) / FLAG_W);
   return (
-    <View accessible accessibilityLabel={`Flag of ${country.name}`} style={{ borderWidth: edge ? 1 : 0,
-      borderColor: c.rule, alignSelf: 'flex-start', backgroundColor: c.background }}>
+    <View accessible accessibilityLabel={`Flag of ${country.name}`}
+      style={{ borderWidth: 1, borderColor: edge ?? c.rule, alignSelf: 'flex-start' }}>
       <Svg width={width} height={height} viewBox={`0 0 ${FLAG_W} ${FLAG_H}`} preserveAspectRatio="none">
         {country.shapes.map((s, i) => <Shape key={i} s={s} />)}
       </Svg>
@@ -38,29 +40,36 @@ export function FlagPlate({ country, width, edge = true }: { country: Country; w
   );
 }
 
-/** The flag stretched over the whole of its parent (which sets the size), behind what is set on it. */
-export function FlagFill({ country }: { country: Country }) {
+/** The plate and the three letters, set before an event's name in a list. */
+export function CountryTag({ country }: { country: Country }) {
+  const styles = useStyles();
+  const wide = useWide();
   return (
-    <View pointerEvents="none" style={StyleSheet.absoluteFill as ViewStyle}>
-      <Svg width="100%" height="100%" viewBox={`0 0 ${FLAG_W} ${FLAG_H}`} preserveAspectRatio="none">
-        {country.shapes.map((s, i) => <Shape key={i} s={s} />)}
-      </Svg>
+    <View style={styles.tag}>
+      <FlagPlate country={country} width={wide ? 42 : 33} />
+      <Text style={wide ? styles.code : styles.codePhone}>{country.code}</Text>
     </View>
   );
 }
 
-/** The national colours as bands, in their shares: stacked top to bottom (`down`, a stripe) or side by side (`across`,
- * a rule), with a hairline `edge` when given (a white band on light paper, a black one on dark). The parent sets the
- * size. */
-export function ColourBands({ country, dir, edge, style }: { country: Country; dir: 'down' | 'across'; edge?: string;
-  style?: ViewStyle }) {
-  const weights = country.weights ?? country.colors.map(() => 1);
+/** The plate and the three letters in a box, first in a photo hero's kicker (Hero's badge). */
+export function HeroCountry({ country }: { country: Country }) {
+  const styles = useStyles();
+  const wide = useWide();
   return (
-    <View pointerEvents="none" style={StyleSheet.flatten([{ flexDirection: dir === 'down' ? 'column' : 'row' },
-      edge ? { borderWidth: 1, borderColor: edge } : null, style])}>
-      {country.colors.map((color, i) => (
-        <View key={i} style={{ flex: weights[i], backgroundColor: color }} />
-      ))}
+    <View style={styles.hero}>
+      <FlagPlate country={country} width={wide ? 45 : 36} edge="rgba(247,244,236,0.85)" />
+      <View style={styles.heroCode}><Text style={styles.heroCodeText}>{country.code}</Text></View>
     </View>
   );
 }
+
+const useStyles = themed((c) => ({
+  tag: { flexDirection: 'row', alignItems: 'center', gap: 9 },
+  code: { ...Type.label, fontSize: 16, letterSpacing: 1.8, color: c.text },
+  codePhone: { ...Type.label, fontSize: 14, letterSpacing: 1.6, color: c.text },
+  hero: { flexDirection: 'row', alignItems: 'stretch', marginRight: 10 },
+  heroCode: { justifyContent: 'center', borderWidth: 1, borderLeftWidth: 0, borderColor: 'rgba(247,244,236,0.85)',
+    backgroundColor: 'rgba(10,10,10,0.35)', paddingHorizontal: 10 },
+  heroCodeText: { ...Type.label, fontSize: 15, letterSpacing: 2, color: PHOTO_INK },
+}));
