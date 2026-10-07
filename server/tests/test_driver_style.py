@@ -172,7 +172,7 @@ def _log(paces, at: str, sharp=False) -> bytes:
         synthetic.speed_at = default
 
 
-def test_event_suggestions_and_the_fingerprint_database(client):
+def test_event_suggestions_and_the_fingerprint_database(client, monkeypatch):
     ev = client.post("/events/folders", json={"name": "Test weekend"}).json()
     paces = {"A1": ((1.0, 0.99, 0.995, 0.985, 0.99), False), "B1": ((0.99, 0.985, 0.99, 0.98, 0.995), True),
              "A2": ((0.995, 0.99, 0.985, 0.99), False), "B2": ((0.985, 0.99, 0.995, 0.99), True)}
@@ -212,6 +212,29 @@ def test_event_suggestions_and_the_fingerprint_database(client):
     assert anna["events"][0]["event"] == "Test weekend" and anna["events"][0]["teammates"] == ["Ben"]
     assert anna["traits"] and all({"label", "explain", "words"} <= set(t) for t in anna["traits"])
     assert db["kinds"] and db["unnamed"] == []
+
+    # kept: the next open answers without working it out again
+    from app import driver_prints
+    from app.routers import driver_style
+
+    def worked_out(_db):
+        raise AssertionError("worked out while the page waits")
+
+    driver_prints.wait_idle()
+    kept = client.get("/drivers/fingerprints").json()
+    monkeypatch.setattr(driver_style, "build_page", worked_out)
+    assert client.get("/drivers/fingerprints").json() == kept
+    # after a change the kept page comes at once, marked as being updated, until the background pass keeps the new one
+    monkeypatch.setattr(driver_prints, "refresh_in_background", lambda: True)
+    anna_id = next(d["driver_id"] for d in kept["drivers"] if d["driver"] == "Anna")
+    assert client.patch(f"/drivers/{anna_id}", json={"name": "Anna P"}).status_code == 200
+    body = client.get("/drivers/fingerprints").json()
+    assert body["updating"] is True and body["drivers"] == kept["drivers"]
+    monkeypatch.undo()
+    driver_prints.refresh_in_background()
+    driver_prints.wait_idle()
+    body = client.get("/drivers/fingerprints").json()
+    assert body["updating"] is False and {d["driver"] for d in body["drivers"]} == {"Anna P", "Ben"}
 
 
 def test_an_unknown_event_has_no_suggestions(client):

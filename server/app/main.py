@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import DataError, IntegrityError
 
-from app import calendar_sync, empty_runs, event_delete, prebuild, run_delete, storage, timing
+from app import calendar_sync, driver_prints, empty_runs, event_delete, prebuild, run_delete, storage, timing
 from app.auth import check_settings, require_user, require_user_or_query_token
 from app.db import create_tables
 from app.routers import catalog, debriefs, imports, insights, sessions, trackmap, tyres, vehicle
@@ -43,6 +43,7 @@ async def lifespan(_: FastAPI):
     results_sync.start_background()  # official series results: missing seasons, and current events kept fresh
     season_match.start()  # in the background: events with data and no season join theirs, or a question is kept
     prebuild.start()  # in the background, last: the pages of every event worked out where missing or out of date
+    driver_prints.start()  # a little later: driver fingerprints of events that have none yet
     yield
     tyre_store.stop()
     calendar_sync.stop()
