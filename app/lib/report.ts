@@ -133,7 +133,9 @@ export type ReportStatus = 'ready' | 'queued' | 'running' | 'failed' | 'empty';
 
 export type ReportSession = {
   id: number;
-  name: string;
+  name: string; // the run's label: its own name ("FP1 stint 1"), never a number (server/app/run_labels.py)
+  short?: string; // the same for narrow places ("FP1 S1")
+  day?: number | null; // the event's day it ran on, when the event has more than one
   driver: string | null;
   clean_laps: number;
   best: number | null;
@@ -152,6 +154,18 @@ export type ReportAnswer = {
   stale: boolean; // the report shown was made before the sessions last changed; a new one is being worked out
   report: Report | null;
   sessions: ReportSession[];
+  runs?: RunName[]; // every run of the event, by its label, in the event page's order (a server before it: none)
+};
+
+/** A run by its own name, as the report calls it (server/app/run_labels.py). */
+export type RunName = {
+  id: number;
+  name: string; // "FP1 stint 1", "Q1 · Gabriele Piana", "Day 2 · FP2 stint 1", "PTS 1"
+  short: string; // "FP1 S1", "Q1 PIA", "D2 FP2 S1"
+  day: number | null; // 1, 2, ... when the event ran over more than one day
+  date: string | null;
+  time: string | null; // HH:MM the log started
+  driver: string | null;
 };
 
 const path = (scope: ReportScope) =>

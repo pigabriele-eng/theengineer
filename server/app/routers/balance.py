@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import models, page_cache
+from app import models, page_cache, run_labels
 from app.analysis.balance import Collected, analyse, car_geometry, collect, prepared
 from app.analysis.quickest import keep_quickest, lap_cap
 from app.analysis.setup_advice import report
@@ -46,7 +46,7 @@ def _scope(db: Session, session: int | None, event: int | None) -> tuple[str, in
         raise HTTPException(422, "Give either ?session=<id> or ?event=<id>")
     if session is not None:
         s = _get(db, session)
-        return "session", s.id, s.name or f"Session {s.id}", [s]
+        return "session", s.id, s.name or f"Session {s.id}", [s]  # named by its label below
     ev = db.get(models.Event, event)
     if ev is None:
         raise HTTPException(404, "Event not found")
@@ -55,10 +55,11 @@ def _scope(db: Session, session: int | None, event: int | None) -> tuple[str, in
     return "event", ev.id, ev.name, list(rows)
 
 
-def _key(kind: str, sid: int, sessions: list[models.RunSession]) -> tuple:
-    """Changes whenever a log is added or its laps are re-timed, so a cached result is never stale."""
-    return (kind, sid, tuple((s.id, tuple(sorted(f.id for f in s.files)), len(s.laps), _best_clean(s))
-                             for s in sessions))
+def _key(kind: str, sid: int, sessions: list[models.RunSession], names: dict[int, str]) -> tuple:
+    """Changes whenever a log is added, its laps are re-timed or a run is renamed, so a cached result is never
+    stale."""
+    return (kind, sid, tuple((s.id, names.get(s.id), tuple(sorted(f.id for f in s.files)), len(s.laps),
+                              _best_clean(s)) for s in sessions))
 
 
 @router.get("/report/balance")
@@ -74,7 +75,12 @@ def balance_report(session: int | None = None, event: int | None = None, db: Ses
     usable = [s for s in sessions if s.files and _best_clean(s) is not None]
     if not usable:
         raise HTTPException(422, f"No clean laps to analyse in this {kind}")
-    key = _key(kind, sid, sessions)
+    # each run called as the report calls it (run_labels.py): its own name, never a number
+    labels = run_labels.labels_for(db, sessions)
+    names = {s.id: labels[s.id].name for s in sessions}
+    if kind == "session":
+        name = names[sid]
+    key = _key(kind, sid, sessions, names)
     with _cache_lock:
         if key in _cache:
             _cache.move_to_end(key)
@@ -83,8 +89,9 @@ def balance_report(session: int | None = None, event: int | None = None, db: Ses
     # the server (each holds a whole log while it reads it): a request that waited its turn may find it built meanwhile
     result = page_cache.cached(
         db, f"{kind}:{sid}|balance",
-        lambda: page_cache.signature("balance", name, page_cache.sessions_part(db, usable)),
-        lambda: _build(db, kind, sid, name, usable))
+        lambda: page_cache.signature("balance", name, page_cache.sessions_part(db, usable),
+                                     *run_labels.renamed(labels[s.id] for s in usable)),
+        lambda: _build(db, kind, sid, name, usable, names))
     with _cache_lock:
         _cache[key] = result
         while len(_cache) > CACHE_SIZE:
@@ -92,14 +99,15 @@ def balance_report(session: int | None = None, event: int | None = None, db: Ses
     return result
 
 
-def _build(db: Session, kind: str, sid: int, name: str, sessions: list[models.RunSession]) -> dict:
+def _build(db: Session, kind: str, sid: int, name: str, sessions: list[models.RunSession],
+           names: dict[int, str] | None = None) -> dict:
     preset = preset_for([s.car for s in sessions if s.car])
     geo = car_geometry(preset_detail(preset) if preset else None)
     sessions = sorted(sessions, key=_best_clean)  # the quickest first: its fastest lap sets the line
     col = Collected()
     track = None
     for s in sessions:
-        label = s.name or f"Session {s.id}"
+        label = (names or {}).get(s.id) or s.name or f"Session {s.id}"
         before = (len(col.laps), len(col.sessions), col.line, col.length)
         data = None
         try:

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import heavy, models, page_cache
+from app import heavy, models, page_cache, run_labels
 from app.analysis import grip
 from app.analysis.grip import GripStudy
 from app.analysis.laps import SessionData, load_session
@@ -22,9 +22,10 @@ _cache: OrderedDict[tuple, tuple[tuple, dict]] = OrderedDict()
 _cache_lock = threading.Lock()
 
 
-def _fingerprint(sessions: list[models.RunSession], track: models.Track | None) -> tuple:
-    """Changes whenever a log, a lap or the track's corners change, so a cached report is never stale."""
-    runs = tuple((s.id, s.name, tuple(sorted(f.id for f in s.files)),
+def _fingerprint(sessions: list[models.RunSession], track: models.Track | None, names: dict[int, str]) -> tuple:
+    """Changes whenever a log, a lap, a run's name or the track's corners change, so a cached report is never
+    stale."""
+    runs = tuple((s.id, names.get(s.id), tuple(sorted(f.id for f in s.files)),
                   tuple((l.number, l.time_s, l.clean) for l in s.laps)) for s in sessions)
     corners = tuple((c.code, c.apex_m, c.sector) for c in track.corners) if track else ()
     return runs, corners, repr(track.timing_line) if track else None
@@ -61,7 +62,10 @@ def grip_report(session: int | None = None, event: int | None = None, db: Sessio
                                    .order_by(models.RunSession.id)).all())
         track = ev.track
         key = ("event", event)
-    fp = _fingerprint(sessions, track)
+    # each run called as the report calls it (run_labels.py): its own name, never a number
+    labels = run_labels.labels_for(db, sessions)
+    names = {s.id: labels[s.id].name for s in sessions}
+    fp = _fingerprint(sessions, track, names)
     with _cache_lock:
         hit = _cache.get(key)
         if hit is not None and hit[0] == fp:
@@ -71,8 +75,9 @@ def grip_report(session: int | None = None, event: int | None = None, db: Sessio
     # holds a whole log in memory while it reads it): a request that waited on the lock may find it built meanwhile
     result = page_cache.cached(
         db, f"{key[0]}:{key[1]}|grip",
-        lambda: page_cache.signature("grip", page_cache.sessions_part(db, sessions), page_cache.track_part(track)),
-        lambda: _build(db, sessions, track))
+        lambda: page_cache.signature("grip", page_cache.sessions_part(db, sessions), page_cache.track_part(track),
+                                     *run_labels.renamed(labels[s.id] for s in sessions)),
+        lambda: _build(db, sessions, track, names))
     with _cache_lock:
         _cache[key] = (fp, result)
         _cache.move_to_end(key)
@@ -81,16 +86,20 @@ def grip_report(session: int | None = None, event: int | None = None, db: Sessio
     return result
 
 
-def _build(db: Session, sessions: list[models.RunSession], track: models.Track | None) -> dict:
+def _build(db: Session, sessions: list[models.RunSession], track: models.Track | None,
+           labels: dict[int, str] | None = None) -> dict:
+    """labels: each run's name, unique among them (else its stored name)."""
+    def name_of(s: models.RunSession) -> str:
+        return (labels or {}).get(s.id) or s.name or f"Session {s.id}"
     # the session with the quickest lap goes first: its quickest lap lays down the track line all laps are put on
     timed = sorted((s for s in sessions if s.files and _clean_best(s) is not None), key=_clean_best)
-    skipped = [s.name or f"Session {s.id}" for s in sessions if s not in timed]
+    skipped = [name_of(s) for s in sessions if s not in timed]
     study = GripStudy(official_corners(track))
     names: set[str] = set()
     unread: list[str] = []
     for s in timed:
-        name = s.name or f"Session {s.id}"
-        if name in names:
+        name = name_of(s)
+        if name in names:  # only without labels: two runs of the same stored name
             name = f"{name} #{s.id}"
         names.add(name)
         try:
