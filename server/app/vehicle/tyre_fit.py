@@ -37,6 +37,7 @@ Method (steady-state bicycle model, Milliken & Milliken, Race Car Vehicle Dynami
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from itertools import pairwise
 
@@ -392,17 +393,21 @@ def _note(top: float, d: float, alpha_peak: float) -> str | None:
             "limits the car can show its peak.")
 
 
-def fit_tyres(sessions: list[SessionData], car: Vehicle, steering_ratio: float | None = None,
+def fit_tyres(sessions: Iterable[SessionData], car: Vehicle, steering_ratio: float | None = None,
               ratio_source: str = "entered") -> dict:
-    """Fitted curve per axle from one or more sessions, or NotEnoughData with what was missing."""
-    s, skipped = Samples(), []
-    for i, data in enumerate(sessions):
+    """Fitted curve per axle from one or more sessions, or NotEnoughData with what was missing. sessions can be a
+    generator that reads each log only when its turn comes: one is let go before the next is asked for."""
+    s, skipped, errors, i = Samples(), [], [], -1
+    for data in sessions:  # not enumerate(): it keeps the last (index, log) until the next log is read
+        i += 1
         try:
             session_samples(data, car, steering_ratio, ratio_source, s)
         except NotEnoughData as e:
-            if len(sessions) == 1:
-                raise
+            errors.append(e.with_traceback(None))  # its traceback would hold on to the log
             skipped.append({"index": i, "reason": str(e)})
+        del data  # its samples are kept: the log can go before the next one is read
+    if i == 0 and errors:
+        raise errors[0]
     n = sum(len(x) for x in s.alpha_f)
     if n < MIN_SAMPLES or s.corners < MIN_CORNERS:
         raise NotEnoughData(

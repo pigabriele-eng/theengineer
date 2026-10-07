@@ -36,7 +36,9 @@ from __future__ import annotations
 
 import csv
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from itertools import chain, islice
 from pathlib import Path
 
 import numpy as np
@@ -60,10 +62,13 @@ class CsvChannel:
     @classmethod
     def of(cls, name: str, unit: str, t: np.ndarray, v: np.ndarray) -> CsvChannel:
         ok = np.isfinite(t) & np.isfinite(v)
-        order = np.argsort(t[ok], kind="stable")
-        t, v = t[ok][order], v[ok][order]
-        rising = np.r_[True, np.diff(t) > 0] if len(t) else np.zeros(0, bool)
-        t, v = t[rising], v[rising]
+        if not ok.all():
+            t, v = t[ok], v[ok]
+        if not (np.diff(t) > 0).all():  # else the times are kept as they are: one array for every channel
+            order = np.argsort(t, kind="stable")
+            t, v = t[order], v[order]
+            rising = np.r_[True, np.diff(t) > 0]
+            t, v = t[rising], v[rising]
         step = float(np.median(np.diff(t))) if len(t) > 1 else 0.0
         return cls(name, unit, max(1, round(1 / step)) if step > 0 else 1, t, v)
 
@@ -147,14 +152,22 @@ def _num(cell: str) -> float:
         return np.nan  # empty, text, "-nan(ind)", ...
 
 
-def _matrix(rows: list[list[str]], width: int) -> np.ndarray:
-    """Rows of cells as floats, NaN where a cell is empty or not a number."""
-    fixed = [r[:width] + [""] * (width - len(r)) for r in rows]
-    try:
-        out = np.array(fixed, dtype=float)
-    except ValueError:
-        out = np.array([[_num(c) for c in r] for r in fixed], dtype=float)
-    return out.reshape(len(fixed), width)
+def _matrix(rows: Iterable[list[str]], width: int, size: int, decimal_comma: bool = False) -> np.ndarray:
+    """Rows of cells as floats, NaN where a cell is empty or not a number; size is at least the number of rows.
+
+    Each row goes into the array as it is read: a long export never sits in memory as cells of text, which take
+    ten times the room of the numbers (a 60 MB export would take over 600 MB).
+    """
+    out = np.full((size, width), np.nan)
+    n = 0
+    for r in rows:
+        cells = [c.replace(",", ".") for c in r[:width]] if decimal_comma else r[:width]
+        try:
+            out[n, :len(cells)] = [float(c) for c in cells]
+        except ValueError:
+            out[n, :len(cells)] = [_num(c) for c in cells]
+        n += 1
+    return out[:n]
 
 
 # ---------- the x axis ----------
@@ -222,9 +235,12 @@ def _channels(series: list[_Series], axis: str, markers: list[float]) -> tuple[d
         firsts = [float(np.nanmin(s.x)) for s in series if np.isfinite(s.x).any()]
         offset = min(firsts) if firsts else 0.0
     channels: dict[str, CsvChannel] = {}
+    clocks: dict[int, np.ndarray] = {}  # one array of times for the channels that share one
     for s in series:
         unit, v = _convert(s.unit, s.v)
-        channels.setdefault(s.name, CsvChannel.of(s.name, unit, s.x - offset, v))
+        if id(s.x) not in clocks:
+            clocks[id(s.x)] = s.x - offset
+        channels.setdefault(s.name, CsvChannel.of(s.name, unit, clocks[id(s.x)], v))
     duration = max((c.duration for c in channels.values() if c.readable), default=0.0)
     return channels, _beacons(markers, offset, duration), offset
 
@@ -270,7 +286,10 @@ def read_csv_log(source: bytes | str | Path) -> CsvLog:
     raw = source if isinstance(source, bytes) else Path(source).read_bytes()
     if raw[:4] == LD_MARKER.to_bytes(4, "little"):
         raise ExportFormatError("This is a native MoTeC .ld log, not a CSV export")
-    lines = _decode(raw).splitlines()
+    text = _decode(raw)
+    del raw, source  # each form of the file is let go once the next is made: bytes, text, lines
+    lines = text.splitlines()
+    del text
     first = next((l for l in lines if l.strip()), "")
     if first.strip().startswith("PiToolboxVersionedASCIIDataSet"):
         return _read_pi_ascii(lines)
@@ -304,21 +323,21 @@ def _read_headed(lines: list[str], delim: str, fmt: str) -> CsvLog:
             meta[key] = row[1].strip() if len(row) > 1 else ""
         if len(row) > 5 and row[4].strip():  # MoTeC's second column of keys
             meta.setdefault(row[4].strip(), row[5].strip())
-    rows = [r for r in csv.reader(lines[used:], delimiter=delim) if any(c.strip() for c in r)]
-    if not rows:
+    rows = (r for r in csv.reader(islice(lines, used, None), delimiter=delim) if any(c.strip() for c in r))
+    head = next(rows, None)
+    if head is None:
         raise ExportFormatError("The export has a header but no channels")
-    names = [c.strip() for c in rows[0]]
+    names = [c.strip() for c in head]
     while names and not names[-1]:
         names.pop()
     units = [""] * len(names)
-    body = rows[1:]
-    if body and _is_units(body[0]):
-        units = [c.strip() for c in body[0][:len(names)]] + [""] * max(0, len(names) - len(body[0]))
-        body = body[1:]
-    if delim != ",":
-        body = [[c.replace(",", ".") for c in r] for r in body]
-    if not body:
+    first = next(rows, None)
+    if first is not None and _is_units(first):
+        units = [c.strip() for c in first[:len(names)]] + [""] * max(0, len(names) - len(first))
+        first = next(rows, None)
+    if first is None:
         raise ExportFormatError("The export has no data rows")
+    m = _matrix(chain([first], rows), len(names), len(lines) - used, delim != ",")
 
     aim = "aim" in fmt.lower() or "aim" in str(meta.get("Data Source", "")).lower()
     if "motec" in fmt.lower():
@@ -327,7 +346,7 @@ def _read_headed(lines: list[str], delim: str, fmt: str) -> CsvLog:
         layout = "AiM Race Studio CSV export"
     rate, start = _num(str(meta.get("Sample Rate", ""))), _num(str(meta.get("Start Time", "")))
     markers = [x for x in (_num(b) for b in meta.get("Beacon Markers", [])) if np.isfinite(x)]
-    return _from_columns(names, units, _matrix(body, len(names)), meta, markers, "aim" if aim else "motec", layout,
+    return _from_columns(names, units, m, meta, markers, "aim" if aim else "motec", layout,
                          rate, start if np.isfinite(start) else 0.0)
 
 
@@ -353,22 +372,22 @@ def _from_columns(names: list[str], units: list[str], m: np.ndarray, meta: dict,
 
 def _read_table(lines: list[str], delim: str) -> CsvLog:
     """A plain table: a row of names (units in brackets, or a row of units below), then data."""
-    rows = list(csv.reader(lines, delimiter=delim))
-    at = next((k for k, r in enumerate(rows) if sum(bool(c.strip()) for c in r) >= 2), None)
-    if at is None:
+    rows = csv.reader(lines, delimiter=delim)
+    head = next((r for r in rows if sum(bool(c.strip()) for c in r) >= 2), None)
+    if head is None:
         raise ExportFormatError("Not a logger export: no row of channel names found")
-    split = [_split_name(c) for c in rows[at]]
+    split = [_split_name(c) for c in head]
     names, units = [n for n, _ in split], [u for _, u in split]
-    body = [r for r in rows[at + 1:] if any(c.strip() for c in r)]
-    if body and _is_units(body[0]):
-        units = [u or (body[0][k].strip() if k < len(body[0]) else "") for k, u in enumerate(units)]
-        body = body[1:]
-    if delim != ",":
-        body = [[c.replace(",", ".") for c in r] for r in body]
-    if not body:
+    body = (r for r in rows if any(c.strip() for c in r))
+    first = next(body, None)
+    if first is not None and _is_units(first):
+        units = [u or (first[k].strip() if k < len(first) else "") for k, u in enumerate(units)]
+        first = next(body, None)
+    if first is None:
         raise ExportFormatError("Not a logger export: no data rows")
-    pi = any("[" in c for c in rows[at])  # Pi Toolbox writes units as name[unit]
-    return _from_columns(names, units, _matrix(body, len(names)), {}, [], "cosworth" if pi else "csv",
+    m = _matrix(chain([first], body), len(names), len(lines), delim != ",")
+    pi = any("[" in c for c in head)  # Pi Toolbox writes units as name[unit]
+    return _from_columns(names, units, m, {}, [], "cosworth" if pi else "csv",
                          "Pi Toolbox table export" if pi else "CSV table")
 
 
@@ -400,12 +419,12 @@ def _read_pi_ascii(lines: list[str]) -> CsvLog:
         start = i
         while i < n and not lines[i].strip().startswith("{"):
             i += 1
-        rows = [l.rstrip("\r\n").split("\t") for l in lines[start:i] if l.strip()]
+        rows = (l.rstrip("\r\n").split("\t") for l in islice(lines, start, i) if l.strip())
         if line == "{EventBlock}":
             markers += [_num(r[0]) for r in rows if len(r) > 1 and "lap" in " ".join(r[1:]).lower()]
             continue
         blocks += 1
-        m = _matrix([[c.replace(",", ".") for c in r] for r in rows], len(header))
+        m = _matrix(rows, len(header), i - start, decimal_comma=True)
         x_name, x_unit = _split_name(header[0])
         axis = _axis_kind(x_name, x_unit, True) or "time"
         _, x = _convert(x_unit or ("s" if axis == "time" else "m"), m[:, 0])
