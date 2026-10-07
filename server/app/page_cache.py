@@ -1,13 +1,13 @@
 """Answers of the pages that read a log, kept in the database (table page_cache) so they open at once.
 
-A session's insights, lap analysis, stint view, track map and track shape, an event's track shape and each session's
-tyre prep reduction are worked out from the logs: seconds each on a fast machine, far longer on the hosted server,
-which also has to download the log first. Each answer is kept with a signature of everything it was made from (the
-log and its stored path, its laps as stored, the car's channel map, the track's start/finish line and corners, and
-the page's version below); the next request with the same signature answers from here, without reading the log and
-without waiting for the server's heavy-work lock (app/heavy.py). When anything changes the signature no longer
-matches, and the answer is worked out again as before and kept. The prebuild (app/prebuild.py) fills this in the
-background right after logs are uploaded.
+A session's insights, lap analysis, lap comparisons, stint view, track map and track shape, an event's track shape and
+each session's tyre prep reduction are worked out from the logs: seconds each on a fast machine, far longer on the
+hosted server, which also has to download the log first. Each answer is kept with a signature of everything it was
+made from (the log and its stored path, its laps as stored, the car's channel map, the track's start/finish line and
+corners, and the page's version below); the next request with the same signature answers from here, without reading
+the log and without waiting for the server's heavy-work lock (app/heavy.py). When anything changes the signature no
+longer matches, and the answer is worked out again as before and kept. The prebuild (app/prebuild.py) fills this in
+the background right after logs are uploaded.
 
 Rows are keyed by a scope that starts with the run or event they belong to ("session:7|analysis", "event:1|shape"),
 so deleting an event or a run (app/event_delete.py) deletes them with it.
@@ -33,7 +33,8 @@ from app.db import Base
 log = logging.getLogger(__name__)
 
 # Raise a page's version when what it answers changes, so every kept answer of that page is worked out again.
-VERSIONS = {"insights": 1, "analysis": 1, "stint": 1, "map": 1, "shape": 1, "tyreprep": 1, "grip": 1, "balance": 1}
+VERSIONS = {"insights": 1, "analysis": 1, "compare": 1, "stint": 1, "map": 1, "shape": 1, "tyreprep": 1, "grip": 1,
+            "balance": 1}
 KEPT_ERRORS = (404, 422)  # answers that say what a log can't give (no lap, no GPS): the same log gives the same answer
 
 
