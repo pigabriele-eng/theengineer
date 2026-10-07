@@ -63,9 +63,9 @@ export default function FingerprintsScreen() {
       {db != null && db.drivers.length === 0 && (
         <View style={StyleSheet.flatten([styles.block, styles.gap])}>
           <Text style={t.body}>
-            No fingerprints yet. Tag one run of each driver at an event, and their fingerprint is learned from it.
-            After that the app sets the driver of every run it is sure of, at that event and at the others, and
-            suggests the rest for a tap.
+            No fingerprints yet. After an upload the app asks once who each driver it can't name is, and learns
+            their style from the answer. From then on it sets the driver of every run by itself, at every event, and
+            shows it as set from the driving style so you can change it.
           </Text>
           <TextLink href="/drivers/tag" label="Tag drivers" arrow />
         </View>
@@ -96,8 +96,8 @@ export default function FingerprintsScreen() {
       )}
 
       {db != null && db.unnamed.length > 0 && (
-        <Section no={next()} title="Styles waiting for a name"
-          dek="Driving styles the app tells apart at these events but can't put a name to yet. Tag one of their runs on the event page.">
+        <Section no={next()} title="Drivers waiting for a name"
+          dek="Drivers the app tells apart by their style at these events but can't name yet. Answer the question on the event page once, and every run of theirs gets the name.">
           <View style={styles.list}>
             {db.unnamed.map((u) => (
               <View key={`${u.event_id}-${u.label}`} style={styles.row}>

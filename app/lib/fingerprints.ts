@@ -6,7 +6,7 @@ export type Trait = { kind: string; label: string; explain: string; value: numbe
 
 export type StyleGroup = {
   index: number;
-  label: string; // the driver's name, else "Style A", "Style B"
+  label: string; // the driver's name, else "New driver" (asked about: never a letter)
   driver_id: number | null;
   driver: string | null;
   // named after a tagged run here, a fingerprint from other events, the car's other driver, or not yet
@@ -99,6 +99,6 @@ export function guessLine(g: RunGuess | undefined, mode: EventGuess['mode'] | un
   if (g.driver_id != null) {
     return g.agrees === false ? `The driving style looks like ${s.label}` : null;
   }
-  const how = s.confidence === 'sure' ? 'Drives like' : 'Probably';
-  return s.driver ? `${how} ${s.driver}` : `${s.label}: same style as the other ${s.label} runs`;
+  if (s.driver) return `${s.confidence === 'sure' ? 'Drives like' : 'Probably'} ${s.driver}`;
+  return mode === 'groups' ? 'A driver the app doesn\'t know yet: name them once, above or here' : null;
 }

@@ -1,11 +1,12 @@
 // Which season an event belongs to, asked in a line with one-tap answers (server/app/season_match.py): on the event
 // page, right after an upload, and on the Sessions list (SeasonMatchCount: how many are waiting, opened in place).
-// After an upload it also says what joined its season by itself, with a way to take that back. Who drove an event's
-// runs is answered with one driver for them all, or on the Tag drivers screen. In the programme's way: each question
+// After an upload it also says what joined its season by itself, with a way to take that back. A driver the driving
+// style can't name is asked about once its laps are read (asked again every few seconds meanwhile): the likely names
+// as answers, or a name typed in, and one answer names every run of that style. In the programme's way: each question
 // under a thick ink rule, its kind in Archivo capitals, the question itself large, the answers as ink blocks and the
 // way out as a text link.
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, ViewStyle } from 'react-native';
 
 import { ErrorLine, Field, FormActions, Input, MainButton, Note, Said } from '@/components/Controls';
@@ -16,16 +17,28 @@ import { Fonts, themed } from '@/constants/Theme';
 
 type Scope = { eventId?: number; runIds?: number[] };
 
-const LABEL: Record<SeasonQuestion['kind'], string> = { round: 'Season', official: 'Series season', drivers: 'Drivers' };
+const LABEL: Record<SeasonQuestion['kind'], string> = { round: 'Season', official: 'Series season', driver: 'Driver' };
+const POLL_MS = 5000;
+const MAX_POLLS = 60; // five minutes: a report that never ends doesn't keep asking
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 function usePending(scope: Scope) {
   const [pending, setPending] = useState<Pending | null>(null);
+  const [polls, setPolls] = useState(0);
   const key = `${scope.eventId ?? ''}|${(scope.runIds ?? []).join(',')}`;
   const load = useCallback(() => {
     seasonMatchApi.pending(scope).then(setPending, () => setPending(null)); // an older server: nothing shown
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps -- the scope is its key
   useFocusEffect(load);
+  // the driving style is still being read: a driver question may follow, so ask again shortly
+  useEffect(() => {
+    if (!pending?.checking || polls >= MAX_POLLS) return;
+    const t = setTimeout(() => {
+      setPolls((n) => n + 1);
+      load();
+    }, POLL_MS);
+    return () => clearTimeout(t);
+  }, [pending, polls, load]);
   return { pending, load };
 }
 
@@ -93,14 +106,16 @@ function Question({ q, showEvent, onDone }: { q: SeasonQuestion; showEvent: bool
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [number, setNumber] = useState('');
+  const [name, setName] = useState('');
   const needsNumber = q.needs.includes('car_number');
   const single = q.options.length === 1;
+  const driver = q.kind === 'driver';
 
   const send = async (key: string) => {
     setBusy(key);
     setError(null);
     try {
-      const r = await seasonMatchApi.answer(q.id, key, number);
+      const r = await seasonMatchApi.answer(q.id, key, number, key === 'other' ? name : undefined);
       onDone(r.done);
     } catch (e) {
       setError((e as Error).message);
@@ -111,7 +126,7 @@ function Question({ q, showEvent, onDone }: { q: SeasonQuestion; showEvent: bool
     <MainButton key={key} label={label} sub={sub} onPress={() => send(key)} busy={busy === key}
       disabled={busy != null || (needsNumber && !number.trim())} />
   );
-  const answers = q.kind === 'drivers' ? q.options.map((o) => yes(o.key, o.label ?? o.key))
+  const answers = driver ? q.options.map((o) => yes(o.key, o.label ?? o.key, o.why))
     : single ? [yes(q.options[0].key, needsNumber ? 'Add the season' : 'Yes')]
     : q.options.map((o) => yes(o.key, o.label ?? o.key, o.why));
 
@@ -120,7 +135,6 @@ function Question({ q, showEvent, onDone }: { q: SeasonQuestion; showEvent: bool
       <Label style={styles.kind}>{LABEL[q.kind]}{showEvent && q.event_name ? ` · ${q.event_name}` : ''}</Label>
       <Text style={wide ? styles.prompt : styles.promptPhone}>{q.prompt}</Text>
       {q.why ? <Note>{q.why}</Note> : null}
-      {q.kind === 'drivers' && q.runs != null ? <Note>{plural(q.runs, 'run')} without a driver.</Note> : null}
       {needsNumber && (
         <Field label="Car number" style={styles.number}>
           <Input value={number} onChangeText={setNumber} placeholder={`Your car's number in ${q.series_name ?? 'the series'}`}
@@ -130,14 +144,24 @@ function Question({ q, showEvent, onDone }: { q: SeasonQuestion; showEvent: bool
       )}
       <FormActions style={styles.answers}>
         {answers}
-        {q.kind === 'drivers' && (
-          <TextLink href={{ pathname: '/drivers/tag', params: { event: String(q.event_id) } }} label="Tag each run" arrow />
-        )}
-        {busy === 'no' ? <ActivityIndicator /> : (
-          <TextLink onPress={() => send('no')} disabled={busy != null}
-            label={q.kind === 'drivers' ? 'Skip' : single ? 'No' : 'None of these'} />
-        )}
+        {!driver && (busy === 'no' ? <ActivityIndicator /> : (
+          <TextLink onPress={() => send('no')} disabled={busy != null} label={single ? 'No' : 'None of these'} />
+        ))}
       </FormActions>
+      {driver && (
+        <>
+          <Field label={q.options.length ? 'Someone else' : 'Name'} style={styles.number}>
+            <Input value={name} onChangeText={setName} placeholder="The driver's name" maxLength={120}
+              editable={busy == null} accessibilityLabel="The driver's name" box returnKeyType="done"
+              onSubmitEditing={() => name.trim() && send('other')} />
+          </Field>
+          <FormActions>
+            <MainButton label="Save the name" onPress={() => send('other')} busy={busy === 'other'}
+              disabled={busy != null || !name.trim()} />
+            {busy === 'no' ? <ActivityIndicator /> : <TextLink onPress={() => send('no')} disabled={busy != null} label="Skip" />}
+          </FormActions>
+        </>
+      )}
       {error && <ErrorLine>{error}</ErrorLine>}
     </View>
   );

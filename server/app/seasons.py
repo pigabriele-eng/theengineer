@@ -694,6 +694,9 @@ def put_event_info(event_id: int, body: InfoIn, db: Session = Depends(get_db)):
     if "drivers" in sent:
         own.drivers = list(dict.fromkeys(body.drivers or []))[:MAX_DRIVERS] or None
     db.commit()
+    if "drivers" in sent or "season_id" in sent:
+        from app import driver_prints  # who could have driven changed: the style names who it can now
+        driver_prints.refresh_in_background()
     return info_for_event(db, event_id)
 
 

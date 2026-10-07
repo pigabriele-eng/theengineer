@@ -16,11 +16,11 @@ change, every event with data and no season is matched against the rounds of the
 - No season of ours matches, but a round on a series' published calendar (results module: result_calendar) does, at
   the same track on its days: the question is whether to add that series' season (made from its calendar, our entry
   from its entry list when our car number is known, else the answer gives the number).
-- After a link, runs whose driver can't be told (two drivers or more, and the log names none of them): a question of
-  who drove, answered with one driver for them all or on the Tag drivers screen. When the runs have laps, it waits
-  ("waiting", not shown) for the driving style to be checked (driver_prints.settle): the runs the style is sure of
-  get their driver by themselves, and the question is asked only about the rest, with the style's suggestion as the
-  first answer (style_checked); after WAIT_FOR_STYLE it is asked anyway.
+- After a link, runs whose driver can't be told (two drivers or more, and the log names none of them) are left to
+  the driving style (driver_prints.settle; Gabriele, 2026-10-07: "fully automatic based on fingerprinting", "I want
+  the app to ask me"): runs whose style is a driver the app knows get their driver by themselves, and a style it
+  doesn't know is asked about ("driver": "New driver found in Q2 and Race 2 run 1: who is this?", the likely names
+  as answers, or a name typed in; ask_new_driver). One answer names every run of that style.
 A "no" is kept, so the same question isn't asked again; a link made by itself can be undone the same way. Nothing
 set by hand changes: an event with a season (set on it, or a round linked to it) isn't matched again, and a run keeps
 the car and driver it has. Nothing here reads a log: the headers' venue, date, driver and logger serial are in the
@@ -37,7 +37,7 @@ from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import JSON, DateTime, Integer, String, delete, select
+from sqlalchemy import JSON, DateTime, Integer, String, delete, func, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, selectinload
 
 from app import calendar_sync, garage, models, plans, seasons
@@ -54,7 +54,6 @@ NEAR_BEFORE = timedelta(days=14)  # the same track this close to a round, on oth
 NEAR_AFTER = timedelta(days=7)
 MAX_OPTIONS = 4
 MAX_RUNS = 500
-WAIT_FOR_STYLE = timedelta(minutes=15)  # a who-drove question waits this long at most for the driving style
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
@@ -68,13 +67,13 @@ class SeasonMatch(Base):
     __tablename__ = "season_matches"
     id: Mapped[int] = mapped_column(primary_key=True)
     event_id: Mapped[int] = mapped_column(Integer, index=True)  # no foreign key: a row of a deleted event isn't read
-    kind: Mapped[str] = mapped_column(String(12))  # round (ours), official (a series' calendar), drivers
-    status: Mapped[str] = mapped_column(String(12), default="pending")  # pending, waiting, linked, yes, no
+    kind: Mapped[str] = mapped_column(String(12))  # round (ours), official (a series' calendar), driver
+    status: Mapped[str] = mapped_column(String(12), default="pending")  # pending, linked, yes, no
     prompt: Mapped[str] = mapped_column(String(400))
     why: Mapped[str | None] = mapped_column(String(600))
     options: Mapped[list] = mapped_column(JSON, default=list)  # [{"key", "label", "why", ...}], best first
     answer: Mapped[str | None] = mapped_column(String(120))  # the option picked, or "no"
-    done: Mapped[dict] = mapped_column(JSON, default=dict)  # what a link did; a drivers question's runs
+    done: Mapped[dict] = mapped_column(JSON, default=dict)  # what a link did; a driver question's runs
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -302,12 +301,11 @@ def _rows(db: Session, event_id: int, status: str | None = None, kind: str | Non
 
 
 def _declined(db: Session, event_id: int) -> set[str]:
-    """What was answered "no" for the event: its options' keys, and "drivers" when asked who drove."""
+    """What was answered "no" for the event: its options' keys."""
     out: set[str] = set()
     for row in _rows(db, event_id, "no"):
-        out |= {o.get("key") for o in row.options or []}
-        if row.kind == "drivers":
-            out.add("drivers")
+        if row.kind in ("round", "official"):
+            out |= {o.get("key") for o in row.options or []}
     return out
 
 
@@ -482,7 +480,7 @@ def _entry_now(db: Session, season: seasons.Season) -> dict:
 def fill_runs(db: Session, ev: models.Event, season: seasons.Season, run_ids: list[int] | None,
               row: SeasonMatch) -> None:
     """The event's runs (or these of them) get the season's car, the car its runs' logger, and their driver; only
-    what a run doesn't have. Runs whose driver can't be told are asked about."""
+    what a run doesn't have. Runs whose driver can't be told are left to the driving style (driver_prints.settle)."""
     entry = seasons.entry_row(season.entry)
     car_id = seasons._exists(db, models.Car, entry["car_id"]) or _car_numbered(db, season.car_number)
     drivers = [d for i in entry["drivers"] if (d := db.get(models.Driver, i)) is not None]
@@ -519,91 +517,26 @@ def fill_runs(db: Session, ev: models.Event, season: seasons.Season, run_ids: li
     row.done = {**done, "runs": filled, "loggers": sorted(set(loggers)), "car_id": car_id,
                 "entry": _entry_used(car_id, drivers)}
     db.flush()
-    if need and "drivers" not in _declined(db, ev.id):
-        _ask_drivers(db, ev, season, need, drivers)
+    if need:
+        from app import driver_prints  # looked up when used: the tests reload it
+        driver_prints.refresh_in_background()  # with the season's drivers known, the style names who it can
 
 
-def _ask_drivers(db: Session, ev: models.Event, season: seasons.Season, need: list[int],
-                 drivers: list[models.Driver]) -> None:
-    shown = _rows(db, ev.id, "pending", "drivers")
-    waiting = _rows(db, ev.id, "waiting", "drivers")
-    runs = sorted({*need, *(r for row in [*shown, *waiting] for r in (row.done or {}).get("runs", []))})
-    for row in waiting:
-        row.status = "pending"  # one question at a time: _ask keeps it
-    names = ", ".join(d.name for d in drivers)
-    row = _ask(db, ev, "drivers", f"Who drove the runs of {ev.name}?",
-               f"Their logs don't say which of {season.name}'s drivers ({names}) drove.",
-               [{"key": f"driver:{d.id}", "label": f"All {d.name}", "driver_id": d.id} for d in drivers],
-               {"runs": runs, "season_id": season.id})
-    from app import driver_prints  # looked up when used: the tests reload it
-    if not shown and driver_prints.will_look(db, ev.id):
-        row.status = "waiting"
-        row.done = {**row.done, "waiting_since": _now().isoformat()}
-        driver_prints.refresh_in_background()  # its fingerprints may be worked out already: settled again
-
-
-def _runs_said(db: Session, picks: dict[int, int]) -> str:
-    """"Max: Q1, R2; Gabriele: Q2, R1": who drove which runs, by the runs' names."""
-    by: dict[int, list[str]] = {}
-    for sid, did in picks.items():
-        s = db.get(models.RunSession, sid)
-        by.setdefault(did, []).append(s.name if s is not None and s.name else f"run {sid}")
-    return "; ".join(f"{db.get(models.Driver, did).name}: {', '.join(sorted(names))}" for did, names in by.items())
-
-
-def style_checked(db: Session, event_id: int, picks: dict[int, int],
-                  splits: list[dict[int, int]] | tuple = ()) -> None:
-    """The driving style was checked for the event (driver_prints.settle), and the runs it was sure of have their
-    driver: the question of who drove is put away when no run is left, else asked about the rest with the style's
-    picks (run -> driver) as the first answer, or, when the runs split into two styles of drivers nobody knows
-    yet, the two ways the car's drivers could share them (splits). The caller holds calendar_sync._lock and
-    commits."""
-    db.flush()
-    for row in [*_rows(db, event_id, "waiting", "drivers"), *_rows(db, event_id, "pending", "drivers")]:
-        runs = [int(r) for r in (row.done or {}).get("runs", [])][:MAX_RUNS]
-        left = set(db.scalars(select(models.RunSession.id).where(
-            models.RunSession.id.in_(runs), models.RunSession.event_id == event_id,
-            models.RunSession.driver_id.is_(None))).all()) if runs else set()
-        if not left:
-            row.status, row.answer, row.answered_at = "yes", "style", _now()
-            continue
-        options = [o for o in row.options or [] if not str(o.get("key")).startswith("style")]
-        ways = [{sid: did for sid, did in split.items() if sid in left and db.get(models.Driver, did) is not None}
-                for split in splits]
-        if len(ways) == 2 and all(ways):
-            why = ("The runs split into two driving styles. Pick which is whose: from then on both drivers are "
-                   "known by their style.")
-            options = [{"key": f"style:{i}", "label": _runs_said(db, way)[:160], "why": why,
-                        "picks": {str(k): v for k, v in way.items()}} for i, way in enumerate(ways)] + options
-            row.options = options[:MAX_OPTIONS]
-            row.status = "pending"
-            continue
-        mine = {sid: did for sid, did in picks.items() if sid in left and db.get(models.Driver, did) is not None}
-        if mine:
-            counts: dict[int, int] = {}
-            for did in mine.values():
-                counts[did] = counts.get(did, 0) + 1
-            said = ", ".join(f"{db.get(models.Driver, did).name} {_plural(n, 'run')}" for did, n in counts.items())
-            why = "Each run's driving style against the drivers' fingerprints. Nothing is set until you tap."
-            if (k := len(left) - len(mine)) > 0:
-                why += f" {_plural(k, 'run')} the style can't tell {'stays' if k == 1 else 'stay'} untagged."
-            options = [{"key": "style", "label": f"As the driving style says: {said}"[:160], "why": why,
-                        "picks": {str(k): v for k, v in mine.items()}}, *options]
-        row.options = options[:MAX_OPTIONS]
-        row.status = "pending"
-    db.flush()
-
-
-def _release_waiting(db: Session) -> None:
-    """Who-drove questions that waited long enough for the driving style are asked anyway."""
-    limit = _now() - WAIT_FOR_STYLE
-    for row in db.scalars(select(SeasonMatch).where(SeasonMatch.status == "waiting")).all():
-        try:
-            since = datetime.fromisoformat((row.done or {}).get("waiting_since") or "")
-        except ValueError:
-            since = None
-        if since is None or since.tzinfo is None or since <= limit:
-            row.status = "pending"
+def ask_new_driver(db: Session, ev_id: int, q: dict | None) -> None:
+    """The question about the event's runs nobody could name (driver_prints._question: prompt, why, options with a
+    driver id or a name, runs), kept one at a time, or put away (None). A question answered "no" about the same runs
+    isn't asked again. The caller holds calendar_sync._lock and commits."""
+    db.execute(delete(SeasonMatch).where(SeasonMatch.event_id == ev_id, SeasonMatch.kind == "drivers",
+                                         SeasonMatch.status.in_(("pending", "waiting"))))  # the earlier question
+    ev = db.get(models.Event, ev_id)
+    runs = sorted(int(r) for r in (q or {}).get("runs", []))
+    if ev is None or not runs or any(sorted((r.done or {}).get("runs", [])) == runs
+                                     for r in _rows(db, ev_id, "no", "driver")):
+        for row in _rows(db, ev_id, "pending", "driver"):
+            db.delete(row)
+        db.flush()
+        return
+    _ask(db, ev, "driver", q["prompt"], q["why"], q["options"], {"runs": runs})
 
 
 # ---------- matching an event ----------
@@ -856,31 +789,38 @@ def _undo(db: Session, row: SeasonMatch) -> None:
     db.flush()
 
 
-def _set_drivers(db: Session, row: SeasonMatch, driver_id: int) -> int:
-    d = db.get(models.Driver, driver_id)
+def _driver_named(db: Session, name: str) -> models.Driver:
+    """The garage's driver of that name (whatever the capitals), else a new one."""
+    name = re.sub(r"\s+", " ", name).strip()[:120]
+    if not name:
+        raise HTTPException(422, "Type the driver's name")
+    d = db.scalars(select(models.Driver).where(func.lower(models.Driver.name) == name.lower())
+                   .order_by(models.Driver.id)).first()
     if d is None:
-        raise HTTPException(409, "That driver isn't in the garage any more")
+        d = models.Driver(name=name)
+        db.add(d)
+        db.flush()
+    return d
+
+
+def _name_runs(db: Session, row: SeasonMatch, d: models.Driver) -> int:
+    """The question's runs that still have no driver, or one the style set, get this driver as a person's answer:
+    it teaches the driver's fingerprint (driver_prints)."""
+    from app import driver_prints  # looked up when used: the tests reload it
     n = 0
     for sid in (row.done or {}).get("runs", []):
         s = db.get(models.RunSession, sid)
-        if s is not None and s.event_id == row.event_id and s.driver_id is None:
-            s.driver_id = d.id
-            n += 1
-            if s.car_id is not None:
-                garage.link_driver(db, d.id, s.car_id)
-    return n
-
-
-def _set_picks(db: Session, row: SeasonMatch, picks: dict) -> int:
-    """The style's pick for each run (run id -> driver id), for the runs still without a driver."""
-    n = 0
-    for sid, did in picks.items():
-        s, d = db.get(models.RunSession, int(sid)), db.get(models.Driver, int(did))
-        if s is not None and d is not None and s.event_id == row.event_id and s.driver_id is None:
-            s.driver_id = d.id
-            n += 1
-            if s.car_id is not None:
-                garage.link_driver(db, d.id, s.car_id)
+        if s is None or s.event_id != row.event_id:
+            continue
+        auto = db.scalar(select(driver_prints.StyleTag).where(driver_prints.StyleTag.session_id == s.id))
+        if s.driver_id is not None and (auto is None or auto.driver_id != s.driver_id):
+            continue  # a person's tag stands
+        if auto is not None:
+            db.delete(auto)
+        s.driver_id = d.id
+        n += 1
+        if s.car_id is not None:
+            garage.link_driver(db, d.id, s.car_id)
     return n
 
 
@@ -899,7 +839,10 @@ def _still_open(db: Session, row: SeasonMatch) -> bool:
     if ev is None:
         db.delete(row)
         return False
-    if row.kind == "drivers":
+    if row.kind == "drivers":  # the earlier question of who drove: the driving style asks now
+        db.delete(row)
+        return False
+    if row.kind == "driver":
         if _missing_drivers(db, row) == 0:
             row.status, row.answer, row.answered_at = "yes", "tagged", _now()
             return False
@@ -926,7 +869,7 @@ def _json(db: Session, row: SeasonMatch, ev: models.Event | None = None) -> dict
     if row.kind == "official" and row.status == "pending" and not any(o.get("car_number") for o in row.options):
         out["needs"] = ["car_number"]
         out["series_name"] = (row.options or [{}])[0].get("series_name")
-    if row.kind == "drivers":
+    if row.kind == "driver":
         out["runs"] = _missing_drivers(db, row)
     if row.status in ("linked", "yes") and row.kind in ("round", "official"):
         out["summary"] = _summary(db, row)
@@ -966,8 +909,9 @@ router = APIRouter(prefix="/season-match")
 
 
 class AnswerIn(BaseModel):
-    answer: str = Field(min_length=1, max_length=120)  # an option's key, or "no"
+    answer: str = Field(min_length=1, max_length=120)  # an option's key, "no", or "other" (driver_name)
     car_number: str | None = Field(None, max_length=8)
+    driver_name: str | None = Field(None, max_length=120)  # a driver question answered with a name typed in
 
 
 def _event_scope(db: Session, event_id: int | None, runs: str | None) -> set[int] | None:
@@ -996,8 +940,6 @@ def pending(event_id: int | None = None, runs: str | None = Query(None, max_leng
     if scope is not None:
         q = q.where(SeasonMatch.event_id.in_(sorted(scope)))
     with calendar_sync._lock:
-        _release_waiting(db)
-        db.flush()
         rows = [r for r in db.scalars(q).all() if _still_open(db, r)]
         db.commit()
     linked = []
@@ -1008,8 +950,10 @@ def pending(event_id: int | None = None, runs: str | None = Query(None, max_leng
                   if (r.done or {}).get("season_id") == _season_id_of(db, r.event_id)]
     events = {e.id: e for e in db.scalars(select(models.Event).where(
         models.Event.id.in_({r.event_id for r in [*rows, *linked]}))).all()} if rows or linked else {}
+    from app import driver_prints  # looked up when used: the tests reload it
     return {"count": len(rows), "questions": [_json(db, r, events.get(r.event_id)) for r in rows],
-            "linked": [_json(db, r, events.get(r.event_id)) for r in linked if r.event_id in events]}
+            "linked": [_json(db, r, events.get(r.event_id)) for r in linked if r.event_id in events],
+            "checking": bool(scope) and driver_prints.checking(sorted(scope))}  # a driver question may follow
 
 
 @router.post("/{match_id}")
@@ -1040,14 +984,19 @@ def answer(match_id: int, body: AnswerIn, db: Session = Depends(get_db)):
         if row.status != "pending":
             raise HTTPException(409, "That was answered already")
         opt = next((o for o in row.options or [] if o.get("key") == key), None)
-        if opt is None:
+        if opt is None and not (row.kind == "driver" and key == "other"):
             raise HTTPException(422, "That isn't one of the answers")
-        if row.kind == "drivers" and key.startswith("style"):
-            n = _set_picks(db, row, opt.get("picks") or {})
-            words = f"{_plural(n, 'run')} of {ev.name} set from the driving style."
-        elif row.kind == "drivers":
-            n = _set_drivers(db, row, int(opt["driver_id"]))
-            words = f"{_plural(n, 'run')} of {ev.name} now driven by {db.get(models.Driver, opt['driver_id']).name}."
+        if row.kind == "driver":
+            if opt is None:
+                d = _driver_named(db, body.driver_name or "")
+            elif opt.get("driver_id") is not None:
+                d = db.get(models.Driver, int(opt["driver_id"]))
+                if d is None:
+                    raise HTTPException(409, "That driver isn't in the garage any more")
+            else:
+                d = _driver_named(db, opt.get("label") or "")
+            n = _name_runs(db, row, d)
+            words = f"{_plural(n, 'run')} of {ev.name} now driven by {d.name}. Later uploads know {d.name} by style."
         else:
             if seasons.season_of_event(db, ev.id, seasons.own_info(db, ev.id))[0] is not None:
                 raise HTTPException(409, f"{ev.name} is in a season already")
@@ -1067,7 +1016,7 @@ def answer(match_id: int, body: AnswerIn, db: Session = Depends(get_db)):
             words = _summary(db, row)
         row.status, row.answer, row.answered_at = "yes", key, _now()
         db.commit()
-    if row.kind != "drivers":
+    if row.kind != "driver":
         safely("an answer", scan, db)  # a new season (or round) may be what other events were waiting for
     else:
         from app import driver_prints  # the answer teaches the driver fingerprints; looked up when used

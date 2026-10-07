@@ -194,7 +194,13 @@ def test_event_suggestions_and_the_fingerprint_database(client, monkeypatch):
     sugg = {s["session_id"]: s["suggestion"] for s in body["sessions"]}
     assert sugg[ids["A1"]]["group"] == sugg[ids["A2"]]["group"] != sugg[ids["B1"]]["group"] == sugg[ids["B2"]]["group"]
     assert all(s["driver_id"] is None and s["agrees"] is None for s in body["sessions"])
-    assert {g["label"] for g in body["groups"]} == {"Style A", "Style B"}
+    assert {g["label"] for g in body["groups"]} == {"New driver"}  # never a letter
+    from app import driver_prints
+
+    driver_prints.refresh_in_background()
+    driver_prints.wait_idle()
+    (q,) = client.get("/season-match/pending", params={"event_id": ev["id"]}).json()["questions"]
+    assert q["kind"] == "driver" and q["prompt"].startswith("New driver found in ") and q["runs"] == 2
 
     # tag one run of each driver: the others are named after them, and the database learns both
     for name, driver in (("A1", "Anna"), ("B1", "Ben")):
@@ -206,6 +212,7 @@ def test_event_suggestions_and_the_fingerprint_database(client, monkeypatch):
     assert sugg[ids["A2"]]["confidence"] in ("sure", "likely")
     assert {s["session_id"]: s["agrees"] for s in body["sessions"]}[ids["A1"]] is True
 
+    driver_prints.wait_idle()  # the tags' background pass keeps the page
     db = client.get("/drivers/fingerprints").json()
     assert db["events"] == 1 and {d["driver"] for d in db["drivers"]} == {"Anna", "Ben"}
     anna = next(d for d in db["drivers"] if d["driver"] == "Anna")
@@ -214,7 +221,6 @@ def test_event_suggestions_and_the_fingerprint_database(client, monkeypatch):
     assert db["kinds"] and db["unnamed"] == []
 
     # kept: the next open answers without working it out again
-    from app import driver_prints
     from app.routers import driver_style
 
     def worked_out(_db):
@@ -289,3 +295,44 @@ def test_drivers_are_set_from_the_style_by_themselves(client):
     db = client.get("/drivers/fingerprints").json()
     anna = next(d for d in db["drivers"] if d["driver"] == "Anna")
     assert [e["event"] for e in anna["events"]] == ["First weekend"]
+
+
+def test_a_new_pair_is_asked_about_once_and_known_by_style_after(client):
+    from app import driver_prints
+    from app.routers import reports
+
+    smooth, sharp = (1.0, 0.99, 0.995, 0.985, 0.99), (0.99, 0.985, 0.99, 0.98, 0.995)
+    first = _weekend(client, "First weekend", {"A1": (smooth, False), "B1": (sharp, True),
+                                               "A2": (smooth, False), "B2": (sharp, True)}, 10)
+    second = _weekend(client, "Second weekend", {"A3": (smooth, False), "B3": (sharp, True)}, 14)
+    pair = [client.post("/garage/drivers", json={"name": n}).json()["id"] for n in ("Anna", "Ben")]
+    for ev in (first["event"], second["event"]):  # the car's two drivers, as the entry list says
+        assert client.put(f"/events/{ev}/info", json={"drivers": pair}).status_code == 200
+        t0 = time.monotonic()
+        while client.get(f"/events/{ev}/driver-guess").json()["status"] == "working" and time.monotonic() - t0 < 120:
+            time.sleep(0.2)
+    assert reports.wait_idle()
+    driver_prints.refresh_in_background()
+    driver_prints.wait_idle()
+
+    # nobody known yet: one question for the first weekend, the car's drivers as the answers
+    (q,) = client.get("/season-match/pending", params={"event_id": first["event"]}).json()["questions"]
+    assert q["kind"] == "driver" and q["prompt"] in ("New driver found in A1 and A2: who is this?",
+                                                     "New driver found in B1 and B2: who is this?")
+    assert [o["label"] for o in q["options"]] == ["Anna", "Ben"]
+    assert q["why"].endswith("The other runs then go to the car's other driver.")
+    anna_first = "A1" in q["prompt"]
+    r = client.post(f"/season-match/{q['id']}", json={"answer": q["options"][0 if anna_first else 1]["key"]})
+    assert r.status_code == 200, r.text
+    driver_prints.wait_idle()
+
+    # the other style is the other driver, and the second weekend is known by style: no question left
+    names = {d["id"]: d["name"] for d in client.get("/garage").json()["drivers"]}
+    for ev, runs in ((first, ("A1", "A2", "B1", "B2")), (second, ("A3", "B3"))):
+        got = {s["session_id"]: s for s in client.get(f"/events/{ev['event']}/driver-guess").json()["sessions"]}
+        assert [names.get(got[ev[run]]["driver_id"]) for run in runs] == ["Anna" if r[0] == "A" else "Ben"
+                                                                          for r in runs]
+    assert client.get("/season-match/pending").json()["count"] == 0
+    got = {s["session_id"]: s for s in client.get(f"/events/{second['event']}/driver-guess").json()["sessions"]}
+    assert all(s["auto"] is not None for s in got.values())  # shown as set from the style, with Change
+

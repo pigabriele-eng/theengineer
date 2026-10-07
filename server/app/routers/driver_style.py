@@ -29,7 +29,7 @@ def _names(db: Session) -> dict[int, str]:
 def _label(i: int, grp: ds.Group, names: dict[int, str]) -> str:
     if grp.driver_id is not None and grp.driver_id in names:
         return names[grp.driver_id]
-    return f"Style {'ABC'[i] if i < 3 else i + 1}"
+    return "New driver"  # never a letter: the driver is asked about (driver_prints.settle)
 
 
 def _pace(times: list[float]) -> dict:
@@ -169,7 +169,9 @@ def build_page(db: Session) -> dict:
                     "event_id": ev_id, "event": ev.name if ev else None, "laps": grp.laps,
                     "match": round(grp.match or 0, 2)})
             elif grp.driver_id is None and g.mode == "groups":
-                unnamed.append({"event_id": ev_id, "event": ev.name if ev else None, "label": _label(i, grp, names),
+                runs = [s.session_id for s in g.sessions if s.group == i]
+                unnamed.append({"event_id": ev_id, "event": ev.name if ev else None,
+                                "label": driver_prints.runs_text(db, runs) if runs else _label(i, grp, names),
                                 "laps": grp.laps})
 
     drivers = []
