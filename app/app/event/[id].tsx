@@ -1,6 +1,6 @@
 import { Link, Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 
 import { useLapColors } from '@/components/CompareViews';
 import { DeleteEvent } from '@/components/DeleteEvent';
@@ -27,6 +27,7 @@ import { formatLap } from '@/lib/api';
 import { todayIso, When, whenOf } from '@/lib/calendar';
 import { MAX_LAPS } from '@/lib/compare';
 import { countryOfAny } from '@/lib/countries';
+import { DAY_GAP, dayColumns, MIN_EVENT_DAY } from '@/lib/dayColumns';
 import { RunsDeleted } from '@/lib/deleteRuns';
 import { dateRange, dayLabel, eventsApi, Folder, FolderSession, KIND_NAMES, NO_EVENT } from '@/lib/events';
 import { EventGuess } from '@/lib/fingerprints';
@@ -51,6 +52,7 @@ export default function EventScreen() {
   const styles = useStyles();
   const wide = useWide();
   const gutter = useGutter();
+  const { width } = useWindowDimensions();
   const params = useLocalSearchParams<{ id: string; compare?: string }>();
   const key = params.id === NO_EVENT ? NO_EVENT : String(Number(params.id));
   const router = useRouter();
@@ -265,17 +267,23 @@ export default function EventScreen() {
 
   // ---------- the sections ----------
 
+  // three or four days side by side across the page, two a row when the window is too narrow for that many columns
+  const cols = dayColumns(folder?.days.length ?? 0, width, wide, gutter, MIN_EVENT_DAY);
+  const daysStyle = cols === 'across' ? styles.daysAcross : cols === 'half' ? styles.daysHalf
+    : wide ? styles.days : styles.daysPhone;
+  const dayStyle = cols === 'across' ? styles.dayAcross : cols === 'half' ? styles.dayHalf : wide ? styles.day : undefined;
+
   let no = 0;
   const runs = folder && (
     <Section no={++no} title="Runs" dek={isEvent
       ? 'Day by day, each with its best lap. Tick two to six to put them side by side; tap a name to rename it, a best lap to open the run.'
       : 'Runs filed in no event. Tick them, then Move to put them into one, or Delete to remove them for good.'}>
       {sessions.length > 0 && isEvent && <Figures folder={folder} />}
-      <View style={wide ? styles.days : styles.daysPhone}>
+      <View style={daysStyle}>
         {folder.days.map((d) => {
           const first = sessions.indexOf(d.sessions[0]);
           return (
-            <View key={d.date ?? 'none'} style={wide ? styles.day : undefined}>
+            <View key={d.date ?? 'none'} style={dayStyle}>
               <DayHead days={folder.days} date={d.date} />
               {d.sessions.map((s, i) => (
                 <SessionRow key={s.id} s={s} no={first + i + 1} color={colorOf(s.id)} picked={picks.some((p) => p.id === s.id)}
@@ -683,6 +691,10 @@ const useStyles = themed((c) => ({
   days: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 32, rowGap: 28 },
   daysPhone: { flexDirection: 'column', gap: 24 },
   day: { flex: 1, minWidth: 340 },
+  daysAcross: { flexDirection: 'row', columnGap: DAY_GAP },
+  daysHalf: { flexDirection: 'row', flexWrap: 'wrap', columnGap: DAY_GAP, rowGap: 28 },
+  dayAcross: { flexGrow: 1, flexShrink: 1, flexBasis: 0, minWidth: 0 },
+  dayHalf: { flexBasis: '47%', flexGrow: 1, minWidth: 0 },
   dayHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', borderTopWidth: 3,
     borderBottomWidth: 1, borderColor: c.rule, paddingTop: 7, paddingBottom: 6 },
   legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 22, rowGap: 8, alignItems: 'center', marginTop: 14 },
