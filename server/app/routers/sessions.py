@@ -95,6 +95,10 @@ def upload_file(session_id: int, file: UploadFile, db: Session = Depends(get_db)
             raise HTTPException(422, f"{name} wasn't added ({e.reason}).") from e
         _attach_track(db, s, rec)
     db.commit()
+    if s.event_id is not None:
+        from app import season_match  # here: it uses the seasons, which use this module's importers
+
+        season_match.safely("a log was added", season_match.after_import, db, [s.id])
     db.refresh(s)
     return _with_best(s)
 

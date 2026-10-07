@@ -171,7 +171,7 @@ export function Credit({ photo, style, textStyle }: { photo: Photo; style?: View
 
 /** The full-bleed photo at the top of a page: the photo, a dark gradient only behind the headline, the credit in the top
  * right corner, then the kicker (a red tag and the rest, which can link back up), the huge headline and an italic deck. */
-export function Hero({ photo, tag, rest, restHref, title, deck, height }: {
+export function Hero({ photo, tag, rest, restHref, title, deck, height, deckGap }: {
   photo: Photo;
   tag: string;
   rest?: string;
@@ -179,6 +179,7 @@ export function Hero({ photo, tag, rest, restHref, title, deck, height }: {
   title: string;
   deck?: string;
   height?: number;
+  deckGap?: number; // room between the headline and the deck: more under a name with an underscore (06_D2S1)
 }) {
   const styles = useStyles();
   const { width } = useWindowDimensions();
@@ -219,7 +220,8 @@ export function Hero({ photo, tag, rest, restHref, title, deck, height }: {
         </View>
         <Text style={StyleSheet.flatten([styles.headline, { fontSize: size, lineHeight: size * 0.92 }])}
           accessibilityRole="header">{title}</Text>
-        {deck ? <Text style={wide ? styles.deck : styles.deckPhone}>{deck}</Text> : null}
+        {deck ? <Text style={StyleSheet.flatten([wide ? styles.deck : styles.deckPhone, deckGap != null && { marginTop: deckGap }])}>
+          {deck}</Text> : null}
       </View>
     </View>
   );
@@ -324,7 +326,8 @@ export function Fig({ label, value, unit, size = 64, color, bar, barHeight = 8, 
       <Text style={StyleSheet.flatten([styles.fig, { fontSize: size, lineHeight: size * 1.02 }, color ? { color } : null])}
         numberOfLines={FIG_LINES} adjustsFontSizeToFit>
         {value}
-        {unit ? <Text style={StyleSheet.flatten([styles.figUnit, { fontSize: Math.round(size * 0.42) }, color ? { color } : null])}>
+        {unit ? <Text style={StyleSheet.flatten([styles.figUnit, { fontSize: Math.round(size * 0.42), lineHeight: Math.round(size * 0.46) },
+          color ? { color } : null])}>
           {` ${unit}`}</Text> : null}
       </Text>
       {bar ? <View style={{ height: barHeight, backgroundColor: bar, marginTop: 10 }} /> : null}

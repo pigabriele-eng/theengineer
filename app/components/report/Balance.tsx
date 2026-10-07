@@ -23,9 +23,10 @@ import {
   Strength,
 } from '@/lib/balance';
 import { quickestLapsLine } from '@/lib/grip';
-import { byScheme, Radius, themed } from '@/constants/Theme';
+import { byScheme, Fonts, themed, Type } from '@/constants/Theme';
 
-type Props = { session?: number; event?: number };
+// bare: inside a report section that already names it, so without its own heading
+type Props = { session?: number; event?: number; bare?: boolean };
 
 // Validated chart palette: categorical slots 1-3 (driving, car, theoretical; and the three laps in the focus charts),
 // and the diverging pair for balance (blue: understeer, red: oversteer, grey: normal), light and dark steps.
@@ -53,7 +54,7 @@ function describe(v: number): Pick<BalanceCell, 'kind' | 'strength'> {
   return { kind: strength == null ? 'normal' : v > 0 ? 'understeer' : 'oversteer', strength };
 }
 
-export function Balance({ session, event }: Props) {
+export function Balance({ session, event, bare }: Props) {
   const styles = useStyles();
   const [report, setReport] = useState<BalanceReport | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -76,7 +77,7 @@ export function Balance({ session, event }: Props) {
 
   return (
     <View style={styles.root}>
-      <Text style={styles.h1}>Car balance and setup</Text>
+      {!bare && <Text style={styles.h1}>Car balance and setup</Text>}
       {busy && (
         <View style={styles.busy}>
           <ActivityIndicator />
@@ -545,51 +546,50 @@ const useStyles = themed((c) => ({
   root: { gap: 12 },
   busy: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   h1: { fontSize: 20, fontWeight: '700' },
-  h2: { fontSize: 18, fontWeight: '700' },
-  h3: { fontSize: 15, fontWeight: '600', marginTop: 8 },
-  headline: { fontSize: 16, lineHeight: 23, fontWeight: '500' },
+  h2: { ...Type.label, fontSize: 13, color: c.text, borderTopWidth: 3, borderColor: c.rule, paddingTop: 6, marginTop: 12 },
+  h3: { ...Type.label, color: c.text, marginTop: 8 },
+  headline: { fontFamily: Fonts.body, fontSize: 19, lineHeight: 25, fontWeight: '600', color: c.text },
   section: { gap: 10, marginTop: 12 },
   body: { lineHeight: 20 },
   note: { lineHeight: 20, opacity: 0.85 },
-  small: { fontSize: 12, lineHeight: 17, opacity: 0.65 },
+  small: { fontFamily: Fonts.label, fontSize: 12, lineHeight: 16, color: c.textMuted },
   dim: { opacity: 0.6 },
   flag: { fontSize: 12, lineHeight: 17, fontWeight: '700' },
   error: { color: c.error },
-  card: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 12, gap: 8, backgroundColor: c.surface },
+  card: { gap: 8, borderTopWidth: 3, borderColor: c.rule, paddingTop: 10 },
   cardHead: { flexDirection: 'row', gap: 10, alignItems: 'baseline' },
-  cardNumber: { fontSize: 16, fontWeight: '700', opacity: 0.5, fontVariant: ['tabular-nums'] },
-  cardTitle: { fontSize: 16, fontWeight: '700', flexShrink: 1 },
+  cardNumber: { fontFamily: Fonts.display, fontSize: 20, lineHeight: 22, color: c.background, backgroundColor: c.rule, paddingHorizontal: 7, paddingTop: 3 },
+  cardTitle: { fontFamily: Fonts.body, fontSize: 18, lineHeight: 24, fontWeight: '600', flexShrink: 1, color: c.text },
   labelled: { gap: 2 },
-  label: { fontSize: 11, fontWeight: '600', opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
+  label: { ...Type.label, fontSize: 11, color: c.textSecondary },
   model: { gap: 4, borderTopWidth: 1, borderColor: c.separator, paddingTop: 8 },
   link: { fontWeight: '600', marginTop: 2 },
-  split: { flexDirection: 'row', height: 14, gap: 2, borderRadius: 4, overflow: 'hidden' },
+  split: { flexDirection: 'row', height: 14, gap: 2, overflow: 'hidden' },
   legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, rowGap: 4, marginTop: 6 },
   legendItem: { fontSize: 13, fontVariant: ['tabular-nums'] },
   barRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   barCode: { width: 64, fontWeight: '600', fontVariant: ['tabular-nums'] },
   barTrack: { flex: 1, gap: 2 },
-  bar: { height: 10, borderTopRightRadius: 4, borderBottomRightRadius: 4 },
+  bar: { height: 10 },
   barWhere: { fontSize: 11, opacity: 0.6 },
   barValue: { width: 52, textAlign: 'right', fontVariant: ['tabular-nums'] },
   explain: { gap: 2 },
   explainHead: { fontWeight: '600', fontVariant: ['tabular-nums'] },
   toggle: { flexDirection: 'row', gap: 8 },
-  toggleItem: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, paddingHorizontal: 12, paddingVertical: 5, backgroundColor: c.surface },
+  toggleItem: { borderBottomWidth: 3, borderColor: 'transparent', paddingBottom: 2, marginRight: 6 },
   tableHead: { flexDirection: 'row', gap: 4 },
-  th: { flex: 1, fontSize: 12, fontWeight: '600', opacity: 0.6 },
+  th: { ...Type.label, flex: 1, fontSize: 11, color: c.textSecondary },
   tableRow: { flexDirection: 'row', gap: 4, alignItems: 'stretch' },
   codeCol: { width: 72, flexGrow: 0, flexShrink: 0, justifyContent: 'center' },
-  thCode: { width: 72, flexGrow: 0, flexShrink: 0, fontSize: 12, fontWeight: '600', opacity: 0.6 },
+  thCode: { ...Type.label, width: 72, flexGrow: 0, flexShrink: 0, fontSize: 11, color: c.textSecondary },
   code: { fontWeight: '600', fontVariant: ['tabular-nums'] },
-  chip: { flex: 1, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 4, justifyContent: 'center' },
+  chip: { flex: 1, paddingHorizontal: 6, paddingVertical: 4, justifyContent: 'center' },
   chipValue: { fontWeight: '600', fontVariant: ['tabular-nums'] },
   chipWords: { fontSize: 11, lineHeight: 14 },
   checks: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  check: { gap: 2, minWidth: 150, flexGrow: 1, flexBasis: 150, borderWidth: 1, borderColor: c.border, borderRadius: Radius.card,
-    padding: 10, backgroundColor: c.surface },
-  checkLabel: { fontSize: 12, opacity: 0.65 },
-  checkValue: { fontSize: 17, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  check: { gap: 2, minWidth: 150, flexGrow: 1, flexBasis: 150, borderTopWidth: 3, borderColor: c.rule, paddingTop: 10 },
+  checkLabel: { ...Type.label, fontSize: 11, color: c.textSecondary },
+  checkValue: { fontFamily: Fonts.display, fontSize: 26, lineHeight: 30, color: c.text },
 }));
 
 export default Balance;

@@ -18,7 +18,7 @@ import {
   TrackMapData,
 } from '@/lib/trackmap';
 import { featureMid, featureSpan, TrackShapeData } from '@/lib/trackshape';
-import { byScheme, Fonts, Radius, themed } from '@/constants/Theme';
+import { byScheme, Fonts, themed, Type } from '@/constants/Theme';
 
 type Props = {
   session?: number; // draw this session's best clean lap
@@ -263,8 +263,8 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
               accessibilityRole="button"
               accessibilityState={{ selected: mode === m }}
               onPress={() => setMode(m)}
-              style={StyleSheet.flatten([styles.toggleItem, { borderColor: mode === m ? tint : c.casing }])}>
-              <Text style={[styles.toggleText, mode === m ? { color: tint } : { opacity: 0.6 }]}>
+              style={StyleSheet.flatten([styles.toggleItem, mode === m && { borderColor: tint }])}>
+              <Text style={StyleSheet.flatten([styles.toggleText, mode !== m && styles.toggleOff])}>
                 {m === 'sections' ? 'Sections' : 'Speed'}
               </Text>
             </Pressable>
@@ -305,6 +305,9 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
                 </>
               ) : (
                 <>
+                  {sectionColors && (
+                    <Path d={g.loop} stroke={c.ink} strokeWidth={g.z.track + 5} fill="none" strokeLinejoin="round" />
+                  )}
                   {g.sections.map((s, k) => (
                     <Path key={s.code} d={s.d} fill="none" strokeLinejoin="round"
                       stroke={tone(k, s.code)}
@@ -432,18 +435,21 @@ function Chequer({ x, y, size, ink, paper }: { x: number; y: number; size: numbe
 }
 
 const useStyles = themed((c) => ({
-  wrap: { gap: 6, backgroundColor: c.surface, borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 12 },
-  head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
-  title: { fontSize: 13, fontWeight: '600', opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 },
-  toggle: { flexDirection: 'row', gap: 6 },
-  toggleItem: { borderWidth: 1, borderRadius: Radius.control, paddingHorizontal: 10, paddingVertical: 4 },
-  toggleText: { fontSize: 13, fontWeight: '600' },
+  // on the paper, under a thin ink rule: no box
+  wrap: { gap: 6 },
+  head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 8,
+    borderBottomWidth: 1, borderColor: c.rule, paddingBottom: 6 },
+  title: { ...Type.label, color: c.text },
+  toggle: { flexDirection: 'row', gap: 14 },
+  toggleItem: { borderBottomWidth: 3, borderColor: 'transparent', paddingBottom: 2 },
+  toggleText: { ...Type.label, fontSize: 13, color: c.text },
+  toggleOff: { color: c.textMuted },
   legend: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   ramp: { flexDirection: 'row', gap: 1 },
   rampStep: { width: 16, height: 8 },
-  detail: { fontSize: 14, fontVariant: ['tabular-nums'] },
-  small: { fontSize: 12, opacity: 0.6, fontVariant: ['tabular-nums'] },
-  note: { fontSize: 12, opacity: 0.6 },
+  detail: { ...Type.dek, fontSize: 15, lineHeight: 21, color: c.textSecondary },
+  small: { fontFamily: Fonts.label, fontSize: 11, letterSpacing: 0.4, color: c.textMuted },
+  note: { ...Type.dek, fontSize: 14, color: c.textMuted },
   strip: { marginTop: 8 },
   gone: { display: 'none' },
 }));
