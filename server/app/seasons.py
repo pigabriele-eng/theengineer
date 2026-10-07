@@ -226,6 +226,10 @@ def info_for_event(db: Session, event_id: int, suggest: bool = False) -> dict:
     vehicle = db.get(catalog.VehicleModel, ids["vehicle_model_id"]) if ids["vehicle_model_id"] is not None else None
     drivers = [{"id": d.id, "name": d.name} for i in ids["drivers"] if (d := db.get(models.Driver, i)) is not None]
     car = _car(db, ids["car_id"])
+    season = r["season"]
+    if car is not None and season is not None and season.car_number \
+            and entry_row(season.entry)["car_id"] == car["id"]:
+        car["number"] = season.car_number.strip().lstrip("#")  # the season's: numbers change from season to season
     missing = []
     if tyre is None or not (tyre.brand or "").strip():
         missing.append("tyre brand")
@@ -597,8 +601,8 @@ def _vehicle_like(db: Session, car_model: str) -> int | None:
 
 def fill_entry(db: Session, s: Season, row: EntryRowIn) -> list[str]:
     """Fill what our entry leaves blank from our car's row on the entry list: the drivers and team (found in the
-    garage by name, else added), the car (the garage car with our number) and the vehicle (the one named like the
-    row's car model). What is set already stays. What was filled."""
+    garage by name, else added), the car (the garage car like the row: season_car.car_like, never by its number
+    alone) and the vehicle (the one named like the row's car model). What is set already stays. What was filled."""
     entry = entry_row(s.entry)
     filled = []
     names = [n.strip() for n in row.drivers if n and n.strip()][:MAX_DRIVERS]
@@ -610,8 +614,9 @@ def fill_entry(db: Session, s: Season, row: EntryRowIn) -> list[str]:
         filled.append("team")
     number = (row.car_number or s.car_number or "").strip()
     if entry["car_id"] is None and number:
-        car_id = db.scalar(select(garage.CarInfo.car_id).where(garage.CarInfo.number == number)
-                           .order_by(garage.CarInfo.id))
+        from app import season_car  # here: it uses this module
+
+        car_id = season_car.car_like(db, number, names, row.team, row.car_model, s.year)
         if car_id is not None:
             entry["car_id"] = car_id
             filled.append("car")
