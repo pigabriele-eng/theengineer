@@ -3,6 +3,7 @@ import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
 
 import { DeletedNotice, DeleteEventAction } from '@/components/DeleteEvent';
+import { useDriverGuess } from '@/components/DriverGuess';
 import { CalendarLine, FilterBar, PlanForm, plannedLine, RemovePlanned } from '@/components/EventFilter';
 import { CountryTag } from '@/components/Flag';
 import { FoldHead, SubFoldHead } from '@/components/Fold';
@@ -11,6 +12,8 @@ import {
   Colophon, Fig, Label, Page, SpecLine, Swatch, TextLink, useWide,
 } from '@/components/Programme';
 import { RenameEvent } from '@/components/RenameEvent';
+import { RunDriverLine } from '@/components/RunDriverLine';
+import { filledNote, localPick, RunPicker, useEventDrivers, useGarage } from '@/components/RunChips';
 import { SeasonMatchCount } from '@/components/SeasonMatch';
 import { Text, View } from '@/components/Themed';
 import { api, formatLap } from '@/lib/api';
@@ -18,20 +21,25 @@ import {
   CalendarState, calendarApi, countByWhen, defaultFilter, Filter, filtered, Plan, todayIso, When, whenOf,
 } from '@/lib/calendar';
 import { Country, countryOfAny } from '@/lib/countries';
+import { DAY_GAP, dayColumns } from '@/lib/dayColumns';
+import { Garage, garageApi, RunFields } from '@/lib/garage';
 import {
   dayLabel, eventsApi, Folder, FolderSession, FolderSummary, NO_EVENT,
 } from '@/lib/events';
 import {
-  byYear, carLine, Championship, champKey, driversLine, eventKey, Folds, monthSpan, openByDefault, readFolds, saveFolds,
+  byYear, carLine, Championship, champKey, driverLapsLine, eventKey, finishesLine, Folds, monthSpan, openByDefault, readFolds, saveFolds,
   shortName, Year, yearKey, yearOf,
 } from '@/lib/homeFolds';
 import { launchEvent } from '@/lib/openCurrent';
 import { PrepAvailability } from '@/lib/prep';
+import { fetchFinishes, Finishes } from '@/lib/finishes';
 import { fetchReport, Report } from '@/lib/report';
 import { face, Fonts, Space, themed, Type, useTheme } from '@/constants/Theme';
 
 // What the page knows about an event beyond the list: its runs by day, its report and the logger it was recorded on.
 type Detail = { folder?: Folder; report?: Report; logger?: string };
+// a run as the event's folder gives it: with its driver's and car's ids
+type Run = FolderSession & { driver_id?: number | null; car_id?: number | null };
 
 /** Events as a race programme: the event on now (else the latest one driven, else the next) on the photo at the top
  * with its facts, then the index (Past, Current, Upcoming, All) and the events it picks by year, newest first, each
@@ -48,6 +56,7 @@ export default function SessionsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [making, setMaking] = useState(false);
   const [calendar, setCalendar] = useState<CalendarState | null>(null);
+  const [finishes, setFinishes] = useState<Finishes | null>(null); // our official race finishes, per event
   const [filter, setFilter] = useState<Filter | null>(null); // null: what the list opens on
   const [details, setDetails] = useState<Record<string, Detail>>({});
   const [loads, setLoads] = useState(0); // counts the list's loads: the details are read again with it
@@ -56,6 +65,7 @@ export default function SessionsScreen() {
   const router = useRouter();
   const navigation = useNavigation();
   const prep = usePrepAvailability(); // events whose track has past data: the Prep report button
+  const { garage, reload: reloadGarage } = useGarage(); // the drivers a run's driver list offers
 
   const load = useCallback(() => {
     eventsApi.folders().then(
@@ -67,6 +77,7 @@ export default function SessionsScreen() {
       (e) => setError((e as Error).message),
     );
     calendarApi.state().then(setCalendar, () => {}); // the list works without it
+    fetchFinishes().then(setFinishes); // one call for the whole list; without it the rows simply have none
   }, []);
   useFocusEffect(load);
   // the calendar is being read in the background: look again shortly
@@ -210,9 +221,10 @@ export default function SessionsScreen() {
         <YearFold key={y.key} no={i + 1} y={y} isOpen={isOpen} toggle={toggle} today={today}>
           {(c) => c.events.map((f) => (
             <EventFold key={f.key} f={f} open={isOpen(eventKey(f))} onToggle={() => toggle(eventKey(f))}
-              country={countryOfEvent(f)}
+              country={countryOfEvent(f)} finishes={f.id != null ? finishesLine(finishes?.events[String(f.id)]) : null}
               detail={details[f.key]} plan={f.id != null ? plans.get(f.id) : undefined}
-              prep={f.id != null ? prep[String(f.id)] : undefined} onChanged={load} onRenamed={renamed(f.key)} />
+              prep={f.id != null ? prep[String(f.id)] : undefined} onChanged={load} onRenamed={renamed(f.key)}
+              garage={garage} onGarage={reloadGarage} />
           ))}
         </YearFold>
       ))}
@@ -292,9 +304,10 @@ function shortDates(start: string | null, end: string | null) {
 /** An event: one line (its days, name, round, track, runs and best lap, or what is planned) that folds and opens with
  * a tap; open, its runs and links (an event with data) and its actions: Rename, Delete (Remove when planned) and the
  * Prep report. Renaming takes the line's place. */
-function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged, country }: {
+function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged, country, finishes, garage, onGarage }: {
   f: FolderSummary;
   country: Country | null; // its flag and three letters before its name
+  finishes: string | null; // our race finishes: "R1 P5 · R2 P3"
   open: boolean;
   onToggle: () => void;
   detail?: Detail;
@@ -302,6 +315,8 @@ function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged
   prep: PrepAvailability[string] | undefined; // past data at its track: the Prep report button
   onRenamed: (name: string) => void;
   onChanged: () => void;
+  garage: Garage | null;
+  onGarage: () => void; // read the garage again (a driver made from a run's list)
 }) {
   const styles = useStyles();
   const wide = useWide();
@@ -312,7 +327,7 @@ function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged
   const past = whenOf(f, todayIso()) === 'past';
   const round = f.season?.round != null ? `Round ${f.season.round}` : null;
   const meta = planned ? [round, plannedLine(f, plan)].filter(Boolean).join(' · ')
-    : [round, f.track, driversLine(f), carLine(f), plural(f.sessions, 'run'),
+    : [round, finishes, f.track, driverLapsLine(f), carLine(f), plural(f.sessions, 'run'),
       f.clean_laps ? plural(f.clean_laps, 'clean lap') : null]
       .filter(Boolean).join(' · ');
   const status = planned ? { text: past ? 'No data' : 'Planned', line: past ? c.textMuted : c.rule }
@@ -354,7 +369,7 @@ function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged
             <View style={styles.linksAlone}>
               <TextLink href={{ pathname: '/event/[id]', params: { id: f.key } }} label="Event page" arrow />
             </View>
-          ) : <Feature f={f} detail={detail} />}
+          ) : <Feature f={f} detail={detail} garage={garage} onGarage={onGarage} onChanged={onChanged} />}
           <View style={styles.itemActions}>
             <TextLink onPress={() => setRenaming(true)} label="Rename" small />
             {planned ? <RemovePlanned f={f} plan={plan} onRemoved={onChanged} />
@@ -394,31 +409,69 @@ function LooseRuns({ f, onChanged }: { f: FolderSummary; onChanged: () => void }
 
 // ---------- an open event's runs ----------
 
-const DAY_GAP = 24; // between the day columns of an open event
-const MIN_DAY = 230; // narrowest a day column gets before the days go two a row
-
 /** An event open on the page: its links, its runs by day (each with its best lap: a purple block for the event's
- * best, else a red bar for the gap to it), and beside them the best lap, clean laps, ideal lap (the lead event's,
- * from its report; runs for the others) and the event's facts. */
-function Feature({ f, detail }: { f: FolderSummary; detail?: Detail }) {
+ * best, else a red bar for the gap to it, and its driver, or who the driving style says, with Change), and beside
+ * them the best lap, clean laps, ideal lap (the lead event's, from its report; runs for the others) and the event's
+ * facts. */
+function Feature({ f, detail, garage, onGarage, onChanged }: {
+  f: FolderSummary;
+  detail?: Detail;
+  garage: Garage | null;
+  onGarage: () => void;
+  onChanged: () => void; // read the list again: the event's drivers on its line, its runs, and the guesses with them
+}) {
   const styles = useStyles();
   const wide = useWide();
   const c = useTheme();
   const folder = detail?.folder;
   const report = detail?.report;
   const best = f.best_lap_s;
-  const runs = folder?.days.flatMap((d) => d.sessions) ?? [];
+  const id = f.id!;
+  // a driver picked here shows at once, until the event's runs are read again after it was saved
+  const [picked, setPicked] = useState<Record<number, Partial<Run>>>({});
+  const saving = useRef(new Set<number>()); // the runs whose pick the server hasn't answered yet
+  const [picking, setPicking] = useState<number | null>(null); // the run whose driver list is open under it
+  const [said, setSaid] = useState<{ id: number; text: string } | null>(null); // what a pick did, or why it failed
+  // who drove each run by driving style (read once the runs are in, again whenever they are read again), and the
+  // event's drivers 1 to 4, offered first in a run's list: only for an open event, as this is drawn only then
+  const guess = useDriverGuess(folder ? id : null, folder);
+  const eventDrivers = useEventDrivers(id);
+  useEffect(() => {
+    setPicked((p) => {
+      const keep = Object.entries(p).filter(([k]) => saving.current.has(Number(k)));
+      return keep.length === Object.keys(p).length ? p : Object.fromEntries(keep);
+    });
+  }, [folder]);
+  const run = (s: FolderSession): Run => ({ ...s, ...picked[s.id] });
+  const pick = async (s: Run, fields: RunFields) => {
+    setPicking(null);
+    setSaid(null);
+    saving.current.add(s.id);
+    setPicked((p) => ({ ...p, [s.id]: { ...p[s.id], ...localPick(garage, fields) } }));
+    try {
+      const r = await garageApi.setRun(s.id, fields);
+      setPicked((p) => ({ ...p, [s.id]: { driver_id: r.driver_id, driver: r.driver, car_id: r.car_id } }));
+      const note = filledNote(r);
+      if (note) setSaid({ id: s.id, text: note });
+      onGarage();
+    } catch (e) {
+      setPicked(({ [s.id]: _, ...rest }) => rest);
+      setSaid({ id: s.id, text: (e as Error).message });
+    } finally {
+      saving.current.delete(s.id);
+      onChanged(); // the event's runs read again: its drivers on its line, and the style's guesses with them
+    }
+  };
+  const runs = folder?.days.flatMap((d) => d.sessions.map(run)) ?? [];
   const maxGap = Math.max(0.5, ...runs.map((s) => (s.best_lap_s != null && best != null ? s.best_lap_s - best : 0)));
   const bestRun = runs.find((s) => s.id === f.best_session_id);
   const drivers = [...new Set(runs.map((s) => s.driver).filter(Boolean))] as string[];
-  const id = f.id!;
   // Three or four days of driving (Gabriele, 2026-10-07: "allow for 4 columns"): the days take the page's whole
   // width side by side and the figures go under them; a window too narrow for that many columns shows two a row
   const { width } = useWindowDimensions();
-  const nDays = folder?.days.length ?? 0;
-  const full = wide && nDays >= 3;
-  const across = Math.min(width, 1240) - 2 * Space.gutter;
-  const oneRow = !full || (across - (nDays - 1) * DAY_GAP) / nDays >= MIN_DAY;
+  const cols = dayColumns(folder?.days.length ?? 0, width, wide, Space.gutter);
+  const full = cols != null;
+  const oneRow = cols !== 'half';
   const dayStyle = full ? (oneRow ? styles.dayAcross : styles.dayHalf) : wide ? styles.day : undefined;
   let no = 0;
   let dated = 0;
@@ -442,9 +495,28 @@ function Feature({ f, detail }: { f: FolderSummary; detail?: Detail }) {
                     <Label>{day.date ? `Day ${dated}` : 'No date'}</Label>
                     {day.date ? <Label>{dayLabel(day.date, { long: true })}</Label> : null}
                   </View>
-                  {day.sessions.map((s) => {
+                  {day.sessions.map((x) => {
                     no += 1;
-                    return <RunRow key={s.id} s={s} no={no} best={best} maxGap={maxGap} />;
+                    const s = run(x);
+                    return (
+                      <RunRow key={s.id} s={s} no={no} best={best} maxGap={maxGap} driver={(
+                        <RunDriverLine run={s} guess={guess?.sessions.find((g) => g.session_id === s.id)} garage={garage}
+                          open={picking === s.id} onOpen={(o) => setPicking(o ? s.id : null)}
+                          onPick={(fields) => pick(s, fields)} />
+                      )}>
+                        {picking === s.id && garage && (
+                          <View style={styles.runPicker}>
+                            <RunPicker what="driver" run={s} garage={garage} eventDrivers={eventDrivers}
+                              onPick={(fields) => pick(s, fields)} onClose={() => setPicking(null)} />
+                          </View>
+                        )}
+                        {said?.id === s.id && (
+                          <Pressable onPress={() => setSaid(null)} accessibilityRole="button" accessibilityHint="Hides this">
+                            <Text style={styles.runSaid}>{said.text}</Text>
+                          </Pressable>
+                        )}
+                      </RunRow>
+                    );
                   })}
                 </View>
               );
@@ -485,46 +557,60 @@ function Feature({ f, detail }: { f: FolderSummary; detail?: Detail }) {
   );
 }
 
-function RunRow({ s, no, best, maxGap }: { s: FolderSession; no: number; best: number | null; maxGap: number }) {
+/** One run: its line opens it (number, name, time, laps, best lap and the gap to the event's best); under it, outside
+ * the link, its driver line under its name, then (children) its driver list when open, the row's width. */
+function RunRow({ s, no, best, maxGap, driver, children }: {
+  s: FolderSession;
+  no: number;
+  best: number | null;
+  maxGap: number;
+  driver: ReactNode;
+  children?: ReactNode;
+}) {
   const styles = useStyles();
   const c = useTheme();
   const gap = s.best_lap_s != null && best != null ? s.best_lap_s - best : null;
   const isBest = gap != null && gap < 0.0005;
   return (
-    // Link asChild hands its child's style to a web anchor, which can't take a style array: one object
-    <Link href={{ pathname: '/session/[id]', params: { id: s.id } }} asChild>
-      <Pressable style={styles.run} accessibilityRole="link">
-        <Text style={styles.runNo}>{pad2(no)}</Text>
-        <View style={styles.runId}>
-          <Text style={styles.runCode} numberOfLines={1}>{s.name}</Text>
-          <Text style={styles.runSub} numberOfLines={1}>
-            {[s.time, `${plural(s.laps, 'lap')} (${s.clean_laps} clean)`, s.driver].filter(Boolean).join(' · ')}
-          </Text>
-        </View>
-        <View style={styles.runBest}>
-          {s.best_lap_s == null ? <Text style={styles.runSub}>no lap</Text> : (
-            <>
-              <View style={isBest ? { backgroundColor: c.timing.best } : undefined}>
-                <Text style={StyleSheet.flatten([styles.runTime, isBest && { color: c.timing.onBest }])}>
-                  {formatLap(s.best_lap_s)}
-                </Text>
-              </View>
-              {isBest ? <Text style={StyleSheet.flatten([styles.gap, { color: c.timing.best }])}>Event best</Text> : gap != null && (
-                <>
-                  <View style={{ height: 5, marginTop: 3, backgroundColor: c.timing.loss[2],
-                    width: Math.max(3, Math.round((gap / maxGap) * 86)) }} />
-                  <Text style={styles.gap}>+{gap.toFixed(2)}</Text>
-                </>
-              )}
-            </>
-          )}
-        </View>
-      </Pressable>
-    </Link>
+    <View style={styles.run}>
+      {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
+      <Link href={{ pathname: '/session/[id]', params: { id: s.id } }} asChild>
+        <Pressable style={styles.runLine} accessibilityRole="link">
+          <Text style={styles.runNo}>{pad2(no)}</Text>
+          <View style={styles.runId}>
+            <Text style={styles.runCode} numberOfLines={1}>{s.name}</Text>
+            <Text style={styles.runSub} numberOfLines={1}>
+              {[s.time, `${plural(s.laps, 'lap')} (${s.clean_laps} clean)`].filter(Boolean).join(' · ')}
+            </Text>
+          </View>
+          <View style={styles.runBest}>
+            {s.best_lap_s == null ? <Text style={styles.runSub}>no lap</Text> : (
+              <>
+                <View style={isBest ? { backgroundColor: c.timing.best } : undefined}>
+                  <Text style={StyleSheet.flatten([styles.runTime, isBest && { color: c.timing.onBest }])}>
+                    {formatLap(s.best_lap_s)}
+                  </Text>
+                </View>
+                {isBest ? <Text style={StyleSheet.flatten([styles.gap, { color: c.timing.best }])}>Event best</Text> : gap != null && (
+                  <>
+                    <View style={{ height: 5, marginTop: 3, backgroundColor: c.timing.loss[2],
+                      width: Math.max(3, Math.round((gap / maxGap) * 86)) }} />
+                    <Text style={styles.gap}>+{gap.toFixed(2)}</Text>
+                  </>
+                )}
+              </>
+            )}
+          </View>
+        </Pressable>
+      </Link>
+      <View style={styles.runMore}>{driver}</View>
+      {children}
+    </View>
   );
 }
 
 const DATE_W = 170;
+const RUN_NO_W = 30; // a run's number, before its name
 
 const useStyles = themed((c) => ({
   // the index: the filter's words and the upload block
@@ -602,9 +688,14 @@ const useStyles = themed((c) => ({
   dayHalf: { flexBasis: '47%', flexGrow: 1, minWidth: 0 },
   dayHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', borderTopWidth: 3,
     borderBottomWidth: 1, borderColor: c.rule, paddingTop: 7, paddingBottom: 6 },
-  run: { flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 1, borderColor: c.separator,
-    paddingTop: 9, paddingBottom: 8 },
-  runNo: { fontFamily: Fonts.display, fontSize: 24, lineHeight: 26, width: 30, color: c.text },
+  run: { borderBottomWidth: 1, borderColor: c.separator, paddingTop: 9, paddingBottom: 8 },
+  runLine: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  // the driver line, under the run's name (past its number)
+  runMore: { marginLeft: RUN_NO_W + 10 },
+  runPicker: { marginTop: 10 },
+  runSaid: { fontFamily: Fonts.body, fontSize: 14, lineHeight: 19, color: c.textSecondary, borderLeftWidth: 3,
+    borderColor: c.rule, paddingLeft: 8, marginTop: 6 },
+  runNo: { fontFamily: Fonts.display, fontSize: 24, lineHeight: 26, width: RUN_NO_W, color: c.text },
   runId: { flex: 1, minWidth: 0 },
   runCode: { fontFamily: Type.label.fontFamily, fontSize: 17, letterSpacing: 0.3, color: c.text },
   runSub: { fontFamily: face('label', 400), fontSize: 13, color: c.textSecondary },

@@ -10,12 +10,16 @@ counts at once. Only runs a person tagged teach the database a driver's fingerpr
 the style never do, so a wrong one can't spread.
 
 Drivers set by themselves (Gabriele, 2026-10-07: "add a function for the fingerprinter to add drivers automatically",
-"when uploading the session, the app should automatically suggest the driver instead of asking"): once an event's
-fingerprints are worked out, and whenever a person tags a run (what the database knows changes), every untagged run
-the style is sure of gets its driver (StyleTag keeps that it was the style, for the run's line and so a person's
-change or removal stands). Who could have driven comes from the event's or its season's driver list, when there is
-one: a style named after one of two drivers makes the other style the other driver. The season's question of who
-drove (season_match) waits for this, and is then asked only about the runs left, with the style's suggestion first.
+then "I want it to be fully automatic based on fingerprinting", "I want the app to ask me, but now it's unhelpful the
+way it asks"): once an event's fingerprints are worked out, and whenever a person tags a run (what the database knows
+changes), every run whose style is a driver the app knows gets that driver (StyleTag keeps that it was the style, for
+the run's line and so a person's change or removal stands): a style named after a tagged run of the event, a
+fingerprint learned elsewhere that matches well (SURE_MATCH), or, of two drivers in the car's entry, the other one. A
+style nobody is known by is asked about (season_match: "New driver found in Q2 and Race 2 run 1: who is this?"), the
+likely names first: the driver it is somewhat like, the car's entry list, the garage's drivers of the car and the
+official results' crew (which list both drivers in every session, so they say who could have driven, not who drove
+which). One answer names every run of that style and teaches the fingerprint. An event splits into at most as many
+styles as its car has drivers (two when that isn't known), so a third style is never a third driver of a pair.
 
 What the pages ask is kept (app/page_cache.py): what the tagged runs teach ("drivers|learned") and the fingerprints
 page's answer ("drivers|fingerprints"), each under a signature of the stored fingerprints, the runs' drivers and the
@@ -233,6 +237,13 @@ def busy() -> bool:
     return t is not None and t.is_alive()
 
 
+def checking(event_ids: list[int]) -> bool:
+    """Whether these events' drivers are still to be checked by their style: a pass is running, or an event's
+    report (which makes the lap traces the style is read from) is still being worked out."""
+    pending = _reports()._pending
+    return busy() or any(f"event:{e}" in pending for e in event_ids)
+
+
 # ---------- the database ----------
 
 def _state(db: Session) -> list:
@@ -264,7 +275,10 @@ def page_signature(db: Session) -> str:
     rounds = [list(r) for r in db.execute(select(seasons.SeasonRound.season_id, seasons.SeasonRound.event_id)
                                           .where(seasons.SeasonRound.event_id.in_(evs))
                                           .order_by(seasons.SeasonRound.id))] if evs else []
-    return page_cache.digest(["page", *state, names, events, info, entries, rounds])
+    runs = [list(r) for r in db.execute(select(models.RunSession.id, models.RunSession.name)
+                                        .where(models.RunSession.event_id.in_(evs))
+                                        .order_by(models.RunSession.id))] if evs else []  # the page names runs
+    return page_cache.digest(["page", *state, names, events, info, entries, rounds, runs])
 
 
 def learned(db: Session) -> dict[int, list[tuple[int, dict[str, float], int]]]:
@@ -292,6 +306,13 @@ def set_by_style(db: Session, session_ids: list[int]) -> dict[int, StyleTag]:
     if not session_ids:
         return {}
     return {t.session_id: t for t in db.scalars(select(StyleTag).where(StyleTag.session_id.in_(session_ids)))}
+
+
+def set_by_person(db: Session, session_ids: list[int], driver_id: int | None) -> None:
+    """A person set these runs' driver (not committed): one the style had set becomes theirs, so it teaches now. A
+    clear keeps the style's mark, so the style doesn't set it again."""
+    if driver_id is not None and session_ids:
+        db.execute(delete(StyleTag).where(StyleTag.session_id.in_(list(session_ids))))
 
 
 def tags_of(db: Session, ep: ds.EventPrint, people_only: bool = True) -> dict[int, int | None]:
@@ -333,7 +354,11 @@ def known_for(learned: dict[int, list], kinds: list[str], exclude_event: int | N
     return out
 
 
-# ---------- drivers set by themselves ----------
+# ---------- drivers set by themselves, and the question about a new one ----------
+
+SURE_MATCH = 0.5  # a style this close (cosine) to a known driver's fingerprint is that driver: set by itself
+MAX_NAMES = 3  # run names in a question, then "and 2 more"
+
 
 def entry_drivers(db: Session, event_id: int) -> list[int]:
     """Who could have driven the event's car: the event's own driver list, else its season's entry (not the runs':
@@ -341,6 +366,12 @@ def entry_drivers(db: Session, event_id: int) -> list[int]:
     from app import seasons
     r = seasons._resolve(db, event_id)
     return list(r["ids"]["drivers"]) if r["from"].get("drivers") in ("event", "season") else []
+
+
+def max_groups(entry: list[int]) -> int:
+    """How many driving styles an event can split into: as many as the car's drivers when three or more are known,
+    else two (in a two-driver car a third group is one of them on other tyres, or in the wet)."""
+    return min(3, max(2, len(set(entry))))
 
 
 def _name_from_entry(g: ds.Guess, entry: list[int]) -> None:
@@ -351,14 +382,19 @@ def _name_from_entry(g: ds.Guess, entry: list[int]) -> None:
     if len(named) != 1 or named[0].driver_id not in entry:
         return
     other = next(grp for grp in g.groups if grp.driver_id is None)
-    other.driver_id, other.source = next(d for d in entry if d != named[0].driver_id), "entry"
+    other.driver_id, other.source, other.hint = next(d for d in entry if d != named[0].driver_id), "entry", None
 
 
 def guess_for(db: Session, event_id: int, ep: ds.EventPrint, learned: dict, entry: list[int] | None = None) -> ds.Guess:
     """The event's style groups, named from the runs a person tagged, the fingerprints learned elsewhere and the
-    event's driver list."""
-    g = ds.guess(ep, tags_of(db, ep), known_for(learned, ep.kinds, exclude_event=event_id))
-    _name_from_entry(g, entry_drivers(db, event_id) if entry is None else entry)
+    event's driver list. A style only somewhat like a known driver's (below SURE_MATCH), or like a driver who isn't
+    in the car's entry, isn't named: that driver is its hint, the first name offered when it is asked about."""
+    entry = entry_drivers(db, event_id) if entry is None else entry
+    g = ds.guess(ep, tags_of(db, ep), known_for(learned, ep.kinds, exclude_event=event_id), max_groups(entry))
+    for grp in g.groups:
+        if grp.source == "fingerprint" and ((grp.match or 0) < SURE_MATCH or (entry and grp.driver_id not in entry)):
+            grp.hint, grp.driver_id, grp.source = grp.driver_id, None, ""
+    _name_from_entry(g, entry)
     return g
 
 
@@ -370,45 +406,153 @@ def will_look(db: Session, event_id: int) -> bool:
     return (n or 0) >= ds.MIN_LAPS
 
 
+def _car_drivers(db: Session, event_id: int) -> list[int]:
+    """The drivers of the cars the event's runs were in (the garage's driver and car links)."""
+    cars = select(models.RunSession.car_id).where(models.RunSession.event_id == event_id,
+                                                  models.RunSession.car_id.is_not(None))
+    return list(dict.fromkeys(db.scalars(select(garage.DriverCar.driver_id).where(garage.DriverCar.car_id.in_(cars))
+                                         .order_by(garage.DriverCar.id)).all()))
+
+
+def official_crew(db: Session, event_id: int) -> list[str]:
+    """Our car's drivers in the official results of the event's round, as the results print them ("G.Piana"). Every
+    session lists the car's whole crew, so they say who could have driven, not who drove which session."""
+    from app.results import models as rm
+    from app.results import summary
+    from app.season_match import same_person
+    link = db.scalar(select(rm.EventResultLink).where(rm.EventResultLink.event_id == event_id))
+    if link is None or not link.car_number or not link.round_id:
+        return []
+    rnd = db.scalar(select(rm.ResultRound).where(rm.ResultRound.series == link.series, rm.ResultRound.year == link.year,
+                                                 rm.ResultRound.round_id == link.round_id))
+    out: list[str] = []
+    for sess in rnd.sessions if rnd is not None else []:
+        row = summary.find_car(sess, link.car_number)
+        for name in (row.drivers or []) if row is not None else []:
+            if isinstance(name, str) and name.strip() and not any(same_person(name, n) for n in out):
+                out.append(name.strip())
+    return out
+
+
+def _options(db: Session, event_id: int, entry: list[int], taken: set[int], hint: int | None) -> list[dict]:
+    """The names a new driver most likely has, best first: the driver the style is somewhat like, the car's entry
+    list, the drivers the garage has in the car, and the official results' crew of our car. Drivers who are another
+    style of the event already are left out."""
+    from app.season_match import MAX_OPTIONS, same_person
+    drivers = {d.id: d for d in db.scalars(select(models.Driver)).all()}
+    out: list[dict] = []
+
+    def add(driver_id: int | None, name: str, why: str) -> None:
+        if driver_id in taken or any(o["driver_id"] == driver_id for o in out if driver_id is not None):
+            return
+        if any(same_person(name, o["label"]) for o in out):
+            return
+        key = f"driver:{driver_id}" if driver_id is not None else f"name:{len(out)}"
+        out.append({"key": key, "label": name[:120], "why": why, "driver_id": driver_id})
+
+    if hint in drivers:
+        add(hint, drivers[hint].name, "Drives most like them of the drivers the app knows")
+    for i in entry:
+        if i in drivers:
+            add(i, drivers[i].name, "In the car's entry list")
+    for i in _car_drivers(db, event_id):
+        if i in drivers:
+            add(i, drivers[i].name, "Has driven this car")
+    for name in official_crew(db, event_id):
+        hit = next((d for d in drivers.values() if same_person(name, d.name)), None)
+        add(hit.id if hit else None, hit.name if hit else name, "In the official results")
+    return out[:MAX_OPTIONS]
+
+
+def runs_text(db: Session, ids: list[int]) -> str:
+    """"FP1 run 2, Q2 and Race 2 run 1", or "FP1 run 2, Q2, Race 1 and 2 more"."""
+    runs = sorted((s for i in ids if (s := db.get(models.RunSession, i)) is not None), key=lambda s: s.id)
+    names = [s.name or f"Run {s.id}" for s in runs]
+    if len(names) > MAX_NAMES + 1:
+        return f"{', '.join(names[:MAX_NAMES])} and {len(names) - MAX_NAMES} more"
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def _question(db: Session, event_id: int, g: ds.Guess | None, entry: list[int], now: dict[int, int | None],
+              auto: dict[int, StyleTag]) -> dict | None:
+    """What to ask about the event's runs nobody could name: the largest style the app doesn't know yet ("New driver
+    found in Q2 and Race 2 run 1: who is this?"), or, when the style can't tell (too few laps), who drove the runs
+    left. Runs a person cleared aren't asked about again. None when every run has its driver."""
+    def left(sid: int) -> bool:
+        return now.get(sid) is None and sid not in auto
+
+    if g is not None and g.mode == "one style":  # no second style to tell it from: who it is, is asked
+        runs = [s.session_id for s in g.sessions if left(s.session_id)]
+        hint = g.groups[0].driver_id or g.groups[0].hint
+        return {"prompt": f"Who drove {runs_text(db, runs)}?",
+                "why": "The app finds one driving style in them, so one answer names them all. If someone else "
+                       "drove one of them, set that run's driver on the event page.",
+                "options": _options(db, event_id, entry, set(), hint), "runs": runs} if runs else None
+    if g is not None and g.mode == "groups":
+        unnamed = [(i, [s.session_id for s in g.sessions if s.group == i and left(s.session_id)])
+                   for i, grp in enumerate(g.groups) if grp.driver_id is None]
+        unnamed = [(i, runs) for i, runs in unnamed if runs]
+        if not unnamed:
+            return None
+        i, runs = max(unnamed, key=lambda x: (len(x[1]), g.groups[x[0]].laps))
+        taken = {grp.driver_id for j, grp in enumerate(g.groups) if j != i and grp.driver_id is not None}
+        taken |= {d for s in g.sessions if s.group != i and (d := now.get(s.session_id)) is not None}
+        why = (f"A driving style that matches no driver the app knows yet. One answer names "
+               f"{'this run' if len(runs) == 1 else f'all {len(runs)} runs'}, and later uploads know this driver by "
+               "their style.")
+        if len(g.groups) == 2 and len(set(entry)) == 2 and all(grp.driver_id is None for grp in g.groups):
+            why += " The other runs then go to the car's other driver."
+        return {"prompt": f"New driver found in {runs_text(db, runs)}: who is this?", "why": why,
+                "options": _options(db, event_id, entry, taken, g.groups[i].hint), "runs": runs}
+    if g is not None and g.mode == "tagged":
+        return None
+    with_laps = set(db.scalars(select(models.Lap.session_id).distinct()
+                               .join(models.RunSession, models.Lap.session_id == models.RunSession.id)
+                               .where(models.RunSession.event_id == event_id)).all())
+    runs = sorted(sid for sid in now if sid in with_laps and left(sid))
+    if not runs:
+        return None
+    return {"prompt": f"Who drove {runs_text(db, runs)}?",
+            "why": "Too few laps to tell drivers apart by their style: one answer names them all, or set each run's "
+                   "driver on the event page.",
+            "options": _options(db, event_id, entry, set(), None), "runs": runs}
+
+
 def settle(db: Session, event_id: int, ep: ds.EventPrint | None, learned: dict) -> int:
-    """The event's untagged runs the style is sure of get their driver; the season's question of who drove is then
-    asked about the rest, with the style's suggestion, or, when the runs split into two styles nobody is known in,
-    which style is which of the car's two drivers (season_match.style_checked). Commits. How many were set."""
-    picks: dict[int, int] = {}
-    splits: list[dict[int, int]] = []
+    """Every run of the event whose driving style is a driver the app knows gets that driver by itself (StyleTag:
+    shown as set from the style, with a way to change it), whether the style was named after a tagged run here, a
+    fingerprint learned elsewhere (SURE_MATCH) or the car's other driver. A person's tag, change or clear stands.
+    A style nobody knows is then asked about (season_match.ask_new_driver), with the likely names. Commits. How
+    many runs were set."""
     n = 0
-    if ep is not None:
-        entry = entry_drivers(db, event_id)
-        g = guess_for(db, event_id, ep, learned, entry)
-        now = tags_of(db, ep, people_only=False)
-        before = set_by_style(db, list(now))
-        open_runs = [s for s in g.sessions if now.get(s.session_id) is None and len(s.stints) == 1]
-        if g.mode == "groups" and len(g.groups) == 2 and len(set(entry)) == 2 \
-                and all(grp.driver_id is None for grp in g.groups) and open_runs:
-            # two styles and two drivers, neither known yet: one tap says which is whose (and teaches both)
-            a, b = entry[0], next(d for d in entry if d != entry[0])
-            splits = [{s.session_id: (a, b)[s.group] for s in open_runs},
-                      {s.session_id: (b, a)[s.group] for s in open_runs}]
-        for s in g.sessions if g.mode in ("tagged", "groups") else []:
-            grp = g.groups[s.group]
-            if now.get(s.session_id) is not None or grp.driver_id is None or len(s.stints) > 1:
-                continue
-            if (entry and grp.driver_id not in entry) or db.get(models.Driver, grp.driver_id) is None:
-                continue
-            if ds.confidence(g, grp, s.share) != "sure" or s.session_id in before:
-                picks[s.session_id] = grp.driver_id  # not sure, or a person took it back: asked
-                continue
-            run = db.get(models.RunSession, s.session_id)
-            run.driver_id = grp.driver_id
-            if run.car_id is not None:
-                garage.link_driver(db, grp.driver_id, run.car_id)
+    entry = entry_drivers(db, event_id)
+    g = guess_for(db, event_id, ep, learned, entry) if ep is not None else None
+    now = dict(db.execute(select(models.RunSession.id, models.RunSession.driver_id)
+                          .where(models.RunSession.event_id == event_id)).all())
+    auto = set_by_style(db, list(now))
+    for s in g.sessions if g is not None and g.mode in ("tagged", "groups") else []:
+        grp, st, current = g.groups[s.group], auto.get(s.session_id), now.get(s.session_id)
+        if (st is None and current is not None) or (st is not None and st.driver_id != current):
+            continue  # a person's tag, change or clear stands
+        if grp.driver_id is None or grp.driver_id == current or db.get(models.Driver, grp.driver_id) is None:
+            continue
+        run = db.get(models.RunSession, s.session_id)
+        run.driver_id = now[run.id] = grp.driver_id
+        if run.car_id is not None:
+            garage.link_driver(db, grp.driver_id, run.car_id)
+        match = round(grp.match, 3) if grp.match is not None else None
+        if st is None:
             db.add(StyleTag(session_id=run.id, event_id=event_id, driver_id=grp.driver_id, source=grp.source,
-                            match=round(grp.match, 3) if grp.match is not None else None))
-            n += 1
-        db.flush()
+                            match=match))
+        else:
+            st.driver_id, st.source, st.match = grp.driver_id, grp.source, match
+        n += 1
+    db.flush()
+    auto = set_by_style(db, list(now))
+    question = _question(db, event_id, g, entry, now, auto)
     from app import calendar_sync, season_match  # looked up when used: the tests reload them
     with calendar_sync._lock:
-        season_match.style_checked(db, event_id, picks, splits)
+        season_match.ask_new_driver(db, event_id, question)
         db.commit()
     return n
 

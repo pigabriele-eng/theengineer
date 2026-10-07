@@ -248,3 +248,20 @@ def test_a_season_calendar_and_its_entry_lists(client, fake_site):
     assert client.get("/results/entries", params={"year": 2026, "round_id": "76"}).json() == []
     fake_site.sync_calendar("gt4-europe", 2026)  # read again: nothing doubled
     assert len(client.get("/results/entries", params={"year": 2026, "round_id": "75"}).json()) == 2
+
+
+def test_our_finishes_for_the_home_list(client, fake_site):
+    fake_site.sync(years=[2026])
+    client.post("/tracks", json={"name": "Test Track"})
+    done = client.post("/events/folders", json={"name": "Round 5"}).json()
+    other = client.post("/events/folders", json={"name": "A test day"}).json()
+    _session(client, done["id"], "Q", (0.97, 0.98), "19/09/2026", "11:30:00")
+    client.put(f"/results/events/{done['id']}/link", json={"car_number": "911"})  # its overview matches the round
+    body = client.get("/results/finishes").json()
+    assert set(body["events"]) == {str(done["id"])}  # no results, not listed
+    r1 = body["events"][str(done["id"])][0]
+    assert (r1["code"], r1["label"], r1["position"], r1["status"], r1["car_number"]) == \
+        ("R1", "Race 1", 1, "classified", "911")
+    assert body["qualifying"][str(done["id"])][0]["position"] == 2
+    assert client.get("/results/finishes", params={"event_ids": str(other["id"])}).json()["events"] == {}
+    assert client.get("/results/finishes", params={"event_ids": "x"}).status_code == 422

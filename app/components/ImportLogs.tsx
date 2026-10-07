@@ -19,6 +19,7 @@ import { Text, View } from '@/components/Themed';
 import { api, ImportJob } from '@/lib/api';
 import { untimedRuns } from '@/lib/emptyRuns';
 import { namingApi, NewEvent } from '@/lib/eventNaming';
+import { warmResults } from '@/lib/finishes';
 import { dateRange, eventsApi, FolderSummary } from '@/lib/events';
 import { PickedFile, sendImport, sizeOf } from '@/lib/upload';
 import { Fonts, inkOn, themed, Type, useTheme } from '@/constants/Theme';
@@ -87,13 +88,20 @@ export function ImportLogs({ onProgress, events, into, big = false }: {
   }, [job, running, onProgress]);
 
   // the event picked for the upload; or, when none was, the events the upload made, to be named
+  // (and the official results worked out for the events it went into, so their finishes show on the list)
   const afterImport = (jobId: number) => {
-    if (sentTo.current) return setLanded(sentTo.current);
-    loadMade(jobId);
+    if (sentTo.current) {
+      warmResults([sentTo.current.id]);
+      return setLanded(sentTo.current);
+    }
+    loadMade(jobId, true);
   };
-  const loadMade = (jobId: number) =>
+  const loadMade = (jobId: number, first = false) =>
     namingApi.newEvents(jobId).then(
-      (r) => setMade((m) => ({ order: m?.order ?? r.events.map((e) => e.id), events: r.events })),
+      (r) => {
+        if (first) warmResults(r.events.map((e) => e.id));
+        setMade((m) => ({ order: m?.order ?? r.events.map((e) => e.id), events: r.events }));
+      },
       () => {},
     );
   const settle = (eventId: number, s: Settled) => {

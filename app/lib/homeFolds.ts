@@ -132,6 +132,34 @@ export function driversLine(f: Pick<FolderSummary, 'drivers'>) {
   return names.length ? names.join(', ') : null;
 }
 
+/** Each driver's laps in the event, as a timing screen names drivers: "PIA 84 laps · RAC 71 laps", then the laps of
+ * runs nobody is set on yet ("12 laps unassigned"). A driver's three letters are the first of their surname (the
+ * surname when two drivers share them). Null when no run has laps; the drivers alone from an older server. */
+export function driverLapsLine(f: Pick<FolderSummary, 'drivers' | 'driver_laps' | 'unassigned_laps'>) {
+  if (!f.driver_laps) return driversLine(f);
+  const codes = f.driver_laps.map((d) => surname(d.name).replace(/[^\p{L}]/gu, '').slice(0, 3).toUpperCase());
+  const parts = f.driver_laps.map((d, i) => {
+    const code = codes[i] && codes.indexOf(codes[i]) === codes.lastIndexOf(codes[i]) ? codes[i] : surname(d.name);
+    return `${code} ${d.laps} lap${d.laps === 1 ? '' : 's'}`;
+  });
+  if (f.unassigned_laps) parts.push(`${f.unassigned_laps} lap${f.unassigned_laps === 1 ? '' : 's'} unassigned`);
+  return parts.length ? parts.join(' · ') : null;
+}
+
+/** Our race finishes, as a timing screen gives them: "R1 P5 · R2 P3", the class place after it when the series has
+ * classes ("R1 P5 (Am P2)"), "R2 DNF" when not classified. Null when there are none. */
+export function finishesLine(finishes: { code: string; position: number | null; class: string | null;
+  class_position: number | null; status: string | null }[] | undefined) {
+  const parts = (finishes ?? []).map((f) => {
+    const out = f.status && !/^(classified|finished|ok)$/i.test(f.status) && f.position == null;
+    if (out) return `${f.code} ${f.status!.toUpperCase()}`;
+    if (f.position == null) return null;
+    const inClass = f.class && f.class_position != null ? ` (${f.class} P${f.class_position})` : '';
+    return `${f.code} P${f.position}${inClass}`;
+  }).filter(Boolean);
+  return parts.length ? parts.join(' · ') : null;
+}
+
 /** The event's car: the one with the most laps, by its model without the chassis code ("BMW M4 GT4 Evo" for "BMW M4
  * GT4 Evo (G82)"), and "+1" for each other car. Null when no run has a car. */
 export function carLine(f: Pick<FolderSummary, 'cars'>) {
