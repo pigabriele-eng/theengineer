@@ -189,7 +189,7 @@ function Head({ answer, onPick }: { answer: PrepAnswer | null; onPick: (key: str
   const learned = answer && answer.status !== 'none' && answer.past_events.length > 0
     ? `Learned from ${pastEvents(answer.past_events.length)} here (` +
       `${answer.past_events.map((e) => e.start?.slice(0, 4) ?? e.name).join(', ')}) with ${answer.car.label}.`
-    : 'What every past weekend at this track learned, as a briefing for this one.';
+    : 'The briefing for a weekend, from every past weekend at its track.';
   return (
     <View style={wide ? styles.head : styles.headPhone}>
       <View style={styles.headText}>

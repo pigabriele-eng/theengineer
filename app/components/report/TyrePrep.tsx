@@ -180,7 +180,7 @@ function Tiles({ tiles }: { tiles: Tile[] }) {
   const wide = useWide();
   if (!tiles.length) return null;
   return (
-    <Cells cols={3} phoneCols={2} style={styles.tiles}>
+    <Cells cols={Math.min(3, tiles.length)} phoneCols={2} style={styles.tiles}>
       {tiles.map((t) => (
         <Fig key={t.label} label={t.label} value={t.value} unit={t.unit} size={wide ? 56 : 30} note={t.sub} />
       ))}
