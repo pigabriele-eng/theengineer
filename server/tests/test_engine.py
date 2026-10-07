@@ -232,6 +232,65 @@ def test_engine_endpoints(client):
     assert sum(check["agreement"].values()) == 3
 
 
+def test_insights_over_sessions_read_one_log_at_a_time(client, monkeypatch):
+    """A log takes 100 to 300 MB: the next session's is read only once the last one's laps are traced and its log
+    let go, whatever order the sessions come in."""
+    import gc
+    import weakref
+
+    import app.routers.insights as insights_router
+
+    track = client.post("/tracks", json={"name": "Test ring", "corners": [
+        {"code": "T1", "apex_m": 300}, {"code": "T2", "apex_m": 690}]}).json()
+    event = client.post("/events", json={"name": "Test day", "track_id": track["id"]}).json()
+    ids = []
+    for paces in ((0.96, 0.95, 0.955), (1.0, 0.99, 0.995), (0.98, 0.97, 0.975)):
+        s = client.post("/sessions", json={"event_id": event["id"]}).json()
+        r = client.post(f"/sessions/{s['id']}/files", files={"file": ("run.ld", write_ld(simulate(paces=paces)[0]))})
+        assert r.status_code == 201, r.text
+        ids.append(s["id"])
+    alive, real = [], insights_router.load_session
+
+    def load(*args, **kwargs):
+        gc.collect()
+        assert all(r() is None for r in alive), "the last session's log is still held"
+        data = real(*args, **kwargs)
+        alive.append(weakref.ref(data))
+        return data
+
+    monkeypatch.setattr(insights_router, "load_session", load)
+    out = client.post("/insights", json={"session_ids": ids}).json()
+    assert [r["run"] for r in out["runs"]] == [f"Session {i}" for i in ids]  # in the order asked for
+    assert out["reference"]["run"] == f"Session {ids[1]}" and out["numbering"] == "official"
+    assert len(alive) == 3  # the quickest session read first, so no log is read twice
+
+
+@pytest.mark.parametrize("hinted", [True, False])
+def test_insights_read_lazily_match_insights_read_together(hinted):
+    """Runs read one at a time give the same picture as runs held together, also when the run read first turns out
+    not to have the quickest lap (it is read again after the quickest)."""
+    import json
+
+    from app.analysis.insights import LazyRun, analyze_lazily
+
+    logs = [read_ld(write_ld(simulate(paces=p)[0])) for p in ((0.96, 0.95, 0.955), (1.0, 0.99, 0.995))]
+    read = []
+
+    def run(i: int) -> RunInput:
+        read.append(i)
+        return RunInput(f"Run {i}", load_session(logs[i]), None, {}, logs[i])
+
+    together = analyze_runs([run(0), run(1)], drop_channels=True)
+    best = [min(l.time for l in run(i).data.laps if l.clean) if hinted else None for i in range(2)]
+    read.clear()
+    lazily = analyze_lazily([LazyRun(lambda i=i: run(i), best[i]) for i in range(2)], lambda: None)
+    assert read == ([1, 0] if hinted else [0, 1, 0])  # unhinted, the slower run was read first: read again after
+
+    def plain(d):
+        return json.loads(json.dumps(d, default=lambda x: x.tolist() if hasattr(x, "tolist") else str(x)))
+    assert plain(lazily) == plain(together)
+
+
 def test_corners_in_one_sector_are_one_section():
     # T2-T4 slow complex at 300, T5 a flat kink at 520; the track times T2 to T5 as one sector
     d = np.arange(1000)

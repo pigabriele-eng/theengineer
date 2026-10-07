@@ -15,6 +15,7 @@ never set the grip used anywhere else.
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -25,8 +26,9 @@ from app.analysis.laps import CornerSpec, SessionData, Section, lap_length, make
 from app.analysis.lapsim import LIMITED_BY, Calibration, SimLap, theoretical_lap
 from app.analysis.limits import CarLimits, car_limits
 from app.analysis.local_limits import PlaceLimits, on_own_line, place_limits
-from app.analysis.scan import channel_scan
+from app.analysis.scan import channel_scan, lap_medians, scan_medians
 from app.analysis.track_shape import TrackShape, on_line, track_shape
+from app.heavy import trim
 from app.importers.motec import LdFile
 
 STRAIGHT_MIN_M = 250  # full throttle for at least this long makes a straight with a speed trap
@@ -47,6 +49,13 @@ class RunInput:
     driver: str | None = None
     meta: dict = field(default_factory=dict)
     ld: LdFile | None = None  # the raw log, to scan every channel it recorded
+
+
+@dataclass
+class LazyRun:
+    """One run read only when its turn comes (analyze_lazily)."""
+    load: Callable[[], RunInput]
+    best: float | None = None  # its quickest clean lap if known, so the quickest run is read first
 
 
 @dataclass
@@ -111,12 +120,60 @@ def prepare(runs: list[RunInput], corners: list[CornerSpec] | None = None, *,
             laps.append(LapRecord(r.name, l.number, l.time, r.driver, tr, i))
         if drop_channels:
             r.data.channels = {}
-    reference = next(x for x in laps if x.run == ref_run.name and x.number == ref_lap.number)
+    return _prepared(laps, ref_run.name, ref_lap.number, line, length, corners)
+
+
+def _prepared(laps: list[LapRecord], ref_run: str, ref_lap: int, line: TrackLine | None, length: int,
+              corners: list[CornerSpec] | None) -> Prepared:
+    reference = next(x for x in laps if x.run == ref_run and x.number == ref_lap)
     sections, numbering = make_sections(reference.trace, corners)
     t = targets(laps, reference.trace, reference.time, sections)
     for x in laps:  # each lap's own line, at limits never below what it showed itself
         x.own_sim = t.calibration.lap(_closed_sim(x.trace["curvature"], on_own_line(t.perfect, x.trace)))
     return t.prepared(line, reference, laps, sections, numbering)
+
+
+def prepare_lazily(runs: list[LazyRun], corners: Callable[[], list[CornerSpec] | None]
+                   ) -> tuple[Prepared | None, list[tuple[str, list[float], dict]]]:
+    """prepare() for runs read one at a time, so only one run's log is held at any moment: each is read, its clean
+    laps traced on the reference lap's line and its channels' lap medians taken for channel_scan, then let go. The
+    run expected to have the quickest lap (LazyRun.best) is read first, as its quickest lap gives the line; when
+    another run turns out quicker, the others are read again after that one. corners are asked for once all are
+    read (the track can come from the logs). Returns what prepare() does, and scan_medians()'s items."""
+    order = sorted(range(len(runs)), key=lambda i: (runs[i].best is None, runs[i].best or 0.0, i))
+    first = None  # the run found quicker last time round, already read
+    while True:
+        traced: dict[int, list[LapRecord]] = {}
+        scans: dict[int, tuple[str, list[float], dict]] = {}
+        ref = again = None
+        for i in order:
+            r, first = first or runs[i].load(), None
+            clean = [l for l in r.data.laps if l.clean]
+            if clean:
+                quickest = min(clean, key=lambda l: l.time)
+                if ref is None:  # the quickest lap of all, as prepare() picks it: the earlier run's on a tie
+                    ref = (quickest.time, i, r.name, quickest.number)
+                    line = track_line(r.data, quickest)
+                    length = line.length if line is not None else round(lap_length(r.data, quickest))
+                elif (quickest.time, i) < ref[:2]:
+                    again, first = i, r
+                    break
+                if "phase" not in r.data.channels:
+                    math_channels(r.data)
+                traced[i] = [LapRecord(r.name, l.number, l.time, r.driver, aligned_trace(r.data, l, line, length), k)
+                             for k, l in enumerate(clean)]
+            if r.ld is not None:
+                scans[i] = (r.name, [l.time for l in clean], lap_medians(r.ld, clean))
+            del r, clean
+            trim()
+        if again is None:
+            break
+        order = [again, *(i for i in order if i != again)]
+    scan = [scans[i] for i in range(len(runs)) if i in scans]
+    if ref is None:
+        return None, scan
+    laps = [x for i in range(len(runs)) for x in traced.get(i, [])]
+    return _prepared(laps, ref[2], ref[3], line, length, corners()), scan
 
 
 @dataclass
@@ -690,6 +747,19 @@ def _r(v, nd=3):
 def analyze_runs(runs: list[RunInput], corners: list[CornerSpec] | None = None, *,
                  drop_channels: bool = False) -> dict:
     prep = prepare(runs, corners, drop_channels=drop_channels)
+    scan_items = [(r.name, r.ld, [l for l in r.data.laps if l.clean]) for r in runs if r.ld is not None]
+    return _analysis(prep, lambda: channel_scan(scan_items) if scan_items else [], bool(scan_items))
+
+
+def analyze_lazily(runs: list[LazyRun], corners: Callable[[], list[CornerSpec] | None]) -> dict:
+    """analyze_runs() for runs read one at a time (prepare_lazily), so several long sessions fit in memory."""
+    prep, scan = prepare_lazily(runs, corners)
+    return _analysis(prep, lambda: scan_medians(scan) if scan else [], bool(scan))
+
+
+def _analysis(prep: Prepared | None, scan: Callable[[], list[dict]], scanned: bool) -> dict:
+    """The whole picture from the prepared laps; scan() gives the channel scan, scanned is whether the runs' logs
+    were there to scan."""
     if prep is None:
         return {"laps": [], "sections": []}
     laps, sim = prep.laps, prep.sim
@@ -738,7 +808,6 @@ def analyze_runs(runs: list[RunInput], corners: list[CornerSpec] | None = None, 
                          "extraction": round(100 * sim.time / best.time, 2)})
 
     ideal = sum(float(min(m["time"] for m in per_lap[s.code])) for s in prep.sections)
-    scan_items = [(r.name, r.ld, [l for l in r.data.laps if l.clean]) for r in runs if r.ld is not None]
     sp = sim.speed
     return {
         "reference": {"run": prep.reference.run, "lap": prep.reference.number, "time": prep.reference.time},
@@ -751,8 +820,8 @@ def analyze_runs(runs: list[RunInput], corners: list[CornerSpec] | None = None, 
         "opportunities": opportunities,
         "laps": lap_rows,
         "runs": run_rows,
-        "correlations": lap_correlations(prep, per_lap, with_state=not scan_items),
-        "channel_scan": channel_scan(scan_items) if scan_items else [],
+        "correlations": lap_correlations(prep, per_lap, with_state=not scanned),
+        "channel_scan": scan(),
         "top_speeds": top_speeds(prep, {k: v for k, v in by_run.items()}),
         "setup": setup_diagnostics(prep),
         "trace": {  # the reference lap and the theoretical lap, every 5 m, for charts and the track map
