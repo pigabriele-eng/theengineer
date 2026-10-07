@@ -1,4 +1,4 @@
-"""Our runs named after the official session they ran in: "FP1 run 1", "FP1 run 2", "Q1", "Race 1", "PT2 run 1".
+"""Our runs named after the official session they ran in: "FP1 stint 1", "FP1 stint 2", "Q1", "Race 1", "PT2 stint 1".
 
 Each run's log start and length (the logger's date, time of day and duration) are laid on the round's official
 timetable (results/: every session's start; its end is the next session's start or the usual length of its kind).
@@ -53,10 +53,10 @@ def label(code: str) -> str:
 
 
 def run_name(code: str, i: int, of: int) -> str:
-    """A practice or test run is always "FP1 run 2", "PT1 run 1"; a qualifying or race run only when it has company."""
+    """A practice or test run is always "FP1 stint 2", "PT1 stint 1"; quali or race run only with company."""
     if of == 1 and prefix(code) in ("Q", "R"):
         return label(code)
-    return f"{label(code)} run {i}"
+    return f"{label(code)} stint {i}"
 
 
 # ---------- times ----------
