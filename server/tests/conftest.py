@@ -148,6 +148,8 @@ def client(tmp_path, monkeypatch):
     importlib.reload(app.routers.reports)
     import app.lappacks
     importlib.reload(app.lappacks)
+    import app.import_rates
+    importlib.reload(app.import_rates)  # its table on the fresh database's metadata
     import app.upload_dupes
     importlib.reload(app.upload_dupes)  # its table on the fresh database's metadata
     importlib.reload(app.routers.imports)
