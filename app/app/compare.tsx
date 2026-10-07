@@ -5,8 +5,9 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-nati
 import { CompareTraces, LineKey, SectionTable, useLapColors, WhereTheTimeIs } from '@/components/CompareViews';
 import { Choice, PageHead, Toggle, useText } from '@/components/Picks';
 import PrintButton from '@/components/PrintButton';
-import { Colophon, Page, Section, TextLink } from '@/components/Programme';
+import { Colophon, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
+import { todayIso } from '@/lib/calendar';
 import {
   CompareResult,
   compareLaps,
@@ -20,7 +21,10 @@ import {
   signedSeconds,
   TrackGroup,
 } from '@/lib/compare';
-import { face, Fonts, themed, Type, useTheme } from '@/constants/Theme';
+import { keepFold, openFirst, pickedTrack, visitFolds } from '@/lib/compareFolds';
+import { face, Fonts, TAP, themed, Type, useTheme } from '@/constants/Theme';
+import { eventsApi } from '@/lib/events';
+import { currentEvent } from '@/lib/openCurrent';
 import { noPrint } from '@/lib/print';
 import { codeOf } from '@/lib/driverTag';
 
@@ -62,22 +66,47 @@ export default function CompareScreen() {
   const resultsY = useRef(0);
   const tracesY = useRef(0);
 
+  // the list folds by track: one open when the page opens (lib/compareFolds.ts openFirst), then as tapped
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const [folds, setFolds] = useState(visitFolds);
+  const wide = useWide();
+
   const sessions = useMemo(() => new Map((groups ?? []).flatMap((g) => g.sessions.map((s) => [s.id, s]))), [groups]);
   const groupOf = (id: number) => groups?.find((g) => g.sessions.some((s) => s.id === id)) ?? null;
 
   useEffect(() => {
-    fetchPickable().then(
-      (g) => {
-        setGroups(g);
-        const start = Number(params.session);
+    const start = Number(params.session);
+    // the event on now (a race weekend, a coaching day), asked only when the page opens without picked laps
+    const onNow = params.laps || start
+      ? Promise.resolve(null)
+      : eventsApi.folders().then((f) => currentEvent(f, todayIso()), () => null);
+    Promise.all([fetchPickable(), onNow]).then(
+      ([g, current]) => {
+        let picked = picks.map((p) => p.session_id); // the laps in the address
         if (!params.laps && start) {
           const s = g.flatMap((x) => x.sessions).find((x) => x.id === start);
-          if (s) setPicks([{ session_id: s.id, lap: s.best_lap, slot: 0 }]);
+          if (s) {
+            setPicks([{ session_id: s.id, lap: s.best_lap, slot: 0 }]);
+            picked = [s.id];
+          }
         }
+        // opened on picked laps: their track opens, even when it was folded earlier in the visit
+        const at = pickedTrack(g, picked);
+        if (at) keepFold(at.key, null);
+        setFolds(visitFolds());
+        setOpenKey(openFirst(g, { picked, current }));
+        setGroups(g);
       },
       (e) => setError((e as Error).message),
     );
   }, []); // eslint-disable-line react-hooks/exhaustive-deps -- only on opening the screen
+
+  const isOpen = (key: string) => folds[key] ?? key === openKey;
+  const toggle = (key: string) => {
+    const open = !isOpen(key);
+    keepFold(key, open);
+    setFolds((f) => ({ ...f, [key]: open }));
+  };
 
   // keep the picks in the address, so a comparison can be reloaded or sent on
   useEffect(() => {
@@ -254,35 +283,56 @@ export default function CompareScreen() {
             {groups && groups.length > 0 && (
               <Text style={t.note}>
                 {picks.length === 0
-                  ? 'Tap a session to add its best lap.'
+                  ? `${choices.length > 1 ? 'Tap a track to open it, then a' : 'Tap a'} session to add its best lap.`
                   : 'Tap a session to add its best lap; tap it again for its next best.'}
               </Text>
             )}
-            {choices.map((g) => (
-              <View key={g.key} style={styles.group}>
-                <Text style={styles.groupName}>{g.track ?? 'Track not known'}</Text>
-                {g.sessions.map((s) => {
-                  const n = picks.filter((p) => p.session_id === s.id).length;
-                  const full = picks.length >= MAX_LAPS || n >= s.laps.filter((l) => l.clean).length;
-                  return (
-                    <Pressable key={s.id} onPress={() => add(s)} style={StyleSheet.flatten([styles.sessionRow, full && styles.dim])}
-                      disabled={full} accessibilityRole="button" accessibilityLabel={`Add ${s.name}'s best lap`}>
-                      <View style={styles.grow}>
-                        <Text style={styles.pickTitle}>
-                          {s.driver ? <Text style={styles.driverCode}>{`${codeOf(s.driver)}  `}</Text> : null}
-                          {s.name}
-                        </Text>
-                        <Text style={t.labelMuted}>
-                          {[s.driver, s.date, `${s.laps.length} laps`, n ? `${n} picked` : null].filter(Boolean).join(' · ')}
-                        </Text>
-                      </View>
-                      <Text style={styles.time}>{formatLap(s.best_time)}</Text>
-                      <Text style={styles.addWord}>Add</Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            ))}
+            {choices.map((g) => {
+              const name = g.track ?? 'Track not known';
+              const open = isOpen(g.key);
+              // picked laps stay picked while their track is folded; its heading says how many
+              const picked = picks.filter((p) => g.sessions.some((s) => s.id === p.session_id)).length;
+              const count = `${g.sessions.length} session${g.sessions.length === 1 ? '' : 's'}`;
+              return (
+                <View key={g.key} style={styles.group}>
+                  <Pressable onPress={() => toggle(g.key)} style={styles.trackHead} accessibilityRole="button"
+                    accessibilityState={{ expanded: open }} aria-expanded={open /* the web reads only this one */}
+                    accessibilityLabel={`${name}, ${count}${picked ? `, ${picked} picked` : ''}`}
+                    accessibilityHint={`${open ? 'Folds' : 'Opens'} the sessions at ${name}`}>
+                    <View style={styles.trackWords}>
+                      <Text style={wide ? styles.trackName : styles.trackNamePhone}>{name}</Text>
+                      <Text style={styles.trackFacts}>
+                        {count}
+                        {picked ? <Text style={styles.trackPicked}>{` · ${picked} picked`}</Text> : null}
+                      </Text>
+                    </View>
+                    <Text style={styles.trackMark}>{open ? '▾' : '▸'}</Text>
+                  </Pressable>
+                  {open && g.sessions.map((s) => {
+                    const n = picks.filter((p) => p.session_id === s.id).length;
+                    const full = picks.length >= MAX_LAPS || n >= s.laps.filter((l) => l.clean).length;
+                    return (
+                      <Pressable key={s.id} onPress={() => add(s)} disabled={full} accessibilityRole="button"
+                        style={StyleSheet.flatten([styles.sessionRow, full && styles.dim])}
+                        accessibilityLabel={`Add ${s.name}'s best lap`}>
+                        <View style={styles.grow}>
+                          <Text style={styles.pickTitle}>
+                            {s.driver ? <Text style={styles.driverCode}>{`${codeOf(s.driver)}  `}</Text> : null}
+                            {s.name}
+                          </Text>
+                          <Text style={t.labelMuted}>
+                            {[s.driver, s.date, `${s.laps.length} laps`, n ? `${n} picked` : null].filter(Boolean)
+                              .join(' · ')}
+                          </Text>
+                        </View>
+                        <Text style={styles.time}>{formatLap(s.best_time)}</Text>
+                        <Text style={styles.addWord}>Add</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              );
+            })}
             {adding && picks.length >= MIN_LAPS && <TextLink label="Done" onPress={() => setAdding(false)} />}
           </View>
         )}
@@ -345,7 +395,17 @@ const useStyles = themed((c) => ({
   action: { marginTop: 16 },
   list: { gap: 12, marginTop: 16 },
   group: { gap: 0 },
-  groupName: { ...Type.label, color: c.text, borderBottomWidth: 1, borderColor: c.rule, paddingBottom: 5 },
+  // a track's heading, folding its sessions: as the Sessions page folds a championship (components/Fold.tsx), the
+  // whole line one tap target, its words 16 px and up on a phone
+  trackHead: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: TAP, borderTopWidth: 3,
+    borderBottomWidth: 1, borderColor: c.rule, paddingTop: 7, paddingBottom: 6 },
+  trackWords: { flex: 1, minWidth: 0, flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 14,
+    rowGap: 2, backgroundColor: 'transparent' },
+  trackName: { fontFamily: Fonts.display, fontSize: 24, lineHeight: 28, textTransform: 'uppercase', color: c.text },
+  trackNamePhone: { fontFamily: Fonts.display, fontSize: 20, lineHeight: 24, textTransform: 'uppercase', color: c.text },
+  trackFacts: { ...Type.label, fontSize: 16, letterSpacing: 1.2, color: c.textSecondary, fontVariant: ['tabular-nums'] },
+  trackPicked: { color: c.text },
+  trackMark: { fontFamily: Fonts.label, fontSize: 20, lineHeight: 24, color: c.text, width: 20, textAlign: 'right' },
   sessionRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderBottomWidth: 1,
     borderColor: c.separator },
   addWord: { ...Type.link, fontSize: 12, letterSpacing: 1.2, color: c.text, borderBottomWidth: 2, borderColor: c.rule,
