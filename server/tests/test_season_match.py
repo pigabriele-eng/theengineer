@@ -203,6 +203,7 @@ def test_a_new_driver_is_named_with_one_tap_or_a_name_typed_in(client):
     assert [(o["key"], o["label"], o["why"]) for o in q["options"]] == [
         (f"driver:{g}", "Gabriele", "In the car's entry list"), ("name:1", "T.Rackl", "In the official results")]
     assert q["runs"] == 1 and seen["checking"] is False
+    assert [d["name"] for d in q["drivers"]] == ["Max"]  # the rest of the garage, to pick from
 
     # a name from the official results that isn't in the garage yet: made, and every run of the style gets it,
     # the one the style had set too, as a person's answer (it teaches); the person's tag stays
@@ -226,6 +227,16 @@ def test_a_new_driver_is_named_with_one_tap_or_a_name_typed_in(client):
     assert r.status_code == 200 and r.json()["done"].startswith("2 runs")
     got = _runs(client, runs)
     assert [got[i]["driver_id"] for i in runs] == [m, m, g]
+
+    # or picked from the garage's other drivers
+    for sid in runs[:2]:
+        client.patch(f"/garage/runs/{sid}", json={"driver_id": None})
+    _ask(ev, runs, options)
+    (q,) = _pending(client, event_id=ev)["questions"]
+    rackl = next(d["id"] for d in q["drivers"] if d["name"] == "T.Rackl")
+    r = client.post(f"/season-match/{q['id']}", json={"answer": "other", "driver_id": rackl})
+    assert r.status_code == 200 and r.json()["done"].startswith("2 runs")
+    assert [_runs(client, runs)[i]["driver_id"] for i in runs] == [rackl, rackl, g]
 
 
 def test_a_skipped_driver_question_isn_t_asked_again_and_tagging_puts_it_away(client):

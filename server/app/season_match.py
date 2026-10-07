@@ -871,6 +871,10 @@ def _json(db: Session, row: SeasonMatch, ev: models.Event | None = None) -> dict
         out["series_name"] = (row.options or [{}])[0].get("series_name")
     if row.kind == "driver":
         out["runs"] = _missing_drivers(db, row)
+        offered = {o.get("driver_id") for o in row.options or []}
+        out["drivers"] = [{"id": d.id, "name": d.name} for d in db.scalars(select(models.Driver)
+                                                                             .order_by(models.Driver.name)).all()
+                          if d.id not in offered]  # the rest of the garage, to pick from
     if row.status in ("linked", "yes") and row.kind in ("round", "official"):
         out["summary"] = _summary(db, row)
         done = row.done or {}
@@ -911,7 +915,8 @@ router = APIRouter(prefix="/season-match")
 class AnswerIn(BaseModel):
     answer: str = Field(min_length=1, max_length=120)  # an option's key, "no", or "other" (driver_name)
     car_number: str | None = Field(None, max_length=8)
-    driver_name: str | None = Field(None, max_length=120)  # a driver question answered with a name typed in
+    driver_id: int | None = None  # a driver question answered "other" with a driver of the garage
+    driver_name: str | None = Field(None, max_length=120)  # ... or with a new driver's name (added to the garage)
 
 
 def _event_scope(db: Session, event_id: int | None, runs: str | None) -> set[int] | None:
@@ -987,7 +992,11 @@ def answer(match_id: int, body: AnswerIn, db: Session = Depends(get_db)):
         if opt is None and not (row.kind == "driver" and key == "other"):
             raise HTTPException(422, "That isn't one of the answers")
         if row.kind == "driver":
-            if opt is None:
+            if opt is None and body.driver_id is not None:
+                d = db.get(models.Driver, body.driver_id)
+                if d is None:
+                    raise HTTPException(409, "That driver isn't in the garage any more")
+            elif opt is None:
                 d = _driver_named(db, body.driver_name or "")
             elif opt.get("driver_id") is not None:
                 d = db.get(models.Driver, int(opt["driver_id"]))

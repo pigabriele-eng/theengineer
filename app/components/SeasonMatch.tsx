@@ -9,7 +9,7 @@ import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, ViewStyle } from 'react-native';
 
-import { ErrorLine, Field, FormActions, Input, MainButton, Note, Said } from '@/components/Controls';
+import { Choice, Choices, ErrorLine, Field, FormActions, Input, MainButton, Note, Said } from '@/components/Controls';
 import { Label, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { Pending, SeasonQuestion, seasonMatchApi } from '@/lib/seasonMatch';
@@ -111,11 +111,12 @@ function Question({ q, showEvent, onDone }: { q: SeasonQuestion; showEvent: bool
   const single = q.options.length === 1;
   const driver = q.kind === 'driver';
 
-  const send = async (key: string) => {
-    setBusy(key);
+  const send = async (key: string, driverId?: number) => {
+    setBusy(driverId != null ? `driver:${driverId}` : key);
     setError(null);
     try {
-      const r = await seasonMatchApi.answer(q.id, key, number, key === 'other' ? name : undefined);
+      const pick = key !== 'other' ? undefined : driverId != null ? { id: driverId } : { name };
+      const r = await seasonMatchApi.answer(q.id, key, number, pick);
       onDone(r.done);
     } catch (e) {
       setError((e as Error).message);
@@ -148,15 +149,26 @@ function Question({ q, showEvent, onDone }: { q: SeasonQuestion; showEvent: bool
           <TextLink onPress={() => send('no')} disabled={busy != null} label={single ? 'No' : 'None of these'} />
         ))}
       </FormActions>
+      {driver && (q.drivers?.length ?? 0) > 0 && (
+        <View style={styles.others}>
+          <Label small>{q.options.length ? 'Or another driver' : 'Pick a driver'}</Label>
+          <Choices>
+            {q.drivers!.map((d) => (
+              <Choice key={d.id} label={d.name} on={busy === `driver:${d.id}`} disabled={busy != null}
+                onPress={() => send('other', d.id)} />
+            ))}
+          </Choices>
+        </View>
+      )}
       {driver && (
         <>
-          <Field label={q.options.length ? 'Someone else' : 'Name'} style={styles.number}>
-            <Input value={name} onChangeText={setName} placeholder="The driver's name" maxLength={120}
-              editable={busy == null} accessibilityLabel="The driver's name" box returnKeyType="done"
+          <Field label="Add a new driver" style={styles.number}>
+            <Input value={name} onChangeText={setName} placeholder="Name" maxLength={120}
+              editable={busy == null} accessibilityLabel="New driver's name" box returnKeyType="done"
               onSubmitEditing={() => name.trim() && send('other')} />
           </Field>
           <FormActions>
-            <MainButton label="Save the name" onPress={() => send('other')} busy={busy === 'other'}
+            <MainButton label="Add the driver" onPress={() => send('other')} busy={busy === 'other'}
               disabled={busy != null || !name.trim()} />
             {busy === 'no' ? <ActivityIndicator /> : <TextLink onPress={() => send('no')} disabled={busy != null} label="Skip" />}
           </FormActions>
@@ -203,6 +215,7 @@ const useStyles = themed((c) => ({
   promptPhone: { fontFamily: Fonts.display, fontSize: 19, lineHeight: 23, textTransform: 'uppercase', color: c.text },
   summary: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 24, color: c.text },
   number: { maxWidth: 360 },
+  others: { gap: 8 },
   answers: { marginTop: 6 },
   spinner: { alignSelf: 'flex-start' },
 }));

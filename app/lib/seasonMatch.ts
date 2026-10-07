@@ -17,6 +17,7 @@ export type SeasonQuestion = {
   needs: 'car_number'[]; // official: our car's number in the series isn't known yet
   series_name?: string | null;
   runs?: number; // driver: runs still without a driver
+  drivers?: { id: number; name: string }[]; // driver: the rest of the garage, to pick from
   summary?: string; // linked: what was done, in words
   undo?: boolean; // linked: "no" takes it back
   created_at: string | null;
@@ -45,12 +46,16 @@ export const seasonMatchApi = {
     const qs = q.toString();
     return call<Pending>(`/season-match/pending${qs ? `?${qs}` : ''}`);
   },
-  /** An option's key, 'no' (not asked again; on a link made by itself: taken back), or 'other' with a driver's
-   * name typed in. */
-  answer: (id: number, answer: string, carNumber?: string, driverName?: string) =>
+  /** An option's key, 'no' (not asked again; on a link made by itself: taken back), or 'other' with a driver of
+   * the garage or a new driver's name (added to the garage). */
+  answer: (id: number, answer: string, carNumber?: string, driver?: { id: number } | { name: string }) =>
     call<Answered>(`/season-match/${id}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ answer, car_number: carNumber?.trim() || null, driver_name: driverName?.trim() || null }),
+      body: JSON.stringify({
+        answer, car_number: carNumber?.trim() || null,
+        driver_id: driver && 'id' in driver ? driver.id : null,
+        driver_name: driver && 'name' in driver ? driver.name.trim() || null : null,
+      }),
     }),
 };
