@@ -31,9 +31,18 @@ export type Mistake = {
  * upshift before or after the revs where the next gear drives harder (or held on the rev limiter), the throttle on
  * and off through a corner, the speed stalling or dropping on the way out.
  * cost_s is what it alone cost: the speed the lift lost carried down the straight, the later braking point missed. */
+/** What an obvious mistake really costs by corner and kind, measured on the laps (with it against without it,
+ * driver by driver, every check at the track pooled); the model's estimate where too few laps measure it or the
+ * loss is still within the noise (the flag stands either way). */
+export type MeasuredCost = { key: string; code: string; kind: ObviousMistake['kind']; measured: boolean;
+  /** the measured loss stands clear of the noise (cost_s is then the measured one, else the model's) */
+  clear?: boolean; measured_s?: number | null; pm_s?: number | null;
+  cost_s: number; model_s: number; laps_with: number; laps_without: number; events: number };
+
 export type ObviousMistake = {
   key: string;
-  kind: 'exit_lift' | 'exit_stall' | 'on_off_throttle' | 'power_step' | 'soft_straight_braking' | 'early_shift' | 'late_shift';
+  kind: 'exit_lift' | 'exit_stall' | 'on_off_throttle' | 'power_step' | 'power_oversteer' | 'soft_straight_braking'
+    | 'braking_unused' | 'early_shift' | 'late_shift';
   code: string;
   phase: Phase;
   start_m: number;
@@ -43,6 +52,7 @@ export type ObviousMistake = {
   title: string;
   what: string;
   do: string;
+  measured?: MeasuredCost | null;
 };
 
 export type Budget = {
@@ -55,10 +65,22 @@ export type Budget = {
   other_gains: number;
 };
 
-export type InputRole = 'throttle' | 'brake' | 'steer' | 'gear';
-/** The driver's inputs at the speed trace's points (every step_m metres): throttle %, brake pressure, steering and
- * gear as the log's channels for those roles have them; null where the log has no such channel. */
-export type Inputs = Record<InputRole, number[] | null>;
+export type InputRole = 'speed' | 'throttle' | 'brake' | 'steer' | 'gear' | 'rpm';
+/** The driver's inputs at the speed trace's points (every step_m metres): throttle %, brake pressure, steering,
+ * gear and revs as the log's channels for those roles have them; null (or missing, from an older check) where the log
+ * has no such channel. */
+export type Inputs = Partial<Record<InputRole, number[] | null>>;
+/** Perfect driving's and the realistic target's inputs at the same points, to lay over the driver's: what their
+ * speed asks of the car (throttle as a share of full drive, brake in the driver's own pressure per g, the gear and
+ * revs of the ideal shift points). No steering: the model has none. */
+export type ModelInputs = { perfect: Inputs; realistic: Inputs; fixed?: Inputs; best?: BestTechnique };
+/** Where each section of the best-technique lap comes from: the driver's own quickest clean pass of the event (its
+ * run and lap), this lap's pass with its obvious mistakes taken out (built), or this lap's own pass, already the
+ * best clean one (own); and what it finds over this lap there. */
+export type BestSource = { code: string; start_m: number; end_m: number; kind: 'pass' | 'built' | 'own';
+  run?: string; number?: number; gain_s: number; put_right?: ObviousMistake['kind'][] };
+/** The driver's best technique through every section, blended at the joins; speed among its inputs. */
+export type BestTechnique = Inputs & { time: number; sources: BestSource[] };
 /** Perfect driving's own phases (trace.model_phases indexes these). Its model has no pedal positions and never
  * coasts: it brakes, drives at the grip limit (part throttle) or at full throttle. */
 export const MODEL_PHASES = ['braking', 'at the grip limit', 'full throttle'] as const;
@@ -78,7 +100,7 @@ export type LapCheck = {
   mistakes: Mistake[];
   obvious?: ObviousMistake[]; // most costly first; they may overlap the mistakes above
   trace: { step_m: number; driven: number[]; perfect: number[]; realistic: number[]; inputs?: Inputs;
-    model_phases?: number[] } | null;
+    model_phases?: number[]; model?: ModelInputs } | null;
   // the event's fastest lap (the one the report measures from), its inputs to lay under this lap's; none when this
   // lap is that one
   fastest?: { session_id: number; run: string; number: number; time: number; this_lap: boolean;
@@ -130,6 +152,7 @@ export type SessionTechnique = Head & {
   laps: LapRow[];
   best_lap?: number | null;
   lap: LapCheck | null;
+  measured?: MeasuredCost[] | null; // the obvious mistakes, most expensive first as measured
   lap_note: string | null;
   habits: { session: Habit[]; session_laps: number; event: Habit[] | null; event_laps: number | null } | null;
   sections?: { code: string; start_m: number; end_m: number; apex_m: number | null; corners: string[] }[];
