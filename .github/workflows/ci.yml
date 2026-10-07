@@ -41,7 +41,7 @@ jobs:
       - run: echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - if: matrix.shard == 1
         run: ruff check .
-      - run: pytest -q -n auto --shard ${{ matrix.shard }}/${{ strategy.job-total }}
+      - run: pytest -q -n auto --shard ${{ matrix.shard }}/${{ strategy.job-total }} --store-durations && cat tests/durations.json
 
   app:
     runs-on: ubuntu-latest
