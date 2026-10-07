@@ -3,8 +3,9 @@ for, so they open at once instead of working it out while Gabriele waits.
 
 For each uploaded run and the event it is in, in this order (the pages that ask for it in brackets):
 1. the run's compact lap traces, one log at a time (Report, Technique, Track grip, the event's side by side);
-2. the event's report, track map and shape, track grip, grip use, balance and its main logs' stint view (Report; the
-   session page's best section times);
+2. the event's report, then the reports of the official sessions (FP1, Q1, R1...) the runs are in, then its track map
+   and shape, track grip, grip use, balance and its main logs' stint view (Report; the weekend page's session reports;
+   the session page's best section times);
 3. the run's lap analysis, the lap comparison it opens on, stint view, track map and track shape (the session page);
 4. the event's technique check, or the run's when it is in no event (Technique);
 5. the run's tyre prep (Quali), and its own report, grip use and balance (Report of one run);
@@ -101,9 +102,14 @@ def pieces(db: Session, session_ids: list[int], prep: bool = True) -> list[Piece
     sids = [s.id for s in runs]
     events = list(dict.fromkeys(s.event_id for s in runs if s.event_id is not None))
     out: list[Piece] = [("traces", (sid,)) for sid in sids]
+    from app.routers import reports  # here: the routers import this module
+
     for e in events:
-        out += [("report", ("event", e)), ("event map", (e,)), ("event shape", (e,)), ("track grip", (e,)),
-                ("grip", ("event", e)), ("balance", ("event", e)), ("event stint", (e,))]
+        out += [("report", ("event", e))]
+        # its sessions' reports: from the traces the event's report has just made, so they take little more
+        out += [("report", ("part", e, code)) for code in reports.parts_with(db, e, sids)]
+        out += [("event map", (e,)), ("event shape", (e,)), ("track grip", (e,)), ("grip", ("event", e)),
+                ("balance", ("event", e)), ("event stint", (e,))]
     for sid in sids:
         out += [("analysis", (sid,)), ("compare", (sid,)), ("stint", (sid,)), ("map", (sid,)), ("shape", (sid,))]
     out += [("technique", ("event", e)) for e in events]
@@ -263,9 +269,9 @@ def _traces(sid: int) -> None:
     reports.prebuild_traces(sid)
 
 
-def _report(kind: str, id_: int) -> None:
+def _report(kind: str, id_: int, part: str | None = None) -> None:
     from app.routers import reports
-    reports.prebuild(kind, id_)
+    reports.prebuild(kind, id_, part)
 
 
 def _technique(kind: str, id_: int) -> None:

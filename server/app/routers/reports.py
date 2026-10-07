@@ -1,4 +1,5 @@
-"""The report: how to go faster, for a whole event (every session of a test) or for one session.
+"""The report: how to go faster, for a whole event (every session of a test), for one official session of it (FP1,
+Q1, R1: every run of that session, both drivers' stints; app/run_parts.py) or for one run.
 
 Logs are big and the hosted server has 512 MB, so the report never opens them all at once. Each session is reduced
 once, in the background and one session at a time, to compact lap traces (analysis/compact.py) kept in file storage
@@ -7,8 +8,13 @@ with a signature of everything it was made from. When a session changes (another
 channel map or corner list), the signature no longer matches and the next request starts the work again; while it
 runs, the screen shows its progress and the last report, if there is one.
 
-GET /reports/events/{id} and GET /reports/sessions/{id} answer at once: the report when it is up to date, otherwise
-its progress. POST .../refresh tries again after a failure.
+GET /reports/events/{id}, GET /reports/events/{id}/sessions/{code} and GET /reports/sessions/{id} answer at once:
+the report when it is up to date, otherwise its progress. POST .../refresh tries again after a failure. GET
+/reports/events/{id}/parts lists the event's official sessions with their runs and whether each one's report is ready.
+
+A session's report is made like the event's from the same compact traces, so once the event's report exists it only
+works the report out from the traces of that session's runs. A session of a single run is that run's own report
+(scope "session:<run id>"), worked out once for both.
 """
 from __future__ import annotations
 
@@ -28,7 +34,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import heavy, models, page_cache, run_labels, storage
+from app import heavy, models, page_cache, run_labels, run_parts, storage
 from app.analysis import compact
 from app.analysis.advice import build_report
 from app.db import SessionLocal, get_db
@@ -41,6 +47,7 @@ REPORT_VERSION = 7  # raise when the advice or the sections change, so every kep
 TRACES_VERSION = compact.FORMAT  # raise (in compact.py) when the reduction changes
 IMPORT_WAIT_S = 1800  # longest the report waits for an import that is reading logs
 MAX_LAPS = 250  # the quickest laps of an event the report works from, to keep within the server's memory
+SCOPE_LEN = 40  # report_cache.scope's length: a session's scope with a longer name keeps a hash of the name
 
 _jobs: queue.Queue[str] = queue.Queue()
 _pending: set[str] = set()  # scopes queued or being worked on in this process
@@ -61,7 +68,7 @@ class Item:
 @dataclass
 class Plan:
     scope: str
-    kind: str  # event or session
+    kind: str  # event, part (one official session of an event: id is the event's) or session
     id: int
     title: str
     track: models.Track | None
@@ -69,6 +76,7 @@ class Plan:
     error: str | None = None
     signature: str = ""
     labels: list[run_labels.RunLabel] = field(default_factory=list)  # the event's runs, in the event page's order
+    part: str | None = None  # the official session's code ("FP1", "Q1", "03_Q") of a part's report
 
 
 def _hash(payload) -> str:
@@ -94,24 +102,66 @@ def _traces_signature(s: models.RunSession, f: models.LoggerFile, track: models.
                   track.timing_line if track else None, laps])
 
 
-def plan_for(db: Session, kind: str, id_: int) -> Plan:
+def plan_for(db: Session, kind: str, id_: int, part: str | None = None) -> Plan:
+    """What the report of an event, of one of its official sessions (kind "part", id_ the event's, ``part`` its code)
+    or of one run is made from."""
     if kind == "event":
         ev = db.get(models.Event, id_)
         if ev is None:
             raise HTTPException(404, "Event not found")
         sessions = db.scalars(select(models.RunSession).where(models.RunSession.event_id == id_)).all()
         labels = run_labels.label_runs(sessions)
-        plan = Plan(f"event:{id_}", kind, id_, ev.name, ev.track, labels=labels)
+        return _fill(db, Plan(f"event:{id_}", kind, id_, ev.name, ev.track, labels=labels), sessions)
+    if kind == "part":
+        ev, sessions, labels, found = _event_parts(db, id_)
+        p = next((p for p in found if part_scope(id_, p.code) == part_scope(id_, part or "")), None)
+        if p is None:
+            raise HTTPException(404, "No runs of that session in this event")
+        return part_plan(db, ev, sessions, labels, p)
+    s = db.get(models.RunSession, id_)
+    if s is None:
+        raise HTTPException(404, "Session not found")
+    # called as in its event's report, so its label is worked out among the event's runs
+    labels = run_labels.label_runs(run_labels.event_runs(db, s))
+    return _fill(db, Plan(f"session:{id_}", kind, id_, next(lab.name for lab in labels if lab.id == s.id), None,
+                          labels=labels), [s])
+
+
+def part_scope(event_id: int, code: str) -> str:
+    """An official session's report: "part:<event id>:<code>", with a hash of a name too long for the column."""
+    scope = f"part:{event_id}:{code}"
+    if len(scope) <= SCOPE_LEN:
+        return scope
+    return f"part:{event_id}:#{hashlib.sha256(code.encode()).hexdigest()[:16]}"
+
+
+def _event_parts(db: Session, event_id: int) -> tuple[models.Event, list[models.RunSession],
+                                                      list[run_labels.RunLabel], list[run_parts.Part]]:
+    ev = db.get(models.Event, event_id)
+    if ev is None:
+        raise HTTPException(404, "Event not found")
+    sessions = list(db.scalars(select(models.RunSession).where(models.RunSession.event_id == event_id)).all())
+    labels = run_labels.label_runs(sessions)
+    return ev, sessions, labels, run_parts.parts(sessions, labels)
+
+
+def part_plan(db: Session, ev: models.Event, sessions: list[models.RunSession], labels: list[run_labels.RunLabel],
+              p: run_parts.Part) -> Plan:
+    """An official session's report: the event's plan with only that session's runs, called by their labels among
+    all the event's runs (as on the event page). A session of one run is that run's own report: the same scope and
+    signature as plan_for("session", run), so it is worked out and kept once."""
+    mine = [s for s in sessions if s.id in set(p.ids)]
+    if len(mine) == 1:
+        plan = Plan(f"session:{mine[0].id}", "part", ev.id, p.title, None, labels=labels, part=p.code)
     else:
-        s = db.get(models.RunSession, id_)
-        if s is None:
-            raise HTTPException(404, "Session not found")
-        # called as in its event's report, so its label is worked out among the event's runs
-        labels = run_labels.label_runs(run_labels.event_runs(db, s))
-        sessions = [s]
-        plan = Plan(f"session:{id_}", kind, id_, next(lab.name for lab in labels if lab.id == s.id), None,
-                    labels=labels)
-    # the runs in the event page's order (by day, then the time of day), each called by its label
+        plan = Plan(part_scope(ev.id, p.code), "part", ev.id, p.title, ev.track, labels=labels, part=p.code)
+    return _fill(db, plan, mine)
+
+
+def _fill(db: Session, plan: Plan, sessions: list[models.RunSession]) -> Plan:
+    """The plan's runs in the event page's order (by day, then the time of day), each called by its label, and the
+    signature of everything the report is made from."""
+    labels = plan.labels
     label_of = {lab.id: (k, lab) for k, lab in enumerate(labels)}
     tracks: dict[int | None, models.Track | None] = {}
     for s in sorted(sessions, key=lambda s: label_of[s.id][0]):
@@ -175,6 +225,7 @@ def _answer(db: Session, plan: Plan, row: models.ReportCache | None, status: str
     working = status in ("queued", "running")
     return {
         "scope": plan.kind, "id": plan.id, "title": plan.title,
+        "part": plan.part,  # a part's report: the official session's code ("FP1", "Q1", "03_Q")
         "track": plan.track.name if plan.track else None,
         "status": status,  # ready, queued, running, failed, empty
         "progress": {"done": row.done, "total": row.total, "current": row.current} if working and row else None,
@@ -189,23 +240,32 @@ def _answer(db: Session, plan: Plan, row: models.ReportCache | None, status: str
     }
 
 
-def report_for(db: Session, kind: str, id_: int) -> dict:
-    plan = plan_for(db, kind, id_)
-    row = db.scalar(select(models.ReportCache).where(models.ReportCache.scope == plan.scope))
+def _status(plan: Plan, row: models.ReportCache | None) -> str | None:
+    """Where the plan's report is: ready, queued, running, failed or empty; None when it hasn't been asked for these
+    inputs yet (asking queues it)."""
     if plan.error:
-        return _answer(db, plan, row, "failed")
+        return "failed"
     if not _used(plan):
-        return _answer(db, plan, row, "empty")
+        return "empty"
     if row is not None and row.signature == plan.signature and plan.scope in _pending:
         # being worked out (again, after a refresh); "done" is the moment between the job saving its result and
         # letting go of the scope: the report is ready
-        return _answer(db, plan, row, "ready" if row.status == "done" else row.status)
+        return "ready" if row.status == "done" else row.status
     if row is not None and row.result is not None and row.result_signature == plan.signature:
-        return _answer(db, plan, row, "ready")
+        return "ready"
     if row is not None and row.signature == plan.signature and row.status == "failed":
-        return _answer(db, plan, row, "failed")  # tried for these very inputs: POST refresh to try again
-    row = _queue(db, plan, row)
-    return _answer(db, plan, row, "queued")
+        return "failed"  # tried for these very inputs: POST refresh to try again
+    return None
+
+
+def report_for(db: Session, kind: str, id_: int, part: str | None = None) -> dict:
+    plan = plan_for(db, kind, id_, part)
+    row = db.scalar(select(models.ReportCache).where(models.ReportCache.scope == plan.scope))
+    status = _status(plan, row)
+    if status is None:
+        row = _queue(db, plan, row)
+        status = "queued"
+    return _answer(db, plan, row, status)
 
 
 def _queue(db: Session, plan: Plan, row: models.ReportCache | None) -> models.ReportCache:
@@ -233,16 +293,23 @@ def event_report(event_id: int, db: Session = Depends(get_db)):
     return page_cache.RawJSON(page_cache.as_json(report_for(db, "event", event_id)))
 
 
+@router.get("/events/{event_id}/sessions/{code:path}")
+def event_part_report(event_id: int, code: str, db: Session = Depends(get_db)):
+    """The same for one official session of the event ("FP1", "Q1", "R1", or a log folder's name like "03_Q"; see
+    GET /reports/events/{id}/parts): every run of that session, called as on the event page."""
+    return page_cache.RawJSON(page_cache.as_json(report_for(db, "part", event_id, code)))
+
+
 @router.get("/sessions/{session_id}")
 def session_report(session_id: int, db: Session = Depends(get_db)):
     """The same for one session's laps."""
     return page_cache.RawJSON(page_cache.as_json(report_for(db, "session", session_id)))
 
 
-def _refresh(db: Session, kind: str, id_: int) -> dict:
-    plan = plan_for(db, kind, id_)
+def _refresh(db: Session, kind: str, id_: int, part: str | None = None) -> dict:
+    plan = plan_for(db, kind, id_, part)
     if plan.error or not _used(plan):
-        return report_for(db, kind, id_)
+        return report_for(db, kind, id_, part)
     row = db.scalar(select(models.ReportCache).where(models.ReportCache.scope == plan.scope))
     if plan.scope not in _pending:
         for i in _used(plan):  # a failed reduction is tried again too
@@ -258,9 +325,75 @@ def refresh_event_report(event_id: int, db: Session = Depends(get_db)):
     return _refresh(db, "event", event_id)
 
 
+@router.post("/events/{event_id}/sessions/{code:path}/refresh")
+def refresh_event_part_report(event_id: int, code: str, db: Session = Depends(get_db)):
+    return _refresh(db, "part", event_id, code)
+
+
 @router.post("/sessions/{session_id}/refresh")
 def refresh_session_report(session_id: int, db: Session = Depends(get_db)):
     return _refresh(db, "session", session_id)
+
+
+# ---------- an event's official sessions ----------
+
+def _clean_laps(s: models.RunSession) -> list[float]:
+    f = _main_file(s)
+    return [l.time_s for l in s.laps if l.clean and f is not None and l.file_id == f.id]
+
+
+def _event_dates(db: Session, ev: models.Event, labels: list[run_labels.RunLabel]) -> tuple[str | None, str | None]:
+    """The event's first and last day, as the event page has them (routers/events.py _folder): the dates set by
+    hand, else the days its logs were recorded, else the event's date."""
+    dates = db.scalar(select(models.EventDates).where(models.EventDates.event_id == ev.id))
+    if dates is not None and (dates.start is not None or dates.end is not None):
+        return (dates.start or dates.end).isoformat(), (dates.end or dates.start).isoformat()
+    logged = sorted({lab.date for lab in labels if lab.date})
+    if logged:
+        return logged[0], logged[-1]
+    day = ev.date.isoformat() if ev.date else None
+    return day, day
+
+
+def parts_of(db: Session, event_id: int) -> dict:
+    """The event's official sessions in the order they ran, each with its runs, drivers, best lap and where its
+    report is (from the database only: nothing is queued or read here)."""
+    ev, sessions, labels, found = _event_parts(db, event_id)
+    by_id = {s.id: s for s in sessions}
+    plans = [part_plan(db, ev, sessions, labels, p) for p in found]
+    rows = {r.scope: r for r in db.scalars(select(models.ReportCache)
+                                           .where(models.ReportCache.scope.in_([pl.scope for pl in plans])))}
+    out = []
+    for p, plan in zip(found, plans, strict=True):
+        row = rows.get(plan.scope)
+        runs = []
+        for lab in p.runs:
+            clean = _clean_laps(by_id[lab.id])
+            runs.append({"id": lab.id, "name": lab.name, "short": lab.short, "driver": lab.driver,
+                         "clean_laps": len(clean), "best": min(clean) if clean else None})
+        drivers = list(dict.fromkeys(r["driver"] for r in runs if r["driver"]))
+        timed = [r for r in runs if r["best"] is not None]
+        best = min(timed, key=lambda r: r["best"]) if timed else None
+        first = p.runs[0]
+        status = _status(plan, row)
+        out.append({"code": p.code, "title": p.title, "official": p.official, "runs": runs,
+                    "drivers": drivers, "driver_codes": [run_labels.driver_code(d) for d in drivers],
+                    "clean_laps": sum(r["clean_laps"] for r in runs),
+                    "best": best["best"] if best else None, "best_run": best["id"] if best else None,
+                    "day": first.day, "date": first.date, "time": first.time,
+                    "status": status or "not started", "ready": status == "ready",
+                    "stale": row is not None and row.result is not None and status != "ready"})
+    start, end = _event_dates(db, ev, labels)
+    return {"event_id": ev.id, "title": ev.name, "start": start, "end": end, "parts": out}
+
+
+@router.get("/events/{event_id}/parts")
+def event_parts(event_id: int, db: Session = Depends(get_db)):
+    """The event's official sessions (FP1, Q1, R1 stint 1 and 2 together...) in the order they ran: each one's code
+    (for GET /reports/events/{id}/sessions/{code}), runs, drivers and best lap, and whether its report is ready
+    ("status": ready, queued, running, failed, empty or "not started": opening it starts it). "start" and "end": the
+    event's first and last day."""
+    return parts_of(db, event_id)
 
 
 # ---------- the background work ----------
@@ -278,18 +411,31 @@ def schedule(scope: str) -> None:
 
 
 def schedule_sessions(db: Session, session_ids: list[int]) -> None:
-    """Start on the reports these sessions belong to (after an import), so they are ready when opened."""
-    scopes = []
+    """Start on the reports these sessions belong to (after an import), so they are ready when opened: their events',
+    then the reports of the official sessions that got these runs (cheap once the event's has made the traces)."""
+    asks: list[tuple] = []
     for sid in session_ids:
         s = db.get(models.RunSession, sid)
         if s is not None:
-            scopes.append(f"event:{s.event_id}" if s.event_id else f"session:{s.id}")
-    for scope in dict.fromkeys(scopes):
-        kind, id_ = scope.split(":")
+            asks.append(("event", s.event_id) if s.event_id else ("session", s.id))
+    events = [ask[1] for ask in dict.fromkeys(asks) if ask[0] == "event"]
+    for eid in events:
+        asks += [("part", eid, code) for code in parts_with(db, eid, session_ids)]
+    for ask in dict.fromkeys(asks):
         try:
-            report_for(db, kind, int(id_))
+            report_for(db, *ask)
         except HTTPException:
             pass
+
+
+def parts_with(db: Session, event_id: int, session_ids: list[int]) -> list[str]:
+    """The codes of the event's official sessions that hold any of these runs, in the order they ran."""
+    want = set(session_ids)
+    try:
+        found = _event_parts(db, event_id)[3]
+    except HTTPException:
+        return []
+    return [p.code for p in found if want & set(p.ids)]
 
 
 def _work() -> None:
@@ -307,12 +453,12 @@ def _work() -> None:
             jobs.task_done()
 
 
-def prebuild(kind: str, id_: int) -> str:
+def prebuild(kind: str, id_: int, part: str | None = None) -> str:
     """For the prebuild (app/prebuild.py): work the report out now, on the calling thread, unless it is up to date,
     failed for these very inputs, or is queued or being worked out already. What it did."""
     with SessionLocal() as db:
         try:
-            plan = plan_for(db, kind, id_)
+            plan = plan_for(db, kind, id_, part)
         except HTTPException:
             return "gone"
         if plan.error or not _used(plan):
@@ -381,14 +527,25 @@ def _wait_for_imports(db: Session, row: models.ReportCache) -> None:
         time.sleep(2)
 
 
+def plan_of_scope(db: Session, scope: str) -> Plan:
+    """The plan a report's scope names: "event:3", "session:12", "part:3:FP1" (or "part:3:#<hash>")."""
+    kind, rest = scope.split(":", 1)
+    if kind == "part":
+        eid, code = rest.split(":", 1)
+        return plan_for(db, kind, int(eid), code)
+    return plan_for(db, kind, int(rest))
+
+
 def run_job(scope: str) -> None:
-    kind, id_ = scope.split(":")
+    kind = scope.split(":", 1)[0]
     with SessionLocal() as db:
         row = db.scalar(select(models.ReportCache).where(models.ReportCache.scope == scope))
         try:
-            plan = plan_for(db, kind, int(id_))
+            plan = plan_of_scope(db, scope)
         except HTTPException:
             return  # the event or session is gone
+        if plan.scope != scope:
+            return  # a session left with one run: its report is that run's, asked for under the run's scope
         if row is None:
             row = models.ReportCache(scope=scope, signature=plan.signature)
             db.add(row)
