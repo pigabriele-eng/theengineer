@@ -94,8 +94,13 @@ const GROUPS: { name: string; dek: string; tools: Tool[] }[] = [
   },
   {
     name: 'Events',
-    dek: 'The season and the weekends to come.',
+    dek: 'The season, the weekends to come, and the debriefs after each run.',
     tools: [
+      {
+        href: '/debrief',
+        title: 'Debrief',
+        blurb: 'Record what the driver says after a run, for any run. It comes back transcribed, as points by corner and phase checked against the data. Each weekend page lists its runs’ debriefs.',
+      },
       {
         href: '/tools/calendar',
         title: 'Racing calendar',
