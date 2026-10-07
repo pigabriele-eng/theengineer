@@ -41,7 +41,7 @@ def release_memory() -> None:
     trim()
 
 
-# Called before a thread waits for the lock (app/db.py hands back the database connections the thread holds, so
+# Called before a thread waits for the lock (app/connections.py hands back the database connections it holds, so
 # requests waiting their turn don't take every connection of the pool).
 before_waiting: list[Callable[[], None]] = []
 
