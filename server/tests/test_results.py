@@ -297,3 +297,23 @@ def test_the_season_s_car_number_beats_one_found_from_logged_laps(client, fake_s
     assert (body["car_number"], body["car_number_from"]) == ("70", "set")
     with SessionLocal() as db:
         assert _known_number(db, "gt4-europe", 2026, ev["id"]) == "70"
+
+
+def test_setting_only_the_car_number_leaves_the_round_matched_automatically(client, fake_site):
+    from app.db import SessionLocal
+    from app.results import models as rm
+
+    fake_site.sync(years=[2026])
+    client.post("/tracks", json={"name": "Test Track"})
+    ev = client.post("/events/folders", json={"name": "Round 5"}).json()
+    _session(client, ev["id"], "Q", (0.97, 0.98), "19/09/2026", "11:30:00")
+    assert client.get(f"/results/events/{ev['id']}").json()["round"]["round_id"] == "75"  # matched by itself
+    body = client.put(f"/results/events/{ev['id']}/link", json={"car_number": "911"}).json()
+    assert body["round"]["round_id"] == "75" and body["car_number_from"] == "set"
+    with SessionLocal() as db:
+        link = db.query(rm.EventResultLink).filter_by(event_id=ev["id"]).one()
+        assert (link.by_hand, link.car_number, link.round_id) == (1, "911", None)  # the round isn't frozen
+    client.put(f"/results/events/{ev['id']}/link", json={"round_id": "75", "car_number": "911"})
+    client.put(f"/results/events/{ev['id']}/link", json={"car_number": "8"})
+    with SessionLocal() as db:  # a round set by hand stays set
+        assert db.query(rm.EventResultLink).filter_by(event_id=ev["id"]).one().round_id == "75"

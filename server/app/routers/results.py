@@ -208,8 +208,8 @@ def event_overview(db: Session, ev: models.Event) -> dict:
                                   car_number=number))
     elif not link.by_hand:
         link.series, link.year, link.round_id, link.car_number = series, rnd.year, rnd.round_id, number
-    elif link.series != series:  # a car number set by hand on an event first matched to another series
-        link.series, link.year, link.round_id = series, rnd.year, rnd.round_id
+    elif link.series != series:  # a car number set by hand on an event first matched to another series: its round
+        link.series, link.year, link.round_id = series, rnd.year, None  # stays matched automatically
     seen = db.scalar(select(rm.EventRound).where(rm.EventRound.event_id == ev.id))
     if seen is None:
         seen = rm.EventRound(event_id=ev.id)
@@ -374,7 +374,8 @@ def set_link(event_id: int, body: LinkIn, db: Session = Depends(get_db)):
     facts = _event_facts(db, _event(db, event_id))
     link.series = series
     link.year = body.year or facts["year"] or 0
-    link.round_id = body.round_id or link.round_id
+    # a round not sent stays matched automatically (a round set by hand before stays set)
+    link.round_id = body.round_id or (link.round_id if link.by_hand else None)
     link.car_number = (body.car_number or "").strip().lstrip("#") or None
     link.by_hand = 1
     db.commit()
