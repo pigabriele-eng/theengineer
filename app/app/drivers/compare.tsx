@@ -13,6 +13,7 @@ import {
   TechniqueList,
 } from '@/components/DriverTrends';
 import { FigRow, MainAction, Meter, PageHead, Tabs, useText } from '@/components/Picks';
+import PrintButton from '@/components/PrintButton';
 import { Colophon, Fig, Page, Section, Swatch, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { TraceChart, useSeriesColors } from '@/components/TraceChart';
@@ -142,7 +143,10 @@ export default function CompareDriversScreen() {
     <Page>
       <Stack.Screen options={{ title: 'Compare drivers' }} />
       <PageHead title="Compare drivers"
-        dek="Two drivers, or two groups of sessions, in the same car at the same track, over all their clean laps: where each gains or loses, how often, the technique behind it and the habits that repeat." />
+        dek="Two drivers, or two groups of sessions, in the same car at the same track, over all their clean laps: where each gains or loses, how often, the technique behind it and the habits that repeat.">
+        <PrintButton title={['Compare drivers', sides ? `${sides.a.label} vs ${sides.b.label}` : null, group?.track]
+          .filter(Boolean).join(' · ')} />
+      </PageHead>
 
       {groups == null && !error && <ActivityIndicator color={theme.text} style={styles.loading} />}
       {groups != null && groups.length === 0 && (

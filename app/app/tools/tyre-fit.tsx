@@ -1,6 +1,7 @@
 import { Stack, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 
+import PrintButton from '@/components/PrintButton';
 import { Colophon, Page, Section, useWide } from '@/components/Programme';
 import { View } from '@/components/Themed';
 import {
@@ -48,7 +49,9 @@ export default function TyreFitScreen() {
     <Page keyboardShouldPersistTaps="handled">
       <Stack.Screen options={{ title: 'Tyre fit' }} />
       <Opening title="Tyre fit"
-        dek="Where each axle’s grip peaks and at what slip angle, and which TPMS temperature and hot pressure give the most: from every log of the car on a tyre, or from the logs you pick." />
+        dek="Where each axle’s grip peaks and at what slip angle, and which TPMS temperature and hot pressure give the most: from every log of the car on a tyre, or from the logs you pick.">
+        <PrintButton title="Tyre fit" />
+      </Opening>
       <View style={styles.modes}>
         <Options big label="Fit from" value={mode} onPick={setMode} options={MODES} />
       </View>

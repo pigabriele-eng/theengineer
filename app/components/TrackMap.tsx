@@ -18,6 +18,7 @@ import {
   TrackMapData,
 } from '@/lib/trackmap';
 import { featureMid, featureSpan, TrackShapeData } from '@/lib/trackshape';
+import { noPrint } from '@/lib/print';
 import { byScheme, Fonts, themed, Type } from '@/constants/Theme';
 
 type Props = {
@@ -263,6 +264,7 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
               accessibilityRole="button"
               accessibilityState={{ selected: mode === m }}
               onPress={() => setMode(m)}
+              {...(mode === m ? null : noPrint)}
               style={StyleSheet.flatten([styles.toggleItem, mode === m && { borderColor: tint }])}>
               <Text style={StyleSheet.flatten([styles.toggleText, mode !== m && styles.toggleOff])}>
                 {m === 'sections' ? 'Sections' : 'Speed'}

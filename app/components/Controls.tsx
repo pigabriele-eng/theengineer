@@ -9,6 +9,7 @@ import { ActivityIndicator, Pressable, StyleSheet, TextInput, TextInputProps, Te
 import { useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { Fonts, themed, Type, useTheme } from '@/constants/Theme';
+import { noPrint } from '@/lib/print';
 
 /** The head of a page without a photo (it keeps the bar above it): a grey kicker, the page's name in Anton and its
  * italic line. */
@@ -78,8 +79,9 @@ export function Choice({ label, sub, on, onPress, add, disabled }: {
 }) {
   const styles = useStyles();
   return (
+    // on paper only the picked word is left
     <Pressable onPress={onPress} disabled={disabled} accessibilityRole={add ? 'button' : 'radio'}
-      accessibilityState={{ selected: on, disabled }} hitSlop={4}
+      accessibilityState={{ selected: on, disabled }} hitSlop={4} {...(on && !add ? null : noPrint)}
       style={StyleSheet.flatten([styles.choice, on && styles.choiceOn, add && styles.choiceAdd, disabled && styles.dim])}>
       <Text style={StyleSheet.flatten([styles.choiceText, (on || add) && styles.choiceTextOn])} numberOfLines={1}>
         {label}
@@ -134,7 +136,7 @@ export function MainButton({ label, sub, onPress, busy, disabled, danger, style 
   const styles = useStyles();
   const c = useTheme();
   return (
-    <Pressable onPress={onPress} disabled={disabled || busy} accessibilityRole="button"
+    <Pressable onPress={onPress} disabled={disabled || busy} accessibilityRole="button" {...noPrint}
       accessibilityLabel={sub ? `${label}: ${sub}` : label} accessibilityState={{ disabled: disabled || busy, busy }}
       style={StyleSheet.flatten([styles.main, danger && styles.mainDanger, (disabled && !busy) && styles.dim, style])}>
       {busy ? <ActivityIndicator color={c.background} /> : (
@@ -152,7 +154,7 @@ export function MainButton({ label, sub, onPress, busy, disabled, danger, style 
 export function FormActions({ children, style }: { children: ReactNode; style?: ViewStyle }) {
   const styles = useStyles();
   return (
-    <View style={StyleSheet.flatten([styles.actions, style])}>
+    <View style={StyleSheet.flatten([styles.actions, style])} {...noPrint}>
       {Children.toArray(children).map((child, i) => <View key={i} style={styles.actionCell}>{child}</View>)}
     </View>
   );

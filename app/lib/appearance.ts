@@ -51,9 +51,19 @@ function subscribe(listener: () => void) {
   };
 }
 
-const snapshot = () => current;
+// While a page is printed (lib/print.ts) the app is drawn Light whatever is chosen: dark ink on paper. Not remembered.
+let printing = false;
 
-/** The chosen appearance; re-renders when it changes. */
+/** Draw the app Light while printing (`on`), then go back to the chosen appearance. */
+export function setPrinting(on: boolean) {
+  if (printing === on) return;
+  printing = on;
+  listeners.forEach((l) => l());
+}
+
+const snapshot = (): Appearance => (printing ? 'light' : current);
+
+/** The chosen appearance (Light while printing); re-renders when it changes. */
 export function useAppearance(): Appearance {
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }

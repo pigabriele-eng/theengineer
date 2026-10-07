@@ -52,7 +52,7 @@ export function EventInfoCard({ no, eventId, version, onInfo }: {
       <View style={styles.links}>
         {!editing && <TextLink onPress={() => setEditing({ focus: null })} label="Edit" small />}
         {season && (
-          <TextLink href="/seasons" small arrow
+          <TextLink href="/seasons" small arrow print
             label={`${season.name}${season.round ? ` · round ${season.round.order}` : ''}`} />
         )}
       </View>

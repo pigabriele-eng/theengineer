@@ -2,6 +2,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { StyleSheet, useWindowDimensions } from 'react-native';
 
 import { onFill } from '@/components/PrepParts';
+import PrintButton from '@/components/PrintButton';
 import { Block, Colophon, Label, Page, useGutter } from '@/components/Programme';
 import { TyrePrep } from '@/components/report/TyrePrep';
 import { SessionSwitcher, useEventFolder, useSessionEvent } from '@/components/SessionSwitcher';
@@ -52,6 +53,7 @@ export default function QualiScreen() {
           How the tyres were brought up to temperature for a quick lap, from the TPMS of every quali-style run
           {session != null ? ' in this session' : ' of the event'}.
         </Text>
+        <PrintButton title={[title, folder?.name, folder?.track].filter(Boolean).join(' · ')} style={styles.print} />
       </View>
       {folder && folder.id != null && (
         <View style={styles.switcher}>
@@ -75,4 +77,5 @@ const useStyles = themed((c) => ({
   title: { ...Type.title, color: c.text },
   dek: { ...Type.dek, color: c.textSecondary, marginTop: 8, maxWidth: 680 },
   switcher: { marginTop: 22 },
+  print: { marginTop: 14 },
 }));
