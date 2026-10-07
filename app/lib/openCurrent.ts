@@ -1,10 +1,12 @@
-// Opening the app while an event is on lands on that event's page instead of the event list; Back and the Sessions
-// tab still reach the list. Once per launch (a fresh load of the web app, a launch of the phone app), and only when
-// the app was opened on the list itself, so a link to another page (a report, say) still opens that page.
+// Opening the app while a race weekend is on (else one starts within 14 days) lands on that weekend's page instead of
+// the list; Back and the Weekend link still reach the list. Once per launch (a fresh load of the web app, a launch of
+// the phone app), and only when the app was opened on the list itself, so a link to another page (a report, say)
+// still opens that page.
 import { usePathname } from 'expo-router';
 
 import { whenOf } from '@/lib/calendar';
 import { FolderSummary } from '@/lib/events';
+import { nextWeekend, weekendsOf } from '@/lib/weekendOpen';
 
 // 'list': opened on the event list and the event that's on not looked for yet; 'done': opened on another page, or
 // already looked for. Module state lives as long as the app does.
@@ -18,12 +20,15 @@ export function NoteLaunch() {
   return null;
 }
 
-/** The event to open, asked once the list has its events: the one that's on, the first time only, and only when the
- * app was opened on the list. */
+/** The event to open, asked once the list has its events: the race weekend that's on, else the next one starting
+ * within 14 days (lib/weekendOpen.ts), the first time only, and only when the app was opened on the list. Coaching
+ * days aren't opened on. */
 export function launchEvent(folders: FolderSummary[], today: string): FolderSummary | null {
   const first = launch === 'list';
   launch = 'done';
-  return first ? currentEvent(folders, today) : null;
+  if (!first) return null;
+  const weekends = weekendsOf(folders);
+  return currentEvent(weekends, today) ?? nextWeekend(weekends, today);
 }
 
 /** Of the current events (the day before to the last day; planned ones without data too), the one whose days contain

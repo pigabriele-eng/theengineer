@@ -6,8 +6,8 @@ import {
   useAudioRecorderState,
 } from 'expo-audio';
 import * as DocumentPicker from 'expo-document-picker';
-import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, TextInput, TextStyle } from 'react-native';
 
 import { MainAction, PageHead, Tabs, useText } from '@/components/Picks';
@@ -35,6 +35,13 @@ const LANGUAGES: [DebriefLanguage, string][] = [
   ['multi', 'Mixed'],
 ];
 
+/** The runs offered: the six newest, and the one picked first when it is older (opened with ?session=). */
+const offered = (sessions: Session[], picked: number | null) => {
+  const newest = sessions.slice(0, 6);
+  const own = newest.some((s) => s.id === picked) ? null : sessions.find((s) => s.id === picked);
+  return own ? [own, ...newest] : newest;
+};
+
 const clock = (ms: number) => {
   const s = Math.floor(ms / 1000);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -45,8 +52,13 @@ export default function DebriefScreen() {
   const t = useText();
   const wide = useWide();
   const theme = useTheme();
+  // ?session=<id>: the run to record for, already picked (the weekend page's and a run's "Record debrief")
+  const asked = Number(useLocalSearchParams<{ session?: string }>().session) || null;
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [sessionId, setSessionId] = useState<number | null>(null);
+  const [sessionId, setSessionId] = useState<number | null>(asked);
+  useEffect(() => {
+    if (asked != null) setSessionId(asked);
+  }, [asked]);
   const [mode, setMode] = useState<DebriefMode>('individual');
   const [language, setLanguage] = useState<DebriefLanguage>('en');
   const [busy, setBusy] = useState(false);
@@ -125,7 +137,7 @@ export default function DebriefScreen() {
         <View style={wide ? styles.setupWide : styles.setup}>
           {sessions.length > 0 ? (
             <Tabs label="Session" value={sessionId} onChange={setSessionId} style={wide ? styles.setupMain : undefined}
-              items={sessions.slice(0, 6).map((s) => ({ key: s.id, label: s.name ?? `Session ${s.id}` }))} />
+              items={offered(sessions, sessionId).map((s) => ({ key: s.id, label: s.name ?? `Session ${s.id}` }))} />
           ) : (
             <View style={wide ? styles.setupMain : undefined}>
               <Label muted small>Session</Label>
