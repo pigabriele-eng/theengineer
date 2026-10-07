@@ -93,6 +93,29 @@ def test_upload_that_fails_after_storing_leaves_no_file_behind(client, monkeypat
     assert not [p for p in stored.rglob("*") if p.is_file()]
 
 
+def test_upload_lets_other_log_work_run_once_its_log_is_stored(client, monkeypatch):
+    """The heavy-work lock is held while the log is read and stored, not while the run is matched to its season and
+    its pages are queued (no log is read there), so a page that reads logs doesn't wait for those."""
+    from app import heavy, prebuild, season_match
+    from tests.synthetic import simulate, write_ld
+
+    held = {}
+
+    def after_import(db, run_ids):
+        held["season"] = getattr(heavy.lock._held, "depth", 0)
+
+    def after_upload(db, session_ids):
+        held["prebuild"] = getattr(heavy.lock._held, "depth", 0)
+
+    monkeypatch.setattr(season_match, "after_import", after_import)
+    monkeypatch.setattr(prebuild, "after_upload", after_upload)
+    event = client.post("/events", json={"name": "Test day"}).json()
+    s = client.post("/sessions", json={"event_id": event["id"]}).json()
+    r = client.post(f"/sessions/{s['id']}/files", files={"file": ("run.ld", write_ld(simulate()[0]))})
+    assert r.status_code == 201, r.text
+    assert held == {"season": 0, "prebuild": 0}
+
+
 def test_ldx_upload_attaches_beacons_to_its_log(client):
     from tests.synthetic import simulate, write_ld
 
