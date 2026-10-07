@@ -139,7 +139,7 @@ function Panel({ axle, groups, window, condKey, domain }: {
             {first >= 0 && (
               <G>
                 <Rect x={PAD.l + first * slot} y={PAD.t} width={(last - first + 1) * slot} height={h} fill={color} fillOpacity={0.1} />
-                <SvgText x={PAD.l + first * slot + 4} y={PAD.t - 5} fontSize={10} fill={c.ink2} fontFamily={CHART_FONT}>
+                <SvgText x={PAD.l + first * slot + 4} y={PAD.t - 5} fontSize={12} fill={c.ink2} fontFamily={CHART_FONT}>
                   Most grip
                 </SvgText>
               </G>
@@ -148,21 +148,21 @@ function Panel({ axle, groups, window, condKey, domain }: {
               <G key={v}>
                 <Line x1={PAD.l} x2={width - PAD.r} y1={Y(v)} y2={Y(v)} stroke={Math.abs(v) < 1e-9 ? c.ink : c.grid}
                   strokeWidth={1} />
-                <SvgText x={PAD.l - 5} y={Y(v) + 4} fontSize={10} fill={c.muted} textAnchor="end" fontFamily={CHART_FONT}>
+                <SvgText x={PAD.l - 5} y={Y(v) + 4} fontSize={12} fill={c.muted} textAnchor="end" fontFamily={CHART_FONT}>
                   {Math.abs(v) < 1e-9 ? 'avg' : gripPct(v, 0).replace(' %', '%')}
                 </SvgText>
               </G>
             ))}
             {condKey === 'tyre_laps'
               ? groups.map((x, i) => (
-                  <SvgText key={i} x={X(i)} y={height - PAD.b + 14} fontSize={10} fill={c.muted} textAnchor="middle" fontFamily={CHART_FONT}>
+                  <SvgText key={i} x={X(i)} y={height - PAD.b + 14} fontSize={12} fill={c.muted} textAnchor="middle" fontFamily={CHART_FONT}>
                     {groupRange(condKey, x)}
                   </SvgText>
                 ))
               : [...groups.map((x) => x.from), groups[groups.length - 1]?.to ?? 0].map((v, i) =>
                   // when crowded: both ends, and every other edge between them that doesn't touch an end
                   everyOther && i > 0 && i < groups.length && (i % 2 === 1 || i > groups.length - 2) ? null : (
-                    <SvgText key={i} x={PAD.l + i * slot} y={height - PAD.b + 14} fontSize={10} fill={c.muted}
+                    <SvgText key={i} x={PAD.l + i * slot} y={height - PAD.b + 14} fontSize={12} fill={c.muted}
                       textAnchor={i === 0 ? 'start' : i === groups.length ? 'end' : 'middle'} fontFamily={CHART_FONT}>
                       {edge(condKey, v)}
                     </SvgText>
@@ -173,7 +173,7 @@ function Panel({ axle, groups, window, condKey, domain }: {
                 <Line key={i} x1={PAD.l + (i + 1) * slot} x2={PAD.l + (i + 1) * slot} y1={PAD.t + h} y2={PAD.t + h + 4}
                   stroke={c.muted} strokeWidth={1} />
               ))}
-            <SvgText x={PAD.l + w / 2} y={height - 4} fontSize={11} fill={c.ink2} textAnchor="middle" fontFamily={CHART_FONT}>
+            <SvgText x={PAD.l + w / 2} y={height - 4} fontSize={12} fill={c.ink2} textAnchor="middle" fontFamily={CHART_FONT}>
               {AXIS[condKey]}
             </SvgText>
             {groups.map((x, i) =>

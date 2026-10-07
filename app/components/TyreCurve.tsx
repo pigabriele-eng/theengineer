@@ -129,22 +129,22 @@ export function CurveChart({ curves, binned, fits, height: fixed }: {
             ))}
             <Line x1={PAD.left} x2={width - PAD.right} y1={y(0)} y2={y(0)} stroke={c.ink} strokeWidth={1} />
             {[top / 2, top].map((m) => (
-              <SvgText key={m} x={PAD.left - 5} y={y(m) + 4} fontSize={10} fill={c.muted} textAnchor="end" fontFamily={CHART_FONT}>
+              <SvgText key={m} x={PAD.left - 5} y={y(m) + 4} fontSize={12} fill={c.muted} textAnchor="end" fontFamily={CHART_FONT}>
                 {m.toFixed(1)}
               </SvgText>
             ))}
-            <SvgText x={PAD.left - 5} y={y(0) + 4} fontSize={10} fill={c.muted} textAnchor="end" fontFamily={CHART_FONT}>
+            <SvgText x={PAD.left - 5} y={y(0) + 4} fontSize={12} fill={c.muted} textAnchor="end" fontFamily={CHART_FONT}>
               0
             </SvgText>
             {ticks.map((t) => (
-              <SvgText key={t} x={x(t)} y={height - PAD.bottom + 14} fontSize={10} fill={c.muted} textAnchor="middle" fontFamily={CHART_FONT}>
+              <SvgText key={t} x={x(t)} y={height - PAD.bottom + 14} fontSize={12} fill={c.muted} textAnchor="middle" fontFamily={CHART_FONT}>
                 {`${t < 0 ? '−' : ''}${Math.abs(t)}°`}
               </SvgText>
             ))}
-            <SvgText x={PAD.left + w / 2} y={height - 4} fontSize={11} fill={c.ink2} textAnchor="middle" fontFamily={CHART_FONT}>
+            <SvgText x={PAD.left + w / 2} y={height - 4} fontSize={12} fill={c.ink2} textAnchor="middle" fontFamily={CHART_FONT}>
               Slip angle
             </SvgText>
-            <SvgText x={PAD.left + 4} y={PAD.top + 10} fontSize={11} fill={c.ink2} fontFamily={CHART_FONT}>
+            <SvgText x={PAD.left + 4} y={PAD.top + 10} fontSize={12} fill={c.ink2} fontFamily={CHART_FONT}>
               Grip (mu)
             </SvgText>
             {points.map((q, i) => (
@@ -161,7 +161,7 @@ export function CurveChart({ curves, binned, fits, height: fixed }: {
             ))}
             {ends.map((e) => (
               <G key={e.a}>
-                <SvgText x={e.x + 6} y={e.y + 4} fontSize={11} fill={c.ink2} fontFamily={CHART_FONT}>
+                <SvgText x={e.x + 6} y={e.y + 4} fontSize={12} fill={c.ink2} fontFamily={CHART_FONT}>
                   {NAMES[e.a]}
                 </SvgText>
               </G>

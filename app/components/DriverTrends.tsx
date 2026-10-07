@@ -213,7 +213,7 @@ export function LapStrip({ result, section, colors }: { result: Comparison; sect
             <Line x1={STRIP.left} x2={width - STRIP.right} y1={height - STRIP.axis + 2} y2={height - STRIP.axis + 2}
               stroke={c.axis} strokeWidth={1} />
             {ticks.map((t, i) => (
-              <SvgText key={i} x={x(t)} y={height - 6} fontSize={10} fill={c.muted} fontFamily={Fonts.sans}
+              <SvgText key={i} x={x(t)} y={height - 6} fontSize={12} fill={c.muted} fontFamily={Fonts.sans}
                 textAnchor={i === 0 ? 'start' : i === 2 ? 'end' : 'middle'}>
                 {t.toFixed(2)} s
               </SvgText>

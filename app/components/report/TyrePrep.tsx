@@ -386,26 +386,26 @@ function ReadyChart({ sims, push }: { sims: Sim[]; push: NonNullable<Report['pus
             ))}
             <Line x1={C.left} x2={C.left + w} y1={y(0)} y2={y(0)} stroke={ch.axis} strokeWidth={1.5} />
             {[0, 1, 2, 3].map((g) => (
-              <SvgText fontFamily={SVG_FONT} key={g} x={C.left - 7} y={y(g) + 4} fontSize={11} fill={ch.muted} textAnchor="end">
+              <SvgText fontFamily={SVG_FONT} key={g} x={C.left - 7} y={y(g) + 4} fontSize={12} fill={ch.muted} textAnchor="end">
                 {g === GAP_MAX ? `${g}+` : g}
               </SvgText>
             ))}
             {xTicks.map((v) => (
-              <SvgText fontFamily={SVG_FONT} key={v} x={x(v)} y={C.top + h + 15} fontSize={11} fill={ch.muted} textAnchor="middle">
+              <SvgText fontFamily={SVG_FONT} key={v} x={x(v)} y={C.top + h + 15} fontSize={12} fill={ch.muted} textAnchor="middle">
                 {v}
               </SvgText>
             ))}
             <Line x1={x(push.front_c)} x2={x(push.front_c)} y1={C.top} y2={C.top + h} stroke={ch.ink} strokeWidth={1.5} />
-            <SvgText fontFamily={SVG_FONT} x={x(push.front_c) + 5} y={C.top - 7} fontSize={11} fill={ch.ink}>
+            <SvgText fontFamily={SVG_FONT} x={x(push.front_c) + 5} y={C.top - 7} fontSize={12} fill={ch.ink}>
               {`PUSH: ${push.front_c} °C`}
             </SvgText>
-            <SvgText fontFamily={SVG_FONT} x={C.left + 5} y={y(push.gap_s) - 5} fontSize={11} fill={ch.ink2}>
+            <SvgText fontFamily={SVG_FONT} x={C.left + 5} y={y(push.gap_s) - 5} fontSize={12} fill={ch.ink2}>
               {`within ${push.gap_s} s of the day's best`}
             </SvgText>
-            <SvgText fontFamily={SVG_FONT} x={C.left + w / 2} y={C.height - 4} fontSize={11} fill={ch.muted} textAnchor="middle">
+            <SvgText fontFamily={SVG_FONT} x={C.left + w / 2} y={C.height - 4} fontSize={12} fill={ch.muted} textAnchor="middle">
               FRONTS AT THE LINE, °C (TPMS)
             </SvgText>
-            <SvgText fontFamily={SVG_FONT} x={11} y={C.top + h / 2} fontSize={11} fill={ch.muted} textAnchor="middle"
+            <SvgText fontFamily={SVG_FONT} x={11} y={C.top + h / 2} fontSize={12} fill={ch.muted} textAnchor="middle"
               transform={`rotate(-90 11 ${C.top + h / 2})`}>
               S OFF THE BEST
             </SvgText>
