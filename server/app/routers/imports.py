@@ -1,7 +1,8 @@
 """Import many logger files at once, e.g. a zip of a whole test: one session per log, in the background.
 
 POST /imports takes the files and answers at once with an import job; one worker thread imports the logs one at a
-time (a log can take a while to analyse, and one at a time keeps memory low), and GET /imports/{id} follows it.
+time (a log can take a while to analyse, and one at a time keeps memory low), and GET /imports/{id} follows it, with
+the time left (app/import_rates.py: each import's times are kept, and the next estimate is made from them).
 Jobs that were queued or running when the server stopped are marked failed when it starts again.
 
 By default the logs of each uploaded zip go into a new event named after the zip, and loose logs into no event; with
@@ -17,6 +18,7 @@ import queue
 import shutil
 import tempfile
 import threading
+import time
 import zipfile
 import zlib
 from datetime import UTC, date, datetime
@@ -26,7 +28,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from sqlalchemy import inspect, select, update
 from sqlalchemy.orm import Session
 
-from app import empty_runs, heavy, models, plans, prebuild, schemas, storage, upload_dupes
+from app import empty_runs, heavy, import_rates, models, plans, prebuild, schemas, storage, upload_dupes
 from app.analysis.emptyrun import NoLaps
 from app.db import SessionLocal, get_db
 from app.importers import archive
@@ -55,6 +57,7 @@ def start_import(files: list[UploadFile], event_id: int | None = Form(None), db:
     """Upload several files in one go, in any mix: MoTeC .ld logs and their .ldx, CSV exports (.csv, .txt) and
     .zip files (logs in folders at any depth, a zip inside a zip). Each log becomes a session of its own, in the event
     event_id when it is given (otherwise a zip's logs make an event named after the zip)."""
+    started = time.monotonic()
     if event_id is not None and db.get(models.Event, event_id) is None:
         raise HTTPException(404, "Event not found")
     names = [_upload_name(f.filename, i) for i, f in enumerate(files)]
@@ -63,7 +66,7 @@ def start_import(files: list[UploadFile], event_id: int | None = Form(None), db:
                                  "(.csv, .txt) or a .zip of them")
     folder = Path(tempfile.mkdtemp(prefix="theengineer-import-"))
     try:
-        uploads, total = [], 0
+        uploads, total, zips = [], 0, 0
         for i, (f, name) in enumerate(zip(files, names, strict=True)):
             dest = folder / f"upload-{i}{archive.suffix(name)}"
             with dest.open("wb") as out:
@@ -74,6 +77,8 @@ def start_import(files: list[UploadFile], event_id: int | None = Form(None), db:
                                                  "GB; send it in parts")
                     out.write(chunk)
             uploads.append((name, dest))
+            if archive.suffix(name) == archive.ZIP:
+                zips += dest.stat().st_size
         shown = dict.fromkeys(n.split("/")[0] for n in names)  # a dropped folder once, by its name
         job = models.ImportJob(filename=", ".join(shown)[:255], status=models.ImportStatus.queued,
                                session_ids=[], errors=[], skipped=[])
@@ -82,9 +87,12 @@ def start_import(files: list[UploadFile], event_id: int | None = Form(None), db:
     except BaseException:
         shutil.rmtree(folder, ignore_errors=True)
         raise
+    import_rates.record("receive", time.monotonic() - started, bytes=total, items=len(files))
+    import_rates.queued(job.id, total, zips)
+    out = _out(db, job)  # with the time left as it stands before the worker takes it
     _jobs.put((job.id, folder, uploads, event_id))
     _start_worker()
-    return job
+    return out
 
 
 def _upload_name(filename: str | None, i: int) -> str:
@@ -96,14 +104,27 @@ def _upload_name(filename: str | None, i: int) -> str:
     return "/".join(p for p in parts if p) or f"file{i}"
 
 
+@router.get("/rates")
+def get_rates():
+    """How fast this server imports (app/import_rates.py), for the time left of an upload still being sent."""
+    return import_rates.as_json(import_rates.rates())
+
+
 @router.get("/{job_id}", response_model=schemas.ImportJobOut)
 def get_import(job_id: int, db: Session = Depends(get_db)):
     job = db.get(models.ImportJob, job_id)
     if job is None:
         raise HTTPException(404, "Import not found")
-    # with the runs kept whose laps couldn't be timed (a missing lap beacon), and why
+    return _out(db, job)
+
+
+def _out(db: Session, job: models.ImportJob) -> dict:
+    """The job, with the runs kept whose laps couldn't be timed (a missing lap beacon) and why, the logs left out as
+    already uploaded, and while it runs the seconds left."""
+    running = job.status in (models.ImportStatus.queued, models.ImportStatus.running)
     return {**schemas.ImportJobOut.model_validate(job).model_dump(), "untimed": empty_runs.untimed(db, job.session_ids),
-            "already_uploaded": sum(1 for x in job.skipped or [] if x.get("already"))}
+            "already_uploaded": sum(1 for x in job.skipped or [] if x.get("already")),
+            "eta": import_rates.eta(job.id) if running else None}
 
 
 def fail_interrupted() -> None:
@@ -131,6 +152,7 @@ def _work() -> None:
         except Exception:
             log.exception("Import %s failed", job_id)
         finally:
+            import_rates.ended(job_id)
             shutil.rmtree(folder, ignore_errors=True)
             _jobs.task_done()
             tyre_store.kick()  # summarise the new logs for the tyre model
@@ -144,29 +166,44 @@ def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]], event
             return
         job.status = models.ImportStatus.running
         db.commit()
+        progress = import_rates.progress(job_id)
+        if progress is not None:
+            progress.to("unpacking")
         try:
             with archive.Upload(uploads, folder) as upload:
+                started = time.monotonic()
                 found = upload.walk()
                 ldx_for, unmatched = archive.pair_ldx(found.logs, found.ldx)
+                _found(progress, uploads, found.logs, time.monotonic() - started)
                 job.total = len(found.logs)
                 job.errors = found.errors
                 job.skipped = [*found.skipped, *({"file": x.label, "reason": "no .ld log of the same name"}
                                                  for x in unmatched)]
                 job.message = found.stopped
                 db.commit()
+                started = time.monotonic()
                 prints, already, homes = _already_uploaded(db, job, found.logs)
+                _checked(progress, found.logs, already, time.monotonic() - started)
                 run = _Run(db, job, found.archives, folder, event_id, homes)
                 for i, item in enumerate(found.logs):
                     if i in already:  # left out before it is read: listed in skipped
                         job.done = i + 1
                         continue
                     with heavy.lock:  # one log in memory at a time, across imports and requests
+                        import_rates.log_started(progress, i)  # timed from here: not the wait for the lock
+                        started, kept = time.monotonic(), (len(job.session_ids), len(job.skipped))
                         run.add(item, ldx_for.get(i), prints[i])
                     job.done = i + 1
                     db.commit()
+                    if (len(job.session_ids), len(job.skipped)) != kept:  # read through (a run or an empty one)
+                        import_rates.log_read(progress, item.size, time.monotonic() - started)
+                if progress is not None:
+                    progress.to("finishing")
+                started = time.monotonic()
                 run.finish_events()
                 topped_up = set(homes.values()) if event_id is None else ({event_id} if already else set())
             _join_seasons(db, job)  # before it is done: the app then asks what the events were run with
+            import_rates.record("finish", time.monotonic() - started, items=len(found.logs))
             job.status = models.ImportStatus.done
         except Exception as e:
             log.exception("Import %s failed", job_id)
@@ -193,6 +230,30 @@ def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]], event
             log.exception("Couldn't start the prebuild of import %s", job_id)
 
 
+def _found(progress: import_rates.Progress | None, uploads: list[tuple[str, Path]], logs: list[archive.Item],
+           seconds: float) -> None:
+    """The logs are known: how long finding them took, and how many MB of logs the zips held, are kept; the time left
+    follows the logs' sizes from now on."""
+    zips = sum(path.stat().st_size for name, path in uploads if archive.suffix(name) == archive.ZIP)
+    import_rates.record("unpack", seconds, bytes=zips, out_bytes=sum(i.size for i in logs if i.path is None),
+                        items=len(logs))
+    if progress is not None:
+        progress.sizes = [i.size for i in logs]
+        progress.to("checking" if upload_dupes.enabled() and logs else "logs")
+
+
+def _checked(progress: import_rates.Progress | None, logs: list[archive.Item], already: set[int],
+             seconds: float) -> None:
+    """The logs were checked against those in the app: how long it took is kept, and the ones left out aren't waited
+    for."""
+    if upload_dupes.enabled() and logs:
+        import_rates.record("check", seconds, bytes=sum(i.size for i in logs), items=len(logs))
+        import_rates.checked(progress, seconds)
+    if progress is not None:
+        progress.sizes = [None if i in already else s for i, s in enumerate(progress.sizes)]
+        progress.to("logs")
+
+
 def _already_uploaded(db: Session, job: models.ImportJob, logs: list[archive.Item]):
     """The logs of the upload already in the app (upload_dupes.py), each listed in skipped as already uploaded; with
     every log's print, and for each uploaded zip that has logs already in an event, that event: the zip's new logs go
@@ -206,6 +267,7 @@ def _already_uploaded(db: Session, job: models.ImportJob, logs: list[archive.Ite
     for i, item in enumerate(logs):
         job.current = f"Checking {item.label}"[:255]
         db.commit()
+        import_rates.checking(job.id, i)
         try:
             p = upload_dupes.of(item)
         except Exception:  # read again when it is imported, which says what is wrong with it

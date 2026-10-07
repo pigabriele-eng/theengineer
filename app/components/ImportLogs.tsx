@@ -1,9 +1,10 @@
 // Upload many logger files at once (MoTeC .ld with their .ldx, CSV exports, zips of whole tests) and follow the
 // import: the files go out with their byte progress, then the server makes a run per log in the background and the
-// same bar follows it run by run. Before picking the files, choose the event they go into: an existing one, a new one
-// (name and dates), or by default a new event per zip named after it. When the upload has made events, each gets a
-// prompt: name it from its logs, or put it into the same race weekend's event. On the web the files can also be
-// dropped, whole folders too, onto a box that opens the picker when clicked.
+// same bar follows it run by run, with the time left of the whole upload and of the stage it is at (UploadEta.tsx).
+// Before picking the files, choose the event they go into: an existing one, a new one (name and dates), or by default
+// a new event per zip named after it. When the upload has made events, each gets a prompt: name it from its logs, or
+// put it into the same race weekend's event. On the web the files can also be dropped, whole folders too, onto a box
+// that opens the picker when clicked.
 import * as DocumentPicker from 'expo-document-picker';
 import { ReactNode, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
@@ -16,6 +17,7 @@ import { NameNewEvent, Settled, SettledLine } from '@/components/NameNewEvent';
 import { Block, TextLink, useWide } from '@/components/Programme';
 import { SeasonMatch } from '@/components/SeasonMatch';
 import { Text, View } from '@/components/Themed';
+import { EtaLines, EtaText, useUploadEta } from '@/components/UploadEta';
 import { api, ImportJob } from '@/lib/api';
 import { untimedRuns } from '@/lib/emptyRuns';
 import { namingApi, NewEvent } from '@/lib/eventNaming';
@@ -31,6 +33,7 @@ const WEB = Platform.OS === 'web'; // a folder can be dropped there, and becomes
 const POLL_MS = 1500;
 const MAX_POLL_FAILURES = 20; // about half a minute without an answer
 const LISTED = 5; // names shown per group before "and N more"
+const CHECKING = 'Checking '; // the server's `current` while it checks the logs (server/app/routers/imports.py)
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 // "02_ADACGT4_T01_HOC.zip/02_ADACGT4_T01_HOC/01_D1S1/a.ld" -> "01_D1S1/a.ld"
@@ -40,7 +43,7 @@ const list = (names: string[]) =>
 const mb = (bytes: number) => (bytes / 1e6).toFixed(bytes >= 1e8 ? 0 : 1);
 
 type Target = { id: number; name: string } | null; // null: a new event per zip, named after it
-type Sending = { files: number; loaded: number; total: number }; // the files going out, in bytes
+type Sending = { files: number; loaded: number; total: number; zipBytes: number }; // the files going out, in bytes
 
 export function ImportLogs({ onProgress, events, into, big = false }: {
   onProgress: () => void;
@@ -128,7 +131,8 @@ export function ImportLogs({ onProgress, events, into, big = false }: {
     setLanded(null);
     setMade(null);
     setSettled({});
-    setSending({ files: files.length, loaded: 0, total: sizeOf(files) });
+    setSending({ files: files.length, loaded: 0, total: sizeOf(files),
+      zipBytes: sizeOf(files.filter((f) => /\.zip$/i.test(f.name))) });
     try {
       failures.current = 0;
       sentTo.current = target;
@@ -141,8 +145,9 @@ export function ImportLogs({ onProgress, events, into, big = false }: {
   };
 
   const busy = sending != null || running;
+  const eta = useUploadEta(sending, job);
   const choices = (events ?? []).filter((e) => e.id != null);
-  const progress = busy ? <UploadStatus sending={sending} job={job} /> : null;
+  const progress = busy ? <UploadStatus sending={sending} job={job} eta={eta} /> : null;
   return (
     <View style={styles.box}>
       {!into && events && (
@@ -235,8 +240,12 @@ function PickBox({ big, busy, onPick, title, progress }: {
 }
 
 /** How far the upload has got, in one bar: first the files going out (per cent, MB sent of MB), then the server
- * reading them (run 3 of 15, and which), then done or failed. */
-function UploadStatus({ sending, job }: { sending: Sending | null; job: ImportJob | null }) {
+ * reading them (run 3 of 15, and which), then done or failed; under it, while it goes, the time left. */
+function UploadStatus({ sending, job, eta = null }: {
+  sending: Sending | null;
+  job: ImportJob | null;
+  eta?: EtaText | null;
+}) {
   const styles = useStyles();
   const wide = useWide();
   const c = useTheme();
@@ -256,6 +265,9 @@ function UploadStatus({ sending, job }: { sending: Sending | null; job: ImportJo
     if (job.total === 0) {
       label = job.status === 'queued' ? 'Waiting for the server' : 'Unpacking the upload';
       sub = 'Looking for the logs in it';
+    } else if (job.current?.startsWith(CHECKING)) { // before reading them, the logs already in the app are found
+      label = `Checking ${plural(job.total, 'log')}`;
+      sub = shortName(job.current.slice(CHECKING.length));
     } else {
       const at = Math.min(job.done + 1, job.total);
       label = `Processing run ${at} of ${job.total}`;
@@ -282,6 +294,7 @@ function UploadStatus({ sending, job }: { sending: Sending | null; job: ImportJo
         {fig ? <Text style={wide ? styles.statusFig : styles.statusFigPhone}>{fig}</Text> : null}
       </View>
       <ProgressBar share={share} failed={failed} label={label} />
+      {eta ? <EtaLines lines={eta} wide={wide} /> : null}
       {sub ? <Text style={styles.statusSub} numberOfLines={1}>{sub}</Text> : null}
     </View>
   );
@@ -338,7 +351,7 @@ const useStyles = themed((c) => ({
   statusLabelPhone: { ...Type.label, fontFamily: Fonts.label, fontSize: 13, letterSpacing: 1.3, color: c.text, flex: 1 },
   statusFig: { fontFamily: Fonts.display, fontSize: 40, lineHeight: 44, fontVariant: ['tabular-nums'], color: c.text },
   statusFigPhone: { fontFamily: Fonts.display, fontSize: 30, lineHeight: 34, fontVariant: ['tabular-nums'], color: c.text },
-  statusSub: { fontFamily: Fonts.label, fontSize: 13, letterSpacing: 0.3, fontVariant: ['tabular-nums'], color: c.textSecondary },
+  statusSub: { fontFamily: Fonts.label, fontSize: 16, letterSpacing: 0.3, fontVariant: ['tabular-nums'], color: c.textSecondary },
 
   summary: { gap: 6 },
   warn: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 22, color: c.warning },

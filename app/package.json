@@ -41,7 +41,8 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "test": "node --test \"lib/**/*.test.mjs\"",
-    "track-photos": "node scripts/track-photos.mjs"
+    "track-photos": "node scripts/track-photos.mjs",
+    "app-icons": "node scripts/app-icons.mjs"
   },
   "private": true
 }
