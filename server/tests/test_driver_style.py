@@ -170,6 +170,15 @@ def test_too_few_laps_suggest_nothing():
     assert ds.event_print(_event([(1, ["smooth"] * 3)])) is None
 
 
+def test_a_lift_without_the_throttle_back_is_not_early_throttle():
+    # a lift with no braking where the throttle never comes back: it is on at the corner's end, not 100 m early
+    d = np.arange(LENGTH, dtype=float)
+    tr = {"t": d / 50, "speed": 200 - 40 * np.exp(-((d - 500) / 60) ** 2), "brake": np.zeros(LENGTH),
+          "steer": np.sin(d / 50), "throttle": np.where(d < 380, 100.0, 0.0)}
+    f = ds.lap_features(tr, [ds.Corner("C1", 500, 200, 900)], 1.0, 1.0)
+    assert f["C1_throttle_on"] == 300
+
+
 # ---------- the API ----------
 
 def _sharp_speed(d, pace):
