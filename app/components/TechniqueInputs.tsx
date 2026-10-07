@@ -352,10 +352,13 @@ function Channel({ geo, title, unit, digits, role, values, under, over, bands, s
               strokeWidth={1} strokeDasharray="2,3" />
           ))}
           {markLabels && marks.map((m, j) => (
-            <SvgText key={`l${j}`} x={px(m.at_m) + 3} y={top + 10} fontSize={12} fontWeight="700"
-              fill={c.text} fontFamily={SANS}>
-              !
-            </SvgText>
+            // on a patch of the chart's paper, so a trace passing under it never crosses the mark
+            <G key={`l${j}`}>
+              <Rect x={px(m.at_m) + 2} y={top - 3} width={5} height={18} fill={c.surface} />
+              <SvgText x={px(m.at_m) + 3} y={top + 10} fontSize={12} fontWeight="700" fill={c.text} fontFamily={SANS}>
+                !
+              </SvgText>
+            </G>
           ))}
           {cursor != null && (
             <Line x1={px(cursor * stepM)} x2={px(cursor * stepM)} y1={top} y2={bottom} stroke={c.text}
