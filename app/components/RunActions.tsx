@@ -282,7 +282,7 @@ const useStyles = themed((c) => ({
   // the danger red of the confirm's own button, with the paper's colour on it (AA in Light and Dark)
   delete: { position: 'absolute', top: 0, right: 0, bottom: 0, width: REVEAL, minHeight: TAP, alignItems: 'center',
     justifyContent: 'center', backgroundColor: c.error },
-  deleteText: { ...Type.link, fontSize: 15, color: c.background },
+  deleteText: { ...Type.link, fontSize: 16, color: c.background },
 
   menu: { borderTopWidth: 3, borderColor: c.rule, maxWidth: 420, marginBottom: 6 },
   menuHead: { flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderColor: c.rule },
@@ -291,6 +291,6 @@ const useStyles = themed((c) => ({
   menuCloseText: { ...Type.link, fontSize: 13, color: c.textSecondary },
   menuItem: { minHeight: TAP + 4, justifyContent: 'center', borderBottomWidth: 1, borderColor: c.separator },
   menuLast: { minHeight: TAP + 4, justifyContent: 'center' }, // the row's own rule closes the menu
-  menuText: { ...Type.link, fontSize: 15, color: c.text },
-  menuDanger: { ...Type.link, fontSize: 15, color: c.error },
+  menuText: { ...Type.link, fontSize: 16, color: c.text },
+  menuDanger: { ...Type.link, fontSize: 16, color: c.error },
 }));
