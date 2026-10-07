@@ -26,9 +26,9 @@ check), and a page whose answer is kept doesn't wait at all.
 The hosted server has a tenth of a CPU, so the pages' requests and the prebuild also share very little processor
 time: a piece running beside a page made the page two to four times slower. So a piece starts only after a quiet
 moment, no request for QUIET_S seconds (a few seconds for an upload's pieces, which the pages just opened are about
-to ask for; longer for the start-up pass, which nobody is waiting for), and the prebuild's thread runs at the lowest
-CPU priority (nice 19): while a request is being worked out, the piece in hand gets the CPU only when the request
-doesn't want it.
+to ask for; longer for the start-up pass, which nobody is waiting for) or MAX_WAIT_S at most (a page that polls never
+leaves a quiet moment), and the prebuild's thread runs at the lowest CPU priority (nice 19): while a request is being
+worked out, the piece in hand gets the CPU only when the request doesn't want it.
 
 On server start (Render starts it again after each deploy, and when it wakes from sleep), once the start-up checks
 are done and the server has had a quiet moment (the first pages after a wake-up come first), every event (newest
@@ -60,6 +60,9 @@ router = APIRouter(prefix="/prebuild")
 UPLOAD, START = 0, 1  # priorities: the pieces for an upload go before the start-up's
 START_DELAY_S = 60  # after start-up before the start-up pass looks for work (the first requests go first)
 QUIET_S = {UPLOAD: 3.0, START: 20.0}  # no request for this long before a piece of that priority starts
+# ... or this long at most: a page left open that polls (an import's progress, the driver guess while it works) never
+# leaves a quiet moment, and the piece then runs anyway, at the lowest CPU priority
+MAX_WAIT_S = {UPLOAD: 30.0, START: 120.0}
 NICE = 19  # the prebuild thread's CPU priority (Linux): the lowest
 SETTLE_WAIT_S = 900  # longest the start-up pass waits for the start-up checks (re-timing, empty runs) to finish
 RECENT = 50  # pieces remembered for GET /prebuild
@@ -323,7 +326,7 @@ def _work() -> None:
             with _lock:
                 _queued.discard((priority, piece))
             try:
-                wait_for_quiet(QUIET_S[priority])  # the pages being opened go first
+                wait_for_quiet(QUIET_S[priority], MAX_WAIT_S[priority])  # the pages being opened go first
                 heavy.lock.wait_for_others()  # a request or job waiting for the heavy-work lock goes first
                 run(piece)
             except Exception:
@@ -344,12 +347,13 @@ def _lowest_priority() -> None:
         log.info("Prebuild: couldn't lower its CPU priority")
 
 
-def wait_for_quiet(quiet_s: float) -> None:
-    """Until no request has been served for quiet_s seconds (none being served now)."""
+def wait_for_quiet(quiet_s: float, max_wait_s: float) -> None:
+    """Until no request has been served for quiet_s seconds (none being served now), or max_wait_s at most."""
     from app.vehicle import tyre_store  # it counts the requests (its middleware)
 
-    while (idle := tyre_store.idle_s()) < quiet_s:
-        time.sleep(min(max(quiet_s - idle, 0.1), 1.0))
+    deadline = time.monotonic() + max_wait_s
+    while (idle := tyre_store.idle_s()) < quiet_s and (left := deadline - time.monotonic()) > 0:
+        time.sleep(min(max(quiet_s - idle, 0.1), 1.0, left))
 
 
 def run(piece: Piece) -> None:
@@ -406,7 +410,7 @@ def _start_pass() -> None:
     deadline = time.monotonic() + SETTLE_WAIT_S
     while not _settled() and time.monotonic() < deadline:
         time.sleep(2)
-    wait_for_quiet(QUIET_S[START])  # looking for work reads every event: after the pages being opened
+    wait_for_quiet(QUIET_S[START], MAX_WAIT_S[START])  # looking for work reads every event: after the pages opened
     try:
         from app.db import SessionLocal
 

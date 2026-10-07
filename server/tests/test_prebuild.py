@@ -20,6 +20,7 @@ def _no_quiet_wait(monkeypatch):
     from app import prebuild
 
     monkeypatch.setattr(prebuild, "QUIET_S", {prebuild.UPLOAD: 0.0, prebuild.START: 0.0})
+    monkeypatch.setattr(prebuild, "MAX_WAIT_S", {prebuild.UPLOAD: 0.0, prebuild.START: 0.0})
 
 
 def _session(client, name="Run 1", paces=(0.95, 0.97, 0.96, 0.975)) -> tuple[int, int]:
@@ -300,9 +301,10 @@ def test_a_piece_starts_after_a_quiet_moment_at_the_lowest_cpu_priority(monkeypa
         (name, os.getpriority(os.PRIO_PROCESS, threading.get_native_id()) if sys.platform.startswith("linux")
          else None)))
     monkeypatch.setattr(prebuild, "QUIET_S", {prebuild.UPLOAD: 0.3, prebuild.START: 0.6})
+    monkeypatch.setattr(prebuild, "MAX_WAIT_S", {prebuild.UPLOAD: 60.0, prebuild.START: 60.0})
     monkeypatch.setitem(tyre_store._traffic, "in_flight", 1)  # a page is being answered
-    prebuild._put(prebuild.START, [("test", ("start",))])
     prebuild._put(prebuild.UPLOAD, [("test", ("upload",))])
+    prebuild._put(prebuild.START, [("test", ("start",))])
     time.sleep(0.5)
     assert ran == []  # not while a request is being served
     tyre_store._traffic["in_flight"] = 0
@@ -323,3 +325,31 @@ def test_health_checks_are_not_traffic(client, monkeypatch):
     assert tyre_store.idle_s() > 99  # Render's health checks don't hold the background work up
     client.get("/events")
     assert tyre_store.idle_s() < 5
+
+
+def test_a_page_that_keeps_polling_holds_a_piece_up_only_so_long(monkeypatch):
+    from app import prebuild
+    from app.vehicle import tyre_store
+
+    ran = []
+    monkeypatch.setitem(prebuild.RUN, "test", lambda name: ran.append((name, time.monotonic())))
+    monkeypatch.setattr(prebuild, "QUIET_S", {prebuild.UPLOAD: 3.0, prebuild.START: 20.0})
+    monkeypatch.setattr(prebuild, "MAX_WAIT_S", {prebuild.UPLOAD: 0.5, prebuild.START: 1.0})
+    stop = threading.Event()
+
+    def polling_page():  # a request every 0.1 s, so a quiet moment never comes
+        while not stop.is_set():
+            tyre_store._traffic["last"] = time.monotonic()
+            time.sleep(0.1)
+    poller = threading.Thread(target=polling_page)
+    poller.start()
+    try:
+        t0 = time.monotonic()
+        prebuild._put(prebuild.UPLOAD, [("test", ("upload",))])
+        prebuild._put(prebuild.START, [("test", ("start",))])
+        assert prebuild.wait_idle(10)  # both ran, each after its longest wait
+    finally:
+        stop.set()
+        poller.join()
+    assert [name for name, _ in ran] == ["upload", "start"]
+    assert 0.5 <= ran[0][1] - t0 < 3 and ran[1][1] - ran[0][1] >= 1.0
