@@ -8,40 +8,19 @@ a name. See analysis/driver_style.py for how, app/driver_prints.py for what is k
 """
 from __future__ import annotations
 
-import threading
-from collections import OrderedDict
+import json
+import zlib
 
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import driver_prints, models
+from app import driver_prints, models, page_cache
 from app.analysis import driver_style as ds
 from app.db import get_db
 
 router = APIRouter()
-
-_cache: OrderedDict = OrderedDict()  # what the tagged runs teach, by the prints and tags it came from
-_cache_lock = threading.Lock()
-
-
-def _taught(db: Session, prints: dict[int, ds.EventPrint]) -> dict[int, list]:
-    sids = sorted({s for ep in prints.values() for s in ep.sessions})
-    tags = db.execute(select(models.RunSession.id, models.RunSession.driver_id)
-                      .where(models.RunSession.id.in_(sids))).all() if sids else []
-    key = (tuple(sorted((e, len(p.numbers), round(float(np.abs(p.v).sum()), 3)) for e, p in prints.items())),
-           tuple(sorted(tags)))
-    with _cache_lock:
-        if key in _cache:
-            return _cache[key]
-    learned = driver_prints.taught(db, prints)
-    with _cache_lock:
-        _cache[key] = learned
-        while len(_cache) > 8:
-            _cache.popitem(last=False)
-    return learned
-
 
 def _names(db: Session) -> dict[int, str]:
     return {d.id: d.name for d in db.scalars(select(models.Driver)).all()}
@@ -75,7 +54,7 @@ def event_guess(event_id: int, db: Session = Depends(get_db)):
     names = _names(db)
     tags = driver_prints.tags_of(db, ep, people_only=False)
     by_style = driver_prints.set_by_style(db, list(tags))
-    g = driver_prints.guess_for(db, event_id, ep, _taught(db, driver_prints.stored(db)))
+    g = driver_prints.guess_for(db, event_id, ep, driver_prints.learned(db))
     times = np.array(ep.times)
     groups = []
     for i, grp in enumerate(g.groups):
@@ -132,15 +111,39 @@ def _advice(vec: dict[str, float], links: list[dict]) -> list[dict]:
 
 @router.get("/drivers/fingerprints")
 def fingerprints(db: Session = Depends(get_db)):
-    """The fingerprint database. Answers from what is kept at once; events whose fingerprints are missing or out
-    of date are worked out in the background ("updating": ask again shortly)."""
-    updating = driver_prints.busy()
-    if not updating and driver_prints.stale(db):
-        updating = driver_prints.refresh_in_background()
+    """The fingerprint database, as kept after the last upload or tag (driver_prints.refresh_all keeps it). When
+    something changed since, the kept answer comes at once with "updating" (ask again shortly) while it is worked
+    out again in the background; only the very first time is it worked out while the request waits."""
+    sig = driver_prints.page_signature(db)
+    hit = page_cache.lookup(db, driver_prints.PAGE, sig)
+    if hit is not None and hit[0] == 200:
+        return {**hit[1], "updating": driver_prints.busy()}
+    driver_prints.refresh_in_background()
+    kept = db.scalar(select(page_cache.PageCache).where(page_cache.PageCache.scope == driver_prints.PAGE))
+    if kept is not None and kept.status == 200:
+        try:
+            return {**json.loads(zlib.decompress(kept.body)), "updating": True}
+        except (zlib.error, ValueError):
+            pass
+    out = page_cache.plain(build_page(db))
+    page_cache.store(db, driver_prints.PAGE, sig, out)
+    return {**out, "updating": driver_prints.busy()}
+
+
+def keep_page(db: Session) -> None:
+    """Work the page out and keep it, unless what is kept is up to date (the background pass ends with this)."""
+    sig = driver_prints.page_signature(db)
+    if not page_cache.fresh(db, driver_prints.PAGE, sig):
+        page_cache.store(db, driver_prints.PAGE, sig, page_cache.plain(build_page(db)))
+
+
+def build_page(db: Session) -> dict:
+    """The fingerprint database: each driver's style, events, advice and where they were found; what goes with
+    quicker laps; the styles waiting for a name; what is measured."""
     prints = {e: p for e, p in driver_prints.stored(db).items() if db.get(models.Event, e) is not None}
     names = _names(db)
     events = {e.id: e for e in db.scalars(select(models.Event).where(models.Event.id.in_(list(prints)))).all()}
-    learned = _taught(db, prints)
+    learned = driver_prints.learned(db)
     # what goes with quicker laps: every run's laps against the run's own typical lap, all events pooled
     rows = []
     all_kinds = sorted({k for p in prints.values() for k in p.kinds})
@@ -193,5 +196,5 @@ def fingerprints(db: Session = Depends(get_db)):
                         "traits": ds.traits(arr, all_kinds), "advice": _advice(vec, links),
                         "also_found": found.get(did, [])})
     drivers.sort(key=lambda d: -d["laps"])
-    return {"updating": updating, "events": len(prints), "drivers": drivers, "links": links, "unnamed": unnamed,
+    return {"events": len(prints), "drivers": drivers, "links": links, "unnamed": unnamed,
             "kinds": [{"kind": k, "label": v.label, "explain": v.explain} for k, v in ds.KINDS.items()]}
