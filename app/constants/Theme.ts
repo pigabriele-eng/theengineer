@@ -1,53 +1,147 @@
-// The app's look in one place: type, shape and spacing shared by every screen, the race-track picture behind the
-// pages, and the hooks screens take their colours (constants/Colors.ts) and styles from. A screen never writes a
-// colour, a corner radius or a label style of its own.
-import { ImageSourcePropType, Platform, StyleSheet, TextStyle, ViewStyle } from 'react-native';
+// The app's look in one place: type, shape and spacing shared by every screen, and the hooks screens take their colours
+// (constants/Colors.ts) and styles from. A screen never writes a colour, a corner radius or a label style of its own.
+//
+// The look is a timing screen: square edges everywhere (no rounded cards, no pills), full-width bands split by hairline
+// rules, condensed uppercase letter-spaced labels, monospaced numbers.
+import { ImageSourcePropType, StyleSheet, TextStyle, ViewStyle } from 'react-native';
 
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors, { INK, Palette, PhaseKey, Scheme } from '@/constants/Colors';
 
 export type { Palette, PhaseKey, Scheme } from '@/constants/Colors';
 
+// ---------- type ----------
+
+// The faces the app loads before its first render (app/_layout.tsx), by the name each is registered under:
+// Barlow Condensed for labels, headings and the big italic names; Barlow Semi Condensed for reading text;
+// JetBrains Mono for every number.
+export const FACES = {
+  label: {
+    600: 'BarlowCondensed_600SemiBold',
+    700: 'BarlowCondensed_700Bold',
+    800: 'BarlowCondensed_800ExtraBold',
+  },
+  labelItalic: { 800: 'BarlowCondensed_800ExtraBold_Italic' },
+  body: {
+    400: 'BarlowSemiCondensed_400Regular',
+    500: 'BarlowSemiCondensed_500Medium',
+    600: 'BarlowSemiCondensed_600SemiBold',
+  },
+  mono: {
+    500: 'JetBrainsMono_500Medium',
+    700: 'JetBrainsMono_700Bold',
+  },
+} as const;
+
+export type FontRole = 'label' | 'body' | 'mono';
+
+/** The face of a role at a weight (the nearest one loaded); italic only exists for the condensed headings. */
+export function face(role: FontRole, weight: number = role === 'label' ? 600 : role === 'mono' ? 500 : 400,
+  italic = false): string {
+  if (role === 'label' && italic) return FACES.labelItalic[800];
+  const faces = FACES[role] as Record<number, string>;
+  const weights = Object.keys(faces).map(Number);
+  const best = weights.reduce((a, b) => (Math.abs(b - weight) < Math.abs(a - weight) ? b : a));
+  return faces[best];
+}
+
 export const Fonts = {
-  // the system sans everywhere (SVG text on the web would otherwise fall back to a serif face)
-  sans: Platform.select({ web: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif', default: undefined }),
-  // lap times and other figures that line up in columns
-  mono: Platform.select({
-    web: 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace',
-    ios: 'Menlo',
-    android: 'monospace',
-    default: undefined,
-  }),
+  label: face('label', 700),
+  body: face('body', 400),
+  mono: face('mono', 500),
+  // text inside charts (react-native-svg): ticks and values, so the number face
+  sans: face('mono', 500),
 };
 
-export const Radius = {
-  card: 10, // cards, panels, banners, forms, tables
-  control: 8, // buttons, inputs, segmented tabs
-  chip: 16, // chips and pills
-  tag: 4, // small inline tags
-};
+const ROLE_OF_FACE: Record<string, FontRole> = Object.fromEntries(
+  (['label', 'labelItalic', 'body', 'mono'] as const).flatMap((k) =>
+    Object.values(FACES[k]).map((f) => [f, k === 'labelItalic' ? 'label' : k] as [string, FontRole])),
+);
 
-export const Space = { page: 16, card: 12, gap: 8 };
+const weightOf = (w: TextStyle['fontWeight']): number =>
+  w == null || w === 'normal' ? 400 : w === 'bold' ? 700 : Number(w) || 400;
 
-/** The solid plate under a chart, so the race-track picture never shows through a plot: spread it into the chart's
- * root style. A chart that measures its own root takes PLATE_PAD off each side. */
-export const chartPlate = (c: Palette): ViewStyle => ({ backgroundColor: c.chart.surface, borderRadius: Radius.card,
-  padding: PLATE_PAD });
-export const PLATE_PAD = Space.gap;
+/** What the app's Text draws a style with: the face for its role and weight. A style names its role with one of
+ * FACES' names (Fonts.label, Fonts.mono...) or leaves it to the text: figures that line up (tabular-nums) take the number
+ * face, uppercase labels the condensed face, the rest the reading face. Uppercase labels get their letter-spacing.
+ * Other font families (none in the app) are left alone. */
+export function resolveFont(style: TextStyle): TextStyle | null {
+  const named = style.fontFamily;
+  if (named && !(named in ROLE_OF_FACE)) return null;
+  const upper = style.textTransform === 'uppercase';
+  const role: FontRole = named ? ROLE_OF_FACE[named]
+    : style.fontVariant?.includes('tabular-nums') ? 'mono' : upper ? 'label' : 'body';
+  const italic = style.fontStyle === 'italic';
+  // a role's own face sets the weight when the style gives none
+  const weight = style.fontWeight != null ? weightOf(style.fontWeight)
+    : named ? Number(Object.entries(FACES[role]).find(([, f]) => f === named)?.[0] ?? 400) : role === 'label' ? 600 : 400;
+  const out: TextStyle = { fontFamily: face(role, weight, italic), fontWeight: 'normal' };
+  if (italic && role === 'label') out.fontStyle = 'normal'; // the face is italic itself
+  if (upper && role === 'label') {
+    const size = style.fontSize ?? 14;
+    if ((style.letterSpacing ?? 0) < size * 0.1) out.letterSpacing = Math.round(size * 0.13 * 10) / 10;
+  }
+  return out;
+}
 
 export const Type = {
-  // section labels ("TYRES", "SETUP"...)
-  label: { fontSize: 13, fontWeight: '600', opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 } as TextStyle,
+  // section labels ("TYRES", "SETUP"...): condensed, uppercase, letter-spaced, muted
+  label: { fontFamily: face('label', 600), fontSize: 12, letterSpacing: 1.7, textTransform: 'uppercase', opacity: 0.62 } as TextStyle,
   // lap times, deltas and every figure that lines up with the one below it
-  number: { fontVariant: ['tabular-nums'] } as TextStyle,
+  number: { fontFamily: Fonts.mono, fontVariant: ['tabular-nums'] } as TextStyle,
+  // a page's name where there is no photo band: big condensed italic capitals
+  title: { fontFamily: face('label', 800, true), fontSize: 40, lineHeight: 42, textTransform: 'uppercase' } as TextStyle,
+  // a band's header ("01 PACE")
+  heading: { fontFamily: face('label', 700), fontSize: 15, letterSpacing: 2.1, textTransform: 'uppercase' } as TextStyle,
+  // a text action: uppercase condensed
+  action: { fontFamily: face('label', 700), fontSize: 13, letterSpacing: 1.6, textTransform: 'uppercase' } as TextStyle,
 };
 
-// The race-track picture behind the pages: a made-up circuit seen from above (assets/images/backdrop-*.png, drawn
-// for this app). Null: no picture.
-export const BACKDROP: Record<Scheme, ImageSourcePropType | null> = {
-  light: require('../assets/images/backdrop-light.png'),
-  dark: require('../assets/images/backdrop-dark.png'),
+// Square edges everywhere: the names stay so every screen's boxes, buttons and chips lose their rounding at once.
+export const Radius = {
+  card: 0,
+  control: 0,
+  chip: 0,
+  tag: 0,
 };
+
+export const Space = { page: 16, card: 12, gap: 8, gutter: 24 };
+
+/** A chart's root: it sits on the page like everything else (no plate, no rounding). Spread it into the chart's root
+ * style. A chart that measures its own root takes PLATE_PAD off each side. */
+export const chartPlate = (c: Palette): ViewStyle => ({ backgroundColor: c.chart.surface, padding: PLATE_PAD });
+export const PLATE_PAD = 4;
+
+// ---------- photos ----------
+
+export type Photo = {
+  source: ImageSourcePropType;
+  credit: string; // the credit tag on the photo
+  short: string; // the credit tag on a phone
+  link: string; // the photo's page, with its author and licence
+};
+
+// The photos at the top of the event list and the report (assets/images, credits in assets/CREDITS.md).
+export const PHOTOS: Record<'track' | 'hockenheim', Photo> = {
+  track: {
+    source: require('../assets/images/track-dusk.jpg'),
+    credit: 'Photo: Dimitrios Savva and Jarod Guest via Poly Haven / Wikimedia Commons, CC0',
+    short: 'Photo: D. Savva, J. Guest / Poly Haven, CC0',
+    link: 'https://commons.wikimedia.org/wiki/File:Backplate_%E2%80%93_Zwartkops_Curve_Sunset_(Dimitrios_Savva_and_Jarod_Guest_via_Poly_Haven)_39.jpg',
+  },
+  hockenheim: {
+    source: require('../assets/images/hockenheim-straight.jpg'),
+    credit: 'Photo: Kmtextor / Wikimedia Commons, CC BY-SA 4.0 (cropped, darkened)',
+    short: 'Photo: Kmtextor, CC BY-SA 4.0 (cropped, darkened)',
+    link: 'https://commons.wikimedia.org/wiki/File:Hockenheimring_start-ziel-gerade_2010.jpg',
+  },
+};
+
+/** The photo for a track: the Hockenheim one at Hockenheim, the generic dusk corner elsewhere. */
+export const photoFor = (track: string | null | undefined): Photo =>
+  track && /hockenheim/i.test(track) ? PHOTOS.hockenheim : PHOTOS.track;
+
+// ---------- colours ----------
 
 /** The colour tokens of the scheme in use. */
 export function useTheme(): Palette {
@@ -71,12 +165,15 @@ const PHASE_OF: Record<string, PhaseKey> = {
   braking: 'braking',
   entry: 'turnIn',
   trail: 'turnIn',
+  'trail braking': 'turnIn',
   'turn-in': 'turnIn',
+  turn_in: 'turnIn',
   'mid-corner': 'mid',
+  mid_corner: 'mid',
   mid: 'mid',
   'at the grip limit': 'mid',
   exit: 'traction',
-  traction: 'traction',
+  traction: 'throttle',
   'full throttle': 'throttle',
   power: 'throttle',
 };
@@ -97,10 +194,17 @@ export function deltaColor(c: Palette, seconds: number | null | undefined): stri
 }
 
 /** A mark's colour for a time difference, deeper the bigger it is against `scale` (what counts as big on the
- * screen): bars, track sections, the edge of a card. */
+ * screen): bars, track sections, the edge of a row. Time lost takes the yellow time-lost ramp. */
 export function deltaMark(c: Palette, seconds: number, scale: number): string {
   if (Math.abs(seconds) < EVEN_S) return c.delta.even;
-  return ramp(seconds < 0 ? c.delta.gainRamp : c.delta.lossRamp, Math.abs(seconds) / Math.max(scale, 1e-6));
+  if (seconds > 0) return lossStep(c, seconds / Math.max(scale, 1e-6));
+  return ramp(c.delta.gainRamp, Math.abs(seconds) / Math.max(scale, 1e-6));
+}
+
+/** A step of the time-lost ramp for a share (0 to 1) of what counts as big on the screen. */
+export function lossStep(c: Palette, share: number): string {
+  const steps = c.timing.loss;
+  return steps[Math.max(0, Math.min(steps.length - 1, Math.ceil(share * steps.length) - 1))];
 }
 
 /** A soft background for a time difference (a table cell), stronger the bigger it is against `scale`. */

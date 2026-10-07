@@ -3,6 +3,9 @@
   "main": "expo-router/entry",
   "version": "1.0.0",
   "dependencies": {
+    "@expo-google-fonts/barlow-condensed": "^0.4.1",
+    "@expo-google-fonts/barlow-semi-condensed": "^0.4.1",
+    "@expo-google-fonts/jetbrains-mono": "^0.4.1",
     "@supabase/supabase-js": "^2.117.2",
     "expo": "~57.0.26",
     "expo-audio": "~57.0.5",
