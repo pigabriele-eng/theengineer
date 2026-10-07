@@ -128,7 +128,7 @@ def _wait_tyre_data_and_prebuild(timeout=180):
     while time.monotonic() < deadline:
         with app_db.SessionLocal() as db:
             todo = tyre_store._todo(db)
-        if not todo and tyre_store._state["current"] is None and prebuild.wait_idle(1) and not tyre_store._summarised:
+        if not todo and tyre_store._state["current"] is None and prebuild.wait_idle(1) and not tyre_store._done:
             return
         time.sleep(0.2)
     raise AssertionError("the prebuild didn't finish")

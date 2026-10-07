@@ -158,7 +158,7 @@ _thread: threading.Thread | None = None
 _start_lock = threading.Lock()
 _state: dict = {"current": None, "unreadable": set()}  # unreadable: failed in this server's run, not tried again
 _traffic = {"in_flight": 0, "last": 0.0}  # requests being served, and when the last one ended (monotonic)
-_summarised: set[int] = set()  # runs whose tyre data this round of the job made (for the prebuild)
+_done: set[int] = set()  # runs whose logs this round of the job did, or found unreadable (for the prebuild)
 
 
 def kick() -> None:
@@ -239,10 +239,10 @@ def process_next(quiet: bool = False) -> bool:
         if f is None:
             return True
         _state["current"] = f.filename
+        _done.add(f.session_id)
         try:
             summarise_file(db, f)
             db.commit()
-            _summarised.add(f.session_id)
         except Exception as e:  # an unreadable file, storage down: noted, tried again after a restart
             db.rollback()
             log.warning("Tyre data for file %s failed: %s", f.id, e)
@@ -284,12 +284,12 @@ def _run() -> None:
 
 
 def _after_round() -> None:
-    """The pages made from the tyre data (track grip, prep) of the runs just summarised are out of date: the
-    prebuild (app/prebuild.py) works them out again in the background."""
-    if not _summarised:
+    """The pages made from the tyre data (track grip, prep) of the runs just done are out of date, or waited for
+    them: the prebuild (app/prebuild.py) works them out in the background."""
+    if not _done:
         return
-    ids = sorted(_summarised)
-    _summarised.clear()
+    ids = sorted(_done)
+    _done.clear()
     try:
         from app import prebuild  # here: it uses the routers, which use this module
 
