@@ -18,6 +18,7 @@ import {
 import PrintButton from '@/components/PrintButton';
 import { RenameEvent } from '@/components/RenameEvent';
 import { ResultsPanel } from '@/components/ResultsPanel';
+import { RunNameQuestions } from '@/components/RunNames';
 import { SeasonMatch } from '@/components/SeasonMatch';
 import { filledNote, localPick, PickerKind, RunChips, RunNameEditor, RunPicker, useGarage } from '@/components/RunChips';
 import { Text, View } from '@/components/Themed';
@@ -255,6 +256,8 @@ export default function EventScreen() {
   // The questions about the event's season (or who drove it), when the server isn't sure: under the band, above the
   // runs. Nothing when there are none.
   const seasonQuestion = eventId != null && <SeasonMatch eventId={eventId} onChanged={load} style={styles.season} />;
+  // runs the official timetable can't place by itself: "Which session was 03_Q?"
+  const runNameQuestion = eventId != null && <RunNameQuestions eventId={eventId} folder={folder} onChanged={load} style={styles.season} />;
 
   // ---------- the sections ----------
 
@@ -357,6 +360,7 @@ export default function EventScreen() {
         {band}
         {notice && <View style={styles.notice}><Said text={notice} onPress={() => setNotice(null)} /></View>}
         {seasonQuestion}
+        {runNameQuestion}
         {runs}
         {sideBySide}
         {info}
