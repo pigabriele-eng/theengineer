@@ -1,0 +1,206 @@
+"""Driver fingerprints: telling drivers apart by style alone, naming them from tags and from other events, driver
+changes at a stop, and the API on top. Synthetic data only."""
+import time
+
+import numpy as np
+
+from app.analysis import driver_style as ds
+from tests import synthetic
+from tests.synthetic import simulate, write_ld
+
+LENGTH = 1000
+
+
+def _trace(corners: tuple[float, ...], style: str, pace: float, rng: np.random.Generator) -> dict[str, np.ndarray]:
+    """A lap on a 1 m grid. Style "smooth" builds the brake slowly, peaks lower and trails it into the corner;
+    "sharp" brakes later and harder, releases before turning and picks the throttle up early."""
+    d = np.arange(LENGTH + 1, dtype=float)
+    v = np.full_like(d, 160.0 * pace)
+    brake = np.zeros_like(d)
+    throttle = np.full_like(d, 100.0)
+    steer = np.zeros_like(d)
+    for apex in corners:
+        a = int(apex)
+        v -= 90 * pace * np.exp(-(((d - apex) / (45 if style == "smooth" else 32)) ** 2))
+        steer += 60 * np.exp(-(((d - apex) / 40) ** 2))
+        if style == "smooth":
+            on, peak, off, t_on, ramp = a - 120, a - 70, a - 5, a + 10, 60
+            brake[on:peak] = np.linspace(0, 70, peak - on)
+            brake[peak:off] = np.linspace(70, 0, off - peak)
+        else:
+            on, peak, off, t_on, ramp = a - 90, a - 85, a - 40, a - 15, 25
+            brake[on:peak] = np.linspace(0, 100, peak - on)
+            brake[peak:off] = 100
+            brake[off:off + 5] = np.linspace(100, 0, 5)
+        throttle[on:t_on] = 0
+        throttle[t_on:t_on + ramp] = np.linspace(10, 100, ramp)
+    v *= 1 + rng.normal(0, 0.003)
+    t = np.concatenate([[0.0], np.cumsum(1 / (v[1:] / 3.6))])
+    noise = lambda x, s: x + rng.normal(0, s, len(x))  # noqa: E731
+    return {"t": t, "speed": v, "throttle": np.clip(noise(throttle, 1.0), 0, 100),
+            "brake": np.clip(noise(brake, 1.0), 0, None), "steer": noise(steer, 0.5),
+            "gear": np.where(v < 100, 3.0, 4.0)}
+
+
+def _event(runs: list[tuple[int, list[str]]], corners=(250.0, 600.0, 850.0), seed=1) -> list[ds.EventLap]:
+    """Every run's laps in order, one style per lap (a run's styles can change at a stop: lap numbers skip one)."""
+    rng = np.random.default_rng(seed)
+    laps = []
+    for sid, styles in runs:
+        n = 1
+        for i, style in enumerate(styles):
+            if i and style != styles[i - 1]:
+                n += 1  # the in-lap and out-lap of the driver change are not clean laps
+            tr = _trace(corners, style, 1 - rng.uniform(0, 0.01), rng)
+            laps.append(ds.EventLap(sid, n, float(tr["t"][-1]), tr))
+            n += 1
+    return laps
+
+
+def test_two_styles_are_told_apart_without_names():
+    laps = _event([(1, ["smooth"] * 6), (2, ["sharp"] * 6), (3, ["smooth"] * 5), (4, ["sharp"] * 5)])
+    ep = ds.event_print(laps)
+    g = ds.guess(ep, {})
+    assert g.mode == "groups" and g.separation >= ds.CLEAR_SPLIT and len(g.groups) == 2
+    by = {s.session_id: s for s in g.sessions}
+    assert by[1].group == by[3].group != by[2].group == by[4].group
+    assert all(s.share == 1.0 and len(s.stints) == 1 for s in g.sessions)
+    assert all(grp.driver_id is None and grp.source == "" for grp in g.groups)
+    assert ds.confidence(g, g.groups[by[1].group], by[1].share) == "sure"
+    smooth = ds.traits(g.groups[by[1].group].v, ep.kinds)
+    words = {t["kind"]: t["words"] for t in smooth}
+    assert words["trail"] == "trails the brake deeper into the corner"
+    assert words["brake_build"] == "builds the brake pressure more gradually"
+    assert all(t["label"] and t["explain"] for t in smooth)
+
+
+def test_one_driver_is_one_style():
+    ep = ds.event_print(_event([(1, ["smooth"] * 6), (2, ["smooth"] * 6), (3, ["smooth"] * 6)]))
+    g = ds.guess(ep, {2: 9})
+    assert g.mode == "one style" and len(g.groups) == 1
+    assert g.groups[0].driver_id == 9 and g.groups[0].source == "tag"  # the one tagged run names everyone's laps
+    assert {s.group for s in g.sessions} == {0}
+
+
+def test_tagged_runs_name_the_others():
+    ep = ds.event_print(_event([(1, ["smooth"] * 6), (2, ["sharp"] * 6), (3, ["smooth"] * 5), (4, ["sharp"] * 5)]))
+    g = ds.guess(ep, {1: 11, 2: 22})
+    assert g.mode == "tagged"
+    named = {s.session_id: g.groups[s.group].driver_id for s in g.sessions}
+    assert named == {1: 11, 2: 22, 3: 11, 4: 22}
+
+
+def test_a_driver_change_at_a_stop_splits_the_run():
+    ep = ds.event_print(_event([(1, ["smooth"] * 5 + ["sharp"] * 6), (2, ["sharp"] * 5), (3, ["smooth"] * 4)]))
+    g = ds.guess(ep, {})
+    by = {s.session_id: s for s in g.sessions}
+    stints = by[1].stints
+    assert [(st.laps[0], st.laps[-1]) for st in stints] == [(1, 5), (7, 12)]
+    assert stints[0].group == by[3].group and stints[1].group == by[2].group
+    assert by[1].group == stints[1].group  # the longer stint is the run's suggestion
+
+
+def test_a_lap_or_two_is_not_a_driver_change():
+    assert len(ds._stints([1, 2, 3, 5, 6, 7, 8], [0, 0, 0, 1, 0, 0, 0])) == 1
+    assert len(ds._stints([1, 2, 3, 4, 6, 7], [0, 0, 0, 0, 1, 1])) == 1  # two laps after the stop: too few
+    st = ds._stints([1, 2, 3, 4, 6, 7, 8], [0, 0, 0, 0, 1, 1, 1])
+    assert [(s.laps, s.group) for s in st] == [([1, 2, 3, 4], 0), ([6, 7, 8], 1)]
+
+
+def test_a_fingerprint_from_one_track_finds_the_driver_at_another():
+    first = ds.event_print(_event([(1, ["smooth"] * 6), (2, ["sharp"] * 6), (3, ["sharp"] * 4)]))
+    g = ds.guess(first, {1: 11, 2: 22})
+    known = {grp.driver_id: grp.v for grp in g.groups}
+    # another track (other corners), nothing tagged
+    other = ds.event_print(_event([(5, ["sharp"] * 6), (6, ["smooth"] * 6), (7, ["smooth"] * 4)],
+                                  corners=(150.0, 420.0, 700.0, 900.0), seed=2))
+    known = {d: np.array([dict(zip(first.kinds, v, strict=True)).get(k, 0.0) for k in other.kinds])
+             for d, v in known.items()}
+    g2 = ds.guess(other, {}, known)
+    named = {s.session_id: g2.groups[s.group].driver_id for s in g2.sessions}
+    assert named == {5: 22, 6: 11, 7: 11}
+    assert all(grp.source == "fingerprint" and grp.match > 0.5 for grp in g2.groups)
+
+
+def test_quicker_laps_tell_what_pays():
+    rng = np.random.default_rng(3)
+    rows = []
+    for _ in range(6):
+        trail = rng.normal(0, 1, 8)
+        t = 100 - 0.3 * trail + rng.normal(0, 0.1, 8)  # more trail braking, quicker laps
+        rows.append((t, np.stack([trail, rng.normal(0, 1, 8)], 1)))
+    links = ds.lap_time_links(rows, ["trail", "steer_lock"])
+    assert links[0]["kind"] == "trail" and links[0]["r"] < -0.5 and links[0]["laps"] == 48
+    assert links[0]["words"] == "On quicker laps the driver trails the brake deeper into the corner"
+    assert all(link["kind"] != "steer_lock" for link in links)
+
+
+def test_too_few_laps_suggest_nothing():
+    assert ds.event_print(_event([(1, ["smooth"] * 3)])) is None
+
+
+# ---------- the API ----------
+
+def _sharp_speed(d, pace):
+    """A later, harder stop than the synthetic default: another driver."""
+    from tests.synthetic import CORNERS_M
+    a, b = (d - CORNERS_M[0]) / 28.0, (d - CORNERS_M[1]) / 28.0
+    return (150.0 - 100.0 * np.exp(-(a * a)) - 80.0 * np.exp(-(b * b))) * pace
+
+
+def _log(paces, at: str, sharp=False) -> bytes:
+    """A synthetic log recorded at the time given (HH:MM:SS): logs with the same header are one log uploaded again."""
+    default = synthetic.speed_at
+    synthetic.speed_at = _sharp_speed if sharp else default
+    try:
+        return write_ld(simulate(paces=paces)[0]).replace(b"12:00:00", at.encode(), 1)
+    finally:
+        synthetic.speed_at = default
+
+
+def test_event_suggestions_and_the_fingerprint_database(client):
+    ev = client.post("/events/folders", json={"name": "Test weekend"}).json()
+    paces = {"A1": ((1.0, 0.99, 0.995, 0.985, 0.99), False), "B1": ((0.99, 0.985, 0.99, 0.98, 0.995), True),
+             "A2": ((0.995, 0.99, 0.985, 0.99), False), "B2": ((0.985, 0.99, 0.995, 0.99), True)}
+    ids = {}
+    for n, (name, (p, sharp)) in enumerate(paces.items()):
+        s = client.post("/sessions", json={"event_id": ev["id"], "name": name}).json()
+        log = _log(p, f"1{n}:00:00", sharp)
+        r = client.post(f"/sessions/{s['id']}/files", files={"file": ("run.ld", log)})
+        assert r.status_code == 201, r.text
+        ids[name] = s["id"]
+
+    url = f"/events/{ev['id']}/driver-guess"
+    t0 = time.monotonic()
+    body = client.get(url).json()
+    while body["status"] == "working" and time.monotonic() - t0 < 120:
+        time.sleep(0.2)
+        body = client.get(url).json()
+    assert body["status"] == "ready" and body["mode"] == "groups"
+    sugg = {s["session_id"]: s["suggestion"] for s in body["sessions"]}
+    assert sugg[ids["A1"]]["group"] == sugg[ids["A2"]]["group"] != sugg[ids["B1"]]["group"] == sugg[ids["B2"]]["group"]
+    assert all(s["driver_id"] is None and s["agrees"] is None for s in body["sessions"])
+    assert {g["label"] for g in body["groups"]} == {"Style A", "Style B"}
+
+    # tag one run of each driver: the others are named after them, and the database learns both
+    for name, driver in (("A1", "Anna"), ("B1", "Ben")):
+        assert client.put(f"/sessions/{ids[name]}/driver", json={"driver_name": driver}).status_code == 200
+    body = client.get(url).json()
+    assert body["mode"] == "tagged"
+    sugg = {s["session_id"]: s["suggestion"] for s in body["sessions"]}
+    assert sugg[ids["A2"]]["driver"] == "Anna" and sugg[ids["B2"]]["driver"] == "Ben"
+    assert sugg[ids["A2"]]["confidence"] in ("sure", "likely")
+    assert {s["session_id"]: s["agrees"] for s in body["sessions"]}[ids["A1"]] is True
+
+    db = client.get("/drivers/fingerprints").json()
+    assert db["events"] == 1 and {d["driver"] for d in db["drivers"]} == {"Anna", "Ben"}
+    anna = next(d for d in db["drivers"] if d["driver"] == "Anna")
+    assert anna["events"][0]["event"] == "Test weekend" and anna["events"][0]["teammates"] == ["Ben"]
+    assert anna["traits"] and all({"label", "explain", "words"} <= set(t) for t in anna["traits"])
+    assert db["kinds"] and db["unnamed"] == []
+
+
+def test_an_unknown_event_has_no_suggestions(client):
+    assert client.get("/events/999/driver-guess").status_code == 404
+    body = client.get("/drivers/fingerprints").json()
+    assert body["drivers"] == [] and body["events"] == 0
