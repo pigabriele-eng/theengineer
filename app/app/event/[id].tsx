@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-nati
 
 import { useLapColors } from '@/components/CompareViews';
 import { DeleteEvent } from '@/components/DeleteEvent';
+import { DeleteRuns, deletedLine } from '@/components/DeleteRuns';
 import { DriverGuessLine, useDriverGuess } from '@/components/DriverGuess';
 import { ErrorLine, FormActions, Input, MainButton, Note, Said, Tick } from '@/components/Controls';
 import { EventCompare, Pick, RunKey } from '@/components/EventCompare';
@@ -23,6 +24,7 @@ import { Text, View } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
 import { todayIso, When, whenOf } from '@/lib/calendar';
 import { MAX_LAPS } from '@/lib/compare';
+import { RunsDeleted } from '@/lib/deleteRuns';
 import { dateRange, dayLabel, eventsApi, Folder, FolderSession, KIND_NAMES, NO_EVENT } from '@/lib/events';
 import { EventGuess } from '@/lib/fingerprints';
 import { Garage, garageApi, RunFields } from '@/lib/garage';
@@ -32,7 +34,7 @@ import { face, Fonts, PHOTOS, photoFor, themed, Type, useTheme } from '@/constan
 // A run row as the server sends it, with its driver and car ids
 type Run = FolderSession & { driver_id?: number | null; car_id?: number | null };
 // What opens in the band under the event's links: one at a time
-type Panel = 'rename' | 'edit' | 'delete' | 'move';
+type Panel = 'rename' | 'edit' | 'delete' | 'move' | 'delete runs';
 
 const freeSlot = (picks: Pick[]) => [0, 1, 2, 3, 4, 5].find((s) => !picks.some((p) => p.slot === s)) ?? 0;
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -149,6 +151,12 @@ export default function EventScreen() {
     setNotice(`Moved ${plural(ids.length, 'run')} to ${toName}. Reports of both events are being worked out again.`);
     load();
   };
+  const runsDeleted = (d: RunsDeleted) => {
+    setPicks([]);
+    setPanel(null);
+    setNotice(deletedLine(d));
+    load();
+  };
 
   const isEvent = key !== NO_EVENT;
   const eventId = isEvent ? Number(key) : null;
@@ -197,8 +205,8 @@ export default function EventScreen() {
     </View>
   );
 
-  // One panel at a time in a ruled band under the links: rename, change the dates, delete the event, move the ticked
-  // runs.
+  // One panel at a time in a ruled band under the links: rename, change the dates, delete the event, move or delete
+  // the ticked runs.
   const band = folder && panel && (
     <View style={styles.band} {...noPrint}>
       {panel === 'rename' && eventId != null && (
@@ -236,6 +244,11 @@ export default function EventScreen() {
       {panel === 'move' && picks.length > 0 && (
         <MoveSessions fromKey={key} count={picks.length} onMove={moveTo} onCancel={() => setPanel(null)} />
       )}
+      {panel === 'delete runs' && picks.length > 0 && (
+        <DeleteRuns ids={picks.map((p) => p.id)}
+          names={picks.map((p) => sessions.find((s) => s.id === p.id)?.name ?? `Run ${p.id}`)} inEvent={isEvent}
+          onDeleted={runsDeleted} onCancel={() => setPanel(null)} />
+      )}
     </View>
   );
 
@@ -249,7 +262,7 @@ export default function EventScreen() {
   const runs = folder && (
     <Section no={++no} title="Runs" dek={isEvent
       ? 'Day by day, each with its best lap. Tick two to six to put them side by side; tap a name to rename it, a best lap to open the run.'
-      : 'Runs filed in no event. Tick them, then Move to put them into one.'}>
+      : 'Runs filed in no event. Tick them, then Move to put them into one, or Delete to remove them for good.'}>
       {sessions.length > 0 && isEvent && <Figures folder={folder} />}
       <View style={wide ? styles.days : styles.daysPhone}>
         {folder.days.map((d) => {
@@ -363,6 +376,7 @@ export default function EventScreen() {
             <Text style={styles.barText}>{picks.length} ticked</Text>
             {picks.length >= 2 && <TextLink onPress={showCompare} label="Side by side ↓" small />}
             <TextLink onPress={() => showPanel('move')} label="Move…" small />
+            <TextLink onPress={() => showPanel('delete runs')} label="Delete…" small />
             <TextLink onPress={() => setPicks([])} label="Clear" small />
           </View>
         </View>
