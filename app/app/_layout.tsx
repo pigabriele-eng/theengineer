@@ -1,3 +1,12 @@
+import { Anton_400Regular } from '@expo-google-fonts/anton/400Regular';
+import { ArchivoNarrow_400Regular } from '@expo-google-fonts/archivo-narrow/400Regular';
+import { ArchivoNarrow_500Medium } from '@expo-google-fonts/archivo-narrow/500Medium';
+import { ArchivoNarrow_600SemiBold } from '@expo-google-fonts/archivo-narrow/600SemiBold';
+import { ArchivoNarrow_700Bold } from '@expo-google-fonts/archivo-narrow/700Bold';
+import { Newsreader_400Regular } from '@expo-google-fonts/newsreader/400Regular';
+import { Newsreader_400Regular_Italic } from '@expo-google-fonts/newsreader/400Regular_Italic';
+import { Newsreader_600SemiBold } from '@expo-google-fonts/newsreader/600SemiBold';
+import { Newsreader_700Bold } from '@expo-google-fonts/newsreader/700Bold';
 import { useFonts } from 'expo-font';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -5,9 +14,10 @@ import { useEffect, useMemo } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import 'react-native-reanimated';
 
-import { Backdrop } from '@/components/Backdrop';
+import { Masthead } from '@/components/Programme';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
+import { Fonts } from '@/constants/Theme';
 import { authEnabled, useAuthSession } from '@/lib/auth';
 import { NoteLaunch } from '@/lib/openCurrent';
 
@@ -25,8 +35,18 @@ export const unstable_settings = {
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
+  // The programme's faces (constants/Theme.ts FACES), loaded before the first page is drawn
   const [loaded, error] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
+    Anton_400Regular,
+    Newsreader_400Regular,
+    Newsreader_400Regular_Italic,
+    Newsreader_600SemiBold,
+    Newsreader_700Bold,
+    ArchivoNarrow_400Regular,
+    ArchivoNarrow_500Medium,
+    ArchivoNarrow_600SemiBold,
+    ArchivoNarrow_700Bold,
   });
   // Keep the splash screen up until the stored session has been read, so a signed-in user never sees sign-in flash by.
   const auth = useAuthSession();
@@ -50,23 +70,31 @@ export default function RootLayout() {
   return <RootLayoutNav signedIn={!authEnabled || auth.session != null} />;
 }
 
-// Pages are see-through on the web, so the race-track picture behind the navigator shows on every page. On iOS and
-// Android only the tabs are: a pushed page slides in over the one below, so it keeps a solid background.
-const SEE_THROUGH = { contentStyle: { backgroundColor: 'transparent' } };
+// The pages that open on a full-bleed photo: the photo is their top, so they have no header bar (their kicker links
+// back up instead).
+const NO_BAR = { headerShown: false };
 
 function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
   const colorScheme = useColorScheme();
   const c = Colors[colorScheme];
-  // React Navigation's headers, tab bar and page backgrounds in the app's colours
+  // React Navigation's headers and page backgrounds on the paper, in the app's colours
   const theme = useMemo(() => {
     const base = colorScheme === 'dark' ? DarkTheme : DefaultTheme;
     return {
       ...base,
-      // on the web the pages are see-through: the root view below paints the page colour and the picture
-      colors: { ...base.colors, primary: c.tint, background: Platform.OS === 'web' ? 'transparent' : c.background,
-        card: c.tabBar, text: c.text, border: c.border, notification: c.error },
+      colors: { ...base.colors, primary: c.tint, background: c.background, card: c.background, text: c.text,
+        border: c.rule, notification: c.error },
     };
   }, [colorScheme, c]);
+  // A pushed page's bar: the paper, no shadow, its name in Archivo Narrow
+  const screenOptions = useMemo(() => ({
+    headerStyle: { backgroundColor: c.background },
+    headerShadowVisible: false,
+    headerTintColor: c.text,
+    headerTitleStyle: { fontFamily: Fonts.label, fontSize: 15, color: c.text },
+    headerBackTitleStyle: { fontFamily: Fonts.label, fontSize: 14 },
+    contentStyle: { backgroundColor: c.background },
+  }), [c]);
   // the browser's own pieces (scrollbars, date fields, the page behind the app) in the same scheme
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
@@ -79,17 +107,19 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
   return (
     <ThemeProvider value={theme}>
       <View style={StyleSheet.flatten([styles.root, { backgroundColor: c.background }])}>
-        <Backdrop />
         {/* where the app was opened: on the event list while an event is on, it goes on to that event's page */}
         <NoteLaunch />
-        <Stack screenOptions={Platform.OS === 'web' ? SEE_THROUGH : undefined}>
+        {/* the masthead and its four text links take the place of a tab bar, above every page */}
+        {signedIn && <Masthead />}
+        <Stack screenOptions={screenOptions}>
           <Stack.Protected guard={signedIn}>
-            <Stack.Screen name="(tabs)" options={{ headerShown: false, ...SEE_THROUGH }} />
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             <Stack.Screen name="event/[id]" options={{ title: 'Event' }} />
-            <Stack.Screen name="session/[id]" options={{ title: 'Session' }} />
-            <Stack.Screen name="report" options={{ title: 'Report' }} />
+            <Stack.Screen name="session/[id]" options={{ title: 'Session', ...NO_BAR }} />
+            <Stack.Screen name="report" options={{ title: 'Report', ...NO_BAR }} />
             <Stack.Screen name="technique" options={{ title: 'Technique check' }} />
             <Stack.Screen name="quali" options={{ title: 'Quali prep' }} />
+            <Stack.Screen name="prep" options={{ title: 'Prep report' }} />
             <Stack.Screen name="debrief/[id]" options={{ title: 'Debrief report' }} />
             <Stack.Screen name="tools/pressures" />
             <Stack.Screen name="tools/tyre-temps" />

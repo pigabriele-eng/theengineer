@@ -1,11 +1,14 @@
 /**
- * Text and View in the app's colours (constants/Colors.ts), in the scheme picked in Tools › Appearance.
+ * Text and View in the app's colours (constants/Colors.ts), in the scheme picked in Tools › Appearance, and Text in the
+ * programme's faces (constants/Theme.ts resolveFont): Anton for headlines and big figures, Archivo Narrow for labels
+ * and numbers in columns, Newsreader for the rest.
  */
-import { Text as DefaultText, View as DefaultView } from 'react-native';
+import { Text as DefaultText, View as DefaultView, StyleSheet, TextStyle } from 'react-native';
 
 import { useColorScheme } from './useColorScheme';
 
 import Colors, { Palette } from '@/constants/Colors';
+import { resolveFont } from '@/constants/Theme';
 
 type ThemeProps = {
   lightColor?: string;
@@ -32,11 +35,13 @@ export function useThemeColor(props: { light?: string; dark?: string }, colorNam
 export function Text(props: TextProps) {
   const { style, lightColor, darkColor, ...otherProps } = props;
   const color = useThemeColor({ light: lightColor, dark: darkColor }, 'text');
+  const flat = (StyleSheet.flatten(style) ?? {}) as TextStyle;
+  const font = resolveFont(flat);
 
-  return <DefaultText style={[{ color }, style]} {...otherProps} />;
+  return <DefaultText style={font ? [{ color }, flat, font] : [{ color }, flat]} {...otherProps} />;
 }
 
-// Views are see-through, so the page's race-track picture shows between the cards; a card paints its own `surface`.
+// Views are see-through: the paper shows behind them.
 export function View(props: ViewProps) {
   const { style, lightColor, darkColor, ...otherProps } = props;
   const theme = useColorScheme();

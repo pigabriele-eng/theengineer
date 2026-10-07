@@ -1,5 +1,6 @@
 // The Light / Dark / System choice of the Tools tab, remembered on the device: the browser's localStorage on the web,
-// expo-sqlite's localStorage on iOS and Android (the storage sign-in already uses).
+// expo-sqlite's localStorage on iOS and Android (the storage sign-in already uses). Until one is picked the app is
+// Light: the race programme as printed.
 import 'expo-sqlite/localStorage/install';
 import { useSyncExternalStore } from 'react';
 import { Appearance as NativeAppearance, Platform } from 'react-native';
@@ -12,14 +13,15 @@ export const APPEARANCES: { value: Appearance; label: string }[] = [
 ];
 
 const KEY = 'theengineer.appearance';
+const DEFAULT: Appearance = 'light';
 const listeners = new Set<() => void>();
 
 function read(): Appearance {
   try {
     const v = globalThis.localStorage?.getItem(KEY);
-    return v === 'light' || v === 'dark' ? v : 'system';
+    return v === 'light' || v === 'dark' || v === 'system' ? v : DEFAULT;
   } catch {
-    return 'system'; // storage blocked (private window...): follow the device
+    return DEFAULT; // storage blocked (private window...)
   }
 }
 
@@ -35,8 +37,7 @@ export function setAppearance(next: Appearance) {
   current = next;
   applyToSystem(next);
   try {
-    if (next === 'system') globalThis.localStorage?.removeItem(KEY);
-    else globalThis.localStorage?.setItem(KEY, next);
+    globalThis.localStorage?.setItem(KEY, next);
   } catch {
     // not remembered, but still applied for this visit
   }
