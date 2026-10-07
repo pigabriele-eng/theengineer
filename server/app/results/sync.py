@@ -127,10 +127,16 @@ def _round_row(db: Session, series: str, year: int, round_id: str, name: str, or
     return r
 
 
+def kind_of(code: str) -> str:
+    """Q1 qualifying, R2 race, FP1 and PQ (pre-qualifying) practice, T1 an official test session."""
+    return ("practice" if code.startswith(("FP", "PQ")) else "qualifying" if code.startswith("Q")
+            else "race" if code.startswith("R") else "test" if code.startswith("T") else "practice")
+
+
 def store_session(db: Session, rnd: rm.ResultRound, code: str, title: str, url: str, data: bytes) -> rm.ResultSession:
     """Read one result PDF into the round, replacing what was there for that session."""
     with heavy.lock:
-        parsed = parse_pdf(data)
+        parsed = parse_pdf(data, kind_of(code))
     return store_parsed(db, rnd, code, title, url, parsed)
 
 
@@ -155,8 +161,7 @@ def store_parsed(db: Session, rnd: rm.ResultRound, code: str, title: str, url: s
     """One classification into the round, replacing what was there for that session."""
     s = next((x for x in rnd.sessions if x.code == code), None)
     if s is None:
-        s = rm.ResultSession(code=code, title=title, kind="qualifying" if code.startswith("Q") else "race",
-                             source_url=url)
+        s = rm.ResultSession(code=code, title=title, kind=kind_of(code), source_url=url)
         rnd.sessions.append(s)
     s.title, s.source_url, s.fetched_at = parsed.title or title, url, datetime.now(UTC)
     s.starts_at, s.track, s.length_m = parsed.date, parsed.track, parsed.length_m

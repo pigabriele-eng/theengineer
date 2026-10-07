@@ -1,8 +1,8 @@
 """GT4 European Series results from its official site, gt4europeanseries.com (SRO).
 
 The results page has a season list and, for each season, a list of meetings (rounds); a meeting's page links one
-"Result List" PDF per session. Only qualifying and race classifications are read (Qualifying 1 and 2 set the grids
-of Race 1 and 2).
+"Result List" PDF per session. The official test sessions, free practice, pre-qualifying, qualifying and races are all
+read (Qualifying 1 and 2 set the grids of Race 1 and 2).
 """
 from __future__ import annotations
 
@@ -55,11 +55,21 @@ def rounds(client: httpx.Client, season_id: str) -> list[tuple[str, str]]:
 
 
 def session_code(title: str) -> str | None:
-    """'Qualifying 1' -> 'Q1', 'Race 2' -> 'R2'; practice and pre-qualifying are not read."""
-    m = re.match(r"\s*(Qualifying|Race)\s*(\d*)\s*$", title, re.I)
-    if not m:
-        return None
-    return ("Q" if m.group(1).lower().startswith("q") else "R") + (m.group(2) or "1")
+    """'Qualifying 1' -> 'Q1', 'Race 2' -> 'R2', 'Free Practice' -> 'FP1', 'Free Practice 2' -> 'FP2',
+    'Pre-Qualifying' -> 'PQ', 'Official Paid test session 2' -> 'T2' ('... Test sessions', all in one, -> 'T1')."""
+    t = title.strip()
+    m = re.match(r"(Qualifying|Race)\s*(\d*)$", t, re.I)
+    if m:
+        return ("Q" if m.group(1).lower().startswith("q") else "R") + (m.group(2) or "1")
+    m = re.match(r"Free\s+Practice\s*(\d*)$", t, re.I)
+    if m:
+        return "FP" + (m.group(1) or "1")
+    if re.match(r"Pre-?\s*Qualifying$", t, re.I):
+        return "PQ"
+    m = re.match(r"(?:Official\s+)?(?:Paid\s+)?Test\s*sessions?\s*(\d*)$", t, re.I)
+    if m:
+        return "T" + (m.group(1) or "1")
+    return None
 
 
 def round_sessions(client: httpx.Client, season_id: str, round_id: str) -> list[SessionLink]:
