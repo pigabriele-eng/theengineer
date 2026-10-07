@@ -84,3 +84,17 @@ def test_logs_saved_after_the_session_go_to_the_last_one_of_their_kind():
     t = at("2026-07-19T10:23:44")
     h, _ = run_names.place([(1, (t, t + timedelta(minutes=7)))], table, {1: ("R1",)})
     assert h == 0
+
+
+def test_quali_runs_too_close_to_call_are_told_by_who_started_race_1():
+    # Monza 2026: our Q1 and Q2 best laps 0.007 s apart; Rackl started Race 1, Piana took over after the stop
+    rackl, piana = 1, 2
+    q_a, q_b = (models.RunSession(id=i, driver_id=d) for i, d in ((10, piana), (11, rackl)))
+    r1_first, r1_second = models.RunSession(id=20, driver_id=rackl), models.RunSession(id=21, driver_id=piana)
+    t = datetime(2026, 5, 30, 19, 26)
+    order = {10: t, 11: t, 20: t, 21: t + timedelta(minutes=30)}
+    got = run_names._by_driver([q_a, q_b, r1_first, r1_second], {20: "R1", 21: "R1"},
+                               {10: ["Q2", "Q1"], 11: ["Q2", "Q1"]}, order)
+    assert got == {10: "Q2", 11: "Q1"}
+    # no driver known: still asked
+    assert run_names._by_driver([models.RunSession(id=10)], {}, {10: ["Q1", "Q2"]}, {10: t}) == {}
