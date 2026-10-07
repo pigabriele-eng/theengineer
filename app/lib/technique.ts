@@ -55,7 +55,7 @@ export type Budget = {
   other_gains: number;
 };
 
-export type InputRole = 'throttle' | 'brake' | 'steer' | 'gear' | 'rpm';
+export type InputRole = 'speed' | 'throttle' | 'brake' | 'steer' | 'gear' | 'rpm';
 /** The driver's inputs at the speed trace's points (every step_m metres): throttle %, brake pressure, steering,
  * gear and revs as the log's channels for those roles have them; null (or missing, from an older check) where the log
  * has no such channel. */
@@ -63,7 +63,14 @@ export type Inputs = Partial<Record<InputRole, number[] | null>>;
 /** Perfect driving's and the realistic target's inputs at the same points, to lay over the driver's: what their
  * speed asks of the car (throttle as a share of full drive, brake in the driver's own pressure per g, the gear and
  * revs of the ideal shift points). No steering: the model has none. */
-export type ModelInputs = { perfect: Inputs; realistic: Inputs };
+export type ModelInputs = { perfect: Inputs; realistic: Inputs; fixed?: Inputs; best?: BestTechnique };
+/** Where each section of the best-technique lap comes from: the driver's own quickest clean pass of the event (its
+ * run and lap), this lap's pass with its obvious mistakes taken out (built), or this lap's own pass, already the
+ * best clean one (own); and what it finds over this lap there. */
+export type BestSource = { code: string; start_m: number; end_m: number; kind: 'pass' | 'built' | 'own';
+  run?: string; number?: number; gain_s: number };
+/** The driver's best technique through every section, blended at the joins; speed among its inputs. */
+export type BestTechnique = Inputs & { time: number; sources: BestSource[] };
 /** Perfect driving's own phases (trace.model_phases indexes these). Its model has no pedal positions and never
  * coasts: it brakes, drives at the grip limit (part throttle) or at full throttle. */
 export const MODEL_PHASES = ['braking', 'at the grip limit', 'full throttle'] as const;

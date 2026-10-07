@@ -304,6 +304,9 @@ def test_technique_check_api(client):
         assert len(model["throttle"]) == len(tr["driven"])
         assert model["brake"] is None or len(model["brake"]) == len(tr["driven"])
         assert model["gear"] is None and model["rpm"] is None
+    overlay = tr["model"]["best"]
+    assert len(overlay["speed"]) == len(tr["driven"]) and len(overlay["sources"]) == len(body["sections"])
+    assert overlay["time"] <= lap_["time"] + 1e-3
     assert body["inputs"]["throttle"] == {"channel": "rThrottlePedal", "unit": "%"}
     assert body["inputs"]["brake"]["channel"] == "Brake Torque" and body["inputs"]["gear"]["channel"] is None
     # the session's quickest lap is the event's fastest: nothing to lay over it

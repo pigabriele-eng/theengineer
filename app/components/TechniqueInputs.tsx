@@ -37,6 +37,7 @@ type Props = {
 };
 
 const CHANNELS: { role: InputRole; title: string; unit: string; digits: number; missing: string }[] = [
+  { role: 'speed', title: 'Speed', unit: 'km/h', digits: 1, missing: 'speed' },
   { role: 'throttle', title: 'Throttle', unit: '%', digits: 0, missing: 'throttle' },
   { role: 'brake', title: 'Brake', unit: 'bar', digits: 0, missing: 'brake pressure' },
   { role: 'steer', title: 'Steering', unit: 'deg', digits: 1, missing: 'steering angle' },
@@ -98,8 +99,8 @@ export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, 
   };
 
   const have = CHANNELS.filter((ch) => inputs[ch.role]);
-  const missing = CHANNELS.filter((ch) => !inputs[ch.role]);
-  const fastestMissing = fastest ? have.filter((ch) => !fastest[ch.role]) : [];
+  const missing = CHANNELS.filter((ch) => ch.role !== 'speed' && !inputs[ch.role]);
+  const fastestMissing = fastest ? have.filter((ch) => ch.role !== 'speed' && !fastest[ch.role]) : [];
   const phaseColors = MODEL_PHASES.map((p) => phaseColor(theme, p)); // the driving phases' colours, as everywhere
   const unitOf = (ch: (typeof CHANNELS)[number]) => channels?.[ch.role]?.unit ?? ch.unit;
   const height = (role: InputRole) => (role === 'gear' ? (tall ? 84 : 64) : tall ? 112 : 84);

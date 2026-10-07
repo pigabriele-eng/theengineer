@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from app import heavy, models, storage
 from app.analysis import compact
 from app.analysis.shifts import ShiftModel
-from app.analysis.technique import INPUT_ROLES, check_lap, habits
+from app.analysis.technique import INPUT_ROLES, Pass, best_technique, check_lap, habits, section_times
 from app.db import SessionLocal, get_db
 from app.routers import reports
 from app.routers.sessions import official_corners
@@ -48,7 +48,8 @@ TECHNIQUE_VERSION = 11  # raise when the check changes, so every kept one is wor
 #    from another lap's pass on a flat-out section
 # 10: the speed stalling or dropping on the way out of a corner, whatever the pedal shows
 # 11: perfect driving's and the realistic target's inputs (throttle, brake, ideal gear and revs) to lay over the
-#     driver's, and the driver's revs among their inputs
+#     driver's, and the driver's revs among their inputs; the best technique: the driver's quickest clean pass of
+#     the event through every section, built where none beats the lap
 TRACES_WAIT_S = 3600  # longest the check waits for the logs to be read into lap traces
 HABITS_SHOWN = 12
 DETAILS_KEPT = 16  # laps' full checks kept in memory
@@ -414,7 +415,7 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
     prep, extras = prepared
     shifts = ShiftModel.of([x.trace for x in prep.laps])  # the event's shift points, from its own logs
     row.done, row.total = 0, len(prep.laps)
-    laps, blobs = [], {}
+    laps, details, passes = [], {}, []
     for i, x in enumerate(prep.laps):
         if i % 10 == 0:
             row.done, row.current = i, f"Checking lap {i + 1} of {len(prep.laps)}"
@@ -428,8 +429,16 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
                      "gap": out["gap"], "pit_from_m": out["pit_from_m"], "budget": out["budget"],
                      "mistakes": [{k: m[k] for k in SUMMARY_KEYS} for m in out["mistakes"]],
                      "obvious": out["obvious"], "detail": member})
-        blobs[member] = np.frombuffer(json.dumps({"mistakes": out["mistakes"], "trace": out["trace"]}).encode(),
-                                      np.uint8)
+        details[member] = {"mistakes": out["mistakes"], "trace": out["trace"]}
+        passes.append(Pass(x.run, x.number, x.time, x.driver, section_times(x.trace, prep.sections), out["obvious"],
+                           out["trace"]))
+    # every lap's best technique: the driver's quickest clean pass of the event through each section, or built
+    blobs = {}
+    for i, p in enumerate(passes):
+        member = f"l{i}"
+        details[member]["trace"]["model"]["best"] = reports._plain(best_technique(p, passes, prep.sections))
+        blobs[member] = np.frombuffer(json.dumps(details[member]).encode(), np.uint8)
+    del details, passes
     by_session: dict[int, list[list[dict]]] = {}
     for x in laps:
         by_session.setdefault(x["session_id"], []).append(x["mistakes"])

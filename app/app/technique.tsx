@@ -13,6 +13,8 @@ import { Text, View } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
 import { formatLap } from '@/lib/api';
 import {
+  BestSource,
+  BestTechnique,
   EventTechnique,
   fetchEventTechnique,
   fetchSessionTechnique,
@@ -322,7 +324,9 @@ function OnTheTrack({ answer, check, selected, onSelect, sideBySide }: { answer:
   const t = useText();
   const styles = useStyles();
   const [cursor, setCursor] = useState<number | null>(null);
-  const [overlay, setOverlay] = useState<Overlay>('perfect');
+  const [picked, setOverlay] = useState<Overlay | null>(null);
+  const overlay: Overlay = picked ?? (check.trace?.model?.best ? 'best' : 'perfect');
+  const best = check.trace?.model?.best ?? null;
   const mistake = check.mistakes[(selected ?? 0) - 1] ?? null;
   const bands = useMemo(() => bandsOf(check), [check]);
   // the map doesn't follow the cursor: kept as it is while the charts are scrubbed
@@ -366,9 +370,10 @@ function OnTheTrack({ answer, check, selected, onSelect, sideBySide }: { answer:
           )}
           {tr.inputs && tr.model && (
             <Tabs label="Laid over the driver's inputs, dashed" value={overlay} onChange={setOverlay}
-              items={OVERLAYS} />
+              items={OVERLAYS.filter((o) => o.key !== 'best' || best)} />
           )}
-          {tr.inputs && tr.model && overlay !== 'off' && (
+          {tr.inputs && overlay === 'best' && best && <BestSources best={best} lapTime={check.time} />}
+          {tr.inputs && tr.model && overlay !== 'off' && overlay !== 'best' && (
             <Text style={t.note}>
               The dashed line is what the {overlay === 'perfect' ? 'perfect lap' : 'realistic target'}&apos;s speed asks
               of the car: throttle as a share of the car&apos;s full drive, brake pressure at this driver&apos;s own
@@ -377,11 +382,12 @@ function OnTheTrack({ answer, check, selected, onSelect, sideBySide }: { answer:
             </Text>
           )}
           {tr.inputs ? (
-            <TechniqueInputs stepM={tr.step_m} points={tr.driven.length} inputs={tr.inputs}
+            <TechniqueInputs stepM={tr.step_m} points={tr.driven.length}
+              inputs={overlay === 'best' && best ? { ...tr.inputs, speed: tr.driven } : tr.inputs}
               fastest={fastest && !fastest.this_lap ? fastest.inputs : null}
               fastestLabel={fastest && !fastest.this_lap
                 ? `Fastest lap: ${fastest.run} L${fastest.number} · ${formatLap(fastest.time)}` : null}
-              model={overlay === 'off' ? null : tr.model?.[overlay] ?? null}
+              model={overlay === 'off' ? null : overlay === 'best' ? best : tr.model?.[overlay] ?? null}
               modelLabel={OVERLAYS.find((o) => o.key === overlay)?.legend ?? null}
               marks={(check.obvious ?? []).map((m) => ({ at_m: m.at_m, code: m.code }))}
               phases={tr.model_phases} channels={answer.inputs} bands={bands} selected={selected} onSelect={onSelect}
@@ -399,12 +405,34 @@ function OnTheTrack({ answer, check, selected, onSelect, sideBySide }: { answer:
   );
 }
 
-type Overlay = 'perfect' | 'realistic' | 'off';
+type Overlay = 'best' | 'perfect' | 'realistic' | 'off';
 const OVERLAYS: { key: Overlay; label: string; legend: string | null }[] = [
+  { key: 'best', label: 'Best', legend: 'Best technique' },
   { key: 'perfect', label: 'Perfect', legend: 'Perfect driving' },
   { key: 'realistic', label: 'Realistic', legend: 'Realistic target' },
   { key: 'off', label: 'Off', legend: null },
 ];
+
+/** Where the best-technique lap comes from, section by section, and what it finds over this lap. */
+function BestSources({ best, lapTime }: { best: BestTechnique; lapTime: number }) {
+  const t = useText();
+  const from = (x: BestSource) => (x.kind === 'pass' ? `${x.run} L${x.number}`
+    : x.kind === 'built' ? 'this lap, mistakes taken out' : 'this lap');
+  return (
+    <View style={{ gap: 4 }}>
+      <Text style={t.note}>
+        The dashed line through each corner is the driver&apos;s own quickest clean pass of the event (no obvious
+        mistake in it) where it beats this lap&apos;s; where none does, this lap&apos;s own pass with its obvious
+        mistakes taken out (built). Joined smoothly: {formatLap(best.time)}, {s2(lapTime - best.time)} quicker.
+      </Text>
+      {best.sources.map((x) => (
+        <Text key={`${x.code}${x.start_m}`} style={t.small}>
+          {`${x.code} · ${from(x)}${x.gain_s >= 0.005 ? ` · ${s2(x.gain_s)}` : ''}`}
+        </Text>
+      ))}
+    </View>
+  );
+}
 
 const bandsOf = (check: LapCheck) =>
   check.mistakes.map((m, i) => ({ n: i + 1, start_m: m.start_m, end_m: m.end_m, label: `${m.title} (${m.code})`,
