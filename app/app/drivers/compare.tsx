@@ -1,8 +1,9 @@
-import { Link, Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, TextInput, TextStyle } from 'react-native';
 
 import {
+  Dot,
   HabitList,
   LapStrip,
   SectionDeltaChart,
@@ -11,7 +12,9 @@ import {
   StyleTable,
   TechniqueList,
 } from '@/components/DriverTrends';
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { FigRow, MainAction, Meter, PageHead, Tabs, useText } from '@/components/Picks';
+import { Colophon, Fig, Page, Section, Swatch, TextLink, useWide } from '@/components/Programme';
+import { Text, View } from '@/components/Themed';
 import { TraceChart, useSeriesColors } from '@/components/TraceChart';
 import { DETECTED_CORNERS_NOTE, formatLap } from '@/lib/api';
 import {
@@ -24,16 +27,19 @@ import {
   Side,
   SIDES,
 } from '@/lib/drivers';
-import { Radius, themed } from '@/constants/Theme';
+import { face, Fonts, inkOn, themed, Type, useTheme } from '@/constants/Theme';
 
 type Mode = 'drivers' | 'sessions';
 const POLL_MS = 1000;
 const MAX_POLL_FAILURES = 20;
 
 // Two drivers (or two groups of sessions) at one track and car, over all their clean laps. ?event=<id> opens on the
-// track and car of that event's sessions.
+// track and car of that event's sessions. A page of the race programme: the headline, the two sides to pick, then
+// the result in numbered sections.
 export default function CompareDriversScreen() {
   const styles = useStyles();
+  const t = useText();
+  const theme = useTheme();
   const { event } = useLocalSearchParams<{ event?: string }>();
   const [groups, setGroups] = useState<OptionGroup[] | null>(null);
   const [groupIdx, setGroupIdx] = useState(0);
@@ -45,9 +51,6 @@ export default function CompareDriversScreen() {
   const [result, setResult] = useState<Comparison | null>(null);
   const [error, setError] = useState<string | null>(null);
   const failures = useRef(0);
-  const tint = useThemeColor({}, 'tint');
-  const onTint = useThemeColor({}, 'onTint');
-  const text = useThemeColor({}, 'text');
   const series = useSeriesColors();
   const colors: Record<Side, string> = { a: series.reference, b: series.compare };
 
@@ -135,111 +138,89 @@ export default function CompareDriversScreen() {
     return () => clearTimeout(timer);
   }, [job, running]);
 
-  const chip = (on: boolean) => StyleSheet.flatten([styles.chip, on && { borderColor: tint }]);
-
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <Page>
       <Stack.Screen options={{ title: 'Compare drivers' }} />
-      <Text style={styles.intro}>
-        Two drivers, or two groups of sessions, in the same car at the same track, over all their clean laps: where each
-        gains or loses, how often, the technique behind it and the habits that repeat.
-      </Text>
+      <PageHead title="Compare drivers"
+        dek="Two drivers, or two groups of sessions, in the same car at the same track, over all their clean laps: where each gains or loses, how often, the technique behind it and the habits that repeat." />
 
-      {groups == null && !error && <ActivityIndicator />}
+      {groups == null && !error && <ActivityIndicator color={theme.text} style={styles.loading} />}
       {groups != null && groups.length === 0 && (
-        <Text style={styles.dim}>No sessions with clean laps yet. Upload logs on the Sessions tab first.</Text>
-      )}
-
-      {groups != null && groups.length > 1 && (
-        <View style={styles.block}>
-          <Text style={styles.h3}>Track and car</Text>
-          <View style={styles.chips}>
-            {groups.map((g, i) => (
-              <Pressable key={`${g.track_id}-${g.car_id}`} onPress={() => pickGroup(i)} style={chip(i === groupIdx)}>
-                <Text style={i === groupIdx ? { color: tint } : undefined}>
-                  {g.track ?? 'Track not known'}
-                  {g.car ? ` · ${g.car}` : ''}
-                </Text>
-                <Text style={styles.chipSub}>{g.laps} clean laps</Text>
-              </Pressable>
-            ))}
-          </View>
-        </View>
+        <Text style={StyleSheet.flatten([t.note, styles.loading])}>
+          No sessions with clean laps yet. Upload logs on the Sessions page first.
+        </Text>
       )}
 
       {group && sides && (
-        <>
-          {groups!.length === 1 && (
-            <Text style={styles.sub}>
-              {group.track ?? 'Track not known'}
-              {group.car ? ` · ${group.car}` : ''} · {group.sessions.length} sessions · {group.laps} clean laps
-            </Text>
-          )}
-          <View style={styles.segment}>
-            {(['drivers', 'sessions'] as Mode[]).map((m) => (
-              <Pressable key={m} onPress={() => setMode(m)} style={chip(mode === m)}>
-                <Text style={mode === m ? { color: tint } : undefined}>{m === 'drivers' ? 'Two drivers' : 'Two groups of sessions'}</Text>
-              </Pressable>
-            ))}
-          </View>
-
-          {mode === 'drivers' ? (
-            <DriverSides group={group} driverOf={driverOf} setDriverOf={setDriverOf} colors={colors} chip={chip} tint={tint} />
-          ) : (
-            <SessionSides group={group} sideOf={sideOf} setSideOf={setSideOf} names={names} setNames={setNames}
-              colors={colors} tint={tint} text={text} onTint={onTint} />
-          )}
-
-          <Pressable
-            onPress={start}
-            disabled={!!problem || running}
-            style={StyleSheet.flatten([styles.button, { backgroundColor: tint }, (!!problem || running) && styles.disabled])}>
-            {running ? (
-              <ActivityIndicator color={onTint} />
-            ) : (
-              <Text style={StyleSheet.flatten([styles.buttonText, { color: onTint }])}>
-                {problem ??
-                  `Compare ${sides.a.label} and ${sides.b.label} (${sides.a.session_ids.length + sides.b.session_ids.length} sessions)`}
-              </Text>
+        <Section no={1} title="The two sides"
+          dek={`${group.track ?? 'Track not known'}${group.car ? ` · ${group.car}` : ''} · ${group.sessions.length} sessions · ${group.laps} clean laps`}>
+          <View style={styles.block}>
+            {groups!.length > 1 && (
+              <Tabs label="Track and car" value={groupIdx} onChange={pickGroup}
+                items={groups!.map((g, i) => ({ key: i, label: `${g.track ?? 'Track not known'}${g.car ? ` · ${g.car}` : ''}`,
+                  sub: `${g.laps} clean laps` }))} />
             )}
-          </Pressable>
-          {running && job && (
-            <View style={styles.block}>
-              <Text style={styles.sub}>
-                {job.status === 'queued'
-                  ? 'Waiting for another comparison to finish…'
-                  : job.done >= job.total
-                    ? 'Comparing the laps…'
-                    : `Reading ${job.current ?? 'the runs'} (${job.done + 1} of ${job.total} runs)…`}
-              </Text>
+            <Tabs big value={mode} onChange={setMode} items={[
+              { key: 'drivers', label: 'Two drivers' },
+              { key: 'sessions', label: 'Two groups of sessions' },
+            ]} />
+
+            {mode === 'drivers' ? (
+              <DriverSides group={group} driverOf={driverOf} setDriverOf={setDriverOf} colors={colors} />
+            ) : (
+              <SessionSides group={group} sideOf={sideOf} setSideOf={setSideOf} names={names} setNames={setNames}
+                colors={colors} />
+            )}
+
+            <MainAction onPress={start} disabled={!!problem} busy={running}
+              label={problem ??
+                `Compare ${sides.a.label} and ${sides.b.label} (${sides.a.session_ids.length + sides.b.session_ids.length} sessions)`} />
+            {running && job && (
               <View style={styles.progress}>
-                <View style={StyleSheet.flatten([styles.progressFill, { width: `${(100 * job.done) / Math.max(job.total, 1)}%`, backgroundColor: tint }])} />
+                <Text style={t.note}>
+                  {job.status === 'queued'
+                    ? 'Waiting for another comparison to finish…'
+                    : job.done >= job.total
+                      ? 'Comparing the laps…'
+                      : `Reading ${job.current ?? 'the runs'} (${job.done + 1} of ${job.total} runs)…`}
+                </Text>
+                <Meter share={job.done / Math.max(job.total, 1)} />
               </View>
-            </View>
-          )}
-        </>
+            )}
+          </View>
+        </Section>
       )}
-      {error && <Text style={styles.error}>{error}</Text>}
+      {error && <Text style={StyleSheet.flatten([t.error, styles.loading])}>{error}</Text>}
 
       {result && <Results key={job?.id} result={result} colors={colors} />}
-    </ScrollView>
+      <Colophon left="The Engineer · Compare drivers" right={group?.track ?? undefined} />
+    </Page>
   );
 }
 
-function DriverSides({ group, driverOf, setDriverOf, colors, chip, tint }: {
+/** A side's key: its colour as a flat block with its letter on it. */
+function SideKey({ side, color }: { side: Side; color: string }) {
+  const styles = useStyles();
+  return (
+    <View style={StyleSheet.flatten([styles.sideKey, { backgroundColor: color }])}>
+      <Text style={StyleSheet.flatten([styles.sideKeyText, { color: inkOn(color) }])}>{side.toUpperCase()}</Text>
+    </View>
+  );
+}
+
+function DriverSides({ group, driverOf, setDriverOf, colors }: {
   group: OptionGroup;
   driverOf: Partial<Record<Side, number>>;
   setDriverOf: (d: Partial<Record<Side, number>>) => void;
   colors: Record<Side, string>;
-  chip: (on: boolean) => object;
-  tint: string;
 }) {
   const styles = useStyles();
+  const t = useText();
   const untagged = group.sessions.filter((s) => s.driver_id == null).length;
   return (
     <View style={styles.block}>
       {group.drivers.length < 2 && (
-        <Text style={styles.sub}>
+        <Text style={t.note}>
           {group.drivers.length === 0 ? 'No session here has a driver yet.' : 'Only one driver has sessions here.'} Tag the
           sessions with their drivers, or compare two groups of sessions.
         </Text>
@@ -247,43 +228,33 @@ function DriverSides({ group, driverOf, setDriverOf, colors, chip, tint }: {
       {group.drivers.length > 0 &&
         SIDES.map((side) => (
           <View key={side} style={styles.sideRow}>
-            <View style={StyleSheet.flatten([styles.sideDot, styles.sideDotTop, { backgroundColor: colors[side] }])} />
-            <View style={styles.chips}>
-              {group.drivers.map((d) => {
-                const on = driverOf[side] === d.id;
-                return (
-                  <Pressable key={d.id} onPress={() => setDriverOf({ ...driverOf, [side]: d.id })} style={chip(on)}>
-                    <Text style={on ? { color: tint } : undefined}>{d.name}</Text>
-                    <Text style={styles.chipSub}>
-                      {d.laps} laps · best {formatLap(d.best)}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+            <SideKey side={side} color={colors[side]} />
+            <Tabs style={styles.flex} value={driverOf[side] ?? null}
+              onChange={(id) => id != null && setDriverOf({ ...driverOf, [side]: id })}
+              items={group.drivers.map((d) => ({ key: d.id as number | null, label: d.name,
+                sub: `${d.laps} laps · best ${formatLap(d.best)}` }))} />
           </View>
         ))}
       {untagged > 0 && (
-        <Link href="/drivers/tag" style={StyleSheet.flatten([styles.link, { color: tint }])}>
-          {untagged} session{untagged === 1 ? '' : 's'} here {untagged === 1 ? 'has' : 'have'} no driver: tag drivers
-        </Link>
+        <TextLink small href="/drivers/tag" arrow
+          label={`${untagged} session${untagged === 1 ? '' : 's'} here ${untagged === 1 ? 'has' : 'have'} no driver: tag drivers`} />
       )}
     </View>
   );
 }
 
-function SessionSides({ group, sideOf, setSideOf, names, setNames, colors, tint, text, onTint }: {
+function SessionSides({ group, sideOf, setSideOf, names, setNames, colors }: {
   group: OptionGroup;
   sideOf: Record<number, Side>;
   setSideOf: (s: Record<number, Side>) => void;
   names: Record<Side, string>;
   setNames: (n: Record<Side, string>) => void;
   colors: Record<Side, string>;
-  tint: string;
-  text: string;
-  onTint: string;
 }) {
   const styles = useStyles();
+  const t = useText();
+  const theme = useTheme();
+  const [focused, setFocused] = useState<Side | null>(null);
   const toggle = (id: number, side: Side) => {
     const next = { ...sideOf };
     if (next[id] === side) delete next[id];
@@ -295,52 +266,68 @@ function SessionSides({ group, sideOf, setSideOf, names, setNames, colors, tint,
       <View style={styles.names}>
         {SIDES.map((side) => (
           <View key={side} style={styles.nameBox}>
-            <View style={StyleSheet.flatten([styles.sideDot, { backgroundColor: colors[side] }])} />
+            <View style={styles.nameLabel}>
+              <SideKey side={side} color={colors[side]} />
+              <Text style={t.label}>Name of group {side.toUpperCase()}</Text>
+            </View>
             <TextInput
               value={names[side]}
               onChangeText={(v) => setNames({ ...names, [side]: v })}
               maxLength={120}
-              style={StyleSheet.flatten([styles.input, { color: text }])}
+              placeholderTextColor={theme.textMuted}
+              onFocus={() => setFocused(side)}
+              onBlur={() => setFocused((f) => (f === side ? null : f))}
+              style={StyleSheet.flatten([styles.input, focused === side && styles.inputFocus])}
               accessibilityLabel={`Name of group ${side.toUpperCase()}`}
             />
           </View>
         ))}
       </View>
-      {group.sessions.map((s) => (
-        <View key={s.id} style={styles.sessionRow}>
-          <View style={styles.sessionText}>
-            <Text style={styles.sessionName}>{s.name}</Text>
-            <Text style={styles.chipSub}>
-              {[s.date, s.driver, `${s.clean_laps} laps`, `best ${formatLap(s.best)}`].filter(Boolean).join(' · ')}
-            </Text>
-          </View>
-          {SIDES.map((side) => {
-            const on = sideOf[s.id] === side;
-            return (
-              <Pressable
-                key={side}
-                onPress={() => toggle(s.id, side)}
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked: on }}
-                accessibilityLabel={`${s.name} in ${names[side] || `group ${side.toUpperCase()}`}`}
-                style={StyleSheet.flatten([styles.sideToggle, on && { backgroundColor: colors[side], borderColor: colors[side] }])}>
-                <Text style={on ? { color: onTint, fontWeight: '700' } : { color: tint }}>{side.toUpperCase()}</Text>
-              </Pressable>
-            );
-          })}
+      <View>
+        <View style={styles.headRow}>
+          <Text style={StyleSheet.flatten([styles.th, styles.flex])}>Session</Text>
+          <Text style={StyleSheet.flatten([styles.th, styles.sideCol])}>Side</Text>
         </View>
-      ))}
+        {group.sessions.map((s) => (
+          <View key={s.id} style={styles.sessionRow}>
+            <View style={styles.flex}>
+              <Text style={styles.sessionName}>{s.name}</Text>
+              <Text style={t.labelMuted}>
+                {[s.date, s.driver, `${s.clean_laps} laps`, `best ${formatLap(s.best)}`].filter(Boolean).join(' · ')}
+              </Text>
+            </View>
+            {SIDES.map((side) => {
+              const on = sideOf[s.id] === side;
+              return (
+                <Pressable
+                  key={side}
+                  onPress={() => toggle(s.id, side)}
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: on }}
+                  accessibilityLabel={`${s.name} in ${names[side] || `group ${side.toUpperCase()}`}`}
+                  style={StyleSheet.flatten([styles.sideToggle, on && { backgroundColor: colors[side], borderColor: colors[side] }])}>
+                  <Text style={StyleSheet.flatten([styles.sideToggleText, on && { color: inkOn(colors[side]) }])}>
+                    {side.toUpperCase()}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        ))}
+      </View>
     </View>
   );
 }
 
 function Results({ result, colors }: { result: Comparison; colors: Record<Side, string> }) {
   const styles = useStyles();
+  const t = useText();
+  const theme = useTheme();
+  const wide = useWide();
   const { labels, summary } = result;
   const biggest = [...result.sections].filter((s) => s.clear).sort((x, y) => Math.abs(y.delta_s) - Math.abs(x.delta_s))[0];
   const [selected, setSelected] = useState<string | null>(biggest?.code ?? result.sections[0]?.code ?? null);
   const [cursor, setCursor] = useState<number | null>(null);
-  const ink = useThemeColor({}, 'text');
   const section = result.sections.find((s) => s.code === selected) ?? null;
   const gap = result.median_gap_s;
   const quicker: Side = gap > 0 ? 'b' : 'a';
@@ -348,171 +335,172 @@ function Results({ result, colors }: { result: Comparison; colors: Record<Side, 
   const distance = useMemo(() => result.delta_trace.gap_s.map((_, i) => i * step), [result, step]);
   const markers = result.sections.map((s) => ({ at: s.anchor_m, label: s.code }));
   const onCursor = useCallback((i: number | null) => setCursor(i), []);
+  let no = 1;
+  const next = () => ++no;
 
   return (
-    <View style={styles.results}>
-      <Text style={styles.headline}>
-        {Math.abs(gap) < 0.005
-          ? `${labels.a} and ${labels.b} are level on a typical lap`
-          : `${labels[quicker]} is ${Math.abs(gap).toFixed(2)} s quicker on a typical lap`}
-      </Text>
-      <Text style={styles.sub}>
-        {result.track ?? 'Track not known'} · median lap of each driver over all clean laps
-      </Text>
-      <View style={styles.kpis}>
-        {SIDES.map((side) => (
-          <View key={side} style={styles.kpi}>
-            <View style={styles.kpiHead}>
-              <View style={StyleSheet.flatten([styles.sideDot, { backgroundColor: colors[side] }])} />
-              <Text style={styles.kpiName} numberOfLines={1}>
-                {labels[side]}
-              </Text>
-            </View>
-            <Text style={styles.kpiValue}>{formatLap(summary[side].median)}</Text>
-            <Text style={styles.kpiSub}>median lap</Text>
-            <Text style={styles.kpiSub}>
-              best {formatLap(summary[side].best)} · {summary[side].laps} laps in {summary[side].runs} runs
-            </Text>
-            {summary[side].consistency != null && (
-              <Text style={styles.kpiSub}>consistency {summary[side].consistency!.toFixed(0)}/100</Text>
-            )}
-          </View>
-        ))}
-      </View>
-      {result.numbering === 'detected' && <Text style={styles.note}>{DETECTED_CORNERS_NOTE}</Text>}
+    <>
+      <Section no={next()} title="The typical lap"
+        dek={`${result.track ?? 'Track not known'} · the median lap of each driver over all their clean laps.`}>
+        <Text style={StyleSheet.flatten([styles.headline, wide ? null : styles.headlinePhone])}>
+          {Math.abs(gap) < 0.005
+            ? `${labels.a} and ${labels.b} are level on a typical lap.`
+            : `${labels[quicker]} is ${Math.abs(gap).toFixed(2)} s quicker on a typical lap.`}
+        </Text>
+        <FigRow style={styles.figs}>
+          {SIDES.map((side) => (
+            <Fig key={side} label={labels[side]} value={formatLap(summary[side].median)} size={wide ? 76 : 40}
+              bar={colors[side]}
+              note={`median lap · best ${formatLap(summary[side].best)} · ${summary[side].laps} laps in ${summary[side].runs} runs${
+                summary[side].consistency != null ? ` · consistency ${summary[side].consistency!.toFixed(0)}/100` : ''}`} />
+          ))}
+        </FigRow>
+        {result.numbering === 'detected' && <Text style={StyleSheet.flatten([t.note, styles.gapTop])}>{DETECTED_CORNERS_NOTE}</Text>}
+      </Section>
 
-      <Text style={styles.h2}>Where the time goes</Text>
-      <SectionDeltaChart result={result} colors={colors} selected={selected} onSelect={setSelected} />
+      <Section no={next()} title="Where the time goes" dek="Section by section, in lap order: who is quicker, by how much and how often.">
+        <View style={styles.narrow}>
+          <SectionDeltaChart result={result} colors={colors} selected={selected} onSelect={setSelected} />
+        </View>
+      </Section>
 
       {section && (
-        <View style={styles.block}>
-          <Text style={styles.h2}>{section.code}</Text>
-          <Text style={styles.sectionLine}>{sectionWords(section, labels)}.</Text>
-          <Text style={styles.sub}>
-            Split by what the drivers were doing ({labels.a} against {labels.b}, + = {labels.a} slower):{' '}
-            {Object.entries(section.gap_by_phase)
-              .filter(([, v]) => Math.abs(v) >= 0.005)
-              .map(([p, v]) => `${PHASE_SHORT[p as keyof typeof PHASE_SHORT]} ${seconds(v)}`)
-              .join(', ') || 'no difference'}
-            .
-          </Text>
-          <LapStrip result={result} section={section} colors={colors} />
-          <Text style={styles.h3}>Technique</Text>
-          <TechniqueList result={result} section={section} colors={colors} />
-          <Text style={styles.h3}>Habits here</Text>
-          <SectionHabits result={result} code={section.code} colors={colors} />
-        </View>
+        <Section no={next()} title={section.code} dek={`${sectionWords(section, labels)}.`}>
+          <View style={styles.block}>
+            <Text style={StyleSheet.flatten([t.body, styles.narrow])}>
+              Split by what the drivers were doing ({labels.a} against {labels.b}, + = {labels.a} slower):{' '}
+              {Object.entries(section.gap_by_phase)
+                .filter(([, v]) => Math.abs(v) >= 0.005)
+                .map(([p, v]) => `${PHASE_SHORT[p as keyof typeof PHASE_SHORT]} ${seconds(v)}`)
+                .join(', ') || 'no difference'}
+              .
+            </Text>
+            <Text style={t.sub}>Every lap in {section.code}</Text>
+            <LapStrip result={result} section={section} colors={colors} />
+            <View style={wide ? styles.twoCols : styles.block}>
+              <View style={wide ? styles.col : undefined}>
+                <Text style={StyleSheet.flatten([t.sub, styles.subGap])}>Technique</Text>
+                <TechniqueList result={result} section={section} colors={colors} />
+              </View>
+              <View style={wide ? styles.col : styles.block}>
+                <Text style={StyleSheet.flatten([t.sub, styles.subGap])}>Habits here</Text>
+                <SectionHabits result={result} code={section.code} colors={colors} />
+              </View>
+            </View>
+          </View>
+        </Section>
       )}
 
-      <Text style={styles.h2}>Along the lap</Text>
-      <TraceChart
-        title={`Gap, + = ${labels.a} behind`}
-        unit="s"
-        distance={distance}
-        series={[{ values: result.delta_trace.gap_s, color: ink }]}
-        cursor={cursor}
-        onCursor={onCursor}
-        markers={markers}
-        zeroLine
-      />
-      <View style={styles.legendRow}>
-        {SIDES.map((side) => (
-          <View key={side} style={styles.kpiHead}>
-            <View style={StyleSheet.flatten([styles.sideDot, { backgroundColor: colors[side] }])} />
-            <Text style={styles.sub}>{labels[side]}</Text>
+      <Section no={next()} title="Along the lap" dek="Both lines are the median over every clean lap of each driver, metre by metre, from the start/finish line.">
+        <View style={styles.charts}>
+          <TraceChart
+            title={`Gap, + = ${labels.a} behind`}
+            unit="s"
+            distance={distance}
+            series={[{ values: result.delta_trace.gap_s, color: theme.chart.ink }]}
+            cursor={cursor}
+            onCursor={onCursor}
+            markers={markers}
+            zeroLine
+          />
+          <View style={styles.legendRow}>
+            {SIDES.map((side) => (
+              <Swatch key={side} color={colors[side]} label={labels[side]} width={14} height={4} />
+            ))}
           </View>
-        ))}
-      </View>
-      <TraceChart
-        title="Typical speed"
-        unit="km/h"
-        distance={distance}
-        series={SIDES.map((side) => ({ values: result.speed_trace[side], color: colors[side] }))}
-        cursor={cursor}
-        onCursor={onCursor}
-        markers={markers}
-      />
-      <Text style={styles.note}>
-        Both lines are the median over every clean lap of each driver, metre by metre, from the start/finish line.
-      </Text>
+          <TraceChart
+            title="Typical speed"
+            unit="km/h"
+            distance={distance}
+            series={SIDES.map((side) => ({ values: result.speed_trace[side], color: colors[side] }))}
+            cursor={cursor}
+            onCursor={onCursor}
+            markers={markers}
+          />
+        </View>
+      </Section>
 
-      <Text style={styles.h2}>Habits that cost time</Text>
-      <Text style={styles.sub}>
-        Patterns that repeat over many laps, how often they happen and what they cost against the laps without them.
-      </Text>
-      {SIDES.map((side) => (
-        <HabitList key={side} result={result} side={side} colors={colors} />
-      ))}
+      <Section no={next()} title="Habits that cost time"
+        dek="Patterns that repeat over many laps, how often they happen and what they cost against the laps without them.">
+        <View style={wide ? styles.twoCols : styles.block}>
+          {SIDES.map((side) => (
+            <View key={side} style={wide ? styles.col : undefined}>
+              <HabitList result={result} side={side} colors={colors} />
+            </View>
+          ))}
+        </View>
+      </Section>
 
-      <Text style={styles.h2}>Driving style</Text>
-      <StyleTable result={result} colors={colors} />
+      <Section no={next()} title="Driving style" dek="Lap-wide habits, the median lap of each driver.">
+        <StyleTable result={result} colors={colors} />
+      </Section>
 
-      <Text style={styles.h2}>Runs</Text>
-      <View style={styles.runRow}>
-        <Text style={StyleSheet.flatten([styles.runName, styles.head])}>Session</Text>
-        <Text style={StyleSheet.flatten([styles.runCell, styles.head])}>Clean laps</Text>
-        <Text style={StyleSheet.flatten([styles.runCell, styles.head])}>Best</Text>
-        <Text style={StyleSheet.flatten([styles.runCell, styles.head])}>Median</Text>
-      </View>
-      {[...result.runs]
-        .sort((x, y) => x.session.localeCompare(y.session, undefined, { numeric: true }))
-        .map((r) => (
-          <View key={r.run} style={styles.runRow}>
-            <View style={StyleSheet.flatten([styles.sideDot, { backgroundColor: colors[r.side] }])} />
-            <Text style={styles.runName} numberOfLines={1}>
-              {r.session}
-            </Text>
-            <Text style={styles.runCell}>{r.laps}</Text>
-            <Text style={styles.runCell}>{formatLap(r.best)}</Text>
-            <Text style={styles.runCell}>{formatLap(r.median)}</Text>
+      <Section no={next()} title="Runs" dek="The runs on each side.">
+        <View style={styles.runs}>
+          <View style={styles.headRow}>
+            <View style={styles.runKey} />
+            <Text style={StyleSheet.flatten([styles.th, styles.flex])}>Session</Text>
+            <Text style={StyleSheet.flatten([styles.th, styles.runCell])}>Clean laps</Text>
+            <Text style={StyleSheet.flatten([styles.th, styles.runCell])}>Best</Text>
+            <Text style={StyleSheet.flatten([styles.th, styles.runCell])}>Median</Text>
           </View>
-        ))}
-    </View>
+          {[...result.runs]
+            .sort((x, y) => x.session.localeCompare(y.session, undefined, { numeric: true }))
+            .map((r) => (
+              <View key={r.run} style={styles.runRow}>
+                <View style={styles.runKey}><Dot color={colors[r.side]} /></View>
+                <Text style={StyleSheet.flatten([styles.runName, styles.flex])} numberOfLines={1}>
+                  {r.session}
+                </Text>
+                <Text style={styles.runCell}>{r.laps}</Text>
+                <Text style={styles.runCell}>{formatLap(r.best)}</Text>
+                <Text style={styles.runCell}>{formatLap(r.median)}</Text>
+              </View>
+            ))}
+        </View>
+      </Section>
+    </>
   );
 }
 
 const useStyles = themed((c) => ({
-  container: { padding: 16, gap: 12, maxWidth: 900, width: '100%', alignSelf: 'center' },
-  intro: { opacity: 0.7, lineHeight: 20 },
-  block: { gap: 8 },
-  h2: { fontSize: 18, fontWeight: '700', marginTop: 12 },
-  h3: { fontSize: 15, fontWeight: '700', marginTop: 8 },
-  sub: { opacity: 0.7, lineHeight: 19 },
-  dim: { opacity: 0.5 },
-  note: { fontSize: 12, opacity: 0.6, lineHeight: 17 },
-  error: { color: c.error },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, flex: 1 },
-  chip: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: c.surface },
-  chipSub: { fontSize: 12, opacity: 0.6, fontVariant: ['tabular-nums'] },
-  segment: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-  sideRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  sideDot: { width: 12, height: 12, borderRadius: 6 },
-  sideDotTop: { marginTop: 4 },
-  link: { fontSize: 14 },
-  names: { flexDirection: 'row', gap: 12, flexWrap: 'wrap' },
-  nameBox: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, minWidth: 150 },
-  input: { flex: 1, minWidth: 0, borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, paddingHorizontal: 10, paddingVertical: 8, fontSize: 16, backgroundColor: c.surface },
-  sessionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderBottomWidth: 1, borderColor: c.separator },
-  sessionText: { flex: 1, backgroundColor: 'transparent' },
-  sessionName: { fontWeight: '600' },
-  sideToggle: { width: 40, height: 34, borderRadius: 8, borderWidth: 1, borderColor: c.border, alignItems: 'center', justifyContent: 'center', backgroundColor: c.surface },
-  button: { borderRadius: 8, padding: 14, alignItems: 'center' },
-  disabled: { opacity: 0.5 },
-  buttonText: { fontWeight: '600', fontSize: 16, textAlign: 'center' },
-  progress: { height: 4, borderRadius: 2, backgroundColor: c.fill, overflow: 'hidden' },
-  progressFill: { height: 4 },
-  results: { gap: 10, marginTop: 8 },
-  headline: { fontSize: 22, fontWeight: '700', lineHeight: 28 },
-  kpis: { flexDirection: 'row', gap: 16, flexWrap: 'wrap' },
-  kpi: { flex: 1, minWidth: 150, gap: 2 },
-  kpiHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  kpiName: { fontWeight: '600', flexShrink: 1 },
-  kpiValue: { fontSize: 26, fontWeight: '600' },
-  kpiSub: { fontSize: 12, opacity: 0.65, fontVariant: ['tabular-nums'] },
-  sectionLine: { fontSize: 15, lineHeight: 21 },
-  legendRow: { flexDirection: 'row', gap: 16, flexWrap: 'wrap' },
-  runRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6, borderBottomWidth: 1, borderColor: c.separator },
-  runName: { flex: 1 },
-  runCell: { width: 72, textAlign: 'right', fontVariant: ['tabular-nums'] },
-  head: { fontWeight: '600', opacity: 0.7, fontSize: 13 },
+  loading: { marginTop: 24, alignSelf: 'flex-start' },
+  block: { gap: 16 },
+  flex: { flex: 1, minWidth: 0 },
+  narrow: { maxWidth: 820 },
+  gapTop: { marginTop: 12 },
+  sideRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 14 },
+  sideKey: { width: 26, height: 26, alignItems: 'center', justifyContent: 'center' },
+  sideKeyText: { fontFamily: Fonts.display, fontSize: 15, lineHeight: 18 },
+  names: { flexDirection: 'row', columnGap: 24, rowGap: 14, flexWrap: 'wrap' },
+  nameBox: { flex: 1, minWidth: 220, gap: 6 },
+  nameLabel: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  // the browser's own focus ring is rounded: the rule turns red instead
+  input: { fontFamily: Fonts.body, fontSize: 17, color: c.text, borderBottomWidth: 2, borderColor: c.rule,
+    paddingVertical: 6, paddingHorizontal: 0, outlineWidth: 0 } as TextStyle,
+  inputFocus: { borderColor: c.mark },
+  headRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, borderBottomWidth: 1, borderColor: c.rule,
+    paddingBottom: 5 },
+  th: { ...Type.label, fontSize: 11, color: c.text },
+  sideCol: { width: 88, textAlign: 'center' },
+  sessionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderBottomWidth: 1,
+    borderColor: c.separator },
+  sessionName: { fontFamily: face('body', 600), fontSize: 16, color: c.text },
+  sideToggle: { width: 40, height: 36, borderWidth: 1, borderColor: c.rule, alignItems: 'center', justifyContent: 'center' },
+  sideToggleText: { fontFamily: Fonts.display, fontSize: 16, lineHeight: 19, color: c.text },
+  progress: { gap: 8, maxWidth: 640 },
+  headline: { fontFamily: face('body', 600), fontSize: 26, lineHeight: 34, color: c.text, maxWidth: 860 },
+  headlinePhone: { fontSize: 21, lineHeight: 28 },
+  figs: { marginTop: 18 },
+  twoCols: { flexDirection: 'row', gap: 32, alignItems: 'flex-start' },
+  col: { flex: 1, minWidth: 0, gap: 10 },
+  subGap: { marginBottom: 4 },
+  charts: { gap: 14 },
+  legendRow: { flexDirection: 'row', columnGap: 22, rowGap: 8, flexWrap: 'wrap' },
+  runs: { maxWidth: 760 },
+  runRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderBottomWidth: 1,
+    borderColor: c.separator },
+  runKey: { width: 14 },
+  runName: { fontFamily: Fonts.body, fontSize: 15, color: c.text },
+  runCell: { ...Type.number, width: 76, textAlign: 'right', fontSize: 14, color: c.text },
 }));

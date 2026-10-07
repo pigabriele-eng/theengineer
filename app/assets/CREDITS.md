@@ -3,11 +3,14 @@
 The app shows each photo's credit on screen where the photo is (top-right corner of a page's photo, or the caption under
 a framed picture). Tapping the credit opens the photo's page.
 
-## Photos (assets/images)
+## Photos (assets/images/tracks)
 
-All three were downsized to 1600 px wide and saved as JPEG for the app.
+One photo per track, named by its venue key (lib/venues.ts), plus default.jpg for a track without one. They are made
+by `npm run track-photos` (scripts/track-photos.mjs) from the photo list tracks.json: each downsized to at most 1600 px
+wide and compressed to under about 300 KB. The script also writes constants/trackPhotos.ts with each credit, adding
+"cropped" to a CC BY-SA credit. Add a track's entry here when you add its photo.
 
-### hockenheim-straight.jpg
+### hockenheim.jpg
 
 - What: Hockenheimring, main grandstands along the start/finish straight (2010).
 - Source: https://commons.wikimedia.org/wiki/File:Hockenheimring_start-ziel-gerade_2010.jpg
@@ -16,7 +19,7 @@ All three were downsized to 1600 px wide and saved as JPEG for the app.
 - Changes: downsized, and shown cropped to fill each page's photo frame. The modified file stays under CC BY-SA 4.0.
 - Credit shown: "Photo: Kmtextor / Wikimedia Commons, CC BY-SA 4.0, cropped"
 
-### track-dusk.jpg
+### default.jpg
 
 - What: Zwartkops Raceway, low sun over an empty corner.
 - Source: https://commons.wikimedia.org/wiki/File:Backplate_%E2%80%93_Zwartkops_Curve_Sunset_(Dimitrios_Savva_and_Jarod_Guest_via_Poly_Haven)_39.jpg
@@ -24,7 +27,7 @@ All three were downsized to 1600 px wide and saved as JPEG for the app.
 - Licence: CC0 (http://creativecommons.org/publicdomain/zero/1.0/); no attribution required, credited anyway.
 - Credit shown: "Photo: Dimitrios Savva and Jarod Guest via Poly Haven / Wikimedia Commons, CC0"
 
-### zandvoort-aerial.jpg
+### zandvoort.jpg
 
 - What: Circuit Zandvoort from the air.
 - Source: https://commons.wikimedia.org/wiki/File:Aerial_view_of_Motorsport_race_track_Circuit_Zandvoort_Formula_one_(40889997713).jpg

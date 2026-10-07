@@ -11,11 +11,12 @@ import {
 } from 'react-native';
 import Svg, { Circle, Line, Polyline, Text as SvgText } from 'react-native-svg';
 
+import { Fig, useWide } from '@/components/Programme';
 import { Text, useThemeColor } from '@/components/Themed';
 import { useSeriesColors } from '@/components/TraceChart';
 import { formatLap } from '@/lib/api';
 import { fetchTrackGrip, GripSession, pct, TrackGripAnswer, TrackGripResult } from '@/lib/trackGrip';
-import { chartPlate, Fonts, themed, useTheme } from '@/constants/Theme';
+import { chartPlate, Fonts, themed, Type, useTheme } from '@/constants/Theme';
 
 const POLL_MS = 4000;
 const C = { left: 44, right: 12, top: 22, bottom: 44, height: 230 };
@@ -34,7 +35,8 @@ const clock = (iso: string | null) => (iso && iso.length >= 16 ? iso.slice(11, 1
 
 /** The event report's track grip section: how the track's grip moved session by session in time order, with the
  * tyres' state taken out, and the plain-words read of it. Waits (and asks again) while the report reads the logs. */
-export function TrackGrip({ event }: { event: number }) {
+// bare: inside a report section that already names it and says what it shows
+export function TrackGrip({ event, bare }: { event: number; bare?: boolean }) {
   const styles = useStyles();
   const [answer, setAnswer] = useState<TrackGripAnswer | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -73,11 +75,13 @@ export function TrackGrip({ event }: { event: number }) {
   const result = answer?.result;
   return (
     <View style={styles.wrap}>
-      <Text style={styles.h2}>Track grip</Text>
-      <Text style={styles.dim}>
-        Grip at the limit session by session{answer ? ` (${answer.car.label})` : ''}, with the tyres&apos; state taken
-        out: the rest is the track rubbering in, its temperature and the weather.
-      </Text>
+      {!bare && <Text style={styles.h2}>Track grip</Text>}
+      {!bare && (
+        <Text style={styles.dim}>
+          Grip at the limit session by session{answer ? ` (${answer.car.label})` : ''}, with the tyres&apos; state taken
+          out: the rest is the track rubbering in, its temperature and the weather.
+        </Text>
+      )}
       {busy && (
         <View style={styles.loading}>
           <ActivityIndicator />
@@ -92,17 +96,43 @@ export function TrackGrip({ event }: { event: number }) {
         </View>
       )}
       {result && !result.available && result.notes.map((n) => <Text key={n} style={styles.dim}>{n}</Text>)}
-      {result && result.available && <Body result={result} />}
+      {result && result.available && <Body result={result} bare={bare} />}
     </View>
   );
 }
 
 export default TrackGrip;
 
-function Body({ result }: { result: TrackGripResult }) {
+function Body({ result, bare }: { result: TrackGripResult; bare?: boolean }) {
   const styles = useStyles();
   const tint = useThemeColor({}, 'tint');
+  const wide = useWide();
+  const c = useTheme();
   const [first, ...rest] = result.read;
+  const h = result.headline;
+  // in the report: the change as a very large figure beside the chart, the first read under it
+  if (bare && h) {
+    const up = h.change_pct >= 0;
+    const tone = Math.abs(h.change_pct) < 0.5 ? c.text : up ? c.delta.gain : c.delta.loss;
+    return (
+      <>
+        <View style={wide ? styles.tg : styles.tgPhone}>
+          <View style={wide ? styles.tgLead : undefined}>
+            <Fig label={`Grip ${up ? 'rose' : 'fell'} about`} value={`${up ? '+' : '−'}${Math.abs(h.change_pct).toFixed(0)}`}
+              unit="%" size={wide ? 132 : 104} color={tone} bar={tone} />
+            {h.pm != null && <Text style={styles.pm}>± {h.pm.toFixed(1)} %</Text>}
+            {first && <Text style={styles.leadText}>{first}</Text>}
+          </View>
+          <View style={styles.tgChart}>
+            <GripChart sessions={result.sessions} base={result.base ?? result.sessions[0]?.name ?? ''} />
+          </View>
+        </View>
+        {rest.map((r) => <Text key={r} style={styles.para}>{r}</Text>)}
+        {result.notes.map((n) => <Text key={n} style={styles.dim}>{n}</Text>)}
+        <Method result={result} />
+      </>
+    );
+  }
   return (
     <>
       {first && (
@@ -338,18 +368,24 @@ const useStyles = themed((c) => ({
   h2: { fontSize: 20, fontWeight: '700' },
   loading: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   error: { color: c.error },
-  dim: { opacity: 0.6, fontSize: 13, lineHeight: 18 },
-  callout: { borderLeftWidth: 3, paddingLeft: 12, paddingVertical: 4 },
-  calloutText: { fontSize: 16, lineHeight: 23 },
+  dim: { fontFamily: Fonts.label, fontSize: 12, lineHeight: 16, color: c.textMuted },
+  tg: { flexDirection: 'row', gap: 32 },
+  tgPhone: { flexDirection: 'column', gap: 16 },
+  tgLead: { width: 300 },
+  tgChart: { flex: 1, minWidth: 0 },
+  pm: { fontFamily: Fonts.display, fontSize: 34, lineHeight: 38, marginTop: 12, color: c.text },
+  leadText: { fontFamily: Fonts.body, fontSize: 18, lineHeight: 25, marginTop: 12, color: c.text },
+  callout: { borderLeftWidth: 10, paddingLeft: 16, paddingVertical: 4 },
+  calloutText: { fontFamily: Fonts.body, fontSize: 18, lineHeight: 25, color: c.text },
   para: { lineHeight: 20 },
   method: { gap: 6 },
   chart: { gap: 4, maxWidth: 760, ...chartPlate(c) },
-  chartTitle: { fontSize: 13, fontWeight: '600' },
+  chartTitle: { ...Type.label, color: c.text },
   readout: { fontSize: 13, minHeight: 36, fontVariant: ['tabular-nums'] },
   legend: { fontSize: 12, opacity: 0.6, lineHeight: 17 },
   toggle: { fontSize: 13, fontWeight: '600', opacity: 0.75, paddingVertical: 4 },
   tRow: { flexDirection: 'row', borderBottomWidth: 1, borderColor: c.separator, paddingVertical: 3 },
-  tHead: { fontSize: 12, fontWeight: '600', opacity: 0.65, textAlign: 'right', paddingRight: 8 },
+  tHead: { ...Type.label, fontSize: 11, color: c.textSecondary, textAlign: 'right', paddingRight: 8 },
   tCell: { fontSize: 13, fontVariant: ['tabular-nums'], textAlign: 'right', paddingRight: 8 },
   tLeft: { textAlign: 'left' },
 }));

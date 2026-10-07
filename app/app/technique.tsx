@@ -1,12 +1,14 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
 
-import { Bars, useChartColors } from '@/components/ReportCharts';
+import { Choice, FigRow, Meter, Notice, PageHead, Tabs, useText } from '@/components/Picks';
+import { Colophon, Fig, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
+import { Bars } from '@/components/ReportCharts';
+import { SessionSwitcher, useEventFolder } from '@/components/SessionSwitcher';
 import { TechniqueInputs } from '@/components/TechniqueInputs';
 import { TechniqueTrace } from '@/components/TechniqueTrace';
-import { SessionSwitcher, useEventFolder } from '@/components/SessionSwitcher';
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { Text, View } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
 import { formatLap } from '@/lib/api';
 import {
@@ -21,10 +23,10 @@ import {
   SessionTechnique,
   working,
 } from '@/lib/technique';
-import { deltaColor, phaseColor, Radius, themed, useTheme } from '@/constants/Theme';
+import { deltaColor, face, Fonts, phaseColor, themed, Type, useTheme } from '@/constants/Theme';
 
 const POLL_MS = 2000;
-const WIDE = 900;
+const SIDE_BY_SIDE = 900; // from this wide the map and the close-up sit side by side
 const CLOSE_UP_M = 150; // metres either side of a mistake in its close-up
 const s2 = (v: number) => `${v.toFixed(2)} s`;
 const m0 = (v: number) => `${Math.round(v)} m`;
@@ -34,10 +36,12 @@ const HABITS_SHOWN = 6;
 /** One lap's driving mistakes against perfect driving, most costly first, what to do instead and what each costs;
  * then how the gap to the perfect lap adds up, the mistakes that repeat across the session and the event, and the
  * lap on the track map and against perfect driving's speed. Opened from a session (?session=) or an event's report
- * (?event=, at the event's quickest lap); ?lap= picks the lap. */
+ * (?event=, at the event's quickest lap); ?lap= picks the lap. A page of the race programme: the headline, the lap's
+ * big figures, then numbered sections. */
 export default function TechniqueScreen() {
-  const theme = useTheme();
+  const t = useText();
   const styles = useStyles();
+  const theme = useTheme();
   const params = useLocalSearchParams<{ session?: string; event?: string; lap?: string }>();
   const router = useRouter();
   const eventParam = params.event ? Number(params.event) : null;
@@ -50,7 +54,7 @@ export default function TechniqueScreen() {
   const [nonce, setNonce] = useState(0);
   const [selected, setSelected] = useState<number | null>(1);
   const { width } = useWindowDimensions();
-  const wide = width >= WIDE;
+  const sideBySide = width >= SIDE_BY_SIDE;
 
   // the session's check of one lap; while the server works it out, ask again every couple of seconds
   useEffect(() => {
@@ -131,125 +135,134 @@ export default function TechniqueScreen() {
   }, [sessionId]);
 
   if (sessionId == null && eventParam == null) {
-    return <Text style={styles.pad}>Open the technique check from a session, or from an event&apos;s report.</Text>;
+    return (
+      <Page>
+        <PageHead title="Technique check" dek="Open the technique check from a session, or from an event's report." />
+      </Page>
+    );
   }
   const head = answer ?? ev;
   const busy = head != null && working(head.status);
   const sessions = ev?.sessions.filter((s) => s.laps > 0) ?? [];
-  const mistake = check?.mistakes[(selected ?? 0) - 1] ?? null;
+  const dek = answer
+    ? [answer.session.name, answer.session.driver, answer.event?.name, answer.track].filter(Boolean).join(' · ')
+    : 'Every mistake on a lap against perfect driving, and what each costs.';
+  // the sections are numbered in the order they are shown
+  let no = 0;
+  const next = () => ++no;
 
   return (
-    <ScrollView contentContainerStyle={styles.outer}>
+    <Page>
       <Stack.Screen options={{ title: answer ? `Technique check · ${answer.session.name}` : 'Technique check' }} />
-      <View style={styles.page}>
-        <View style={styles.head}>
-          <Text style={styles.h1}>Technique check</Text>
-          {answer && (
-            <Text style={styles.sub}>
-              {answer.session.name}
-              {answer.session.driver ? ` · ${answer.session.driver}` : ''}
-              {answer.event ? ` · ${answer.event.name}` : ''}
-              {answer.track ? ` · ${answer.track}` : ''}
-            </Text>
-          )}
-          <Text style={styles.note}>
-            Every mistake on the lap against perfect driving: the lap&apos;s own line driven at the best the car has
-            shown at every place of the track, across the {answer?.scope === 'session' ? 'session' : 'whole event'}.
-            Each costs what a driver can find: the time against the realistic target, the grip a quick lap usually
-            shows at each place.
-          </Text>
-        </View>
+      <PageHead title="Technique check" dek={dek} />
+      <Text style={StyleSheet.flatten([t.note, styles.intro])}>
+        Every mistake on the lap against perfect driving: the lap&apos;s own line driven at the best the car has shown
+        at every place of the track, across the {answer?.scope === 'session' ? 'session' : 'whole event'}. Each costs
+        what a driver can find: the time against the realistic target, the grip a quick lap usually shows at each place.
+      </Text>
 
-        {!head && !error && <ActivityIndicator />}
-        {error && <Text style={styles.error}>Can&apos;t reach the server: {error}</Text>}
+      <View style={styles.states}>
+        {!head && !error && <ActivityIndicator color={theme.text} style={styles.left} />}
+        {error && <Text style={t.error}>Can&apos;t reach the server: {error}</Text>}
         {head && busy && <Progress head={head} />}
         {head?.status === 'failed' && (
-          <View style={styles.banner}>
-            <Text style={styles.bannerText}>{head.error ?? 'The technique check couldn’t be worked out.'}</Text>
-            {sessionId != null && (
-              <Pressable accessibilityRole="button" onPress={retry} style={styles.smallButton}>
-                <Text style={styles.smallButtonText}>Try again</Text>
-              </Pressable>
-            )}
-          </View>
+          <Notice>
+            <Text style={t.body}>{head.error ?? 'The technique check couldn’t be worked out.'}</Text>
+            {sessionId != null && <TextLink label="Try again" onPress={retry} red />}
+          </Notice>
         )}
         {head?.status === 'empty' && (
-          <Text style={styles.note}>No clean laps to check yet. Upload the logs; every clean lap is checked once they
-            are imported.</Text>
+          <Text style={t.note}>No clean laps to check yet. Upload the logs; every clean lap is checked once they are
+            imported.</Text>
         )}
         {answer?.stale && check && (
-          <Text style={styles.note}>
+          <Text style={t.note}>
             This check is from before the sessions last changed; the new one replaces it when it is ready.
           </Text>
         )}
+      </View>
 
+      <View style={styles.pickers}>
         {folder && folder.id != null && (
           <SessionSwitcher folder={folder} current={sessionId} onlyTimed onPick={(s) => pickSession(s.id)} />
         )}
         {!folder && sessions.length > 1 && (
-          <View style={styles.block}>
-            <Text style={styles.h4}>Session</Text>
-            <View style={styles.chips}>
-              {sessions.map((s) => (
-                <Chip key={s.id} on={s.id === sessionId} onPress={() => pickSession(s.id)}
-                  label={s.name} detail={s.best ? formatLap(s.best.time) : undefined} />
-              ))}
-            </View>
-          </View>
+          <Tabs label="Session" value={sessionId} onChange={(id) => id != null && pickSession(id)}
+            items={sessions.map((s) => ({ key: s.id as number | null, label: s.name,
+              sub: s.best ? formatLap(s.best.time) : undefined }))} />
         )}
         {answer && answer.laps.length > 0 && (
-          <View style={styles.block}>
-            <Text style={styles.h4}>Lap {loading ? '…' : ''}</Text>
-            <View style={styles.chips}>
-              {answer.laps.map((l) => (
-                <Chip key={l.number} on={l.number === check?.number} onPress={() => pickLap(l.number)}
-                  label={`${l.number}`} detail={`${formatLap(l.time)}${l.number === answer.best_lap ? ' best' : ''}` +
-                    `${l.in_lap ? ' in' : ''}`}
-                  tone={l.number === answer.best_lap ? theme.lap.fastest : l.in_lap ? theme.lap.outIn : undefined} />
-              ))}
+          <View style={styles.lapBlock}>
+            <View style={styles.lapHead}>
+              <Label small>Lap</Label>
+              {loading && <ActivityIndicator size="small" color={theme.text} />}
             </View>
-            <Text style={styles.note}>Clean laps only: out-laps and in-laps say little about technique.</Text>
+            <View style={styles.laps}>
+              {answer.laps.map((l) => {
+                const best = l.number === answer.best_lap;
+                return (
+                  <Choice key={l.number} on={l.number === check?.number} onPress={() => pickLap(l.number)}
+                    label={`${l.number}`} detail={`${formatLap(l.time)}${l.in_lap ? ' in' : ''}`}
+                    fill={best ? theme.timing.best : undefined} ink={best ? theme.timing.onBest : undefined}
+                    dim={l.in_lap}
+                    accessibilityLabel={`Lap ${l.number}, ${formatLap(l.time)}${best ? ', the quickest' : ''}`} />
+                );
+              })}
+            </View>
+            <Text style={t.small}>
+              Clean laps only: out-laps and in-laps say little about technique.
+              {answer.best_lap != null ? ' The quickest lap’s time is in purple.' : ''}
+            </Text>
           </View>
         )}
-        {answer?.lap_note && <Text style={styles.note}>{answer.lap_note}</Text>}
-
-        {check && answer && (
-          <>
-            <LapSummary check={check} />
-            <Section title={check.mistakes.length ? 'Mistakes on this lap, most costly first' : 'Mistakes on this lap'}>
-              {check.mistakes.length === 0 && (
-                <Text style={styles.note}>
-                  No single mistake costs more than 0.02 s on this lap against the realistic target.
-                </Text>
-              )}
-              {check.mistakes.map((m, i) => (
-                <MistakeCard key={`${m.key}-${m.start_m}`} n={i + 1} m={m} on={selected === i + 1}
-                  onPress={() => setSelected(i + 1)} />
-              ))}
-            </Section>
-            <Section title={`How the ${s2(check.gap)} to perfect driving adds up`}>
-              <BudgetView check={check} />
-            </Section>
-          </>
-        )}
-
-        {answer?.habits && <Habits habits={answer.habits} />}
-
-        {check && answer && (
-          <Section title="On the track">
-            <OnTheTrack answer={answer} check={check} selected={selected} onSelect={setSelected} wide={wide} />
-          </Section>
-        )}
-
-        {check && (
-          <Section title="How this is worked out">
-            {METHOD.map((m) => (
-              <Text key={m} style={styles.method}>{m}</Text>
-            ))}
-          </Section>
-        )}
+        {answer?.lap_note && <Text style={t.note}>{answer.lap_note}</Text>}
       </View>
-    </ScrollView>
+
+      {check && answer && <LapSummary check={check} />}
+
+      {check && answer && (
+        <Section no={next()} title="Mistakes on this lap"
+          dek={check.mistakes.length
+            ? 'Most costly first: what happened, what to do instead and what it costs. Tap one to find it on the map.'
+            : undefined}>
+          {check.mistakes.length === 0 && (
+            <Text style={t.note}>No single mistake costs more than 0.02 s on this lap against the realistic target.</Text>
+          )}
+          {check.mistakes.map((m, i) => (
+            <MistakeRow key={`${m.key}-${m.start_m}`} n={i + 1} m={m} on={selected === i + 1} first={i === 0}
+              onPress={() => setSelected(i + 1)} />
+          ))}
+        </Section>
+      )}
+
+      {check && answer && (
+        <Section no={next()} title="The gap" dek={`How the ${s2(check.gap)} to perfect driving adds up.`}>
+          <BudgetView check={check} />
+        </Section>
+      )}
+
+      {answer?.habits && <Habits habits={answer.habits} no={next()} />}
+
+      {check && answer && (
+        <Section no={next()} title="On the track"
+          dek="The lap on the map and against perfect driving's speed, the picked mistake close up, then the driver's inputs.">
+          <OnTheTrack answer={answer} check={check} selected={selected} onSelect={setSelected} sideBySide={sideBySide} />
+        </Section>
+      )}
+
+      {check && (
+        <Section no={next()} title="How this is worked out">
+          <View style={styles.method}>
+            {METHOD.map((m) => (
+              <Text key={m} style={t.body}>{m}</Text>
+            ))}
+          </View>
+        </Section>
+      )}
+
+      <Colophon left="The Engineer · Technique check"
+        right={answer ? [answer.session.name, answer.track].filter(Boolean).join(' · ') : undefined} />
+    </Page>
   );
 }
 
@@ -278,8 +291,9 @@ const METHOD = [
 
 /** The lap on the map and against perfect driving's speed (a close-up of the picked mistake, then the whole lap), with
  * the driver's inputs under the whole lap's speed. One cursor runs through every chart. */
-function OnTheTrack({ answer, check, selected, onSelect, wide }: { answer: SessionTechnique; check: LapCheck;
-  selected: number | null; onSelect: (n: number) => void; wide: boolean }) {
+function OnTheTrack({ answer, check, selected, onSelect, sideBySide }: { answer: SessionTechnique; check: LapCheck;
+  selected: number | null; onSelect: (n: number) => void; sideBySide: boolean }) {
+  const t = useText();
   const styles = useStyles();
   const [cursor, setCursor] = useState<number | null>(null);
   const mistake = check.mistakes[(selected ?? 0) - 1] ?? null;
@@ -295,11 +309,11 @@ function OnTheTrack({ answer, check, selected, onSelect, wide }: { answer: Sessi
   const fastest = check.fastest;
   const scope = answer.scope === 'event' ? 'event' : 'session';
   return (
-    <>
-      <View style={wide ? styles.row : styles.column}>
-        <View style={wide ? styles.half : undefined}>{map}</View>
+    <View style={styles.track}>
+      <View style={sideBySide ? styles.row : styles.column}>
+        <View style={sideBySide ? styles.half : undefined}>{map}</View>
         {tr && mistake && (
-          <View style={wide ? styles.half : undefined}>
+          <View style={sideBySide ? styles.half : undefined}>
             <TechniqueTrace stepM={tr.step_m} driven={tr.driven} perfect={tr.perfect} realistic={tr.realistic}
               bands={bands} selected={selected} onSelect={onSelect} corners={corners}
               from={mistake.start_m - CLOSE_UP_M} to={mistake.end_m + CLOSE_UP_M}
@@ -309,16 +323,16 @@ function OnTheTrack({ answer, check, selected, onSelect, wide }: { answer: Sessi
       </View>
       {tr ? (
         <TechniqueTrace stepM={tr.step_m} driven={tr.driven} perfect={tr.perfect} realistic={tr.realistic}
-          bands={bands} selected={selected} onSelect={onSelect} corners={corners} height={wide ? 260 : 240}
+          bands={bands} selected={selected} onSelect={onSelect} corners={corners} height={sideBySide ? 260 : 240}
           title="Speed over the whole lap" cursor={cursor} onCursor={setCursor} />
       ) : (
-        <Text style={styles.note}>The speed trace of this lap isn&apos;t available; refresh to work it out.</Text>
+        <Text style={t.note}>The speed trace of this lap isn&apos;t available; refresh to work it out.</Text>
       )}
       {tr && (
-        <View style={styles.block}>
-          <Text style={styles.h3}>Your inputs</Text>
+        <View style={styles.inputs}>
+          <Text style={styles.subhead}>The driver&apos;s inputs</Text>
           {fastest?.this_lap && (
-            <Text style={styles.note}>
+            <Text style={t.note}>
               This is the {scope}&apos;s fastest lap, the one the report measures from: there is no quicker lap to lay
               under it.
             </Text>
@@ -329,17 +343,17 @@ function OnTheTrack({ answer, check, selected, onSelect, wide }: { answer: Sessi
               fastestLabel={fastest && !fastest.this_lap
                 ? `Fastest lap: ${fastest.run} L${fastest.number} · ${formatLap(fastest.time)}` : null}
               phases={tr.model_phases} channels={answer.inputs} bands={bands} selected={selected} onSelect={onSelect}
-              corners={corners} cursor={cursor} onCursor={setCursor} tall={wide} />
+              corners={corners} cursor={cursor} onCursor={setCursor} tall={sideBySide} />
           ) : (
-            <Text style={styles.note}>This lap&apos;s inputs come with the new check, worked out in the background.</Text>
+            <Text style={t.note}>This lap&apos;s inputs come with the new check, worked out in the background.</Text>
           )}
         </View>
       )}
-      <Text style={styles.note}>
+      <Text style={t.small}>
         {Platform.OS === 'web' ? 'Hover over' : 'Drag across'} a chart to read the speeds and inputs at that point on
         every chart; tap a numbered band or a mistake above to see it on the map and close up.
       </Text>
-    </>
+    </View>
   );
 }
 
@@ -347,63 +361,43 @@ const bandsOf = (check: LapCheck) =>
   check.mistakes.map((m, i) => ({ n: i + 1, start_m: m.start_m, end_m: m.end_m, label: `${m.title} (${m.code})`,
     phase: m.phase }));
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  const styles = useStyles();
-  return (
-    <View style={styles.section}>
-      <Text style={styles.h2}>{title}</Text>
-      {children}
-    </View>
-  );
-}
-
-function Chip({ label, detail, tone, on, onPress }: {
-  label: string; detail?: string; tone?: string; on: boolean; onPress: () => void; // tone: the detail's lap-status colour
-}) {
-  const theme = useTheme();
-  const styles = useStyles();
-  const c = useChartColors();
-  return (
-    <Pressable accessibilityRole="button" accessibilityState={{ selected: on }} onPress={onPress}
-      style={StyleSheet.flatten([styles.chip, { borderColor: on ? theme.tint : c.grid }])}>
-      <Text style={StyleSheet.flatten([styles.chipLabel, on && styles.bold])}>{label}</Text>
-      {detail ? <Text style={StyleSheet.flatten([styles.chipDetail, tone ? { color: tone, opacity: 1 } : null])}>{detail}</Text>
-        : null}
-    </Pressable>
-  );
-}
-
 function Progress({ head }: { head: SessionTechnique | EventTechnique }) {
-  const styles = useStyles();
-  const c = useChartColors();
+  const t = useText();
   const p = head.progress;
   const share = p && p.total ? Math.min(1, p.done / p.total) : 0;
   return (
-    <View style={styles.banner}>
-      <Text style={styles.bannerText}>
-        Checking every clean lap{p?.current ? `: ${p.current}` : '…'}
+    <Notice busy>
+      <Text style={t.label}>
+        Checking every clean lap{p?.total ? ` · ${p.done} of ${p.total}` : ''}
       </Text>
-      <View style={[styles.meter, { backgroundColor: c.grid }]}>
-        <View style={[styles.meterFill, { backgroundColor: c.s1, width: `${Math.round(share * 100)}%` }]} />
-      </View>
-      <Text style={styles.note}>Worked out once for the whole event and kept, so it opens at once next time.</Text>
-    </View>
+      {p?.current ? <Text style={t.body}>{p.current}</Text> : null}
+      <Meter share={share} />
+      <Text style={t.small}>Worked out once for the whole event and kept, so it opens at once next time.</Text>
+    </Notice>
   );
 }
 
 function LapSummary({ check }: { check: LapCheck }) {
+  const t = useText();
+  const theme = useTheme();
+  const wide = useWide();
   const styles = useStyles();
   const named = check.budget.mistakes;
+  const size = wide ? 76 : 44;
   return (
-    <View style={styles.block}>
-      <View style={styles.tiles}>
-        <Tile label={`Lap ${check.number}`} value={formatLap(check.time)} detail={check.run} />
-        <Tile label="Realistic target" value={formatLap(check.realistic)}
-          detail={`${s2(check.time - check.realistic)} to find · a quick lap's usual grip at each place`} />
-        <Tile label="Perfect driving" value={formatLap(check.perfect)}
-          detail={`${s2(check.gap)} away · the car's best at every place`} />
-      </View>
-      <Text style={styles.summary}>
+    <View style={styles.summary}>
+      <FigRow>
+        {[
+          <Fig key="lap" label={`Lap ${check.number}`} value={formatLap(check.time)} size={size} bar={theme.rule}
+            note={check.run} />,
+          <Fig key="real" label="Realistic target" value={formatLap(check.realistic)} size={size}
+            bar={theme.timing.personal}
+            note={`${s2(check.time - check.realistic)} to find · a quick lap's usual grip at each place`} />,
+          <Fig key="perfect" label="Perfect driving" value={formatLap(check.perfect)} size={size} bar={theme.timing.best}
+            note={`${s2(check.gap)} away · the car's best at every place`} />,
+        ]}
+      </FigRow>
+      <Text style={StyleSheet.flatten([t.lead, styles.measure])}>
         {check.mistakes.length
           ? `${check.mistakes.length} mistake${check.mistakes.length === 1 ? '' : 's'} on this lap cost ${s2(named)} ` +
             `against the realistic target; the biggest: ${lower(check.mistakes[0].title)} in ` +
@@ -415,51 +409,55 @@ function LapSummary({ check }: { check: LapCheck }) {
   );
 }
 
-function Tile({ label, value, detail }: { label: string; value: string; detail: string }) {
-  const styles = useStyles();
-  return (
-    <View style={styles.tile}>
-      <Text style={styles.label}>{label}</Text>
-      <Text style={styles.tileValue}>{value}</Text>
-      <Text style={styles.note}>{detail}</Text>
-    </View>
-  );
-}
-
-function MistakeCard({ n, m, on, onPress }: { n: number; m: Mistake; on: boolean; onPress: () => void }) {
+/** A mistake: its number in an ink block (red when picked), what it is, where and in which phase, its cost as a
+ * figure, then what happened and what to do instead. */
+function MistakeRow({ n, m, on, first, onPress }: { n: number; m: Mistake; on: boolean; first: boolean;
+  onPress: () => void }) {
+  const t = useText();
   const theme = useTheme();
+  const wide = useWide();
   const styles = useStyles();
-  const c = useChartColors();
   return (
     <Pressable accessibilityRole="button" accessibilityState={{ selected: on }} onPress={onPress}
-      style={StyleSheet.flatten([styles.card, { borderColor: on ? theme.tint : c.grid,
-        borderLeftColor: phaseColor(theme, m.phase) }])}>
-      <View style={styles.cardHead}>
-        <View style={[styles.badge, { backgroundColor: on ? c.text : c.axis }]}>
-          <Text style={[styles.badgeText, { color: c.surface }]}>{n}</Text>
+      style={StyleSheet.flatten([styles.mistake, !first && styles.mistakeRule, on && styles.mistakeOn])}>
+      <View style={styles.mistakeHead}>
+        <View style={StyleSheet.flatten([styles.no, on && styles.noOn])}>
+          <Text style={styles.noText}>{n}</Text>
         </View>
-        <Text style={styles.cardTitle}>{m.title}</Text>
-        <Text style={StyleSheet.flatten([styles.cost, { color: deltaColor(theme, m.cost_s) }])}>{s2(m.cost_s)}</Text>
+        <View style={styles.flex}>
+          <Text style={styles.mistakeTitle}>{m.title}</Text>
+          <View style={styles.meta}>
+            <View style={StyleSheet.flatten([styles.phaseKey, { backgroundColor: phaseColor(theme, m.phase) }])} />
+            <Text style={styles.metaText}>
+              {m.code} · {m.phase} · {Math.round(m.start_m)}–{m0(m.end_m)}
+            </Text>
+          </View>
+        </View>
+        <Text style={StyleSheet.flatten([styles.cost, { color: deltaColor(theme, m.cost_s) ?? theme.text }])}>
+          {m.cost_s.toFixed(2)}
+          <Text style={StyleSheet.flatten([styles.costUnit, { color: deltaColor(theme, m.cost_s) ?? theme.text }])}> s</Text>
+        </Text>
       </View>
-      <Text style={styles.meta}>
-        {m.code} · {m.phase} · {Math.round(m.start_m)}–{m0(m.end_m)}
-      </Text>
-      <Text style={styles.what}>{m.what}</Text>
-      <Text style={styles.what}>
-        <Text style={styles.bold}>Instead: </Text>
-        {m.do}
-      </Text>
-      <Text style={styles.note}>
-        {s2(m.cost_s)} against the realistic target, {s2(m.cost_perfect_s)} against perfect driving
-        {m.carried_s >= 0.01 ? `; ${s2(m.carried_s)} of it carried on past ${m0(m.end_m)}` : ''}
-        {m.repeats ? ` · on ${m.repeats.laps} of the session's ${m.repeats.of} clean laps` : ''}
-      </Text>
+      <View style={wide ? styles.mistakeBody : styles.mistakeBodyPhone}>
+        <Text style={t.body}>{m.what}</Text>
+        <Text style={t.body}>
+          <Text style={t.strong}>Instead: </Text>
+          {m.do}
+        </Text>
+        <Text style={t.small}>
+          {s2(m.cost_s)} against the realistic target, {s2(m.cost_perfect_s)} against perfect driving
+          {m.carried_s >= 0.01 ? `; ${s2(m.carried_s)} of it carried on past ${m0(m.end_m)}` : ''}
+          {m.repeats ? ` · on ${m.repeats.laps} of the session's ${m.repeats.of} clean laps` : ''}
+        </Text>
+      </View>
     </Pressable>
   );
 }
 
 function BudgetView({ check }: { check: LapCheck }) {
+  const t = useText();
   const styles = useStyles();
+  const wide = useWide();
   const b = check.budget;
   const rows = [
     { label: 'Mistakes', value: b.mistakes },
@@ -468,38 +466,44 @@ function BudgetView({ check }: { check: LapCheck }) {
     ...(b.pit_lane > 0 ? [{ label: 'Pit lane', value: b.pit_lane }] : []),
     { label: 'Unexplained', value: b.other },
   ];
+  const words: { label: string; value: number; text: string }[] = [
+    { label: 'Mistakes', value: b.mistakes,
+      text: `the ${check.mistakes.length} above, against the realistic target.` },
+    { label: 'At the limit', value: b.at_limit,
+      text: 'flat out, braking with the ABS working or driving out on the traction control, yet slower than perfect ' +
+        'driving. The car on the day (tyres, tow, wind), not the pedals.' },
+    { label: 'Optimism', value: b.optimism,
+      text: 'perfect driving takes the best the car has shown at every place, which no single lap puts together; the ' +
+        'realistic target takes what a quick lap usually shows there.' },
+    ...(b.pit_lane > 0 ? [{ label: 'Pit lane', value: b.pit_lane,
+      text: `the lap ends in the pit lane, from ${m0(check.pit_from_m ?? 0)}.` }] : []),
+    { label: 'Unexplained', value: b.other,
+      text: `losses too small to name or with no clear cause (${s2(b.other_losses)}), less the places this lap beat ` +
+        `the realistic target (${s2(b.other_gains)}).` },
+  ];
   return (
-    <View style={styles.block}>
-      <Bars rows={rows} max={Math.max(...rows.map((r) => r.value), 0.001)} />
-      <Text style={styles.budgetLine}>
-        <Text style={styles.bold}>Mistakes {s2(b.mistakes)}</Text>: the {check.mistakes.length} above, against the
-        realistic target.
-      </Text>
-      <Text style={styles.budgetLine}>
-        <Text style={styles.bold}>At the limit {s2(b.at_limit)}</Text>: flat out, braking with the ABS working or
-        driving out on the traction control, yet slower than perfect driving. The car on the day (tyres, tow, wind),
-        not the pedals.
-      </Text>
-      <Text style={styles.budgetLine}>
-        <Text style={styles.bold}>Optimism {s2(b.optimism)}</Text>: perfect driving takes the best the car has
-        shown at every place, which no single lap puts together; the realistic target takes what a quick lap usually
-        shows there.
-      </Text>
-      {b.pit_lane > 0 && (
-        <Text style={styles.budgetLine}>
-          <Text style={styles.bold}>Pit lane {s2(b.pit_lane)}</Text>: the lap ends in the pit lane, from{' '}
-          {m0(check.pit_from_m ?? 0)}.
-        </Text>
-      )}
-      <Text style={styles.budgetLine}>
-        <Text style={styles.bold}>Unexplained {s2(b.other)}</Text>: losses too small to name or with no clear cause (
-        {s2(b.other_losses)}), less the places this lap beat the realistic target ({s2(b.other_gains)}).
-      </Text>
+    <View style={wide ? styles.budget : styles.budgetPhone}>
+      <View style={wide ? styles.budgetBars : undefined}>
+        <Text style={styles.subhead}>Time against perfect driving, s</Text>
+        <Bars rows={rows} max={Math.max(...rows.map((r) => r.value), 0.001)} />
+      </View>
+      <View style={wide ? styles.budgetWords : undefined}>
+        {words.map((w, i) => (
+          <View key={w.label} style={StyleSheet.flatten([styles.term, i === 0 && styles.termFirst])}>
+            <View style={styles.termHead}>
+              <Text style={t.label}>{w.label}</Text>
+              <Text style={styles.termValue}>{s2(w.value)}</Text>
+            </View>
+            <Text style={t.note}>{w.text.charAt(0).toUpperCase() + w.text.slice(1)}</Text>
+          </View>
+        ))}
+      </View>
     </View>
   );
 }
 
-function Habits({ habits }: { habits: NonNullable<SessionTechnique['habits']> }) {
+function Habits({ habits, no }: { habits: NonNullable<SessionTechnique['habits']>; no: number }) {
+  const t = useText();
   const styles = useStyles();
   const [scope, setScope] = useState<'session' | 'event'>('session');
   const [all, setAll] = useState(false);
@@ -507,99 +511,102 @@ function Habits({ habits }: { habits: NonNullable<SessionTechnique['habits']> })
   const laps = scope === 'event' ? habits.event_laps : habits.session_laps;
   const top = useMemo(() => Math.max(...list.map((h) => h.cost_per_lap_s), 0.001), [list]);
   return (
-    <Section title="Mistakes that repeat">
+    <Section no={no} title="Mistakes that repeat"
+      dek={`The same mistake in the same place across the ${scope === 'event' ? 'event' : 'session'}'s ${laps} clean laps, most costly per lap first.`}>
       {habits.event && (
-        <View style={styles.chips}>
-          <Chip label="This session" detail={`${habits.session_laps} laps`} on={scope === 'session'}
-            onPress={() => setScope('session')} />
-          <Chip label="The event" detail={`${habits.event_laps} laps`} on={scope === 'event'}
-            onPress={() => setScope('event')} />
+        <Tabs big value={scope} onChange={setScope} style={styles.habitTabs}
+          items={[
+            { key: 'session', label: 'This session', sub: `${habits.session_laps} laps` },
+            { key: 'event', label: 'The event', sub: `${habits.event_laps} laps` },
+          ]} />
+      )}
+      {list.length === 0 && <Text style={t.note}>No mistake repeats on two laps or more.</Text>}
+      {list.length > 0 && (
+        <View style={styles.habitHead}>
+          <Text style={StyleSheet.flatten([t.label, styles.flex])}>Mistake</Text>
+          <Text style={t.label}>A lap, on average</Text>
         </View>
       )}
-      <Text style={styles.note}>
-        The same mistake in the same place across the {scope === 'event' ? 'event' : 'session'}&apos;s {laps} clean
-        laps, most costly per lap first: how often it happens and what it costs a lap on average.
-      </Text>
-      {list.length === 0 && <Text style={styles.note}>No mistake repeats on two laps or more.</Text>}
       {(all ? list : list.slice(0, HABITS_SHOWN)).map((h) => <HabitRow key={h.key} h={h} top={top} />)}
       {list.length > HABITS_SHOWN && (
-        <Pressable accessibilityRole="button" onPress={() => setAll(!all)}>
-          <Text style={styles.link}>{all ? 'Show the costliest only' : `Show all ${list.length}`}</Text>
-        </Pressable>
+        <View style={styles.more}>
+          <TextLink small label={all ? 'Show the costliest only' : `Show all ${list.length}`} onPress={() => setAll(!all)} />
+        </View>
       )}
     </Section>
   );
 }
 
 function HabitRow({ h, top }: { h: Habit; top: number }) {
+  const t = useText();
+  const theme = useTheme();
   const styles = useStyles();
-  const c = useChartColors();
   const size = habitSize(h);
   return (
-    <View style={[styles.habit, { borderColor: c.grid }]}>
-      <View style={styles.cardHead}>
+    <View style={styles.habit}>
+      <View style={styles.habitLine}>
+        <View style={StyleSheet.flatten([styles.phaseKey, { backgroundColor: phaseColor(theme, h.phase) }])} />
         <Text style={styles.habitTitle}>
           {h.title} · {h.code}
         </Text>
-        <Text style={styles.cost}>{s2(h.cost_per_lap_s)}</Text>
+        <Text style={styles.habitCost}>{s2(h.cost_per_lap_s)}</Text>
       </View>
-      <View style={[styles.meter, { backgroundColor: c.grid }]}>
-        <View style={[styles.meterFill, { backgroundColor: c.s1, width: `${Math.round((h.cost_per_lap_s / top) * 100)}%` }]} />
-      </View>
-      <Text style={styles.note}>
-        On {h.laps} of {h.of} laps ({Math.round(h.share * 100)}%) · {h.phase} · {s2(h.cost_per_lap_s)} a lap on average,{' '}
-        {s2(h.cost_when_s)} when it happens{size ? ` · usually ${size}` : ''}
+      <Meter share={h.cost_per_lap_s / top} color={theme.delta.loss} height={8} />
+      <Text style={t.small}>
+        On {h.laps} of {h.of} laps ({Math.round(h.share * 100)}%) · {h.phase} · {s2(h.cost_when_s)} when it happens
+        {size ? ` · usually ${size}` : ''}
       </Text>
     </View>
   );
 }
 
 const useStyles = themed((c) => ({
-  outer: { paddingVertical: 16, alignItems: 'center' },
-  page: { width: '100%', maxWidth: 1100, paddingHorizontal: 16, gap: 20 },
-  pad: { padding: 16 },
-  head: { gap: 4 },
-  h1: { fontSize: 24, fontWeight: '700' },
-  h2: { fontSize: 20, fontWeight: '700' },
-  h3: { fontSize: 16, fontWeight: '700' },
-  h4: { fontSize: 13, fontWeight: '600', opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 },
-  sub: { opacity: 0.7 },
-  note: { fontSize: 12, opacity: 0.65, lineHeight: 17 },
-  error: { color: c.error },
-  row: { flexDirection: 'row', gap: 24, alignItems: 'flex-start' },
-  column: { gap: 16 },
+  intro: { marginTop: 12, maxWidth: 760 },
+  states: { gap: 10, marginTop: 14 },
+  left: { alignSelf: 'flex-start' },
+  pickers: { gap: 18, marginTop: 10 },
+  lapBlock: { gap: 8 },
+  lapHead: { flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 1, borderColor: c.rule,
+    paddingBottom: 5 },
+  laps: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 14, rowGap: 10 },
+  flex: { flex: 1, minWidth: 0 },
+  measure: { maxWidth: 820 },
+  summary: { marginTop: 30, gap: 18 },
+  mistake: { paddingVertical: 14, gap: 10 },
+  mistakeRule: { borderTopWidth: 1, borderColor: c.separator },
+  mistakeOn: { backgroundColor: c.surfaceRaised, marginHorizontal: -10, paddingHorizontal: 10 },
+  mistakeHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  no: { backgroundColor: c.rule, minWidth: 30, paddingHorizontal: 6, paddingTop: 4, paddingBottom: 3, alignItems: 'center' },
+  noOn: { backgroundColor: c.mark },
+  noText: { fontFamily: Fonts.display, fontSize: 18, lineHeight: 21, color: c.background },
+  mistakeTitle: { fontFamily: face('body', 600), fontSize: 19, lineHeight: 25, color: c.text },
+  meta: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 4 },
+  phaseKey: { width: 12, height: 12 },
+  metaText: { ...Type.label, fontSize: 11, letterSpacing: 1, color: c.textSecondary, flexShrink: 1 },
+  cost: { fontFamily: Fonts.display, fontSize: 32, lineHeight: 34 },
+  costUnit: { fontFamily: Fonts.display, fontSize: 15 },
+  mistakeBody: { marginLeft: 42, gap: 6, maxWidth: 780 },
+  mistakeBodyPhone: { gap: 6 },
+  budget: { flexDirection: 'row', gap: 32, alignItems: 'flex-start' },
+  budgetPhone: { gap: 18 },
+  budgetBars: { flex: 5, minWidth: 0 },
+  budgetWords: { flex: 6, minWidth: 0 },
+  subhead: { ...Type.label, color: c.text, borderBottomWidth: 1, borderColor: c.rule, paddingBottom: 5, marginBottom: 8 },
+  term: { paddingVertical: 9, borderTopWidth: 1, borderColor: c.separator, gap: 3 },
+  termFirst: { borderTopWidth: 1, borderColor: c.rule },
+  termHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 },
+  termValue: { ...Type.number, fontSize: 15, color: c.text },
+  habitTabs: { marginBottom: 14 },
+  habitHead: { flexDirection: 'row', gap: 8, borderBottomWidth: 1, borderColor: c.rule, paddingBottom: 5 },
+  habit: { gap: 6, paddingVertical: 10, borderBottomWidth: 1, borderColor: c.separator },
+  habitLine: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  habitTitle: { fontFamily: face('body', 600), fontSize: 16, lineHeight: 21, flex: 1, color: c.text },
+  habitCost: { ...Type.number, fontSize: 15, color: c.text },
+  more: { marginTop: 12 },
+  track: { gap: 22 },
+  row: { flexDirection: 'row', gap: 28, alignItems: 'flex-start' },
+  column: { gap: 18 },
   half: { flex: 1, minWidth: 0, gap: 12 },
-  block: { gap: 8 },
-  section: { gap: 12 },
-  banner: { gap: 8, padding: 12, borderRadius: Radius.card, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface },
-  bannerText: { fontSize: 14 },
-  meter: { height: 6, borderRadius: 3, overflow: 'hidden' },
-  meterFill: { height: 6, borderRadius: 3 },
-  smallButton: { alignSelf: 'flex-start', borderWidth: 1, borderColor: c.borderStrong, borderRadius: Radius.control, paddingHorizontal: 12,
-    paddingVertical: 6 },
-  smallButtonText: { fontWeight: '600' },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  chip: { borderWidth: 1, borderRadius: Radius.control, paddingHorizontal: 10, paddingVertical: 5, flexDirection: 'row',
-    alignItems: 'baseline', gap: 6 },
-  chipLabel: { fontSize: 14, fontVariant: ['tabular-nums'] },
-  chipDetail: { fontSize: 12, opacity: 0.65, fontVariant: ['tabular-nums'] },
-  tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  tile: { flexBasis: 160, flexGrow: 1, gap: 2 },
-  label: { fontSize: 12, opacity: 0.65, textTransform: 'uppercase', letterSpacing: 0.5 },
-  tileValue: { fontSize: 22, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  summary: { fontSize: 15, lineHeight: 21 },
-  card: { borderWidth: 1, borderLeftWidth: 4, borderRadius: Radius.card, padding: 14, gap: 6, backgroundColor: c.surface },
-  cardHead: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'transparent' },
-  badge: { width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  badgeText: { fontSize: 12, fontWeight: '700' },
-  cardTitle: { fontSize: 16, fontWeight: '700', flex: 1 },
-  cost: { fontSize: 16, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  meta: { fontSize: 13, opacity: 0.7 },
-  what: { fontSize: 14, lineHeight: 20 },
-  bold: { fontWeight: '700' },
-  budgetLine: { fontSize: 13, lineHeight: 19, opacity: 0.85 },
-  habit: { gap: 4, paddingVertical: 8, borderBottomWidth: 1 },
-  habitTitle: { fontSize: 15, fontWeight: '600', flex: 1 },
-  method: { fontSize: 13, lineHeight: 19, opacity: 0.8 },
-  link: { fontSize: 13, fontWeight: '600', textDecorationLine: 'underline', paddingVertical: 4 },
+  inputs: { gap: 10 },
+  method: { gap: 12, maxWidth: 760 },
 }));

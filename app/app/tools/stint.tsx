@@ -2,11 +2,13 @@ import { Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 
+import { FigRow, PageHead, Tabs, TickBox, useText } from '@/components/Picks';
+import { Colophon, Fig, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { LineChart, useChartColors } from '@/components/ReportCharts';
 import { SessionSwitcher, useEventFolder } from '@/components/SessionSwitcher';
 import { BalanceDumbbell, ChangeBar, CornerText, FadeBars, MIN_SHIFT, OnCorner, ShiftRow, shiftColor,
   useBalanceColors } from '@/components/StintCharts';
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { Text, View } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
 import { formatLap } from '@/lib/api';
 import {
@@ -34,7 +36,7 @@ import {
   TAGS,
   Words,
 } from '@/lib/stint';
-import { inkOn, Palette, phaseColor, Radius, themed, useTheme } from '@/constants/Theme';
+import { face, Fonts, inkOn, Palette, phaseColor, themed, Type, useTheme } from '@/constants/Theme';
 
 const ALL = 'all';
 const MAX_LOGS = 12; // the server reads at most this many logs in one view
@@ -45,9 +47,12 @@ const SIDE_MAP = 900; // from this wide the track map has a column of its own on
 // traffic and they leave the trends; count a lap the analysis leaves out (not a pit lap) and it joins them. Open with
 // ?session=<id> to start with that session's log ticked, or ?event=<id> with every run of the event. The track map
 // stays in view beside the report (on a phone, pinned on top, one tap to hide it); a corner the report names lights
-// up on it when hovered or tapped.
+// up on it when hovered or tapped. A page of the race programme: the headline, the logs and stints to pick, then
+// numbered sections.
 export default function StintScreen() {
   const styles = useStyles();
+  const tx = useText();
+  const theme = useTheme();
   const params = useLocalSearchParams<{ session?: string; event?: string }>();
   const [events, setEvents] = useState<LogEvent[] | null>(null);
   const [ticked, setTicked] = useState<number[]>([]);
@@ -60,8 +65,6 @@ export default function StintScreen() {
   const request = useRef(0);
   const scroll = useRef<ScrollView>(null);
   const lapsY = useRef(0);
-  const surface = useThemeColor({}, 'surface');
-  const tint = useThemeColor({}, 'tint');
   const { width, height } = useWindowDimensions();
   const side = width >= SIDE_MAP;
   const sideWidth = Math.round(Math.min(440, Math.max(340, width * 0.3)));
@@ -165,6 +168,7 @@ export default function StintScreen() {
   const pending = (stint ? [stint] : view?.stints ?? []).flatMap((s) => s.laps.filter((l) => l.suggestion)).length;
   const sections = stint ? stint.sections : view?.overall.sections ?? [];
   const codes = sections.map((s) => s.code);
+  const fade = stint ? stint.fade : view?.overall.fade ?? [];
 
   // the map of what the view shows: its session's, or with runs of several sessions their event's fastest lap
   const target = useMemo(() => {
@@ -190,27 +194,37 @@ export default function StintScreen() {
       e.deltaY * (e.deltaMode === 1 ? 16 : 1)),
   } : {};
 
+  const scopes = [
+    ...(view && view.stints.length > 1
+      ? [{ key: ALL, label: 'All stints', sub: `${view.overall.fitted_laps} laps in the trend` }] : []),
+    ...(view?.stints ?? []).map((s) => ({ key: s.key, label: `${many ? `${s.run} · ` : ''}Stint ${s.number}`,
+      sub: `laps ${s.first_lap}–${s.last_lap} · ${s.fitted_laps} in the trend` })),
+  ];
+  // the sections are numbered in the order they are shown
+  let no = 0;
+  const next = () => ++no;
+
   return (
     <View style={StyleSheet.flatten([styles.screen, side && styles.split])}>
       {showMap && !side && (
-        <View style={StyleSheet.flatten([styles.pinned, { backgroundColor: surface }])}>
+        <View style={styles.pinned}>
           <View style={styles.pinnedBar}>
-            <Text style={styles.pinnedTitle}>Track map</Text>
-            <Text style={StyleSheet.flatten([styles.small, styles.flex])} numberOfLines={1}>
+            <Label small>Track map</Label>
+            <Text style={StyleSheet.flatten([tx.small, styles.flex])} numberOfLines={1}>
               {mapShown ? (corner && codes.includes(corner) ? corner : 'Tap a corner in the report') : ''}
             </Text>
-            <Pressable onPress={() => setMapShown(!mapShown)} accessibilityRole="button" hitSlop={8}
-              style={styles.pinnedButton}>
-              <Text style={{ color: tint, fontWeight: '600' }}>{mapShown ? 'Hide map' : 'Show map'}</Text>
-            </Pressable>
+            <TextLink small label={mapShown ? 'Hide map' : 'Show map'} onPress={() => setMapShown(!mapShown)} />
           </View>
           {/* hidden, not removed: showing it again doesn't ask the server again */}
           <View style={mapShown ? undefined : styles.gone}>{map}</View>
         </View>
       )}
-      <ScrollView ref={scroll} style={styles.flex} contentContainerStyle={styles.container}>
+      <Page scrollRef={scroll}>
         <Stack.Screen options={{ title: 'Stint analysis' }} />
-        <View style={styles.page}>
+        <PageHead title="Stint analysis"
+          dek={'How the car fades over a stint, fuel burn and tyres apart; grip and balance by phase; how the ' +
+            `driver adapts.${view?.track ? ` ${view.track}.` : ''}`} />
+        <View style={styles.top}>
           {folder && folder.id != null && (
             <SessionSwitcher folder={folder} current={current} onlyTimed
               onWhole={eventMains.length > 1 ? () => setTicked(eventMains.slice(0, MAX_LOGS)) : undefined}
@@ -222,90 +236,90 @@ export default function StintScreen() {
           <Picker events={events} ticked={ticked} open={pickerOpen} setOpen={setPickerOpen} toggle={toggle}
             track={view?.track ?? null} />
 
-          {error && <Text style={styles.error}>{error}</Text>}
+          {error && <Text style={tx.error}>{error}</Text>}
           {busy && (
             <View style={styles.busy}>
-              <ActivityIndicator />
-              <Text style={styles.dim}>{view ? 'Updating…' : 'Reading the logs…'}</Text>
+              <ActivityIndicator color={theme.text} />
+              <Text style={tx.note}>{view ? 'Updating…' : 'Reading the logs…'}</Text>
             </View>
           )}
           {!busy && ticked.length === 0 && events && events.length > 0 && (
-            <Text style={styles.dim}>Tick one or more logs to see their stints.</Text>
+            <Text style={tx.note}>Tick one or more logs to see their stints.</Text>
           )}
+          {view && words && scopes.length > 0 && <Tabs big label="Stint" value={scope} onChange={setScope} items={scopes} />}
+        </View>
 
-          {view && words && (
-            <>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips}>
-                {view.stints.length > 1 && (
-                  <ScopeChip on={scope === ALL} onPress={() => setScope(ALL)} title="All stints"
-                    sub={`${view.overall.fitted_laps} laps in the trend`} />
-                )}
-                {view.stints.map((s) => (
-                  <ScopeChip key={s.key} on={scope === s.key} onPress={() => setScope(s.key)}
-                    title={`${many ? `${s.run} · ` : ''}Stint ${s.number}`}
-                    sub={`laps ${s.first_lap}–${s.last_lap} · ${s.fitted_laps} in the trend`} />
-                ))}
-              </ScrollView>
-
+        {view && words && (
+          <>
+            <Section no={next()} title={stint ? `Stint ${stint.number}` : 'The stints'}
+              dek={stint
+                ? `${many ? `${stint.run}: l` : 'L'}aps ${stint.first_lap} to ${stint.last_lap}, ${stint.fitted_laps} of them in the trend.`
+                : `${view.stints.length} stint${view.stints.length === 1 ? '' : 's'}, ${view.overall.fitted_laps} laps in the trend.`}>
               <Summary words={words} fits={stint ? stint.fits : view.overall.fits}
-                fuel={stint ? stint.fuel : view.overall.fuel} top={(stint ? stint.fade : view.overall.fade)[0]}
+                fuel={stint ? stint.fuel : view.overall.fuel} top={fade[0]}
                 pending={pending} onPending={() => scroll.current?.scrollTo({ y: lapsY.current, animated: true })}
                 at={{ codes, focus: corner, onCorner: pointAt }} />
+            </Section>
 
-              {(stint ? stint.fade : view.overall.fade).length > 0 && (
-                <Section title="Where the fade comes from"
-                  intro="Each lap's time against the stint's typical lap, fuel burn taken out, charged to the phase where it was lost: speed lost on an exit counts against the exit all the way down the straight that follows.">
-                  <View style={styles.narrow}>
-                    <FadeBars rows={stint ? stint.fade : view.overall.fade} focus={corner} onCorner={pointAt} />
-                  </View>
-                </Section>
-              )}
-
-              <Section title="Grip and balance by phase"
-                intro={`Grip: the g the car pulls in each phase (90th percentile of the lap). Balance: the understeer angle against the car's normal at the same cornering g (${view.understeer_per_g ?? '–'}° per g), + understeer, − oversteer.`}>
-                <PhaseTable fits={stint ? stint.fits : view.overall.fits} fade={stint ? stint.fade : view.overall.fade}
-                  stint={stint} wide={wide} />
+            {fade.length > 0 && (
+              <Section no={next()} title="Where the fade comes from"
+                dek="Each lap's time against the stint's typical lap, fuel burn taken out, charged to the phase where it was lost: speed lost on an exit counts against the exit all the way down the straight that follows.">
+                <View style={styles.narrow}>
+                  <FadeBars rows={fade} focus={corner} onCorner={pointAt} />
+                </View>
               </Section>
+            )}
 
-              <Section title="Balance shift per corner"
-                intro="How the balance moves from the stint's early laps to its late laps, corner by corner.">
-                <CornerShift sections={sections} stints={stint ? [stint] : view.stints} onCorner={pointAt} />
-              </Section>
+            <Section no={next()} title="Grip and balance by phase"
+              dek={`Grip: the g the car pulls in each phase (90th percentile of the lap). Balance: the understeer angle against the car's normal at the same cornering g (${view.understeer_per_g ?? '–'}° per g), + understeer, − oversteer.`}>
+              <PhaseTable fits={stint ? stint.fits : view.overall.fits} fade={fade} stint={stint} wide={wide} />
+            </Section>
 
+            <Section no={next()} title="Balance shift per corner"
+              dek="How the balance moves from the stint's early laps to its late laps, corner by corner.">
+              <CornerShift sections={sections} stints={stint ? [stint] : view.stints} onCorner={pointAt} />
+            </Section>
+
+            <Section no={next()} title={stint ? 'Laps' : 'Stints'}
+              dek={stint ? 'The lap times against the stint’s typical lap, then every lap: tag the ones a safety car, an FCY or traffic slowed.'
+                : 'Open a stint to see it lap by lap and tag its slow laps.'}
+              onLayout={(e) => (lapsY.current = e.nativeEvent.layout.y)}>
               {stint ? (
-                <View onLayout={(e) => (lapsY.current = e.nativeEvent.layout.y)} style={styles.section}>
-                  <Text style={styles.h2}>Laps</Text>
+                <View style={styles.block}>
                   <LapTimes stint={stint} />
                   <LapList stint={stint} onTag={tag} tagging={tagging} />
                   <LapTable stint={stint} unit={view.units.steer} />
                 </View>
               ) : (
-                <View onLayout={(e) => (lapsY.current = e.nativeEvent.layout.y)} style={styles.section}>
-                  <Text style={styles.h2}>Stints</Text>
-                  <Text style={styles.small}>Open a stint to see it lap by lap and tag its slow laps.</Text>
-                  {view.stints.map((s) => (
-                    <StintCard key={s.key} stint={s} many={many} onPress={() => {
+                <View>
+                  {view.stints.map((s, i) => (
+                    <StintCard key={s.key} stint={s} many={many} first={i === 0} onPress={() => {
                       setScope(s.key);
                       scroll.current?.scrollTo({ y: 0, animated: true });
                     }} />
                   ))}
                 </View>
               )}
+            </Section>
 
-              {view.notes.map((n) => (
-                <Text key={n} style={styles.small}>
-                  {n}
-                </Text>
-              ))}
-            </>
-          )}
-        </View>
-      </ScrollView>
+            {view.notes.length > 0 && (
+              <View style={styles.notes}>
+                {view.notes.map((n) => (
+                  <Text key={n} style={tx.small}>
+                    {n}
+                  </Text>
+                ))}
+              </View>
+            )}
+          </>
+        )}
+        <Colophon left="The Engineer · Stint analysis" right={view?.track ?? undefined} />
+      </Page>
       {showMap && side && (
         <View {...wheel}
           style={StyleSheet.flatten([styles.side, { width: sideWidth }])}>
           {map}
-          <Text style={styles.small}>A corner you hover or tap in the report lights up here.</Text>
+          <Text style={tx.small}>A corner you hover or tap in the report lights up here.</Text>
         </View>
       )}
     </View>
@@ -319,7 +333,8 @@ function Picker({ events, ticked, open, setOpen, toggle, track }: {
   toggle: (id: number) => void; track: string | null;
 }) {
   const styles = useStyles();
-  const tint = useThemeColor({}, 'tint');
+  const tx = useText();
+  const theme = useTheme();
   const files = useMemo(() => {
     const out = new Map<number, { label: string; track: string | null }>();
     for (const e of events ?? []) {
@@ -331,49 +346,41 @@ function Picker({ events, ticked, open, setOpen, toggle, track }: {
     return out;
   }, [events]);
   const tickedTrack = ticked.map((id) => files.get(id)?.track).find((t) => t) ?? null;
-  if (events == null) return <ActivityIndicator />;
+  if (events == null) return <ActivityIndicator color={theme.text} style={styles.left} />;
   if (events.length === 0) {
-    return <Text style={styles.dim}>No logs yet. Upload a logger file (.ld or a CSV export) to a session first.</Text>;
+    return <Text style={tx.note}>No logs yet. Upload a logger file (.ld or a CSV export) to a session first.</Text>;
   }
   return (
-    <View style={styles.card}>
+    <View style={styles.picker}>
       <View style={styles.pickerHead}>
-        <View style={styles.flex}>
-          <Text style={styles.h3}>Logs</Text>
-          <Text style={styles.small}>
-            {ticked.length === 0 ? 'None ticked' : `${ticked.length} ticked${track || tickedTrack ? ` · ${track ??
-              tickedTrack}` : ''}`}
-          </Text>
-        </View>
-        <Pressable onPress={() => setOpen(!open)} style={styles.button} accessibilityRole="button">
-          <Text style={{ color: tint, fontWeight: '600' }}>{open ? 'Done' : 'Change'}</Text>
-        </Pressable>
+        <Label>Logs</Label>
+        <Text style={StyleSheet.flatten([tx.small, styles.flex])} numberOfLines={1}>
+          {ticked.length === 0 ? 'None ticked' : `${ticked.length} ticked${track || tickedTrack ? ` · ${track ??
+            tickedTrack}` : ''}`}
+        </Text>
+        <TextLink small label={open ? 'Done' : 'Change'} onPress={() => setOpen(!open)} />
       </View>
       {!open && ticked.length > 0 && (
         <View style={styles.tickedRow}>
           {ticked.slice(0, ticked.length > 5 ? 4 : 5).map((id) => (
-            <Pressable key={id} onPress={() => toggle(id)} style={styles.tickedChip}
-              accessibilityLabel={`Untick ${files.get(id)?.label ?? id}`}>
+            <Pressable key={id} onPress={() => toggle(id)} style={styles.tickedItem} hitSlop={4}
+              accessibilityRole="button" accessibilityLabel={`Untick ${files.get(id)?.label ?? id}`}>
               <Text style={styles.tickedText}>{files.get(id)?.label ?? `Log ${id}`}</Text>
-              <Text style={styles.dim}>✕</Text>
+              <Text style={styles.tickedX}>✕</Text>
             </Pressable>
           ))}
-          {ticked.length > 5 && (
-            <Pressable onPress={() => setOpen(true)} style={styles.tickedChip} accessibilityRole="button">
-              <Text style={StyleSheet.flatten([styles.tickedText, { color: tint }])}>+{ticked.length - 4} more</Text>
-            </Pressable>
-          )}
+          {ticked.length > 5 && <TextLink small label={`+${ticked.length - 4} more`} onPress={() => setOpen(true)} />}
         </View>
       )}
       {open && events.map((e) => {
         const other = tickedTrack != null && e.track != null && e.track !== tickedTrack;
         return (
           <View key={e.id ?? 'none'} style={styles.event}>
-            <Text style={styles.eventName}>
-              {e.name}
-              {e.track ? <Text style={styles.dim}>{`  ${e.track}`}</Text> : null}
-            </Text>
-            {other && <Text style={styles.small}>Another track: untick the others to compare these.</Text>}
+            <View style={styles.eventHead}>
+              <Text style={styles.eventName}>{e.name}</Text>
+              {e.track ? <Text style={tx.labelMuted}>{e.track}</Text> : null}
+            </View>
+            {other && <Text style={tx.small}>Another track: untick the others to compare these.</Text>}
             {e.sessions.flatMap((s) => s.files.map((f) => {
               const on = ticked.includes(f.id);
               const empty = f.laps === 0;
@@ -381,12 +388,10 @@ function Picker({ events, ticked, open, setOpen, toggle, track }: {
                 <Pressable key={f.id} onPress={() => toggle(f.id)} disabled={(empty || other) && !on}
                   accessibilityRole="checkbox" accessibilityState={{ checked: on, disabled: (empty || other) && !on }}
                   style={StyleSheet.flatten([styles.logRow, (empty || other) && !on && styles.dim])}>
-                  <View style={StyleSheet.flatten([styles.box, on && { backgroundColor: tint, borderColor: tint }])}>
-                    {on && <Text style={styles.tick}>✓</Text>}
-                  </View>
+                  <TickBox on={on} />
                   <View style={styles.flex}>
                     <Text style={styles.logName}>{s.files.length > 1 ? `${s.name} · ${f.filename}` : s.name}</Text>
-                    <Text style={styles.small}>
+                    <Text style={tx.small}>
                       {empty ? 'no laps' : `${f.laps} lap${f.laps === 1 ? '' : 's'} · ${f.clean_laps} clean · best ${
                         formatLap(f.best_lap_s)}`}
                       {s.driver ? ` · ${s.driver}` : ''}
@@ -402,18 +407,6 @@ function Picker({ events, ticked, open, setOpen, toggle, track }: {
   );
 }
 
-function ScopeChip({ on, onPress, title, sub }: { on: boolean; onPress: () => void; title: string; sub: string }) {
-  const styles = useStyles();
-  const tint = useThemeColor({}, 'tint');
-  return (
-    <Pressable onPress={onPress} accessibilityRole="tab" accessibilityState={{ selected: on }}
-      style={StyleSheet.flatten([styles.chip, on && { borderColor: tint, borderWidth: 2 }])}>
-      <Text style={StyleSheet.flatten([styles.chipTitle, on && { color: tint }])}>{title}</Text>
-      <Text style={styles.chipSub}>{sub}</Text>
-    </Pressable>
-  );
-}
-
 // ---------- the plain-words summary ----------
 
 // the corners a text may name, the one pointed at, and where to report a corner hovered or tapped
@@ -424,79 +417,77 @@ function Summary({ words, fits, fuel, top, pending, onPending, at }: {
   pending: number; onPending: () => void; at: PointAt;
 }) {
   const styles = useStyles();
-  const tint = useThemeColor({}, 'tint');
+  const tx = useText();
+  const theme = useTheme();
+  const wide = useWide();
   const tyres = fits.corrected_time ?? fits.time;
+  // the stint's figures: s a lap, slower in red, quicker in green
   const tiles = [
-    tyres && { label: fits.corrected_time ? 'Tyres' : 'Lap time', value: `${signed(tyres.per_lap)} s/lap`,
-      sub: tyres.clear ? 'clear trend' : `within ±${tyres.within.toFixed(2)}` },
-    fuel?.fuel_s_per_lap != null && { label: 'Fuel burn', value: `${signed(fuel.fuel_s_per_lap)} s/lap`,
-      sub: `${fuel.kg_per_lap?.toFixed(2)} kg/lap${fuel.source === 'log' ? '' : ' (estimate)'}` },
-    fuel && { label: '10 kg of fuel', value: `${fuel.s_per_10kg.toFixed(2)} s/lap`, sub: 'here' },
-    top && top.clear && top.per_lap > 0 && { label: 'Biggest fade', value: `${signed(top.per_lap)} s/lap`,
-      sub: top.label.toLowerCase() },
-  ].filter(Boolean) as { label: string; value: string; sub: string }[];
+    tyres && { label: fits.corrected_time ? 'Tyres' : 'Lap time', value: signed(tyres.per_lap), unit: 's/lap',
+      note: tyres.clear ? 'clear trend' : `within ±${tyres.within.toFixed(2)}`, delta: tyres.per_lap },
+    fuel?.fuel_s_per_lap != null && { label: 'Fuel burn', value: signed(fuel.fuel_s_per_lap), unit: 's/lap',
+      note: `${fuel.kg_per_lap?.toFixed(2)} kg/lap${fuel.source === 'log' ? '' : ' (estimate)'}`,
+      delta: fuel.fuel_s_per_lap },
+    fuel && { label: '10 kg of fuel', value: fuel.s_per_10kg.toFixed(2), unit: 's/lap', note: 'here', delta: null },
+    top && top.clear && top.per_lap > 0 && { label: 'Biggest fade', value: signed(top.per_lap), unit: 's/lap',
+      note: top.label.toLowerCase(), delta: top.per_lap },
+  ].filter(Boolean) as { label: string; value: string; unit: string; note: string; delta: number | null }[];
+  const barOf = (d: number | null) =>
+    d == null || Math.abs(d) < 0.005 ? theme.rule : d > 0 ? theme.delta.loss : theme.delta.gain;
   return (
-    <View style={styles.card}>
-      <CornerText style={styles.headline} text={words.headline} {...at} />
+    <View style={styles.summary}>
+      <CornerText style={StyleSheet.flatten([styles.headline, wide ? null : styles.headlinePhone])}
+        text={words.headline} {...at} />
       {words.advice && (
-        <View style={StyleSheet.flatten([styles.advice, { borderLeftColor: tint }])}>
-          <CornerText style={styles.body} text={words.advice} {...at} />
+        <View style={styles.advice}>
+          <CornerText style={tx.body} text={words.advice} {...at} />
         </View>
       )}
       {tiles.length > 0 && (
-        <View style={styles.tiles}>
+        <FigRow style={styles.figs}>
           {tiles.map((t) => (
-            <View key={t.label} style={styles.tile}>
-              <Text style={styles.tileLabel}>{t.label}</Text>
-              <Text style={styles.tileValue}>{t.value}</Text>
-              <Text style={styles.tileSub}>{t.sub}</Text>
-            </View>
+            <Fig key={t.label} label={t.label} value={t.value} unit={t.unit} size={wide ? 52 : 38} bar={barOf(t.delta)}
+              barHeight={6} note={t.note} />
           ))}
-        </View>
+        </FigRow>
       )}
       {pending > 0 && (
-        <Pressable onPress={onPending} accessibilityRole="link">
-          <Text style={{ color: tint }}>
-            {pending === 1 ? '1 lap looks' : `${pending} laps look`} slowed by traffic, a safety car or an FCY: check
-            {pending === 1 ? ' it' : ' them'} in the lap list ↓
+        <View style={styles.pending}>
+          <Text style={tx.body}>
+            {pending === 1 ? '1 lap looks' : `${pending} laps look`} slowed by traffic, a safety car or an FCY.
           </Text>
-        </Pressable>
-      )}
-      {words.car.length > 0 && (
-        <View style={styles.list}>
-          <Text style={styles.h3}>The car</Text>
-          {words.car.map((s) => <Bullet key={s} text={s} at={at} />)}
+          <TextLink small red label={`Check ${pending === 1 ? 'it' : 'them'} in the lap list ↓`} onPress={onPending} />
         </View>
       )}
-      {words.driver.length > 0 && (
-        <View style={styles.list}>
-          <Text style={styles.h3}>Your driving</Text>
-          {words.driver.map((s) => <Bullet key={s} text={s} at={at} />)}
+      {(words.car.length > 0 || words.driver.length > 0) && (
+        <View style={wide ? styles.lists : styles.listsPhone}>
+          {words.car.length > 0 && (
+            <View style={wide ? styles.listCol : styles.list}>
+              <Text style={tx.sub}>The car</Text>
+              {words.car.map((s) => <Bullet key={s} text={s} at={at} />)}
+            </View>
+          )}
+          {words.driver.length > 0 && (
+            <View style={wide ? styles.listCol : styles.list}>
+              <Text style={tx.sub}>The driving</Text>
+              {words.driver.map((s) => <Bullet key={s} text={s} at={at} />)}
+            </View>
+          )}
         </View>
       )}
-      {words.fuel && <Text style={styles.small}>{words.fuel}</Text>}
-      {words.left_out && <Text style={styles.small}>{words.left_out}</Text>}
+      {words.fuel && <Text style={tx.small}>{words.fuel}</Text>}
+      {words.left_out && <Text style={tx.small}>{words.left_out}</Text>}
     </View>
   );
 }
 
 function Bullet({ text, at }: { text: string; at: PointAt }) {
   const styles = useStyles();
+  const tx = useText();
   return (
     <View style={styles.bullet}>
-      <Text style={styles.bulletDot}>•</Text>
-      <CornerText style={StyleSheet.flatten([styles.body, styles.flex])} text={text} {...at} />
-    </View>
-  );
-}
-
-function Section({ title, intro, children }: { title: string; intro?: string; children: React.ReactNode }) {
-  const styles = useStyles();
-  return (
-    <View style={styles.section}>
-      <Text style={styles.h2}>{title}</Text>
-      {intro && <Text style={styles.small}>{intro}</Text>}
-      {children}
+      <View style={styles.bulletMark} />
+      <CornerText style={StyleSheet.flatten([tx.body, styles.flex])} text={text} {...at} />
     </View>
   );
 }
@@ -508,9 +499,8 @@ function PhaseTable({ fits, fade, stint, wide }: {
 }) {
   const theme = useTheme();
   const styles = useStyles();
-  const c = useChartColors();
+  const tx = useText();
   const pal = useBalanceColors();
-  const tint = useThemeColor({}, 'tint');
   const [phase, setPhase] = useState<GripPhase>('exit');
   const pct = (f?: Fit) => (f && f.level ? (100 * f.change) / f.level : null);
   const gripMax = Math.max(3, ...GRIP_PHASES.map((p) => Math.abs(pct(fits[`grip_${p.key}`]) ?? 0)));
@@ -519,48 +509,53 @@ function PhaseTable({ fits, fade, stint, wide }: {
   return (
     <View style={styles.block}>
       <View style={StyleSheet.flatten([styles.block, styles.narrow])}>
-        <View style={styles.tableHead}>
-          <Text style={StyleSheet.flatten([styles.th, styles.phaseCol])}>Phase</Text>
-          <Text style={StyleSheet.flatten([styles.th, styles.numCol])}>Grip</Text>
-          <Text style={StyleSheet.flatten([styles.th, styles.flex])}>Grip change</Text>
-          <Text style={StyleSheet.flatten([styles.th, styles.flex])}>Balance shift</Text>
+        <View>
+          <View style={styles.tableHead}>
+            <Text style={StyleSheet.flatten([styles.th, styles.phaseCol])}>Phase</Text>
+            <Text style={StyleSheet.flatten([styles.th, styles.numCol])}>Grip</Text>
+            <Text style={StyleSheet.flatten([styles.th, styles.flex])}>Grip change</Text>
+            <Text style={StyleSheet.flatten([styles.th, styles.flex])}>Balance shift</Text>
+          </View>
+          {GRIP_PHASES.map((p) => {
+            const g = fits[`grip_${p.key}`];
+            const b = p.balance ? fits[`balance_${p.balance}`] : undefined;
+            const gp = pct(g);
+            const on = !wide && stint != null && p.key === phase;
+            return (
+              <Pressable key={p.key} onPress={() => setPhase(p.key)} disabled={wide || stint == null}
+                accessibilityLabel={`${p.label}: grip ${fixed(g?.level, 2)} g, ${signed(gp, 1)} %, balance ${signed(b?.change)}°`}
+                accessibilityState={{ selected: on }}
+                style={StyleSheet.flatten([styles.phaseRow, on && styles.phaseRowOn])}>
+                <View style={StyleSheet.flatten([styles.phaseCol, styles.phaseName])}>
+                  <View style={StyleSheet.flatten([styles.phaseKey, { backgroundColor: phaseColor(theme, p.key) }])} />
+                  <Text style={StyleSheet.flatten([styles.phaseLabel, on && styles.phaseLabelOn])} numberOfLines={2}>
+                    {p.label}
+                  </Text>
+                </View>
+                <Text style={StyleSheet.flatten([styles.numCol, styles.num])}>{fixed(g?.level, 2)} g</Text>
+                <View style={styles.cellBar}>
+                  <ChangeBar value={gp} max={gripMax} color={(gp ?? 0) < 0 ? theme.delta.loss : theme.delta.gain} faded={!g?.clear} />
+                  <Text style={StyleSheet.flatten([styles.num, styles.cellNum, !g?.clear && styles.dim])}>
+                    {gp == null ? '–' : `${signed(gp, 1)} %`}
+                  </Text>
+                </View>
+                <View style={styles.cellBar}>
+                  {b ? (
+                    <>
+                      <ChangeBar value={b.change} max={balMax} color={shiftColor(b.change, pal)} faded={!b.clear} />
+                      <Text style={StyleSheet.flatten([styles.num, styles.cellNum, !b.clear && styles.dim])}>
+                        {signed(b.change)}°
+                      </Text>
+                    </>
+                  ) : <Text style={StyleSheet.flatten([styles.num, styles.flex, styles.dim])}>–</Text>}
+                </View>
+              </Pressable>
+            );
+          })}
         </View>
-        {GRIP_PHASES.map((p) => {
-          const g = fits[`grip_${p.key}`];
-          const b = p.balance ? fits[`balance_${p.balance}`] : undefined;
-          const gp = pct(g);
-          const on = !wide && stint != null && p.key === phase;
-          return (
-            <Pressable key={p.key} onPress={() => setPhase(p.key)} disabled={wide || stint == null}
-              accessibilityLabel={`${p.label}: grip ${fixed(g?.level, 2)} g, ${signed(gp, 1)} %, balance ${signed(b?.change)}°`}
-              style={StyleSheet.flatten([styles.phaseRow, on && { borderColor: tint },
-                { borderLeftColor: phaseColor(theme, p.key) }])}>
-              <Text style={StyleSheet.flatten([styles.phaseCol, styles.body, on && { color: tint, fontWeight: '600' }])}>
-                {p.label}
-              </Text>
-              <Text style={StyleSheet.flatten([styles.numCol, styles.num])}>{fixed(g?.level, 2)} g</Text>
-              <View style={styles.cellBar}>
-                <ChangeBar value={gp} max={gripMax} color={(gp ?? 0) < 0 ? theme.delta.loss : theme.delta.gain} faded={!g?.clear} />
-                <Text style={StyleSheet.flatten([styles.num, styles.cellNum, !g?.clear && styles.dim])}>
-                  {gp == null ? '–' : `${signed(gp, 1)} %`}
-                </Text>
-              </View>
-              <View style={styles.cellBar}>
-                {b ? (
-                  <>
-                    <ChangeBar value={b.change} max={balMax} color={shiftColor(b.change, pal)} faded={!b.clear} />
-                    <Text style={StyleSheet.flatten([styles.num, styles.cellNum, !b.clear && styles.dim])}>
-                      {signed(b.change)}°
-                    </Text>
-                  </>
-                ) : <Text style={StyleSheet.flatten([styles.dim, styles.flex])}>–</Text>}
-              </View>
-            </Pressable>
-          );
-        })}
-        <Text style={styles.small}>
+        <Text style={tx.small}>
           Change from the first to the last lap{stint ? ' of the stint' : ' of a stint, over every stint in view'}. Grip
-          falling in red, rising in green; balance moving towards understeer in blue, oversteer in red. Faded: within
+          falling in red, rising in green; balance moving towards understeer in blue, oversteer in magenta. Faded: within
           the lap-to-lap scatter.{!wide && stint ? ' Tap a phase to see it lap by lap.' : ''}
         </Text>
       </View>
@@ -568,11 +563,11 @@ function PhaseTable({ fits, fade, stint, wide }: {
         <View style={styles.panels}>
           {shown.map((p) => (
             <PhasePanel key={p.key} stint={stint} phase={p} fade={fade.find((f) => f.key === p.key)}
-              width={wide ? '48.5%' : '100%'} />
+              width={wide ? '48%' : '100%'} />
           ))}
         </View>
       ) : (
-        <Text style={styles.small}>Open a stint to see grip and balance lap by lap.</Text>
+        <Text style={tx.small}>Open a stint to see grip and balance lap by lap.</Text>
       )}
     </View>
   );
@@ -583,6 +578,7 @@ function PhasePanel({ stint, phase, fade, width }: {
 }) {
   const theme = useTheme();
   const styles = useStyles();
+  const tx = useText();
   const c = useChartColors();
   const laps = stint.laps.filter((l) => l.in_fit);
   if (laps.length < 2) return null;
@@ -591,8 +587,11 @@ function PhasePanel({ stint, phase, fade, width }: {
   const bal = phase.balance ? laps.map((l) => l.balance?.[phase.balance as BalancePhase] ?? null) : null;
   return (
     <View style={StyleSheet.flatten([styles.panel, { width }])}>
-      <Text style={styles.h3}>{phase.label}</Text>
-      <Text style={styles.small}>
+      <View style={styles.panelHead}>
+        <View style={StyleSheet.flatten([styles.phaseKey, { backgroundColor: phaseColor(theme, phase.key) }])} />
+        <Text style={styles.panelTitle}>{phase.label}</Text>
+      </View>
+      <Text style={tx.small}>
         {phase.measure}
         {fade ? ` · fade ${signed(fade.per_lap, 3)} s/lap${fade.clear ? '' : ' (within scatter)'}` : ''}
       </Text>
@@ -600,7 +599,7 @@ function PhasePanel({ stint, phase, fade, width }: {
         height={130}
         title="Grip, g" unit="lap" formatX={(v) => `L${v}`} formatY={(v) => v.toFixed(2)}
         readout={(i) => [{ label: 'grip', value: `${fixed(grip[i], 3)} g`, color: phaseColor(theme, phase.key) }]} />
-      {!bal && <Text style={styles.small}>No balance here: the car runs straight.</Text>}
+      {!bal && <Text style={tx.small}>No balance here: the car runs straight.</Text>}
       {bal && (
         <LineChart x={x} series={[{ key: 'b', label: 'Balance', values: bal, color: c.s3 }]} legend={[]} height={130}
           title="Balance, ° against normal (+ understeer)" unit="lap" formatX={(v) => `L${v}`}
@@ -620,7 +619,7 @@ function median(v: number[]) {
 
 function CornerShift({ sections, stints, onCorner }: { sections: SectionRow[]; stints: Stint[]; onCorner?: OnCorner }) {
   const styles = useStyles();
-  const tint = useThemeColor({}, 'tint');
+  const tx = useText();
   const [phase, setPhase] = useState<BalancePhase>('entry');
   const grouped = stints.filter((s) => s.groups);
   // the whole lap: the median of the early laps and of the late laps of each stint, as per corner
@@ -647,28 +646,25 @@ function CornerShift({ sections, stints, onCorner }: { sections: SectionRow[]; s
   const moved = rows.filter((r) => !r.strong && Math.abs(r.shift) >= MIN_SHIFT).length;
   return (
     <View style={styles.block}>
-      <View style={styles.toggle}>
-        {(['entry', 'mid', 'exit'] as BalancePhase[]).map((p) => (
-          <Pressable key={p} onPress={() => setPhase(p)} accessibilityRole="tab" accessibilityState={{ selected: p === phase }}
-            style={StyleSheet.flatten([styles.toggleItem, p === phase && { borderColor: tint, borderWidth: 2 }])}>
-            <Text style={p === phase ? { color: tint, fontWeight: '600' } : undefined}>
-              {p === 'entry' ? 'Entry' : p === 'mid' ? 'Mid-corner' : 'Exit'}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
+      <Tabs value={phase} onChange={setPhase} items={[
+        { key: 'entry', label: 'Entry' },
+        { key: 'mid', label: 'Mid-corner' },
+        { key: 'exit', label: 'Exit' },
+      ]} />
       {rows.length === 0 ? (
-        <Text style={styles.small}>
+        <Text style={tx.note}>
           Not enough flying laps for an early and a late group (it takes 4 in a stint), or no steering and yaw rate to
           read the balance from.
         </Text>
       ) : (
         <>
-          <Text style={styles.small}>
+          <Text style={tx.note}>
             {moved === 0 ? 'Every corner holds within ±0.15°.' : `${moved} of ${rows.length - (rows[0]?.strong ? 1 : 0)
             } corners move more than ${MIN_SHIFT}°.`}
           </Text>
-          <BalanceDumbbell rows={rows} early={earlyLaps} late={lateLaps} onCorner={onCorner} />
+          <View style={styles.narrow}>
+            <BalanceDumbbell rows={rows} early={earlyLaps} late={lateLaps} onCorner={onCorner} />
+          </View>
         </>
       )}
     </View>
@@ -705,14 +701,14 @@ function LapTimes({ stint }: { stint: Stint }) {
   );
 }
 
-/** A lap's time in its status colour: the stint's fastest, a clean lap, an out/in-lap, a pit lap, or a lap tagged SC,
- * FCY or traffic. */
-function lapTone(theme: Palette, l: StintLap, fastest: number | null) {
-  if (l.tag) return theme.lap.flag;
-  if (l.kind === 'pit') return theme.lap.pit;
-  if (l.kind === 'out' || l.kind === 'in') return theme.lap.outIn;
-  if (l.lap === fastest) return theme.lap.fastest;
-  return l.in_fit ? theme.lap.clean : theme.lap.outIn;
+/** A lap's time the programme's way: the stint's fastest on purple, a lap tagged SC, FCY or traffic on the flag
+ * yellow, a pit lap on ink; an out/in-lap or one left out in grey, a clean lap in ink. */
+function lapTone(theme: Palette, l: StintLap, fastest: number | null): { fill?: string; ink: string } {
+  if (l.tag) return { fill: theme.lap.flag, ink: inkOn(theme.lap.flag) };
+  if (l.kind === 'pit') return { fill: theme.lap.pit, ink: theme.background };
+  if (l.kind === 'out' || l.kind === 'in') return { ink: theme.textMuted };
+  if (l.lap === fastest) return { fill: theme.timing.best, ink: theme.timing.onBest };
+  return { ink: l.in_fit ? theme.text : theme.textMuted };
 }
 
 function LapList({ stint, onTag, tagging }: {
@@ -720,17 +716,22 @@ function LapList({ stint, onTag, tagging }: {
 }) {
   const theme = useTheme();
   const styles = useStyles();
-  const tint = useThemeColor({}, 'tint');
+  const tx = useText();
   // the stint's quickest lap in the trend
   const fastest = stint.laps.filter((l) => l.in_fit && !l.tag)
     .reduce<StintLap | null>((b, l) => (b == null || l.time < b.time ? l : b), null)?.lap ?? null;
   return (
-    <View style={styles.block}>
-      <Text style={styles.small}>
+    <View>
+      <Text style={StyleSheet.flatten([tx.note, styles.lapIntro])}>
         Tag a lap lost to a safety car, an FCY or traffic: it stays in the list, marked, and leaves the trends, the
         fade and the averages. Tap the tag again to clear it. A lap left out (an out-lap, in-lap, slow lap or one far
         off the trend) can be counted: it then goes into every figure like any other lap.
       </Text>
+      <View style={styles.lapHead}>
+        <Text style={StyleSheet.flatten([styles.th, styles.lapNoCol])}>Lap</Text>
+        <Text style={StyleSheet.flatten([styles.th, styles.flex])}>Time</Text>
+        <Text style={styles.th}>Tag</Text>
+      </View>
       {stint.laps.map((l) => {
         const taggable = l.kind === 'flying' || l.kind === 'slow';
         const busy = tagging === `${stint.key}:${l.lap}`;
@@ -741,16 +742,18 @@ function LapList({ stint, onTag, tagging }: {
             : l.kind !== 'flying' ? `${KIND_LABEL[l.kind]} · left out`
               : l.outlier ? `${signed(l.off_trend_s, 1)} s off the trend · left out`
                 : l.in_fit ? trendWords : 'left out';
+        const tone = lapTone(theme, l, fastest);
         return (
-          <View key={l.lap} style={StyleSheet.flatten([styles.lapRow, l.tag && styles.lapTagged])}>
+          <View key={l.lap} style={StyleSheet.flatten([styles.lapRow, !l.in_fit && styles.lapOff])}>
             <View style={styles.lapMain}>
-              <Text style={styles.lapNo}>L{l.lap}</Text>
+              <Text style={StyleSheet.flatten([styles.lapNo, !l.in_fit && styles.muted])}>{l.lap}</Text>
               <View style={styles.flex}>
-                <Text style={StyleSheet.flatten([styles.lapTime, { color: lapTone(theme, l, fastest) },
-                  l.lap === fastest && styles.bold])}>{formatLap(l.time)}</Text>
-                <Text style={styles.small}>{status}</Text>
+                <View style={StyleSheet.flatten([styles.lapTimeBox, tone.fill ? { backgroundColor: tone.fill } : null])}>
+                  <Text style={StyleSheet.flatten([styles.lapTime, { color: tone.ink }])}>{formatLap(l.time)}</Text>
+                </View>
+                <Text style={tx.small}>{status}</Text>
               </View>
-              {busy && <ActivityIndicator size="small" />}
+              {busy && <ActivityIndicator size="small" color={theme.text} />}
               {taggable && (
                 <View style={styles.tagRow}>
                   {TAGS.map((t) => {
@@ -761,9 +764,9 @@ function LapList({ stint, onTag, tagging }: {
                         hitSlop={4} accessibilityRole="button" accessibilityState={{ selected: on }}
                         accessibilityLabel={on ? `Clear the ${TAG_WORDS[t]} tag on lap ${l.lap}`
                           : `Tag lap ${l.lap} ${TAG_WORDS[t]}`}
-                        style={StyleSheet.flatten([styles.tagChip, suggested && { borderColor: tint, borderStyle: 'dashed' },
+                        style={StyleSheet.flatten([styles.tagBox, suggested && styles.tagSuggested,
                           on && { backgroundColor: theme.lap.flag, borderColor: theme.lap.flag }])}>
-                        <Text style={StyleSheet.flatten([styles.tagText, on && { color: inkOn(theme.lap.flag), fontWeight: '700' }])}>
+                        <Text style={StyleSheet.flatten([styles.tagText, on && { color: inkOn(theme.lap.flag) }])}>
                           {TAG_LABEL[t]}
                         </Text>
                       </Pressable>
@@ -774,48 +777,35 @@ function LapList({ stint, onTag, tagging }: {
             </View>
             {l.suggestion && !l.tag && (
               <View style={styles.suggest}>
-                <Text style={styles.small}>
+                <Text style={tx.note}>
                   {l.suggestion.likely
                     ? `Looks like ${l.suggestion.options.map((t) => TAG_WORDS[t]).join(' or ')}: ${l.suggestion.why}.`
                     : `${l.suggestion.why.charAt(0).toUpperCase()}${l.suggestion.why.slice(1)}`}
                 </Text>
                 {/* a lap left out is counted with the button below; one in the trend only needs the hint dismissed */}
-                {l.in_fit && (
-                  <Pressable onPress={() => onTag(stint, l, 'none')} disabled={busy} hitSlop={6} accessibilityRole="button">
-                    <Text style={{ color: tint, fontSize: 13 }}>No, it counts</Text>
-                  </Pressable>
-                )}
+                {l.in_fit && <TextLink small label="No, it counts" onPress={() => onTag(stint, l, 'none')} disabled={busy} />}
               </View>
             )}
             {l.checked && l.in_fit && (
               <View style={styles.suggest}>
-                <Text style={styles.small}>You checked this lap: it counts.</Text>
-                <Pressable onPress={() => onTag(stint, l, null)} disabled={busy} hitSlop={6} accessibilityRole="button">
-                  <Text style={{ color: tint, fontSize: 13 }}>Undo</Text>
-                </Pressable>
+                <Text style={tx.note}>You checked this lap: it counts.</Text>
+                <TextLink small label="Undo" onPress={() => onTag(stint, l, null)} disabled={busy} />
               </View>
             )}
             {l.counted && (
               <View style={styles.suggest}>
-                <Text style={StyleSheet.flatten([styles.countedText, { color: tint }])}>✓ Counted by you</Text>
-                <Pressable onPress={() => onTag(stint, l, null)} disabled={busy} hitSlop={8} accessibilityRole="button"
-                  accessibilityLabel={`Undo: stop counting lap ${l.lap}`}>
-                  <Text style={{ color: tint, fontSize: 13, textDecorationLine: 'underline' }}>Undo</Text>
-                </Pressable>
+                <Text style={tx.label}>✓ Counted by you</Text>
+                <TextLink small label="Undo" onPress={() => onTag(stint, l, null)} disabled={busy} />
               </View>
             )}
             {countable && (
               <View style={styles.suggest}>
-                <Pressable onPress={() => onTag(stint, l, 'count')} disabled={busy} hitSlop={6}
-                  accessibilityRole="button" accessibilityLabel={`Count lap ${l.lap} in the trends`}
-                  style={StyleSheet.flatten([styles.countButton, { borderColor: tint }])}>
-                  <Text style={StyleSheet.flatten([styles.countText, { color: tint }])}>Count this lap</Text>
-                </Pressable>
+                <TextLink small red label="Count this lap" onPress={() => onTag(stint, l, 'count')} disabled={busy} />
               </View>
             )}
             {l.kind === 'pit' && (
               <View style={styles.suggest}>
-                <Text style={styles.small}>Can&apos;t be counted: the time standing in the pits swamps the lap.</Text>
+                <Text style={tx.small}>Can&apos;t be counted: the time standing in the pits swamps the lap.</Text>
               </View>
             )}
           </View>
@@ -846,18 +836,16 @@ const COLUMNS: { title: string; width: number; value: (l: StintLap) => string }[
 
 function LapTable({ stint, unit }: { stint: Stint; unit: string }) {
   const styles = useStyles();
+  const tx = useText();
   const [open, setOpen] = useState(false);
-  const tint = useThemeColor({}, 'tint');
   return (
     <View style={styles.block}>
-      <Pressable onPress={() => setOpen(!open)} accessibilityRole="button">
-        <Text style={{ color: tint }}>{open ? 'Hide the numbers' : 'Every lap in numbers'}</Text>
-      </Pressable>
+      <TextLink label={open ? 'Hide the numbers' : 'Every lap in numbers'} onPress={() => setOpen(!open)} arrow={!open} />
       {open && (
         <>
           <ScrollView horizontal>
             <View>
-              <View style={styles.row}>
+              <View style={styles.numHead}>
                 {COLUMNS.map((c) => (
                   <Text key={c.title} style={StyleSheet.flatten([styles.cell, styles.th, { width: c.width }])}>
                     {c.title}
@@ -865,9 +853,9 @@ function LapTable({ stint, unit }: { stint: Stint; unit: string }) {
                 ))}
               </View>
               {stint.laps.map((l) => (
-                <View key={l.lap} style={styles.row}>
+                <View key={l.lap} style={StyleSheet.flatten([styles.numRow, !l.in_fit && styles.lapOff])}>
                   {COLUMNS.map((c) => (
-                    <Text key={c.title} style={StyleSheet.flatten([styles.cell, { width: c.width }, !l.in_fit && styles.dim])}>
+                    <Text key={c.title} style={StyleSheet.flatten([styles.cell, { width: c.width }, !l.in_fit && styles.muted])}>
                       {c.value(l)}
                     </Text>
                   ))}
@@ -875,9 +863,9 @@ function LapTable({ stint, unit }: { stint: Stint; unit: string }) {
               ))}
             </View>
           </ScrollView>
-          <Text style={styles.small}>
+          <Text style={tx.small}>
             Grey laps are left out of the trends. Grip in g per phase (90th percentile). Balance in {unit === 'deg' ? '°'
-              : unit} of understeer angle against the car's normal at the same cornering g, + understeer.
+              : unit} of understeer angle against the car&apos;s normal at the same cornering g, + understeer.
           </Text>
         </>
       )}
@@ -885,98 +873,112 @@ function LapTable({ stint, unit }: { stint: Stint; unit: string }) {
   );
 }
 
-function StintCard({ stint, many, onPress }: { stint: Stint; many: boolean; onPress: () => void }) {
+function StintCard({ stint, many, first, onPress }: { stint: Stint; many: boolean; first: boolean; onPress: () => void }) {
   const styles = useStyles();
+  const tx = useText();
   const t = stint.fits.corrected_time ?? stint.fits.time;
   return (
-    <Pressable onPress={onPress} style={styles.card} accessibilityRole="button">
-      <Text style={styles.h3}>{stintName(stint, many)}</Text>
-      <Text style={styles.small}>
-        {stint.fitted_laps} laps in the trend · best {formatLap(stint.best)}
+    <Pressable onPress={onPress} style={StyleSheet.flatten([styles.stintRow, first && styles.stintFirst])}
+      accessibilityRole="button" accessibilityLabel={`Open ${stintName(stint, many)}`}>
+      <View style={styles.stintHead}>
+        <Text style={styles.stintTitle}>{many ? `${stint.run} · ` : ''}Stint {stint.number}</Text>
+        <TextLink small label="Open" arrow onPress={onPress} />
+      </View>
+      <Text style={tx.labelMuted}>
+        Laps {stint.first_lap}–{stint.last_lap} · {stint.fitted_laps} in the trend · best {formatLap(stint.best)}
         {t ? ` · tyres ${signed(t.per_lap)} s/lap${t.clear ? '' : ' (no clear trend)'}` : ''}
       </Text>
-      <Text style={styles.body}>{stint.words.headline}</Text>
+      <Text style={tx.body}>{stint.words.headline}</Text>
     </Pressable>
   );
 }
 
 const useStyles = themed((c) => ({
-  screen: { flex: 1 },
+  screen: { flex: 1, backgroundColor: c.background },
   split: { flexDirection: 'row' },
-  pinned: { borderBottomWidth: 1, borderColor: c.separator, paddingHorizontal: 16, paddingBottom: 6 },
-  pinnedBar: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 40, backgroundColor: 'transparent' },
-  pinnedTitle: { fontSize: 13, fontWeight: '600', opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 },
-  pinnedButton: { paddingVertical: 8, paddingLeft: 8 },
+  pinned: { borderBottomWidth: 1, borderColor: c.rule, paddingHorizontal: 16, paddingBottom: 6, backgroundColor: c.background },
+  pinnedBar: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 40, backgroundColor: 'transparent' },
   gone: { display: 'none' },
-  side: { borderLeftWidth: 1, borderColor: c.separator, padding: 16, gap: 8 },
-  container: { padding: 16, alignItems: 'center' },
-  page: { width: '100%', maxWidth: 1040, gap: 16 },
-  flex: { flex: 1, backgroundColor: 'transparent' },
-  narrow: { maxWidth: 720, backgroundColor: 'transparent' },
-  block: { gap: 10, backgroundColor: 'transparent' },
-  busy: { flexDirection: 'row', gap: 8, alignItems: 'center' },
-  card: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 14, gap: 10, backgroundColor: c.surface },
-  h2: { fontSize: 18, fontWeight: '700' },
-  h3: { fontSize: 15, fontWeight: '700' },
-  headline: { fontSize: 17, fontWeight: '600', lineHeight: 24 },
-  body: { fontSize: 14, lineHeight: 20 },
-  small: { fontSize: 12, opacity: 0.7, lineHeight: 17 },
+  side: { borderLeftWidth: 1, borderColor: c.rule, padding: 16, gap: 8, backgroundColor: c.background },
+  top: { gap: 18, marginTop: 18 },
+  left: { alignSelf: 'flex-start' },
+  flex: { flex: 1, minWidth: 0, backgroundColor: 'transparent' },
+  narrow: { maxWidth: 760, backgroundColor: 'transparent' },
+  block: { gap: 14, backgroundColor: 'transparent' },
+  busy: { flexDirection: 'row', gap: 10, alignItems: 'center' },
   dim: { opacity: 0.45 },
-  error: { color: c.error },
-  section: { gap: 10 },
-  advice: { borderLeftWidth: 3, paddingLeft: 10, paddingVertical: 2 },
-  tiles: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 20, rowGap: 10 },
-  tile: { minWidth: 120, gap: 1 },
-  tileLabel: { fontSize: 11, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
-  tileValue: { fontSize: 20, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  tileSub: { fontSize: 12, opacity: 0.6 },
-  list: { gap: 4 },
-  bullet: { flexDirection: 'row', gap: 8 },
-  bulletDot: { fontSize: 14, lineHeight: 20, opacity: 0.6 },
-  chips: { gap: 8 },
-  chip: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 12, paddingVertical: 7, backgroundColor: c.surface },
-  chipTitle: { fontSize: 14, fontWeight: '600' },
-  chipSub: { fontSize: 12, opacity: 0.6 },
-  pickerHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  button: { paddingHorizontal: 12, paddingVertical: 8 },
-  tickedRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  tickedChip: { flexDirection: 'row', alignItems: 'center', gap: 8, borderWidth: 1, borderColor: c.border,
-    borderRadius: Radius.chip, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: c.surface },
-  tickedText: { fontSize: 13 },
-  event: { gap: 2, marginTop: 4 },
-  eventName: { fontSize: 13, fontWeight: '700', marginBottom: 2 },
-  logRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8, minHeight: 44 },
-  box: { width: 22, height: 22, borderRadius: 5, borderWidth: 2, borderColor: c.borderStrong, alignItems: 'center',
-    justifyContent: 'center', backgroundColor: c.surface },
-  tick: { color: c.onTint, fontSize: 14, fontWeight: '800', lineHeight: 16 },
-  logName: { fontSize: 14 },
-  toggle: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-  toggleItem: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: c.surface },
-  tableHead: { flexDirection: 'row', gap: 8, paddingHorizontal: 6 },
-  th: { fontSize: 12, fontWeight: '600', opacity: 0.7 },
-  phaseRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, paddingHorizontal: 6,
-    borderWidth: 1, borderLeftWidth: 4, borderColor: 'transparent', borderRadius: Radius.control },
-  phaseCol: { width: 92 },
-  numCol: { width: 52 },
-  num: { fontSize: 13, fontVariant: ['tabular-nums'] },
+  muted: { color: c.textMuted },
+  notes: { gap: 6, marginTop: 24, maxWidth: 760 },
+  // the logs
+  picker: { gap: 8 },
+  pickerHead: { flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderColor: c.rule,
+    paddingBottom: 6 },
+  tickedRow: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 18, rowGap: 8, alignItems: 'center' },
+  tickedItem: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 2 },
+  tickedText: { fontFamily: face('body', 600), fontSize: 15, color: c.text },
+  tickedX: { fontFamily: Fonts.label, fontSize: 12, color: c.textMuted },
+  event: { gap: 2, marginTop: 8 },
+  eventHead: { flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', columnGap: 10, marginBottom: 2 },
+  eventName: { fontFamily: Fonts.display, fontSize: 20, lineHeight: 24, textTransform: 'uppercase', color: c.text },
+  logRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8, minHeight: 44, borderBottomWidth: 1,
+    borderColor: c.separator },
+  logName: { fontFamily: face('body', 600), fontSize: 15, color: c.text },
+  // the summary
+  summary: { gap: 18 },
+  headline: { fontFamily: face('body', 600), fontSize: 24, lineHeight: 32, color: c.text, maxWidth: 860 },
+  headlinePhone: { fontSize: 20, lineHeight: 27 },
+  advice: { borderLeftWidth: 4, borderColor: c.rule, paddingLeft: 14, paddingVertical: 2, maxWidth: 820 },
+  figs: { marginTop: 4 },
+  pending: { gap: 8 },
+  lists: { flexDirection: 'row', gap: 32, alignItems: 'flex-start' },
+  listsPhone: { gap: 20 },
+  listCol: { flex: 1, minWidth: 0, gap: 8 },
+  list: { gap: 8 },
+  bullet: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
+  bulletMark: { width: 7, height: 7, backgroundColor: c.text, marginTop: 8 },
+  // grip and balance
+  tableHead: { flexDirection: 'row', gap: 8, borderBottomWidth: 1, borderColor: c.rule, paddingBottom: 5 },
+  th: { ...Type.label, fontSize: 11, color: c.text },
+  phaseRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 9, borderBottomWidth: 1,
+    borderColor: c.separator },
+  phaseRowOn: { backgroundColor: c.surfaceRaised },
+  phaseCol: { width: 112 },
+  phaseName: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  phaseKey: { width: 12, height: 12 },
+  phaseLabel: { fontFamily: Fonts.body, fontSize: 15, color: c.text, flexShrink: 1 },
+  phaseLabelOn: { fontFamily: face('body', 700) },
+  numCol: { width: 56 },
+  num: { ...Type.number, fontSize: 13, color: c.text },
   cellBar: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'transparent' },
   cellNum: { width: 50, textAlign: 'right' },
-  panels: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between' },
-  panel: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 12, gap: 8, backgroundColor: c.surface },
-  lapRow: { borderBottomWidth: 1, borderColor: c.separator, paddingVertical: 6, gap: 4 },
-  lapTagged: { opacity: 0.85 },
+  panels: { flexDirection: 'row', flexWrap: 'wrap', rowGap: 24, columnGap: 16, justifyContent: 'space-between' },
+  panel: { gap: 8, borderTopWidth: 3, borderColor: c.rule, paddingTop: 8 },
+  panelHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  panelTitle: { fontFamily: Fonts.display, fontSize: 22, lineHeight: 26, textTransform: 'uppercase', color: c.text },
+  // laps
+  lapIntro: { maxWidth: 760, marginBottom: 12 },
+  lapHead: { flexDirection: 'row', alignItems: 'flex-end', gap: 10, borderBottomWidth: 1, borderColor: c.rule,
+    paddingBottom: 5 },
+  lapNoCol: { width: 36 },
+  lapRow: { borderBottomWidth: 1, borderColor: c.separator, paddingVertical: 8, gap: 6 },
+  lapOff: { backgroundColor: c.band },
   lapMain: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  lapNo: { width: 34, fontSize: 14, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  lapTime: { fontSize: 15, fontVariant: ['tabular-nums'] },
-  bold: { fontWeight: '700' },
+  lapNo: { width: 36, fontFamily: Fonts.display, fontSize: 22, lineHeight: 26, color: c.text },
+  lapTimeBox: { alignSelf: 'flex-start', paddingHorizontal: 4, paddingVertical: 1 },
+  lapTime: { ...Type.number, fontFamily: face('label', 700), fontSize: 16 },
   tagRow: { flexDirection: 'row', gap: 6 },
-  tagChip: { borderWidth: 1, borderColor: c.borderStrong, borderRadius: Radius.chip, paddingHorizontal: 10, paddingVertical: 7,
-    minWidth: 44, alignItems: 'center', backgroundColor: c.surface },
-  tagText: { fontSize: 13 },
-  suggest: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 12, rowGap: 2, marginLeft: 44 },
-  countButton: { borderWidth: 1, borderRadius: Radius.chip, paddingHorizontal: 12, paddingVertical: 6 },
-  countText: { fontSize: 13, fontWeight: '600' },
-  countedText: { fontSize: 13, fontWeight: '600' },
-  row: { flexDirection: 'row', borderBottomWidth: 1, borderColor: c.separator, paddingVertical: 4 },
-  cell: { fontVariant: ['tabular-nums'], fontSize: 13, paddingRight: 6, textAlign: 'right' },
+  tagBox: { borderWidth: 1, borderColor: c.rule, paddingHorizontal: 9, paddingVertical: 7, minWidth: 44,
+    alignItems: 'center' },
+  tagSuggested: { borderColor: c.mark, borderStyle: 'dashed', borderWidth: 2 },
+  tagText: { ...Type.label, fontSize: 12, color: c.text },
+  suggest: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 6, marginLeft: 46 },
+  numHead: { flexDirection: 'row', borderBottomWidth: 1, borderColor: c.rule, paddingBottom: 4 },
+  numRow: { flexDirection: 'row', borderBottomWidth: 1, borderColor: c.separator, paddingVertical: 5 },
+  cell: { ...Type.number, fontSize: 13, color: c.text, paddingRight: 6, textAlign: 'right' },
+  // the stints
+  stintRow: { gap: 6, paddingVertical: 14, borderTopWidth: 1, borderColor: c.separator },
+  stintFirst: { borderTopWidth: 0, paddingTop: 0 },
+  stintHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  stintTitle: { fontFamily: Fonts.display, fontSize: 26, lineHeight: 30, textTransform: 'uppercase', color: c.text,
+    flexShrink: 1 },
 }));

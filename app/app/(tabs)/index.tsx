@@ -173,6 +173,12 @@ export default function SessionsScreen() {
           )}
         </View>
       )}
+      {/* the questions about which season an upload belongs to, when the app isn't sure */}
+      {folders && (
+        <View style={styles.seasons}>
+          <SeasonMatchCount onChanged={load} />
+        </View>
+      )}
       {error && <Text style={styles.error}>Can&apos;t reach the server: {error}</Text>}
       <DeletedNotice />
       {!folders && !error && <ActivityIndicator style={styles.loading} />}
@@ -182,7 +188,6 @@ export default function SessionsScreen() {
           own. Or make an event first with + New event and upload into it.
         </Text>
       )}
-      {folders && <SeasonMatchCount onChanged={load} />}
       {folders && folders.length > 0 && sections.map((when, i) => {
         const list = groups[when];
         const leadHere = lead && leadWhen === when && lead.sessions > 0 ? lead : null;
@@ -544,7 +549,7 @@ function ListItem({ f, when, first, plan, prep, onRenamed, onChanged }: {
         <View style={wide ? styles.itemActions : styles.itemActionsPhone}>
           <TextLink onPress={() => setRenaming(true)} label="Rename" small />
           {planned && <RemovePlanned f={f} plan={plan} onRemoved={onChanged} />}
-          {!planned && <DeleteEventAction id={f.id!} name={f.name} onDeleted={onChanged} />}
+          {!planned && f.id != null && <DeleteEventAction id={f.id} name={f.name} onDeleted={onChanged} />}
           {f.id != null && <PrepButton eventId={f.id} info={prep} compact />}
         </View>
       )}
@@ -565,6 +570,7 @@ const useStyles = themed((c) => ({
   uploadBigPhone: { fontFamily: Fonts.display, fontSize: 26, lineHeight: 28, textTransform: 'uppercase', color: c.background },
   // the faint rule colour reads as a quiet grey on the ink block, in either scheme
   uploadSmall: { ...Type.label, fontFamily: Fonts.label, letterSpacing: 1, color: c.border, marginTop: 6 },
+  seasons: { paddingTop: 10 },
   toolsLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 22, paddingTop: 12 },
   toolsLinePhone: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 18, rowGap: 12, paddingTop: 12 },
   sync: { marginLeft: 'auto' },
