@@ -599,7 +599,7 @@ const useStyles = themed((c) => ({
   explainHead: { fontWeight: '600', fontVariant: ['tabular-nums'] },
   // the two views: 44 px tap targets around their underlined names, the one not shown in the caption grey
   toggle: { flexDirection: 'row', gap: 8 },
-  toggleHit: { minWidth: TAP, marginRight: 6, ...tapRoom(12) },
+  toggleHit: { minWidth: TAP, marginRight: 6, ...tapRoom(13) },
   toggleItem: { borderBottomWidth: 3, borderColor: 'transparent', paddingBottom: 2, backgroundColor: 'transparent' },
   toggleOff: { color: c.textMuted },
   tableHead: { flexDirection: 'row', gap: 4 },

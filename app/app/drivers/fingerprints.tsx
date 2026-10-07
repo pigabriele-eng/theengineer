@@ -9,7 +9,7 @@ import { Colophon, Label, Page, Section, TextLink } from '@/components/Programme
 import { Text, View } from '@/components/Themed';
 import { Driver, driversApi } from '@/lib/drivers';
 import { FingerprintDb, fingerprintsApi, LapLink } from '@/lib/fingerprints';
-import { themed, useTheme } from '@/constants/Theme';
+import { tapRoom, themed, useTheme } from '@/constants/Theme';
 
 const POLL_MS = 5000;
 
@@ -116,7 +116,7 @@ export default function FingerprintsScreen() {
             {db.unnamed.map((u) => (
               <View key={`${u.event_id}-${u.label}`} style={styles.row}>
                 <Link href={{ pathname: '/event/[id]', params: { id: String(u.event_id) } }} asChild>
-                  <Pressable accessibilityRole="link" hitSlop={4} style={styles.flex}>
+                  <Pressable accessibilityRole="link" style={styles.rowLink}>
                     <Text style={t.body}><Text style={t.strong}>{u.label}</Text> at {u.event ?? `Event ${u.event_id}`}</Text>
                   </Pressable>
                 </Link>
@@ -167,6 +167,8 @@ const useStyles = themed((c) => ({
   block: { gap: 26 },
   list: { gap: 12 },
   flex: { flex: 1, minWidth: 0 },
+  // the event's link: room above and below makes it a 44 px tap target, the row laid out as drawn
+  rowLink: { flex: 1, minWidth: 0, ...tapRoom(11) },
   row: { flexDirection: 'row', alignItems: 'baseline', gap: 16, flexWrap: 'wrap' },
   rowPhone: { gap: 4 },
   figs: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, rowGap: 2 },

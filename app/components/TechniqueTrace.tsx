@@ -96,7 +96,7 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
     const kx = px(k.at_m);
     if (k.at_m < x0 || k.at_m > x1) continue;
     const prev = ticksX[ticksX.length - 1];
-    if (prev && kx - prev.x < (prev.label.length + k.code.length) * 3.6 + 6) continue;
+    if (prev && kx - prev.x < (prev.label.length + k.code.length) * 3.9 + 6) continue;
     ticksX.push({ label: k.code, x: kx });
   }
 
@@ -166,7 +166,7 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
                 strokeWidth={1} />
             ))}
             {ticks.map((t) => (
-              <SvgText key={`t${t}`} x={PAD.left - 6} y={py(t) + 4} fontSize={11} fill={c.axis} textAnchor="end"
+              <SvgText key={`t${t}`} x={PAD.left - 6} y={py(t) + 4} fontSize={12} fill={c.axis} textAnchor="end"
                 fontFamily={SANS}>
                 {Math.round(t)}
               </SvgText>
@@ -178,19 +178,19 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
                 strokeWidth={1} />
             ))}
             {ticksX.map((m) => (
-              <SvgText key={`ml${m.label}`} x={m.x} y={PAD.top + h + 16} fontSize={11} fill={c.secondary}
+              <SvgText key={`ml${m.label}`} x={m.x} y={PAD.top + h + 16} fontSize={12} fill={c.secondary}
                 textAnchor="middle" fontFamily={SANS}>
                 {m.label}
               </SvgText>
             ))}
-            <SvgText x={PAD.left} y={height - 3} fontSize={11} fill={c.axis} fontFamily={SANS}>
+            <SvgText x={PAD.left} y={height - 3} fontSize={12} fill={c.axis} fontFamily={SANS}>
               {`${Math.round(x0)} m`}
             </SvgText>
-            <SvgText x={width - PAD.right} y={height - 3} fontSize={11} fill={c.axis} textAnchor="end"
+            <SvgText x={width - PAD.right} y={height - 3} fontSize={12} fill={c.axis} textAnchor="end"
               fontFamily={SANS}>
               {`${Math.round(x1)} m`}
             </SvgText>
-            <SvgText x={(PAD.left + width - PAD.right) / 2} y={height - 3} fontSize={11} fill={c.axis}
+            <SvgText x={(PAD.left + width - PAD.right) / 2} y={height - 3} fontSize={12} fill={c.axis}
               textAnchor="middle" fontFamily={SANS}>
               km/h, by metres from the line
             </SvgText>
@@ -206,7 +206,7 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
                 fill={b.n === selected ? c.text : c.axis} stroke={c.surface} strokeWidth={1.5} />
             ))}
             {badges.map((b) => (
-              <SvgText key={`n${b.n}`} x={b.x} y={PAD.top - 7} fontSize={11} fill={c.surface}
+              <SvgText key={`n${b.n}`} x={b.x} y={PAD.top - 7} fontSize={12} fill={c.surface}
                 textAnchor="middle" fontFamily={SANS}>
                 {String(b.n)}
               </SvgText>
