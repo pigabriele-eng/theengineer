@@ -9,7 +9,7 @@ import Svg, { Circle, ClipPath, Defs, G, Line, Path, Rect, Text as SvgText } fro
 import { Text, View } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
 import { ResetZoom, usePlaneZoom, useZoom, ZoomArea, ZoomPlane } from '@/components/Zoom';
-import { byScheme, chartPlate, Fonts, inkOn, ramp, themed, Type } from '@/constants/Theme';
+import { byScheme, chartPlate, Fonts, inkOn, ramp, TAP, tapRoom, themed, Type } from '@/constants/Theme';
 import { noPrint } from '@/lib/print';
 import { isZoomed, pixelOf, Plane, Range, shownRange } from '@/lib/zoom';
 
@@ -182,20 +182,20 @@ export function Scatter({ points, xLabel, yLabel, fit, yFmt, height = 240, hint 
             {yt.values.map((v) => (
               <G key={`y${v}`}>
                 <Line x1={pad.l} x2={width - pad.r} y1={Y(v)} y2={Y(v)} stroke={c.grid} strokeWidth={1} />
-                <T x={pad.l - 6} y={Y(v) + 4} fontSize={10} fill={c.muted} textAnchor="end">
+                <T x={pad.l - 6} y={Y(v) + 4} fontSize={12} fill={c.muted} textAnchor="end">
                   {yFmt ? yFmt(v) : yt.label(v)}
                 </T>
               </G>
             ))}
             {xt.values.map((v) => (
-              <T key={`x${v}`} x={X(v)} y={height - pad.b + 14} fontSize={10} fill={c.muted} textAnchor="middle">
+              <T key={`x${v}`} x={X(v)} y={height - pad.b + 14} fontSize={12} fill={c.muted} textAnchor="middle">
                 {xt.label(v)}
               </T>
             ))}
-            <T x={pad.l + w / 2} y={height - 4} fontSize={11} fill={c.ink2} textAnchor="middle">
+            <T x={pad.l + w / 2} y={height - 4} fontSize={12} fill={c.ink2} textAnchor="middle">
               {xLabel}
             </T>
-            <T x={0} y={11} fontSize={11} fill={c.ink2}>
+            <T x={0} y={11} fontSize={12} fill={c.ink2}>
               {yLabel}
             </T>
             <G clipPath={zoomed ? `url(#${clip})` : undefined}>
@@ -263,7 +263,7 @@ export function GgDiagram({ limit, series, band, hint }: {
             {[-2, -1, 0, 1, 2].map((v) => (
               <G key={`x${v}`}>
                 <Line x1={X(v)} x2={X(v)} y1={Y(yr[0])} y2={Y(yr[1])} stroke={c.grid} strokeWidth={1} />
-                <T x={X(v)} y={xAxisY} fontSize={10} fill={c.muted} textAnchor="middle">
+                <T x={X(v)} y={xAxisY} fontSize={12} fill={c.muted} textAnchor="middle">
                   {num(v)}
                 </T>
               </G>
@@ -271,19 +271,19 @@ export function GgDiagram({ limit, series, band, hint }: {
             {[-2, -1, 0, 1].map((v) => (
               <G key={`y${v}`}>
                 <Line x1={X(xr[0])} x2={X(xr[1])} y1={Y(v)} y2={Y(v)} stroke={c.grid} strokeWidth={1} />
-                <T x={yAxisX} y={Y(v) + 4} fontSize={10} fill={c.muted} textAnchor="end">
+                <T x={yAxisX} y={Y(v) + 4} fontSize={12} fill={c.muted} textAnchor="end">
                   {num(v)}
                 </T>
               </G>
             ))}
-            <T x={clamp(X(0), 40, width - 40)} y={height - 3} fontSize={11} fill={c.ink2} textAnchor="middle">
+            <T x={clamp(X(0), 40, width - 40)} y={height - 3} fontSize={12} fill={c.ink2} textAnchor="middle">
               Lateral g
             </T>
-            <T x={Math.min(X(xr[1]), width - 2)} y={Math.max(Y(yr[1]) + 11, 11)} fontSize={11} fill={c.ink2}
+            <T x={Math.min(X(xr[1]), width - 2)} y={Math.max(Y(yr[1]) + 11, 11)} fontSize={12} fill={c.ink2}
               textAnchor="end">
               Accelerating
             </T>
-            <T x={Math.min(X(xr[1]), width - 2)} y={Math.min(Y(yr[0]) - 5, height - 18)} fontSize={11} fill={c.ink2}
+            <T x={Math.min(X(xr[1]), width - 2)} y={Math.min(Y(yr[0]) - 5, height - 18)} fontSize={12} fill={c.ink2}
               textAnchor="end">
               Braking
             </T>
@@ -345,7 +345,7 @@ export function Dumbbell({ rows, hint }: {
             {ticks(lo, hi, 4).values.map((v) => (
               <G key={v}>
                 <Line x1={X(v)} x2={X(v)} y1={4} y2={height - 20} stroke={c.grid} strokeWidth={1} />
-                <T x={X(v)} y={height - 6} fontSize={10} fill={c.muted} textAnchor="middle">
+                <T x={X(v)} y={height - 6} fontSize={12} fill={c.muted} textAnchor="middle">
                   {`${v} %`}
                 </T>
               </G>
@@ -357,7 +357,7 @@ export function Dumbbell({ rows, hint }: {
                   <T x={0} y={y + 4} fontSize={12} fill={c.ink}>
                     {row.label}
                   </T>
-                  <T x={0} y={y + 19} fontSize={10} fill={c.muted}>
+                  <T x={0} y={y + 19} fontSize={12} fill={c.muted}>
                     {row.sub}
                   </T>
                   {row.fast != null && row.slow != null && (
@@ -366,7 +366,7 @@ export function Dumbbell({ rows, hint }: {
                         stroke={c.ink2} strokeWidth={2} />
                       <Circle cx={X(row.slow)} cy={y} r={6} fill={c.other} stroke={c.surface} strokeWidth={2} />
                       <Circle cx={X(row.fast)} cy={y} r={6} fill={c.s1} stroke={c.surface} strokeWidth={2} />
-                      <T x={X(Math.max(row.fast, row.slow)) + 10} y={y + 4} fontSize={11} fill={c.ink2}>
+                      <T x={X(Math.max(row.fast, row.slow)) + 10} y={y + 4} fontSize={12} fill={c.ink2}>
                         {`${row.fast - row.slow >= 0 ? '+' : '−'}${Math.abs(row.fast - row.slow).toFixed(1)}`}
                       </T>
                     </G>
@@ -437,11 +437,13 @@ export function GripMap({ x, y, step, modes, labels, describe }: {
   const hit = nearest(x, (_, i): [number, number] => [X(x[i]), Y(y[i])], at, 24);
   return (
     <View style={styles.chart}>
-      <View style={styles.tabs}>
+      <View style={styles.tabs} accessibilityRole="tablist">
         {modes.map((m, i) => (
-          <Pressable key={m.key} onPress={() => setMode(i)} {...(i === mode ? null : noPrint)}
-            style={i === mode ? [styles.tab, { borderColor: c.ink }] : styles.tab}>
-            <Text style={i === mode ? styles.tabOn : styles.tabText}>{m.label}</Text>
+          <Pressable key={m.key} onPress={() => setMode(i)} {...(i === mode ? null : noPrint)} accessibilityRole="tab"
+            accessibilityState={{ selected: i === mode }} style={styles.tabHit}>
+            <View style={i === mode ? [styles.tab, { borderColor: c.ink }] : styles.tab}>
+              <Text style={i === mode ? styles.tabOn : styles.tabText}>{m.label}</Text>
+            </View>
           </Pressable>
         ))}
       </View>
@@ -457,10 +459,15 @@ export function GripMap({ x, y, step, modes, labels, describe }: {
               const j = Math.max(0, Math.min(x.length - 1, Math.round(l.at / step)));
               if (X(x[j]) < 0 || X(x[j]) > width || Y(y[j]) < 0 || Y(y[j]) > height) return null; // zoomed out of sight
               const [lx, ly] = place(j);
+              const half = l.code.length * 3.8 + 3;
+              // on a patch of the chart's paper, so a name over the coloured track still reads
               return (
-                <T key={l.code} x={lx} y={ly} fontSize={11} fontWeight="700" fill={c.ink} textAnchor="middle">
-                  {l.code}
-                </T>
+                <G key={l.code}>
+                  <Rect x={lx - half} y={ly - 12} width={2 * half} height={16} fill={c.surface} fillOpacity={0.85} />
+                  <T x={lx} y={ly} fontSize={12} fontWeight="700" fill={c.ink} textAnchor="middle">
+                    {l.code}
+                  </T>
+                </G>
               );
             })}
             <Rect x={X(x[0]) - 4} y={Y(y[0]) - 4} width={8} height={8} fill={c.ink} transform={`rotate(45 ${X(x[0])} ${Y(y[0])})`} />
@@ -488,13 +495,16 @@ const useStyles = themed((c) => ({
   readout: { fontSize: 12, lineHeight: 16, minHeight: 32, fontVariant: ['tabular-nums'] },
   readoutRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   readoutBeside: { flex: 1, minWidth: 0 },
-  hint: { opacity: 0.55 },
+  // the hint before a point is picked: in the caption grey, not faded (it must still read at 4.5:1)
+  hint: { color: c.textMuted },
   legendRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   legendDot: { width: 18, height: 12 },
   legendText: { fontSize: 12, opacity: 0.75 },
-  tabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  tab: { borderBottomWidth: 3, borderColor: 'transparent', paddingBottom: 2, marginRight: 8 },
+  // the tabs: 44 px tap targets around their underlined names, the rows far enough apart that they don't overlap
+  tabs: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 6, rowGap: 22 },
+  tabHit: { minWidth: TAP, marginRight: 8, ...tapRoom(11) },
+  tab: { borderBottomWidth: 3, borderColor: 'transparent', paddingBottom: 2, backgroundColor: 'transparent' },
   tabText: { ...Type.label, fontSize: 13, color: c.textMuted },
   tabOn: { ...Type.label, fontSize: 13, color: c.text },
 }));

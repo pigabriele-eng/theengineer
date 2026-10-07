@@ -1,10 +1,10 @@
 // The report's car balance and setup direction section, advice first: the setup changes to try (each with its
 // reason and expected effect), where the car rather than the driver limits the lap and by how much, then the
 // balance per section on entry, mid-corner and exit. For one session or a whole event.
-import { Link } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 
+import { TextLink } from '@/components/Programme';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { TraceChart } from '@/components/TraceChart';
 import { useColorScheme } from '@/components/useColorScheme';
@@ -25,7 +25,7 @@ import {
 } from '@/lib/balance';
 import { quickestLapsLine } from '@/lib/grip';
 import { noPrint } from '@/lib/print';
-import { byScheme, Fonts, themed, Type } from '@/constants/Theme';
+import { byScheme, Fonts, TAP, tapRoom, themed, Type } from '@/constants/Theme';
 
 // bare: inside a report section that already names it, so without its own heading
 type Props = { session?: number; event?: number; bare?: boolean };
@@ -172,7 +172,6 @@ function Labelled({ label, text }: { label: string; text: string }) {
 
 function ModelLine({ model }: { model: BarModel }) {
   const styles = useStyles();
-  const tint = useThemeColor({}, 'tint');
   const [a, b] = model.llt_front_share;
   const [ra, rb] = model.roll_gradient;
   return (
@@ -186,9 +185,7 @@ function ModelLine({ model }: { model: BarModel }) {
         )}
       </Text>
       <Text style={styles.small}>{nb(model.note)}</Text>
-      <Link href="/tools/vehicle" style={{ ...styles.link, color: tint }}>
-        Open the vehicle model
-      </Link>
+      <TextLink href="/tools/vehicle" label="Open the vehicle model" arrow small />
     </View>
   );
 }
@@ -213,9 +210,10 @@ function SplitBar({ parts, legend = true }: { parts: Part[]; legend?: boolean })
       {legend && (
         <View style={styles.legend}>
           {parts.map((p) => (
-            <Text key={p.label} style={styles.legendItem}>
-              <Text style={{ color: p.color }}>■</Text> {p.label} {p.seconds.toFixed(2)} s
-            </Text>
+            <View key={p.label} style={styles.keyed}>
+              <View style={[styles.key, { backgroundColor: p.color }]} />
+              <Text style={styles.legendItem}>{p.label} {p.seconds.toFixed(2)} s</Text>
+            </View>
           ))}
         </View>
       )}
@@ -320,10 +318,12 @@ function FocusView({ focus }: { focus: Focus }) {
       />
       {focus.explain.map((e) => (
         <View key={e.part} style={styles.explain}>
-          <Text style={styles.explainHead}>
-            <Text style={{ color: colors[e.part] }}>■</Text> {e.part[0].toUpperCase() + e.part.slice(1)}{' '}
-            {e.seconds.toFixed(2)} s
-          </Text>
+          <View style={styles.keyed}>
+            <View style={[styles.key, { backgroundColor: colors[e.part] }]} />
+            <Text style={styles.explainHead}>
+              {e.part[0].toUpperCase() + e.part.slice(1)} {e.seconds.toFixed(2)} s
+            </Text>
+          </View>
           <Text style={styles.body}>{nb(e.text)}</Text>
         </View>
       ))}
@@ -331,9 +331,10 @@ function FocusView({ focus }: { focus: Focus }) {
         <View style={styles.legendRow}>
           <View style={styles.legend}>
             {laps.map((l) => (
-              <Text key={l.label} style={styles.legendItem}>
-                <Text style={{ color: l.color }}>━</Text> {l.label}
-              </Text>
+              <View key={l.label} style={styles.keyed}>
+                <View style={[styles.keyLine, { backgroundColor: l.color }]} />
+                <Text style={styles.legendItem}>{l.label}</Text>
+              </View>
             ))}
           </View>
           <ResetZoom reserve />
@@ -417,7 +418,7 @@ function BalanceTable({ r }: { r: BalanceReport }) {
         Steering against the car's normal at the same cornering g ({b.per_g?.toFixed(2)}° per g). Blue: understeer, the
         front pushes. Red: oversteer, the rear slides. Grey: within ±0.3° of normal.
       </Text>
-      <View style={styles.toggle}>
+      <View style={styles.toggle} accessibilityRole="tablist">
         {[
           { label: 'All clean laps', on: !quick },
           { label: 'Quickest passes', on: quick },
@@ -426,8 +427,12 @@ function BalanceTable({ r }: { r: BalanceReport }) {
             key={o.label}
             onPress={() => setQuick(o.label === 'Quickest passes')}
             {...(o.on ? null : noPrint)}
-            style={[styles.toggleItem, o.on && { borderColor: tint }]}>
-            <Text style={o.on ? { color: tint } : styles.dim}>{o.label}</Text>
+            accessibilityRole="tab"
+            accessibilityState={{ selected: o.on }}
+            style={styles.toggleHit}>
+            <View style={[styles.toggleItem, o.on && { borderColor: tint }]}>
+              <Text style={o.on ? { color: tint } : styles.toggleOff}>{o.label}</Text>
+            </View>
           </Pressable>
         ))}
       </View>
@@ -575,12 +580,15 @@ const useStyles = themed((c) => ({
   labelled: { gap: 2 },
   label: { ...Type.label, fontSize: 11, color: c.textSecondary },
   model: { gap: 4, borderTopWidth: 1, borderColor: c.separator, paddingTop: 8 },
-  link: { fontWeight: '600', marginTop: 2 },
   split: { flexDirection: 'row', height: 14, gap: 2, overflow: 'hidden' },
   legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, rowGap: 4, marginTop: 6, flexShrink: 1 },
   legendRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-end',
     gap: 8 },
   legendItem: { fontSize: 13, fontVariant: ['tabular-nums'] },
+  // a legend's colour key: a flat square (a short line for a line), its words in the text's own ink beside it
+  keyed: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },
+  key: { width: 10, height: 10 },
+  keyLine: { width: 16, height: 3 },
   barRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   barCode: { width: 64, fontWeight: '600', fontVariant: ['tabular-nums'] },
   barTrack: { flex: 1, gap: 2 },
@@ -589,8 +597,11 @@ const useStyles = themed((c) => ({
   barValue: { width: 52, textAlign: 'right', fontVariant: ['tabular-nums'] },
   explain: { gap: 2 },
   explainHead: { fontWeight: '600', fontVariant: ['tabular-nums'] },
+  // the two views: 44 px tap targets around their underlined names, the one not shown in the caption grey
   toggle: { flexDirection: 'row', gap: 8 },
-  toggleItem: { borderBottomWidth: 3, borderColor: 'transparent', paddingBottom: 2, marginRight: 6 },
+  toggleHit: { minWidth: TAP, marginRight: 6, ...tapRoom(12) },
+  toggleItem: { borderBottomWidth: 3, borderColor: 'transparent', paddingBottom: 2, backgroundColor: 'transparent' },
+  toggleOff: { color: c.textMuted },
   tableHead: { flexDirection: 'row', gap: 4 },
   th: { ...Type.label, flex: 1, fontSize: 11, color: c.textSecondary },
   tableRow: { flexDirection: 'row', gap: 4, alignItems: 'stretch' },
