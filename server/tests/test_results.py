@@ -226,6 +226,27 @@ def test_an_event_has_its_prediction_and_then_predicted_vs_actual(client, fake_s
     assert rows[("Q1", "our_lap")]["actual"] == 102.441
     assert all(r["miss"] is None or r["miss"] == round(r["predicted"] - r["actual"], 3) for r in rows.values())
 
+def test_an_event_s_prediction_reads_the_series_results_once(client, fake_site, monkeypatch):
+    """Before its round is run, our logged best is blended in; the series' rounds are read once and our sessions only
+    as the Results section reads them."""
+    from app.results import summary
+    from app.routers import results
+
+    fake_site.sync(years=[2026])
+    client.post("/tracks", json={"name": "Test Track"})
+    ev = client.post("/events/folders", json={"name": "Next year"}).json()
+    _session(client, ev["id"], "FP1", (0.97, 0.98), "18/09/2027", "10:00:00")
+    client.put(f"/results/events/{ev['id']}/link", json={"car_number": "911"})
+    reads = {"rounds": 0, "facts": 0}
+    rounds, facts = summary._rounds, results._event_facts
+    monkeypatch.setattr(summary, "_rounds", lambda *a: reads.update(rounds=reads["rounds"] + 1) or rounds(*a))
+    monkeypatch.setattr(results, "_event_facts", lambda *a: reads.update(facts=reads["facts"] + 1) or facts(*a))
+    body = client.get(f"/results/events/{ev['id']}/prediction").json()
+    assert not body["finished"] and body["year"] == 2027 and body["team"] == "Team Two"
+    assert body["prediction"]["logged_best"]["event"] == "Next year" and body["prediction"]["logged_best"]["time_s"]
+    assert reads == {"rounds": 1, "facts": 1}
+
+
 def test_a_car_set_by_hand_shows_before_any_results(client):
     ev = client.post("/events/folders", json={"name": "Next round"}).json()
     body = client.put(f"/results/events/{ev['id']}/link", json={"car_number": "12", "year": 2027}).json()
