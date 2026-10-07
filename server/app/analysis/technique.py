@@ -745,6 +745,72 @@ def shift_mistakes(tr: dict[str, np.ndarray], model: ShiftModel, a: int, stop: i
     return out
 
 
+IDEAL_SHIFT_SLOWS_M = 5  # the lap slows for the next corner where its speed is lower this many metres on
+IDEAL_SHIFT_DECEL_M = 40  # its braking there, read over this many metres
+IDEAL_SHIFT_SMOOTH_M = 15  # m, the lap's own acceleration on the way averaged over this (one metre's is noise)
+
+
+def with_ideal_shifts(tr: dict[str, np.ndarray], model: ShiftModel | None,
+                      sections: list[Section]) -> np.ndarray | None:
+    """The lap's speed (km/h, every metre) had every upshift on the way out of a corner been made at the ideal revs
+    (shift_mistakes): the drive the wrong gear lost added back where it was lost, and the speed it gained carried on
+    with the lap's own acceleration at each speed (its gears, its drag) until the lap slows for the next corner,
+    which the car then brakes for as hard as the lap did there, so the speed runs back into the lap's own. None where
+    the logs can't tell the shift points or every upshift was right. Never slower than the lap anywhere."""
+    if model is None or any(k not in tr for k in ("gear", "rpm", "throttle")):
+        return None
+    driven = np.asarray(tr["speed"], float)
+    n = len(driven) - 1
+    ms = driven / 3.6
+    fixed = driven.copy()
+    apexes = sorted({int(s.apex) for s in sections if s.apex is not None and 0 <= s.apex < n})
+    for a, b in zip(apexes, [*apexes[1:], n], strict=True):
+        for sh in shift_mistakes(tr, model, a, b):
+            j, e, extra = sh["j"], min(sh["end"], n), sh["extra"]
+            held = fixed[j] / 3.6
+            for k in range(j + 1, e + 1):
+                up = held * held + ms[k] ** 2 - ms[k - 1] ** 2 + 2 * max(float(extra[k - 1 - j]), 0.0)
+                held = max(up, 0.0) ** 0.5
+                fixed[k] = max(fixed[k], held * 3.6)
+            # where the lap slows for the next corner
+            stop = next((k for k in range(e, n - IDEAL_SHIFT_SLOWS_M)
+                         if driven[k + IDEAL_SHIFT_SLOWS_M] < driven[k] - 0.5), n)
+            seg = ms[e:stop + 1]
+            if len(seg) >= IDEAL_SHIFT_SMOOTH_M:
+                acc = np.convolve((seg[1:] ** 2 - seg[:-1] ** 2) / 2, np.ones(IDEAL_SHIFT_SMOOTH_M)
+                                  / IDEAL_SHIFT_SMOOTH_M, "same")
+                order = np.argsort(seg[:-1])
+                at_v, acc_v = seg[:-1][order], acc[order]
+                v, i = max(held, ms[e]), e
+                while i < stop:
+                    # the lap's own step there, less what the car pulls less at the higher speed: the speed it
+                    # has more only shrinks
+                    less = float(np.interp(ms[i], at_v, acc_v) - np.interp(v, at_v, acc_v))
+                    up = (max(v * v + ms[i + 1] ** 2 - ms[i] ** 2 - 2 * max(less, 0.0), 0.0)) ** 0.5
+                    v, i = min(up, ms[i + 1] + v - ms[i]), i + 1
+                    if v <= ms[i]:
+                        break
+                    fixed[i] = max(fixed[i], v * 3.6)
+            # braking for it as hard as the lap did, back into the lap's own speed where it slows
+            after = ms[stop:min(stop + IDEAL_SHIFT_DECEL_M, n) + 1]
+            dec = float(np.max((after[:-1] ** 2 - after[1:] ** 2) / 2)) if len(after) > 1 else 0.0
+            for k in range(stop, j, -1):
+                cap = (ms[stop] ** 2 + 2 * max(dec, 0.0) * (stop - k)) ** 0.5 * 3.6
+                if cap >= fixed[k]:
+                    break
+                fixed[k] = max(cap, driven[k])
+    return fixed if np.any(fixed > driven + 1e-6) else None
+
+
+def ideal_shift_saving(tr: dict[str, np.ndarray], fixed: np.ndarray | None) -> np.ndarray:
+    """Seconds saved up to each metre of the lap driven at fixed's speed (with_ideal_shifts) instead of its own."""
+    v = np.maximum(np.asarray(tr["speed"], float), 1.0) / 3.6
+    if fixed is None:
+        return np.zeros(len(v))
+    f = np.maximum(np.asarray(fixed, float), 1.0) / 3.6
+    return np.concatenate([[0.0], np.cumsum(2 / (v[:-1] + v[1:]) - 2 / (f[:-1] + f[1:]))])
+
+
 def brake_cost(va: float, vb: float, got: float, can: float) -> float:
     """What braking from va to vb (m/s) at got instead of can (g) costs: braking at can starts later, and the car
     holds va to there."""
