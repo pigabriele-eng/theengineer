@@ -24,7 +24,8 @@ event is removed) and a setup copied from a run that goes. Drivers, cars, teams,
 
 The database part is one transaction; the stored files (logs, compact lap traces, lap packs, technique details,
 debrief recordings) are deleted after its commit: a file left behind is harmless, a row naming a missing file is not,
-and a file already missing is logged. It all runs under heavy.lock, so no analysis is reading a log as it goes. An
+and a file already missing is logged. A stored log that a log file row which stays still names (runs split from one
+log share it: run_split.py) stays. It all runs under heavy.lock, so no analysis is reading a log as it goes. An
 analysis job that had already started on the event's runs may still write a row for them once the lock is let go; when
 such jobs are running, the same search runs again once they are done (sweep) and removes what they left.
 """
@@ -188,8 +189,21 @@ def find(db: Session, start: dict[str, set[int]], reset: bool = True) -> Found:
         for name in STORED.get(t.name, ()):
             for part in _chunks(f.ids(t.name)):
                 f.keys += [k for k in db.scalars(select(t.c[name]).where(pk.in_(part))) if k]
-    f.keys = list(dict.fromkeys(f.keys))
+    shared = _shared_logs(db, f, tables)
+    f.keys = [k for k in dict.fromkeys(f.keys) if k not in shared]
     return f
+
+
+def _shared_logs(db: Session, f: Found, tables: list[Table]) -> set[str]:
+    """Stored logs that a log file row which stays still names: runs split from one log share it (run_split.py)."""
+    t = next((t for t in tables if t.name == "logger_files"), None)
+    gone = f.ids("logger_files")
+    if t is None or not gone:
+        return set()
+    out: set[str] = set()
+    for part in _chunks(f.keys):
+        out |= {path for i, path in db.execute(select(t.c.id, t.c.path).where(t.c.path.in_(part))) if i not in gone}
+    return out
 
 
 def _find_resets(db: Session, f: Found, tables: list[Table]) -> None:
