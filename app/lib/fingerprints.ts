@@ -9,7 +9,8 @@ export type StyleGroup = {
   label: string; // the driver's name, else "Style A", "Style B"
   driver_id: number | null;
   driver: string | null;
-  source: 'tag' | 'fingerprint' | ''; // named after a tagged run here, a fingerprint from other events, or not yet
+  // named after a tagged run here, a fingerprint from other events, the car's other driver, or not yet
+  source: 'tag' | 'fingerprint' | 'entry' | '';
   match: number | null;
   laps: number;
   best_s?: number;
@@ -36,6 +37,7 @@ export type RunGuess = {
   suggestion: Suggestion;
   agrees: boolean | null; // the tag against the style, when both are known
   stints: RunStint[]; // two or more when the driver changed at a stop
+  auto: { source: string; match: number | null } | null; // its driver was set from the driving style, not by a person
 };
 
 export type EventGuess = {
@@ -88,6 +90,7 @@ export const fingerprintsApi = {
 export function guessLine(g: RunGuess | undefined, mode: EventGuess['mode'] | undefined): string | null {
   if (!g || !mode || mode === 'too few laps') return null;
   const s = g.suggestion;
+  if (g.auto && g.driver_id != null) return 'Driver set from the driving style';
   if (g.stints.length > 1) {
     const parts = g.stints.map((st) => `${st.label} laps ${st.first_lap}–${st.last_lap}`);
     return `Driver change at a stop: ${parts.join(', then ')}`;
