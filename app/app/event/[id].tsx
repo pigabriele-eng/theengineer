@@ -38,8 +38,8 @@ const freeSlot = (picks: Pick[]) => [0, 1, 2, 3, 4, 5].find((s) => !picks.some((
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** One event as a race programme: its track on the photo with the event's facts under it, the links to its report and
- * analyses, then numbered sections: its runs by day (each with its best lap and the gap to the event's best), any two to
- * six runs side by side, what it was run with, its official results, and a run to add by hand (logs are uploaded on the Upload page). Runs are relabelled,
+ * analyses (the Prediction, and Predicted vs actual once the weekend has begun), then numbered sections: its runs by
+ * day (each with its best lap and the gap to the event's best), any two to six runs side by side, what it was run with, its official results, and a run to add by hand (logs are uploaded on the Upload page). Runs are relabelled,
  * tagged, ticked and moved here. /event/none holds the runs in no event. ?compare=3,12 keeps the runs side by side in
  * the address. */
 export default function EventScreen() {
@@ -182,6 +182,11 @@ export default function EventScreen() {
       {timed && <TextLink href={{ pathname: '/tools/stint', params: { event: eventId } }} label="Stint analysis" arrow />}
       {timed && <TextLink href={{ pathname: '/drivers/compare', params: { event: eventId } }} label="Compare drivers" arrow />}
       {timed && <TextLink href="/drivers/fingerprints" label="Driver fingerprints" arrow />}
+      <TextLink href={{ pathname: '/prediction', params: { event: eventId } }} label="Prediction" arrow />
+      {whenOf(folder, todayIso()) !== 'upcoming' && (
+        <TextLink href={{ pathname: '/prediction', params: { event: eventId, view: 'actual' } }}
+          label="Predicted vs actual" arrow />
+      )}
       <PrepButton eventId={eventId} info={prep[String(eventId)]} compact />
       <View style={wide ? styles.manage : styles.managePhone}>
         <TextLink onPress={() => showPanel(panel === 'rename' ? null : 'rename')} label="Rename" small />

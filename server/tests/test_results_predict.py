@@ -182,3 +182,14 @@ def test_changed_track_is_set_aside(sessions):
     p = predict_round(sessions, "bravo", 2026, car_number="12", team=TEAM, with_ranges=False)
     assert p["sessions"]["Q1"]["pole_s"] == pytest.approx(120.0 * 0.98, abs=0.1)
     assert any("different track" in line for line in p["explain"])
+
+
+def test_predicted_vs_actual_rows(sessions):
+    from app.results.predict import actual_round, compare
+    p = predict_round(sessions, "alpha", 2025, car_number="12", team=TEAM)
+    rows = {(r["code"], r["what"]): r for r in compare(p, actual_round(sessions, "alpha", 2025, car_number="12",
+                                                                         team=TEAM))}
+    assert {("Q1", "pole"), ("Q1", "our_lap"), ("Q1", "position"), ("R1", "position")} <= set(rows)
+    pole = rows[("Q1", "pole")]
+    assert pole["actual"] == pytest.approx(99.0) and pole["miss"] == pytest.approx(0.0, abs=0.05)
+    assert pole["inside"] is True and rows[("R1", "position")]["status"] == "classified"
