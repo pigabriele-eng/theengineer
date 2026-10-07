@@ -241,7 +241,7 @@ function Debriefs({ no, eventId, folder }: { no: number; eventId: number; folder
   );
 }
 
-function DebriefRow({ line }: { line: DebriefLine }) {
+export function DebriefRow({ line }: { line: DebriefLine }) {
   const styles = useStyles();
   const c = useTheme();
   const { run, state, debrief, count } = line;
