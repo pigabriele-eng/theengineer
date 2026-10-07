@@ -171,18 +171,30 @@ def _fit(model, values: dict) -> dict:
 
 def store_parsed(db: Session, rnd: rm.ResultRound, code: str, title: str, url: str,
                  parsed: ResultList) -> rm.ResultSession:
-    """One classification into the round, replacing what was there for that session."""
+    """One classification into the round, replacing what was there for that session. The same sheet read again (a
+    live round is fetched every few minutes) changes nothing, not even fetched_at: the prediction's backtest is kept
+    while the loaded results stay the same."""
     s = next((x for x in rnd.sessions if x.code == code), None)
+    head = _fit(rm.ResultSession, {"title": parsed.title or title, "source_url": url, "starts_at": parsed.date,
+                                   "track": parsed.track, "length_m": parsed.length_m,
+                                   "weather": parsed.weather, "fastest": parsed.fastest})
+    rows = [_fit(rm.ResultRow, vars(r)) for r in parsed.rows]
+    if s is not None and s.id is not None and _same(s, head, rows):
+        return s
     if s is None:
         s = rm.ResultSession(code=code, title=title, kind=kind_of(code), source_url=url)
         rnd.sessions.append(s)
-    for k, v in _fit(rm.ResultSession, {"title": parsed.title or title, "source_url": url, "starts_at": parsed.date,
-                                        "track": parsed.track, "length_m": parsed.length_m,
-                                        "weather": parsed.weather, "fastest": parsed.fastest}).items():
+    for k, v in head.items():
         setattr(s, k, v)
     s.fetched_at = datetime.now(UTC)
-    s.rows = [rm.ResultRow(**_fit(rm.ResultRow, vars(r))) for r in parsed.rows]
+    s.rows = [rm.ResultRow(**r) for r in rows]
     return s
+
+
+def _same(s: rm.ResultSession, head: dict, rows: list[dict]) -> bool:
+    """Whether a stored classification already says exactly this."""
+    return (all(getattr(s, k) == v for k, v in head.items()) and len(s.rows) == len(rows)
+            and all(getattr(old, k) == v for old, new in zip(s.rows, rows, strict=True) for k, v in new.items()))
 
 
 def sync_round(db: Session, client: httpx.Client, series: str, year: int, season_id: str, round_id: str,

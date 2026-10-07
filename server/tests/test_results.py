@@ -420,3 +420,24 @@ def test_the_list_of_rounds_counts_cars_in_one_query(client, fake_site):
         event.remove(app_db.engine, "before_cursor_execute", log)
     assert [s["cars"] for s in rounds[0]["sessions"]] == [4, 3]
     assert sum("result_rows" in s for s in seen) == 1  # not one query per session
+
+
+def test_a_live_round_read_again_unchanged_is_left_as_it_is(client, fake_site, monkeypatch):
+    from app.db import SessionLocal
+    from app.prep.official import _loaded
+    from app.results import models as rm
+
+    def state():
+        with SessionLocal() as db:
+            return _loaded(db), sorted((s.code, s.fetched_at, tuple(r.id for r in s.rows))
+                                       for s in db.query(rm.ResultSession).all())
+
+    fake_site.sync(years=[2026])
+    before = state()
+    fake_site.sync(years=[2026], round_id="75", force=True)  # the refresh during the event: nothing new
+    assert len(FakeSite.calls) == 4 and state() == before  # the backtest's key (count, latest fetch) holds
+    monkeypatch.setattr(FakeSite, "fetch", staticmethod(lambda client, url: (
+        QUALI.replace("1:42.147", "1:42.000") if "q1" in url else RACE).encode()))
+    fake_site.sync(years=[2026], round_id="75", force=True)  # a corrected sheet
+    after = state()
+    assert after[0] != before[0] and after[1][0][1] > before[1][0][1] and after[1][1] == before[1][1]
