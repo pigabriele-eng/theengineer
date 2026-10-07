@@ -333,7 +333,7 @@ def test_an_events_quick_laps_read_every_main_log(client, stint_run, monkeypatch
     lets one tick (12), and the report's grip, balance and tyre figures need them all."""
     from app.routers import stint
 
-    monkeypatch.setattr(stint, "MAX_LOGS", 2)
+    monkeypatch.setattr(stint, "MAX_LOGS", 1)
     event = client.post("/events", json={"name": "Race weekend"}).json()
     fids = []
     for name in ("FP1", "Q", "Race"):
@@ -345,9 +345,10 @@ def test_an_events_quick_laps_read_every_main_log(client, stint_run, monkeypatch
     assert r.status_code == 200, r.text
     assert sorted(r.json()["file_ids"]) == sorted(fids)
     assert client.get(f"/stint?files={every}").json() == r.json()  # kept
-    # ticked by hand in the stint tool, the limit holds
+    # some of the event's main logs (the report's list a moment old): read too
     assert client.get(f"/stint?files={fids[0]},{fids[1]}").status_code == 200
+    # logs ticked by hand in the stint tool from anywhere: the limit holds
     s = client.post("/sessions", json={"name": "Elsewhere"}).json()
     other = client.post(f"/sessions/{s['id']}/files", files={"file": ("run.ld", write_ld(stint_run[0]))}).json()
-    r = client.get(f"/stint?files={fids[0]},{fids[1]},{other['files'][0]['id']}")
-    assert r.status_code == 422 and "at most 2" in r.json()["detail"]
+    r = client.get(f"/stint?files={fids[0]},{other['files'][0]['id']}")
+    assert r.status_code == 422 and "at most 1" in r.json()["detail"]

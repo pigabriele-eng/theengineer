@@ -129,11 +129,15 @@ def stint_view(db: Session, file_ids: list[int]) -> dict:
             return page_cache.cached(db, f"session:{f.session_id}|stint|file:{f.id}",
                                      lambda: _view_signature(db, f), lambda: _stint_view(db, ids), locked=False)
         events = {f.session.event_id for f in files}
-        if len(events) == 1 and None not in events and sorted(ids) == event_files(db, (eid := events.pop())):
-            return page_cache.cached(
-                db, f"event:{eid}|stint",
-                lambda: page_cache.signature("stint", sorted(_view_signature(db, f) for f in files), EVENT_VIEW),
-                lambda: _stint_view(db, ids, limit=False), locked=False)
+        if len(events) == 1 and None not in events:
+            mains = event_files(db, (eid := events.pop()))
+            if sorted(ids) == mains:
+                return page_cache.cached(
+                    db, f"event:{eid}|stint",
+                    lambda: page_cache.signature("stint", sorted(_view_signature(db, f) for f in files), EVENT_VIEW),
+                    lambda: _stint_view(db, ids, limit=False), locked=False)
+            if set(ids) <= set(mains):  # some of them: the report's list of an event a moment old, say
+                return _stint_view(db, ids, limit=False)
     return _stint_view(db, ids)
 
 
