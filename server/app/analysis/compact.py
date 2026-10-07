@@ -24,10 +24,11 @@ from app.analysis.laps import MASTER_HZ, CornerSpec, SessionData, lap_length, lo
 from app.analysis.scan import lap_medians
 from app.importers.motec import LdFile
 
-FORMAT = 3  # 2: accelerometers logged in m/s² (or g mislabelled) read as g; 3: the road's shape (turn_g, az, altitude)
+FORMAT = 4  # 2: accelerometers logged in m/s² (or g mislabelled) read as g; 3: the road's shape (turn_g, az, altitude)
+# 4: engine revs and torque (the shift points)
 PAD_M = 40  # metres kept before the line and after it, so another session's line can start a little earlier or later
 FLOAT_ROLES = ("speed", "ax", "ay", "curvature", "throttle", "brake", "steer", "understeer", "rear_slip",
-               "front_lock", "slide_rate", "turn_g", "az", "altitude")
+               "front_lock", "slide_rate", "turn_g", "az", "altitude", "rpm", "engine_torque")
 STATE_ROLES = ("phase", "gear", "braking", "coasting", "overlap", "tc_on", "abs_on")
 TYRE_ROLES = tuple(f"tyre_{k}_{w}" for k in ("p", "t") for w in ("fl", "fr", "rl", "rr"))
 EARTH_R = 6_371_000.0

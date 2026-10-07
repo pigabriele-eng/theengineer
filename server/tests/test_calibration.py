@@ -78,14 +78,14 @@ def test_a_lap_quicker_in_one_section_moves_only_that_section(fastest):
     # still carries down the straight into it
     assert _section(t.sim.t, SECTIONS[0]) <= _section(other.trace["t"], SECTIONS[0]) + 1e-9
     assert gain["T1"] > 0.1
-    assert 0 <= gain["T2"] < 0.05 * gain["T1"]
+    assert -1e-9 <= gain["T2"] < 0.05 * gain["T1"]  # capped at the best pass: exactly none, to rounding
     # T2 from its braking on is the fastest lap's own
     brake = int(CORNERS_M[1]) - 50
     assert np.allclose(np.diff(t.sim.t)[brake:], np.diff(ref)[brake:], atol=1e-9)
     assert t.sim.time == pytest.approx(fastest.time - gain["T1"] - gain["T2"], abs=1e-9)
     # the realistic target (the median of two laps) gains less than the theoretical lap, and only in T1 too
     real = {s.code: _section(ref, s) - _section(t.realistic.t, s) for s in SECTIONS}
-    assert 0 < real["T1"] <= gain["T1"] and 0 <= real["T2"] < 0.05 * gain["T1"]
+    assert 0 < real["T1"] <= gain["T1"] and -1e-9 <= real["T2"] < 0.05 * gain["T1"]
 
 
 # ---------- a lap on a line of its own ----------

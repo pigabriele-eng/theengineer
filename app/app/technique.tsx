@@ -304,6 +304,11 @@ const METHOD = [
     'a lift or a steering correction, and braking in a straight line, with no cornering to share the grip, below ' +
     'the deceleration the car has shown there. Each costs what it alone lost: the speed a lift took off, carried ' +
     'down the straight, or the later braking point missed. Under 0.01 s they are left out.',
+  'Shift points come from the event\'s own logs: each gear\'s ratio (engine revs per km/h) and the engine\'s ' +
+    'torque at full throttle (the logger\'s engine torque channel), as the car\'s ratios and torque curve are not ' +
+    'published. Drive force is torque times the ratio, so the best upshift is where the next gear drives harder, or ' +
+    'just short of the rev limiter where it never does. An upshift 150 rpm or more before that is early; after it, ' +
+    'or held on the limiter, late. Each costs the drive it missed, carried down the straight.',
   'The perfect lap is never quicker through a section than the best pass a lap has really made there.',
   'Corners are named by their official numbers only.',
 ];
