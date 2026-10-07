@@ -354,3 +354,32 @@ def test_technique_check_api(client):
     assert _wait(client, f"/technique/events/{event['id']}")["status"] == "ready"
     assert client.get("/technique/sessions/9999").status_code == 404
     assert client.get("/technique/events/9999").status_code == 404
+
+
+def test_what_a_mistake_really_costs_is_measured_on_the_laps():
+    from app.analysis.technique import mistake_stats, pool_stats
+    secs = [Section("T1", 0, 300, 150, ["T1"]), Section("T2", 300, 600, 450, ["T2"]), Section("T3", 600, N, 800, [])]
+    lift = {"kind": "exit_lift", "at_m": 200.0, "cost_s": 0.05}
+    rng = np.random.default_rng(1)
+    laps = []
+    for i in range(12):  # four laps lift out of T1 and lose 0.2 s down to T2's end; the others don't
+        times = [10.0 + rng.normal(0, 0.01), 8.0 + rng.normal(0, 0.01), 12.0]
+        obv = []
+        if i % 3 == 0:
+            times[0] += 0.05
+            times[1] += 0.15
+            obv = [lift]
+        laps.append(("PIA", times, obv))
+    laps.append(("RAC", [9.0, 7.0, 11.0], [lift]))  # another driver's, quicker: not compared with these
+    stats = mistake_stats(laps, secs)
+    pia = next(x for x in stats if x["driver"] == "PIA")
+    assert (pia["code"], pia["kind"], pia["laps_with"], pia["laps_without"]) == ("T1", "exit_lift", 4, 8)
+    assert pia["diff_s"] == pytest.approx(0.2, abs=0.03) and pia["model_s"] == pytest.approx(0.05)
+    pooled = pool_stats([stats])["T1:exit_lift"]
+    assert pooled["measured"] and pooled["cost_s"] == pytest.approx(0.2, abs=0.03) and pooled["events"] == 1
+    # too few laps with it: the model's estimate stands, and says so
+    few = pool_stats([mistake_stats([*laps[:4], ("PIA", [10.0, 8.0, 12.0], [])], secs)])["T1:exit_lift"]
+    assert not few["measured"] and few["cost_s"] == pytest.approx(0.05)
+    # another event at the track adds to it
+    both = pool_stats([stats, stats])["T1:exit_lift"]
+    assert both["events"] == 2 and both["laps_with"] == 2 * pooled["laps_with"]

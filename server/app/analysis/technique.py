@@ -1516,3 +1516,81 @@ def habits(laps: list[list[dict]], min_laps: int = 2) -> list[dict]:
                     "value": round(float(np.median(h["values"])), 2) if h["values"] else None, "unit": h["unit"]})
     out.sort(key=lambda x: -x["cost_per_lap_s"])
     return out
+
+
+# ---------- what each obvious mistake really costs, measured on the laps ----------
+
+MEASURE_MIN_LAPS = 3  # laps with a mistake, and laps without, before its cost is measured rather than modelled
+
+
+def mistake_stats(laps: list[tuple[str | None, list[float], list[dict]]], sections: list[Section]) -> list[dict]:
+    """What each obvious mistake (by section and kind) really cost on these laps, driver by driver: the time from
+    the section's start to the next section's end (so a slow exit's loss down the straight counts), the median of the
+    laps with the mistake there against the median of the laps with no obvious mistake over that stretch. laps: each
+    clean lap's driver, time through each section (section_times) and obvious mistakes. A loss measured, not
+    modelled: kept per driver so pooling events (pool_stats) compares like with like."""
+    n = len(sections)
+    if n == 0:
+        return []
+
+    def window(times: list[float], k: int) -> float:
+        return times[k] + (times[k + 1] if k + 1 < n else 0.0)
+
+    def section_of(m: float) -> int | None:
+        return next((k for k, s in enumerate(sections) if s.start <= m < s.end), None)
+
+    marks = [[(section_of(o["at_m"]), o) for o in obv] for _, _, obv in laps]
+    out = []
+    for driver in {d for d, _, _ in laps}:
+        mine = [i for i, (d, _, _) in enumerate(laps) if d == driver]
+        found: dict[tuple[int, str], list[int]] = {}
+        model: dict[tuple[int, str], list[float]] = {}
+        for i in mine:
+            for k, o in marks[i]:
+                if k is None:
+                    continue
+                if i not in found.setdefault((k, o["kind"]), []):
+                    found[(k, o["kind"])].append(i)
+                model.setdefault((k, o["kind"]), []).append(float(o.get("cost_s", 0.0)))
+        for (k, kind), with_ in found.items():
+            over = {k, k + 1}
+            clean = [i for i in mine if not any(s in over for s, _ in marks[i])]
+            if len(clean) < MEASURE_MIN_LAPS:  # too few laps clean over the stretch: those without this mistake
+                clean = [i for i in mine if i not in with_]
+            if not clean:
+                continue
+            had = float(np.median([window(laps[i][1], k) for i in with_]))
+            free = float(np.median([window(laps[i][1], k) for i in clean]))
+            out.append({"code": sections[k].code, "kind": kind, "driver": driver, "laps_with": len(with_),
+                        "laps_without": len(clean), "diff_s": round(had - free, 4),
+                        "model_s": round(float(np.mean(model[(k, kind)])), 4)})
+    return out
+
+
+def pool_stats(stats: list[list[dict]]) -> dict[str, dict]:
+    """Every event's (or session's) mistake_stats pooled, by "code:kind": the measured cost (each driver's and each
+    event's difference, weighted by the laps behind it: the fewer of with and without), the laps and events it rests
+    on, and the model's own estimate beside it. measured is True once MEASURE_MIN_LAPS laps with and without it
+    back it; otherwise cost_s is the model's."""
+    acc: dict[str, dict] = {}
+    for events, group in enumerate(stats):
+        for x in group:
+            a = acc.setdefault(f"{x['code']}:{x['kind']}", {"code": x["code"], "kind": x["kind"], "w": 0.0, "sum": 0.0,
+                                                            "laps_with": 0, "laps_without": 0, "model": [],
+                                                            "events": set()})
+            w = float(min(x["laps_with"], x["laps_without"]))
+            a["w"] += w
+            a["sum"] += w * x["diff_s"]
+            a["laps_with"] += x["laps_with"]
+            a["laps_without"] += x["laps_without"]
+            a["model"].append(x["model_s"])
+            a["events"].add(events)
+    out = {}
+    for key, a in acc.items():
+        measured = a["laps_with"] >= MEASURE_MIN_LAPS and a["laps_without"] >= MEASURE_MIN_LAPS and a["w"] > 0
+        model_s = float(np.mean(a["model"]))
+        out[key] = {"key": key, "code": a["code"], "kind": a["kind"], "measured": measured,
+                    "cost_s": round(max(a["sum"] / a["w"], 0.0), 3) if measured else round(model_s, 3),
+                    "model_s": round(model_s, 3), "laps_with": a["laps_with"], "laps_without": a["laps_without"],
+                    "events": len(a["events"])}
+    return out

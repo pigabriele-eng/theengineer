@@ -30,7 +30,16 @@ from sqlalchemy.orm import Session
 from app import heavy, models, storage
 from app.analysis import compact
 from app.analysis.shifts import ShiftModel
-from app.analysis.technique import INPUT_ROLES, Pass, best_technique, check_lap, habits, section_times
+from app.analysis.technique import (
+    INPUT_ROLES,
+    Pass,
+    best_technique,
+    check_lap,
+    habits,
+    mistake_stats,
+    pool_stats,
+    section_times,
+)
 from app.db import SessionLocal, get_db
 from app.routers import reports
 from app.routers.sessions import official_corners
@@ -49,7 +58,8 @@ TECHNIQUE_VERSION = 11  # raise when the check changes, so every kept one is wor
 # 10: the speed stalling or dropping on the way out of a corner, whatever the pedal shows
 # 11: perfect driving's and the realistic target's inputs (throttle, brake, ideal gear and revs) to lay over the
 #     driver's, and the driver's revs among their inputs; the best technique: the driver's quickest clean pass of
-#     the event through every section, built where none beats the lap
+#     the event through every section, built where none beats the lap; every obvious mistake's cost measured on the
+#     laps (with it against without it), pooled over the track's checks
 TRACES_WAIT_S = 3600  # longest the check waits for the logs to be read into lap traces
 HABITS_SHOWN = 12
 DETAILS_KEPT = 16  # laps' full checks kept in memory
@@ -174,11 +184,41 @@ def _fastest(row: models.TechniqueCache, res: dict, x: dict) -> dict | None:
             "this_lap": this, "inputs": trace.get("inputs") if trace else None}
 
 
-def _lap_out(row: models.TechniqueCache, res: dict, x: dict, session_habits: list[dict]) -> dict:
+_others: dict[str, tuple[tuple, list[list[dict]]]] = {}  # track -> (its checks' versions, their mistake_stats)
+
+
+def _measured(db: Session, row: models.TechniqueCache, res: dict) -> dict[str, dict]:
+    """Every obvious mistake's cost measured on the laps (technique.pool_stats): this check's laps pooled with every
+    other check at the same track, so it grows as more logs arrive."""
+    track = res.get("track")
+    own = res.get("mistake_stats") or []
+    if not track:
+        return pool_stats([own])
+    T = models.TechniqueCache
+    stamp = tuple(db.execute(select(T.id, T.updated_at).where(T.result.is_not(None), T.id != row.id)
+                             .order_by(T.id)).all())
+    with _details_lock:
+        cached = _others.get(track)
+    if cached is None or cached[0] != stamp:
+        others = []
+        for r in db.scalars(select(T).where(T.result.is_not(None), T.id != row.id)):
+            if r.result.get("track") == track and r.result.get("mistake_stats"):
+                others.append(r.result["mistake_stats"])
+        with _details_lock:
+            _others[track] = (stamp, others)
+    else:
+        others = cached[1]
+    return pool_stats([own, *others])
+
+
+def _lap_out(row: models.TechniqueCache, res: dict, x: dict, session_habits: list[dict],
+             measured: dict[str, dict] | None = None) -> dict:
     detail = _detail(row, x["detail"]) or {}
     repeats = {h["key"]: {"laps": h["laps"], "of": h["of"]} for h in session_habits}
     mistakes = [{**m, "repeats": repeats.get(m["key"])} for m in detail.get("mistakes", x["mistakes"])]
     out = {k: v for k, v in x.items() if k not in ("detail", "mistakes")}
+    if measured:  # each obvious mistake with its cost measured on the laps, where there are enough of them
+        out["obvious"] = [{**m, "measured": measured.get(f"{m['code']}:{m['kind']}")} for m in x.get("obvious", [])]
     return {**out, "mistakes": mistakes, "trace": detail.get("trace"), "fastest": _fastest(row, res, x)}
 
 
@@ -197,7 +237,7 @@ def session_technique(session_id: int, lap: int | None = None, db: Session = Dep
     out["event"] = {"id": s.event_id, "name": s.event.name} if s.event_id and s.event else None
     out["map"] = {"event": s.event_id} if kind == "event" else {"session": s.id}
     res = row.result if row is not None else None
-    out.update(laps=[], lap=None, lap_note=None, habits=None)
+    out.update(laps=[], lap=None, lap_note=None, habits=None, measured=None)
     if not res:
         return out
     laps = sorted((x for x in res["laps"] if x["session_id"] == s.id), key=lambda x: x["number"])
@@ -210,8 +250,12 @@ def session_technique(session_id: int, lap: int | None = None, db: Session = Dep
                            "in-laps and laps off the pace say little about technique.")
     if chosen is None and lap is None and laps:
         chosen = min(laps, key=lambda x: x["time"])
+    measured = _measured(db, row, res)
     if chosen is not None:
-        out["lap"] = _lap_out(row, res, chosen, session_habits)
+        out["lap"] = _lap_out(row, res, chosen, session_habits, measured)
+    # the obvious mistakes ranked by what they really cost, most expensive first (the model's estimate where too few
+    # laps measure one)
+    out["measured"] = sorted(measured.values(), key=lambda m: (not m["measured"], -m["cost_s"]))[:HABITS_SHOWN]
     out["habits"] = {"session": session_habits[:HABITS_SHOWN], "session_laps": len(laps),
                      "event": res["habits"]["event"][:HABITS_SHOWN] if kind == "event" else None,
                      "event_laps": len(res["laps"]) if kind == "event" else None}
@@ -239,6 +283,8 @@ def event_technique(event_id: int, db: Session = Depends(get_db)):
     out["best"] = ({"session_id": quickest["session_id"], "number": quickest["number"], "time": quickest["time"]}
                    if quickest else None)
     out["habits"] = res["habits"]["event"][:HABITS_SHOWN] if res else None
+    out["measured"] = (sorted(_measured(db, row, res).values(), key=lambda m: (not m["measured"], -m["cost_s"]))
+                       [:HABITS_SHOWN] if res and row is not None else None)
     out["laps_checked"] = len(res["laps"]) if res else 0
     return out
 
@@ -438,7 +484,7 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
         member = f"l{i}"
         details[member]["trace"]["model"]["best"] = reports._plain(best_technique(p, passes, prep.sections, shifts))
         blobs[member] = np.frombuffer(json.dumps(details[member]).encode(), np.uint8)
-    del details, passes
+    del details
     by_session: dict[int, list[list[dict]]] = {}
     for x in laps:
         by_session.setdefault(x["session_id"], []).append(x["mistakes"])
@@ -457,8 +503,13 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
         "habits": {"event": habits([x["mistakes"] for x in laps]),
                    "sessions": {str(sid): habits(m) for sid, m in by_session.items()}},
         "laps_left_out": left_out,
+        # what each obvious mistake really cost on these laps, per driver, pooled with the track's other events
+        "track": plan.track.name if plan.track else None,
+        "mistake_stats": mistake_stats([(x["driver"], p.times, x["obvious"]) for x, p in zip(laps, passes,
+                                                                                             strict=True)],
+                                       prep.sections),
     }
-    del prep, extras
+    del prep, extras, passes
     buf = io.BytesIO()
     np.savez_compressed(buf, **blobs)
     del blobs

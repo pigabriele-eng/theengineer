@@ -31,6 +31,11 @@ export type Mistake = {
  * upshift before or after the revs where the next gear drives harder (or held on the rev limiter), the throttle on
  * and off through a corner, the speed stalling or dropping on the way out.
  * cost_s is what it alone cost: the speed the lift lost carried down the straight, the later braking point missed. */
+/** What an obvious mistake really costs by corner and kind, measured on the laps (with it against without it,
+ * driver by driver, every check at the track pooled); the model's estimate where too few laps measure it. */
+export type MeasuredCost = { key: string; code: string; kind: ObviousMistake['kind']; measured: boolean;
+  cost_s: number; model_s: number; laps_with: number; laps_without: number; events: number };
+
 export type ObviousMistake = {
   key: string;
   kind: 'exit_lift' | 'exit_stall' | 'on_off_throttle' | 'power_step' | 'soft_straight_braking' | 'early_shift' | 'late_shift';
@@ -43,6 +48,7 @@ export type ObviousMistake = {
   title: string;
   what: string;
   do: string;
+  measured?: MeasuredCost | null;
 };
 
 export type Budget = {
@@ -142,6 +148,7 @@ export type SessionTechnique = Head & {
   laps: LapRow[];
   best_lap?: number | null;
   lap: LapCheck | null;
+  measured?: MeasuredCost[] | null; // the obvious mistakes, most expensive first as measured
   lap_note: string | null;
   habits: { session: Habit[]; session_laps: number; event: Habit[] | null; event_laps: number | null } | null;
   sections?: { code: string; start_m: number; end_m: number; apex_m: number | null; corners: string[] }[];

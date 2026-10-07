@@ -15,6 +15,7 @@ import { formatLap } from '@/lib/api';
 import {
   BestSource,
   BestTechnique,
+  MeasuredCost,
   EventTechnique,
   fetchEventTechnique,
   fetchSessionTechnique,
@@ -299,6 +300,8 @@ export default function TechniqueScreen() {
       )}
 
       {answer?.habits && <Habits habits={answer.habits} no={next()} />}
+
+      {!!answer?.measured?.length && <MeasuredCosts list={answer.measured} no={next()} />}
 
       {check && answer && (
         <Section no={next()} title="On the track"
@@ -614,8 +617,42 @@ function ObviousRow({ m, first, on, onPress }: { m: ObviousMistake; first: boole
           <Text style={t.strong}>Instead: </Text>
           {m.do}
         </Text>
+        {m.measured && <Text style={t.small}>{measuredLine(m.measured)}</Text>}
       </View>
     </Pressable>
+  );
+}
+
+/** What the laps say a mistake costs, or why the model's estimate stands. */
+function measuredLine(x: MeasuredCost) {
+  const over = `${x.laps_with} lap${x.laps_with === 1 ? '' : 's'} with it against ${x.laps_without} without` +
+    (x.events > 1 ? `, over ${x.events} events here` : '');
+  if (!x.measured) return `Too few laps to measure it yet (${over}): the cost shown is the model's estimate.`;
+  return x.cost_s < 0.005
+    ? `Measured on the laps: no loss to see (${over}); the model's estimate is ${s2(x.model_s)}.`
+    : `Measured on the laps: ${s2(x.cost_s)} each time (${over}); the model's estimate is ${s2(x.model_s)}.`;
+}
+
+/** The obvious mistakes ranked by what they really cost on the laps. */
+function MeasuredCosts({ list, no }: { list: MeasuredCost[]; no: number }) {
+  const t = useText();
+  const theme = useTheme();
+  const styles = useStyles();
+  const top = Math.max(...list.map((x) => x.cost_s), 0.001);
+  return (
+    <Section no={no} title="What mistakes really cost"
+      dek="Each obvious mistake's loss measured on the laps: the time from its corner to the end of the next, laps with it against laps without it, driver by driver, every event at this track pooled. Most expensive first.">
+      {list.map((x) => (
+        <View key={x.key} style={styles.habit}>
+          <View style={styles.habitLine}>
+            <Text style={styles.habitTitle}>{(PUT_RIGHT[x.kind] ?? x.kind).replace(/^./, (c) => c.toUpperCase())} · {x.code}</Text>
+            <Text style={styles.habitCost}>{s2(x.cost_s)}</Text>
+          </View>
+          <Meter share={x.cost_s / top} color={x.measured ? theme.delta.loss : theme.textMuted} height={8} />
+          <Text style={t.small}>{measuredLine(x)}</Text>
+        </View>
+      ))}
+    </Section>
   );
 }
 
