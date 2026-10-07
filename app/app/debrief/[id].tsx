@@ -324,9 +324,11 @@ function Kpi({ n, label, verdict, size }: { n: number; label: string; verdict: V
   const styles = useStyles();
   const v = VERDICT[verdict];
   const color = useTheme().status[v.status];
+  const wide = useWide();
   return (
     <View>
-      <View style={styles.kpiHead}>
+      {/* two lines of label kept on a phone, so the three figures stay level when one label wraps */}
+      <View style={StyleSheet.flatten([styles.kpiHead, !wide && styles.kpiHeadPhone])}>
         <Glyph status={v.status} glyph={v.glyph} size={16} />
         <Label small>{label}</Label>
       </View>
@@ -407,6 +409,7 @@ const useStyles = themed((c) => ({
   oneCol: { gap: 28, marginTop: 26 },
   col: { flex: 1, minWidth: 0 },
   kpiHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
+  kpiHeadPhone: { alignItems: 'flex-start', minHeight: 32 },
   item: { gap: 5, paddingTop: 10, paddingBottom: 12, borderBottomWidth: 1, borderColor: c.separator },
   itemHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   itemTitle: { fontFamily: face('body', 600), fontSize: 16, lineHeight: 22, color: c.text, flexShrink: 1 },

@@ -12,12 +12,14 @@ type Props = {
   sessionId: number;
   analysis: Analysis;
   laps: Lap[];
-  heading?: boolean; // its own label over the picks; false where the page's section already names it
+  // inside a page's own numbered section: no "Compare laps" heading of its own and no frame, the lap picks and the
+  // charts only
+  bare?: boolean;
 };
 
 /** A lap against the reference lap: time delta, speed, throttle and brake on one distance axis. The laps to pick as
  * the programme's figures (the picked one underlined in red), the charts in the programme's chrome. */
-export function LapCompare({ sessionId, analysis, laps: allLaps, heading = true }: Props) {
+export function LapCompare({ sessionId, analysis, laps: allLaps, bare = false }: Props) {
   const styles = useStyles();
   const t = useText();
   const theme = useTheme();
@@ -52,7 +54,7 @@ export function LapCompare({ sessionId, analysis, laps: allLaps, heading = true 
 
   return (
     <View style={styles.section}>
-      {heading && <Text style={t.sub}>Compare laps</Text>}
+      {!bare && <Text style={t.sub}>Compare laps</Text>}
       <View style={styles.picks}>
         {clean.map((l) => (
           <Choice key={l.number} label={`${l.number}`} detail={formatLap(l.time_s)} on={l.number === lap}
