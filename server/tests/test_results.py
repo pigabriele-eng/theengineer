@@ -272,3 +272,28 @@ def test_a_circuit_in_spain_is_not_spa():
     assert venue_key("Circuit Ricardo Tormo, Valencia, Spain") == "valencia"
     assert venue_key("Circuit de Spa-Francorchamps") == "spa" and venue_key("Hockenheimring") == "hockenheim"
     assert venue_key("Lausitzring") == "lausitzring"
+
+
+def test_the_season_s_car_number_beats_one_found_from_logged_laps(client, fake_site):
+    from app.db import SessionLocal
+    from app.results import models as rm
+    from app.season_match import _known_number
+
+    fake_site.sync(years=[2026])
+    client.post("/tracks", json={"name": "Test Track"})
+    ev = client.post("/events/folders", json={"name": "Round 5"}).json()
+    _session(client, ev["id"], "Q", (0.97, 0.98), "19/09/2026", "11:30:00")
+    with SessionLocal() as db:  # an earlier open found #8 from our logged laps
+        db.add(rm.EventResultLink(event_id=ev["id"], series="gt4-europe", year=2026, round_id="75", car_number="8"))
+        db.commit()
+    r = client.post("/seasons", json={"name": "GT4 European Series 2026", "series": "gt4-europe", "year": 2026,
+                                      "car_number": "911", "rounds": []})
+    assert r.status_code in (200, 201), r.text
+    body = client.get(f"/results/events/{ev['id']}").json()
+    assert (body["car_number"], body["car_number_from"]) == ("911", "the season")
+    with SessionLocal() as db:
+        assert _known_number(db, "gt4-europe", 2026, ev["id"]) == "911"
+    body = client.put(f"/results/events/{ev['id']}/link", json={"car_number": "70"}).json()  # by hand beats both
+    assert (body["car_number"], body["car_number_from"]) == ("70", "set")
+    with SessionLocal() as db:
+        assert _known_number(db, "gt4-europe", 2026, ev["id"]) == "70"

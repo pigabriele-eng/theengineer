@@ -189,11 +189,14 @@ def event_overview(db: Session, ev: models.Event) -> dict:
     out["round"] = {"year": rnd.year, "round": rnd.order, "round_id": rnd.round_id, "name": rnd.name,
                     "fetched_at": rnd.fetched_at.isoformat() if rnd.fetched_at else None}
     bests = [r["best_lap_s"] for r in facts["rows"] if r["best_lap_s"]]
-    number = link.car_number if link and link.car_number and (link.by_hand or link.series == series) else None
-    if number:
-        out["car_number_from"] = "set" if link.by_hand else "logged laps"
+    # set by hand on the event, else our season's number, else the one found from our logged laps (kept on the link)
+    number = None
+    if link is not None and link.by_hand and link.car_number:
+        number, out["car_number_from"] = link.car_number, "set"
     elif season_number:
         number, out["car_number_from"] = season_number, "the season"
+    elif link is not None and link.car_number and link.series == series:
+        number, out["car_number_from"] = link.car_number, "logged laps"
     else:
         number, matches = summary.infer_car(rnd, bests)
         if matches < summary.MIN_MATCHES:  # one match can be another car on a busy day
