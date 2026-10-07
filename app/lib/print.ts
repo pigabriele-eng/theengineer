@@ -3,12 +3,14 @@
 // drawn Light on white paper, the masthead and the page's controls are left out, and every scrolling box is laid out
 // in full: react-native-web's ScrollView is a box as tall as the window that scrolls inside, so the paper would
 // otherwise show only the first screen. The same happens when the browser's own Print menu (Ctrl+P / Cmd+P) is used.
-// iOS and Android have no Print button (nothing here runs there).
+// Where the browser has no print dialog (the app added to an iPhone's home screen) the button makes the PDF itself,
+// from the same paper page (lib/pdf.web.ts). iOS and Android apps have no Print button (nothing here runs there).
 import { Platform } from 'react-native';
 
 import Colors from '@/constants/Colors';
 import { WIDE } from '@/constants/Theme';
 import { setPrinting } from '@/lib/appearance';
+import { flushSync } from '@/lib/flushSync';
 
 /** True where a page can be printed: the web app, in a browser. */
 export const canPrint = Platform.OS === 'web' && typeof window !== 'undefined' && typeof document !== 'undefined'
@@ -25,6 +27,10 @@ export const printHead: object = Platform.OS === 'web' ? { dataSet: { print: 'he
  * is laid out wider on paper than on the screen it was measured on). */
 export const printFill: object = Platform.OS === 'web' ? { dataSet: { print: 'fill' } } : {};
 
+/** An iPhone or an iPad (an iPad says it is a Mac, but a Mac has no touch screen). */
+export const onIos = canPrint && (/iPad|iPhone|iPod/.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+
 // attributes set on the page only while it prints
 const FLOW = 'data-print-flow'; // a scrolling box, or a box holding one: laid out in full
 const SIDE = 'data-print-side'; // a box that scrolls sideways (a wide table): shown whole
@@ -33,9 +39,11 @@ const HIDE = 'data-print-off'; // the bar above a page with its name and the bac
 const PAGE_WIDTH = 720; // CSS px across an A4 or Letter page inside its margins, roughly
 const MAX_WIDTH = 1240; // the widest the page's body gets (components/Programme.tsx Page)
 
-const PRINT_CSS = `
-@page { margin: 12mm; }
-@media print {
+/** The paper's margin on every side, in mm (the @page rule below). */
+export const PAPER_MARGIN_MM = 12;
+
+// The paper page. These rules apply while the page prints, and to the copy of the page a PDF is drawn from.
+const RULES = `
   html, body { height: auto !important; overflow: visible !important; background: #fff !important; }
   #root { display: block !important; height: auto !important; overflow: visible !important; }
   *, *::before, *::after { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
@@ -49,14 +57,16 @@ const PRINT_CSS = `
   [data-print="fill"] { left: 0 !important; top: 0 !important; width: 100% !important; height: 100% !important; }
   input, textarea { border-color: transparent !important; background: transparent !important; resize: none; }
   input::placeholder, textarea::placeholder { color: transparent !important; }
-}
 `;
+const PRINT_CSS = `@page { margin: ${PAPER_MARGIN_MM}mm; }\n@media print {${RULES}}`;
 
 let installed = false;
 let printing = false;
+let hold = false; // the page stays on paper whatever the browser's afterprint says (see printPage)
 let title: string | null = null; // the PDF's name while the Print button prints
 let saved: string | null = null; // the page's own title, put back after
 let sheet: HTMLStyleElement | null = null; // the rules made for this page: its paper, its width
+let white = ''; // the rule that makes the paper colour white, for the copy a PDF is drawn from
 
 /** Put the print styles on the page and follow the browser's own Print menu. Once; the Print button calls it. */
 export function installPrint() {
@@ -66,41 +76,78 @@ export function installPrint() {
   style.id = 'te-print';
   style.textContent = PRINT_CSS;
   document.head.appendChild(style);
+  // the browser's Print menu: draw the page Light at once, then mark the boxes on the redrawn page
   window.addEventListener('beforeprint', () => {
-    // the browser's Print menu: draw the page Light (React redraws it in a microtask, before the browser lays the
-    // paper out), then mark the boxes on the redrawn page
-    if (begin()) queueMicrotask(prepare);
+    if (begin()) prepare();
   });
-  window.addEventListener('afterprint', finish);
+  window.addEventListener('afterprint', () => {
+    if (!printing || hold) return;
+    // Safari on an iPhone may say printing is over before its print sheet has laid the paper out
+    if (onIos) untilTouch();
+    else finish();
+  });
 }
 
-/** Print the page (the browser's dialog, with Save as PDF), `name` as the PDF's file name. */
+/** Print the page (the browser's dialog, with Save as PDF), `name` as the PDF's file name. Called in the tap itself:
+ * Safari opens its print sheet only for a tap, so the page is drawn Light and marked before print() is called. */
 export function printPage(name: string) {
-  if (!canPrint) return;
+  if (!canPrint || printing) return;
   installPrint();
   title = name;
   begin();
-  // React draws the page Light once this press is handled; then mark it and open the dialog
-  setTimeout(() => {
-    prepare();
-    window.print();
-    // a browser that never says printing is over (no afterprint): the next touch on the page means it is
-    window.addEventListener('pointerdown', finish, { once: true });
-  }, 0);
+  prepare();
+  // Chrome and Firefox on a computer return from print() once their dialog is closed. Safari and the phones return at
+  // once and lay the paper out after (again when the paper size is changed), and may say printing is over before they
+  // have: the page stays on paper until the next touch or key on it (their dialog covers the page while it is open).
+  hold = true;
+  const opened = Date.now();
+  window.print();
+  if (!printing) return;
+  if (Date.now() - opened > 1000) finish();
+  else untilTouch();
+}
+
+/** Lay the page out as paper for the PDF lib/pdf.web.ts makes (Light, the boxes marked, the page's title as the PDF's
+ * name): the width the page is laid out at on paper and the rules for the copy the PDF is drawn from. Null when the
+ * page is being printed already. endPaper() puts the page back. */
+export function paperPage(name: string): { width: number; css: string } | null {
+  if (!canPrint || printing) return null;
+  installPrint();
+  title = name;
+  hold = true; // the browser's afterprint has nothing to do with it
+  begin();
+  prepare();
+  return { width: paperWidth(), css: RULES + white };
+}
+
+export function endPaper() {
+  finish();
+}
+
+// until the next touch or key on the page
+function untilTouch() {
+  window.addEventListener('pointerdown', finish, { once: true, capture: true });
+  window.addEventListener('keydown', finish, { once: true, capture: true });
 }
 
 function begin(): boolean {
   if (printing) return false;
   printing = true;
-  setPrinting(true);
+  flushSync(() => setPrinting(true)); // drawn Light now, so the page is measured and laid out on paper as it is drawn
   return true;
+}
+
+// The width the page is laid out at on paper: a phone's page as wide as the paper, a wide window as it is (up to the
+// widest the page's body gets), scaled down to the paper's width
+function paperWidth(): number {
+  return window.innerWidth >= WIDE ? Math.min(window.innerWidth, MAX_WIDTH) : PAGE_WIDTH;
 }
 
 function prepare() {
   if (!printing) return;
   const root = document.getElementById('root');
   const wide = window.innerWidth >= WIDE;
-  const width = wide ? Math.min(window.innerWidth, MAX_WIDTH) : PAGE_WIDTH;
+  const width = paperWidth();
   // the stack's bar above a page (its name and the back arrow): the heading React Navigation marks level 1, and the
   // short boxes around it
   document.querySelectorAll('h1[aria-level="1"]').forEach((h) => {
@@ -112,7 +159,9 @@ function prepare() {
   for (const el of divs) {
     if (el.clientHeight === 0 && el.clientWidth === 0) continue;
     const cs = getComputedStyle(el);
-    if (/auto|scroll/.test(cs.overflowY) && el.scrollHeight > el.clientHeight + 1) {
+    // every scrolling box, also one whose page fits the screen: left as it is, it shrank to nothing on paper (Seasons
+    // with no season printed blank)
+    if (/auto|scroll/.test(cs.overflowY) && el.scrollHeight > 0) {
       for (let e: HTMLElement | null = el; e && e !== root && e !== document.body; e = e.parentElement) e.setAttribute(FLOW, '');
     } else if (/auto|scroll/.test(cs.overflowX) && el.scrollWidth > el.clientWidth + 1) {
       el.setAttribute(SIDE, '');
@@ -128,7 +177,8 @@ function prepare() {
     if (parent && (parent.offsetHeight > keep || parent.hasAttribute(FLOW))) el.setAttribute(KEEP, '');
   }
   sheet ??= document.head.appendChild(document.createElement('style'));
-  sheet.textContent = whitePaper() + (wide ? fit(width) : '');
+  white = whitePaper();
+  sheet.textContent = `@media print { ${white} }\n` + (wide ? fit(width) : '');
   if (title) {
     saved ??= document.title;
     document.title = title;
@@ -168,15 +218,19 @@ function whitePaper(): string {
       // a style sheet from another site (fonts): nothing of ours in it
     }
   }
-  return `@media print { ${selectors.join(', ')} { background-color: #fff !important; } }\n`;
+  return `${selectors.join(', ')} { background-color: #fff !important; }`;
 }
 
 function finish() {
+  window.removeEventListener('pointerdown', finish, { capture: true });
+  window.removeEventListener('keydown', finish, { capture: true });
   if (!printing) return;
   printing = false;
+  hold = false;
   for (const a of [FLOW, SIDE, KEEP, HIDE]) document.querySelectorAll(`[${a}]`).forEach((e) => e.removeAttribute(a));
   sheet?.remove();
   sheet = null;
+  white = '';
   if (saved != null) document.title = saved;
   saved = null;
   title = null;
