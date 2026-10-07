@@ -209,6 +209,23 @@ def test_predictions_and_backtest_answer(client, fake_site):
     assert client.get("/results/backtest", params={"car_number": "911"}).status_code == 200
 
 
+
+def test_an_event_has_its_prediction_and_then_predicted_vs_actual(client, fake_site):
+    ev = client.post("/events/folders", json={"name": "Next round"}).json()
+    body = client.get(f"/results/events/{ev['id']}/prediction").json()
+    assert body["prediction"] is None and body["note"]  # no circuit, no date, no car yet
+    fake_site.sync(years=[2026])
+    client.post("/tracks", json={"name": "Test Track"})
+    done = client.post("/events/folders", json={"name": "Round 5"}).json()
+    _session(client, done["id"], "Q", (0.97, 0.98), "19/09/2026", "11:30:00")
+    client.put(f"/results/events/{done['id']}/link", json={"car_number": "911"})
+    body = client.get(f"/results/events/{done['id']}/prediction").json()
+    assert body["finished"] and body["team"] == "Team Two" and body["prediction"]["sessions"]["Q1"]
+    rows = {(r["code"], r["what"]): r for r in body["comparison"]}
+    assert rows[("Q1", "position")]["actual"] == 2 and rows[("R1", "position")]["actual"] == 1
+    assert rows[("Q1", "our_lap")]["actual"] == 102.441
+    assert all(r["miss"] is None or r["miss"] == round(r["predicted"] - r["actual"], 3) for r in rows.values())
+
 def test_a_car_set_by_hand_shows_before_any_results(client):
     ev = client.post("/events/folders", json={"name": "Next round"}).json()
     body = client.put(f"/results/events/{ev['id']}/link", json={"car_number": "12", "year": 2027}).json()

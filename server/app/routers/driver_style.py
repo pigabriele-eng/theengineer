@@ -1,9 +1,10 @@
 """Driver fingerprints: who drove each run of an event, from driving style alone, and every driver's fingerprint.
 
 GET /events/{id}/driver-guess suggests a driver for the event's runs (and a driver change inside a run), to be
-confirmed with a tap; GET /drivers/fingerprints is the database: each driver's style in words, the events it was
-learned from with the pace against teammates, which ways of driving go with quicker laps in all the data, and the
-style groups still waiting for a name. See analysis/driver_style.py for how, app/driver_prints.py for what is kept.
+confirmed with a tap, and says which runs had their driver set from the style (driver_prints.settle);
+GET /drivers/fingerprints is the database: each driver's style in words, the events it was learned from with the pace
+against teammates, which ways of driving go with quicker laps in all the data, and the style groups still waiting for
+a name. See analysis/driver_style.py for how, app/driver_prints.py for what is kept.
 """
 from __future__ import annotations
 
@@ -72,10 +73,9 @@ def event_guess(event_id: int, db: Session = Depends(get_db)):
     if ep is None:
         return {"status": status, "mode": "too few laps", "separation": None, "groups": [], "sessions": []}
     names = _names(db)
-    tags = driver_prints.tags_of(db, ep)
-    learned = _taught(db, driver_prints.stored(db))
-    known = driver_prints.known_for(learned, ep.kinds, exclude_event=event_id)
-    g = ds.guess(ep, tags, known)
+    tags = driver_prints.tags_of(db, ep, people_only=False)
+    by_style = driver_prints.set_by_style(db, list(tags))
+    g = driver_prints.guess_for(db, event_id, ep, _taught(db, driver_prints.stored(db)))
     times = np.array(ep.times)
     groups = []
     for i, grp in enumerate(g.groups):
@@ -99,8 +99,10 @@ def event_guess(event_id: int, db: Session = Depends(get_db)):
         agrees = None
         if current is not None and grp.driver_id is not None:
             agrees = current == grp.driver_id
+        st = by_style.get(s.session_id)
+        auto = {"source": st.source, "match": st.match} if st is not None and st.driver_id == current else None
         out.append({"session_id": s.session_id, "driver_id": current, "suggestion": suggestion, "agrees": agrees,
-                    "stints": stints})
+                    "stints": stints, "auto": auto})
     return {"status": status, "mode": g.mode,
             "separation": round(g.separation, 2) if g.separation is not None else None,
             "groups": groups, "sessions": out}
@@ -155,8 +157,7 @@ def fingerprints(db: Session = Depends(get_db)):
     unnamed = []
     per_event: dict[int, tuple[ds.EventPrint, ds.Guess]] = {}
     for ev_id, ep in prints.items():
-        tags = driver_prints.tags_of(db, ep)
-        g = ds.guess(ep, tags, driver_prints.known_for(learned, ep.kinds, exclude_event=ev_id))
+        g = driver_prints.guess_for(db, ev_id, ep, learned)
         per_event[ev_id] = (ep, g)
         ev = events.get(ev_id)
         for i, grp in enumerate(g.groups):

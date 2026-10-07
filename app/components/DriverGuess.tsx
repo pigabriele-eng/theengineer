@@ -33,8 +33,8 @@ export function useDriverGuess(eventId: number | null, version: unknown) {
   return guess;
 }
 
-/** The line under a run's driver chip: who the driving style says drove it, with a tap to confirm (nothing is tagged
- * until then), or the driver change inside the run. */
+/** The line under a run's driver chip: who the driving style says drove it, with a tap to confirm, the driver change
+ * inside the run, or that the style set the driver by itself (sure of it), with a tap to change it. */
 export function DriverGuessLine({ guess, mode, onPick, onName }: {
   guess: RunGuess | undefined;
   mode: EventGuess['mode'] | undefined;
@@ -45,7 +45,8 @@ export function DriverGuessLine({ guess, mode, onPick, onName }: {
   const line = guessLine(guess, mode);
   if (!guess || !line) return null;
   const s = guess.suggestion;
-  const action = guess.stints.length > 1 ? null
+  const action = guess.auto && guess.driver_id != null ? { label: 'Change', onPress: onName }
+    : guess.stints.length > 1 ? null
     : s.driver_id != null && guess.driver_id !== s.driver_id
       ? { label: guess.driver_id == null ? 'Confirm' : `Change to ${s.driver}`, onPress: () => onPick({ driver_id: s.driver_id }) }
       : guess.driver_id == null ? { label: 'Name this driver', onPress: onName } : null;

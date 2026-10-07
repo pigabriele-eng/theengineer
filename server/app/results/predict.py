@@ -947,6 +947,42 @@ def backtest(sessions: Sequence[dict], *, car_number: str = "12", team: str = "B
     }
 
 
+def actual_round(sessions: Sequence[dict], venue: str, year: int, *, car_number: str | None = None,
+                 team: str | None = None, order: int | None = None, driver: str | None = None) -> dict[str, dict]:
+    """What happened in ``year``'s round at ``venue``, per session (Q1 ... R2), for our car as the prediction finds
+    it (from the rounds before this one)."""
+    core = _core(sessions, venue, year, car_number, team, None, None, order, None, driver)
+    return _actual(sessions, venue, year, core["us"])
+
+
+def compare(pred: dict, actual: dict[str, dict]) -> list[dict]:
+    """Predicted against what happened, one row per number: the pole and our lap (seconds) and our place and class
+    place in each qualifying, our finish in each race. ``miss`` is predicted - actual; ``inside`` says whether what
+    happened fell in the likely range."""
+    rows: list[dict] = []
+
+    def add(code: str, what: str, p: float | None, rng: list | None, a: Any, extra: dict | None = None) -> None:
+        if p is None and a is None:
+            return
+        miss = None if p is None or a is None else _r(p - a, 3 if what in ("pole", "our_lap") else 1)
+        inside = None if not rng or a is None or rng[0] is None or rng[1] is None else rng[0] <= a <= rng[1]
+        rows.append({"code": code, "what": what, "predicted": p, "range": rng, "actual": a, "miss": miss,
+                     "inside": inside, "wet": bool((actual.get(code) or {}).get("wet")), **(extra or {})})
+
+    for code in QUALI_CODES:
+        p, a = pred["sessions"].get(code) or {}, actual.get(code) or {}
+        add(code, "pole", p.get("pole_s"), p.get("pole_range_s"), _r(a.get("pole_s")))
+        add(code, "our_lap", p.get("our_time_s"), p.get("our_time_range_s"), _r(a.get("our_time_s")))
+        add(code, "position", p.get("position"), p.get("position_range"), a.get("position"))
+        if p.get("class_position") is not None:  # a series without classes (ADAC) has none to compare
+            add(code, "class_position", p["class_position"], p.get("class_position_range"), a.get("class_position"))
+    for code in RACE_CODES:
+        p, a = pred["sessions"].get(code) or {}, actual.get(code) or {}
+        add(code, "position", p.get("position"), p.get("position_range"), a.get("position"),
+            {"status": a.get("status")})
+    return rows
+
+
 def _naive(prior: list[dict], venue: str, year: int, us: _Us) -> dict:
     """Same session at our last dry visit for times; our season average so far for positions."""
     base: dict[str, Any] = {}

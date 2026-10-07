@@ -398,3 +398,95 @@ def test_a_round_named_with_its_number_is_not_numbered_twice():
     assert _round_label(season, NS(order=1, name="Round 5 Zandvoort")) == "GT4 European Series 2026, round 5 Zandvoort"
     assert _round_label(season, NS(order=5, name="Zandvoort")) == "GT4 European Series 2026, round 5 Zandvoort"
     assert _round_label(season, NS(order=2, name="Rotterdam")) == "GT4 European Series 2026, round 2 Rotterdam"
+
+
+def _with_laps(runs: list[int], n: int = 3) -> None:
+    """Laps for the runs (as an import leaves them): enough for the driving style to be checked."""
+    from app import models
+    from app.db import SessionLocal
+
+    with SessionLocal() as db:
+        for sid in runs:
+            f = db.scalar(select(models.LoggerFile.id).where(models.LoggerFile.session_id == sid))
+            db.add_all([models.Lap(session_id=sid, file_id=f, number=i, time_s=100.0, start_s=100.0 * i)
+                        for i in range(1, n + 1)])
+        db.commit()
+
+
+def test_who_drove_waits_for_the_driving_style_and_offers_its_pick(client):
+    from app import models, season_match
+    from app.db import SessionLocal
+
+    ev, runs = _logged("zandvoort-2026-09", "Zandvoort", ["2026-09-19"], runs=3)
+    _with_laps(runs)
+    entry = _entry(client, drivers=("Gabriele", "Max"))
+    _season(client, entry=entry)
+    assert _pending(client)["count"] == 0  # not asked yet: the driving style is checked first
+    with SessionLocal() as db:
+        (row,) = db.scalars(select(season_match.SeasonMatch).where(season_match.SeasonMatch.kind == "drivers")).all()
+        assert row.status == "waiting"
+        db.get(models.RunSession, runs[0]).driver_id = entry["drivers"][0]  # one the style was sure of: set
+        season_match.style_checked(db, ev, {runs[1]: entry["drivers"][1]})  # one it thinks is Max
+        db.commit()
+    (q,) = _pending(client, event_id=ev)["questions"]
+    assert q["runs"] == 2 and [o["key"] for o in q["options"]] == ["style", *(f"driver:{d}" for d in entry["drivers"])]
+    assert q["options"][0]["label"] == "As the driving style says: Max 1 run"
+    assert "1 run the style can't tell stays untagged" in q["options"][0]["why"]
+    r = client.post(f"/season-match/{q['id']}", json={"answer": "style"})
+    assert r.status_code == 200 and r.json()["done"] == "1 run of zandvoort-2026-09 set from the driving style."
+    got = _runs(client, runs)
+    assert [got[i]["driver_id"] for i in runs] == [entry["drivers"][0], entry["drivers"][1], None]
+
+
+def test_who_drove_is_put_away_when_the_style_set_every_run(client):
+    from app import models, season_match
+    from app.db import SessionLocal
+
+    ev, runs = _logged("zandvoort-2026-09", "Zandvoort", ["2026-09-19"])
+    _with_laps(runs)
+    entry = _entry(client, drivers=("Gabriele", "Max"))
+    _season(client, entry=entry)
+    with SessionLocal() as db:
+        for i, sid in enumerate(runs):
+            db.get(models.RunSession, sid).driver_id = entry["drivers"][i]
+        season_match.style_checked(db, ev, {})
+        db.commit()
+        (row,) = db.scalars(select(season_match.SeasonMatch).where(season_match.SeasonMatch.kind == "drivers")).all()
+        assert (row.status, row.answer) == ("yes", "style")
+    assert _pending(client)["count"] == 0
+
+
+def test_who_drove_is_asked_anyway_when_the_style_takes_too_long(client, monkeypatch):
+    from datetime import timedelta
+
+    from app import season_match
+
+    _, runs = _logged("zandvoort-2026-09", "Zandvoort", ["2026-09-19"])
+    _with_laps(runs)
+    _season(client, entry=_entry(client, drivers=("Gabriele", "Max")))
+    assert _pending(client)["count"] == 0
+    monkeypatch.setattr(season_match, "WAIT_FOR_STYLE", timedelta(0))
+    (q,) = _pending(client)["questions"]
+    assert q["kind"] == "drivers" and [o["label"] for o in q["options"]] == ["All Gabriele", "All Max"]
+
+
+def test_two_styles_nobody_knows_yet_are_one_tap(client):
+    from app import season_match
+    from app.db import SessionLocal
+
+    ev, runs = _logged("zandvoort-2026-09", "Zandvoort", ["2026-09-19"], runs=3)
+    _with_laps(runs)
+    entry = _entry(client, drivers=("Gabriele", "Max"))
+    _season(client, entry=entry)
+    g, m = entry["drivers"]
+    with SessionLocal() as db:  # runs 1 and 3 in one style, run 2 in the other
+        season_match.style_checked(db, ev, {}, [{runs[0]: g, runs[1]: m, runs[2]: g},
+                                                {runs[0]: m, runs[1]: g, runs[2]: m}])
+        db.commit()
+    (q,) = _pending(client, event_id=ev)["questions"]
+    assert [o["label"] for o in q["options"]] == [
+        "Gabriele: Run 1, Run 3; Max: Run 2", "Max: Run 1, Run 3; Gabriele: Run 2", "All Gabriele", "All Max"]
+    r = client.post(f"/season-match/{q['id']}", json={"answer": q["options"][1]["key"]})
+    assert r.status_code == 200 and r.json()["done"].startswith("3 runs")
+    got = _runs(client, runs)
+    assert [got[i]["driver_id"] for i in runs] == [m, g, m]
