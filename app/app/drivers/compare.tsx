@@ -17,6 +17,7 @@ import PrintButton from '@/components/PrintButton';
 import { Colophon, Fig, Page, Section, Swatch, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { TraceChart, useSeriesColors } from '@/components/TraceChart';
+import { ResetZoom, ZOOM_HINT, ZoomGroup } from '@/components/Zoom';
 import { DETECTED_CORNERS_NOTE, formatLap } from '@/lib/api';
 import {
   CompareJob,
@@ -339,6 +340,10 @@ function Results({ result, colors }: { result: Comparison; colors: Record<Side, 
   const distance = useMemo(() => result.delta_trace.gap_s.map((_, i) => i * step), [result, step]);
   const markers = result.sections.map((s) => ({ at: s.anchor_m, label: s.code }));
   const onCursor = useCallback((i: number | null) => setCursor(i), []);
+  // the lines, kept from one render to the next so the charts only redraw them when they or the zoom change
+  const gapLine = useMemo(() => [{ values: result.delta_trace.gap_s, color: theme.chart.ink }], [result, theme]);
+  const speed = useMemo(() => SIDES.map((side) => ({ values: result.speed_trace[side], color: colors[side] })),
+    [result, colors]);
   let no = 1;
   const next = () => ++no;
 
@@ -396,12 +401,13 @@ function Results({ result, colors }: { result: Comparison; colors: Record<Side, 
       )}
 
       <Section no={next()} title="Along the lap" dek="Both lines are the median over every clean lap of each driver, metre by metre, from the start/finish line.">
+        <ZoomGroup>
         <View style={styles.charts}>
           <TraceChart
             title={`Gap, + = ${labels.a} behind`}
             unit="s"
             distance={distance}
-            series={[{ values: result.delta_trace.gap_s, color: theme.chart.ink }]}
+            series={gapLine}
             cursor={cursor}
             onCursor={onCursor}
             markers={markers}
@@ -411,17 +417,20 @@ function Results({ result, colors }: { result: Comparison; colors: Record<Side, 
             {SIDES.map((side) => (
               <Swatch key={side} color={colors[side]} label={labels[side]} width={14} height={4} />
             ))}
+            <ResetZoom reserve />
           </View>
           <TraceChart
             title="Typical speed"
             unit="km/h"
             distance={distance}
-            series={SIDES.map((side) => ({ values: result.speed_trace[side], color: colors[side] }))}
+            series={speed}
             cursor={cursor}
             onCursor={onCursor}
             markers={markers}
           />
+          <Text style={StyleSheet.flatten([t.small, styles.narrow])}>{ZOOM_HINT}</Text>
         </View>
+        </ZoomGroup>
       </Section>
 
       <Section no={next()} title="Habits that cost time"
@@ -500,7 +509,7 @@ const useStyles = themed((c) => ({
   col: { flex: 1, minWidth: 0, gap: 10 },
   subGap: { marginBottom: 4 },
   charts: { gap: 14 },
-  legendRow: { flexDirection: 'row', columnGap: 22, rowGap: 8, flexWrap: 'wrap' },
+  legendRow: { flexDirection: 'row', columnGap: 22, rowGap: 8, flexWrap: 'wrap', alignItems: 'center' },
   runs: { maxWidth: 760 },
   runRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderBottomWidth: 1,
     borderColor: c.separator },

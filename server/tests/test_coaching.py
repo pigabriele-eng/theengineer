@@ -85,3 +85,22 @@ def test_coaching_api(client):
     assert picked["previous"]["id"] == ids[1]
     assert client.get("/coaching/sessions/9999/top").status_code == 404
     assert client.get(f"/coaching/sessions/{ids[0]}/fixed", params={"previous": 9999}).status_code == 404
+
+
+def test_a_check_still_pending_after_it_finished_reads_ready(client, monkeypatch):
+    """The worker marks the row done a moment before it leaves _pending: the answer is ready then, never 'done'."""
+    from app.routers import technique
+
+    track = client.post("/tracks", json={"name": "Test ring", "corners": [
+        {"code": code, "apex_m": at, "sector": sector} for code, at, sector in CORNERS]}).json()
+    event = client.post("/events", json={"name": "Test day", "track_id": track["id"]}).json()
+    s = client.post("/sessions", json={"event_id": event["id"], "name": "Run 1"}).json()
+    client.post(f"/sessions/{s['id']}/files", files={"file": ("run.ld", write_ld(simulate(paces=(0.95, 0.96))[0]))})
+    assert _wait(client, f"/coaching/sessions/{s['id']}/top")["status"] == "ready"
+
+    class Always(set):
+        def __contains__(self, scope):
+            return True
+
+    monkeypatch.setattr(technique, "_pending", Always())
+    assert client.get(f"/coaching/sessions/{s['id']}/top").json()["status"] == "ready"

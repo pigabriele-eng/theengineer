@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app import catalog
 from app.db import get_db
-from app.heavy import one_at_a_time
+from app.heavy import one_at_a_time, trim
 from app.routers.sessions import _get, load_main_file
 from app.vehicle import specs as vehicle_specs
 from app.vehicle.model import Change, Vehicle, compute, what_if
@@ -97,11 +97,19 @@ def tyre_fit(body: TyreFitIn, db: Session = Depends(get_db)):
     if body.vehicle is None and body.preset not in PRESETS:
         raise HTTPException(404, "No such car preset")
     car = body.vehicle or preset_vehicle(body.preset)
-    sessions = [load_main_file(db, _get(db, sid))[1] for sid in dict.fromkeys(body.session_ids)]
+    sessions = [_get(db, sid) for sid in dict.fromkeys(body.session_ids)]
+
+    def logs():  # one log at a time: each takes 100 to 300 MB, so they can't all be held together
+        for s in sessions:
+            data = load_main_file(db, s)[1]
+            yield data
+            del data
+            trim()
+
     try:
-        out = fit_tyres(sessions, car, body.steering_ratio)
+        out = fit_tyres(logs(), car, body.steering_ratio)
     except NotEnoughData as e:
         raise HTTPException(422, str(e)) from e
-    for s in out["skipped"]:
-        s["session_id"] = body.session_ids[s.pop("index")]
+    for skipped in out["skipped"]:
+        skipped["session_id"] = sessions[skipped.pop("index")].id
     return out

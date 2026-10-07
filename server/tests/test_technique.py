@@ -7,6 +7,7 @@ import pytest
 from app.analysis.insights import _closed_sim
 from app.analysis.laps import Section
 from app.analysis.local_limits import PlaceLimits
+from app.analysis.shifts import ShiftModel
 from app.analysis.technique import Envelope, check_lap, habits
 from tests.synthetic import curvature_at, simulate, write_ld
 
@@ -99,8 +100,9 @@ def test_the_trace_carries_the_drivers_inputs_and_perfect_drivings_phases(env, k
     n = len(t["driven"])
     assert n == N // t["step_m"] + 1
     ins = t["inputs"]
-    assert set(ins) == {"throttle", "brake", "steer", "gear"}
-    for role in ins:
+    assert set(ins) == {"throttle", "brake", "steer", "gear", "rpm"}
+    assert ins["rpm"] is None  # this log has no revs
+    for role in ("throttle", "brake", "steer", "gear"):
         # every channel at the speed trace's own points: the same metres, so they line up with it point for point
         assert len(ins[role]) == n
         assert ins[role] == pytest.approx(np.asarray(tr[role][::t["step_m"]], float), abs=0.06)
@@ -122,6 +124,42 @@ def test_the_trace_carries_the_drivers_inputs_and_perfect_drivings_phases(env, k
     assert out2["trace"]["inputs"]["steer"] is None
     assert out2["trace"]["inputs"]["throttle"] == ins["throttle"]
     assert [x["key"] for x in out2["mistakes"]] == [x["key"] for x in out["mistakes"] if x["kind"] != "steering"]
+
+
+def test_perfect_drivings_inputs_to_lay_over_the_drivers(env, k, lim):
+    tr = lap(env.P * 3.6, k)  # the perfect lap itself, braking at 60 bar per g
+    shifts = ShiftModel({5: 60.0, 6: 40.0, 7: 30.0}, np.array([3000.0, 7000.0]), np.array([400.0, 400.0]), 7000.0,
+                        {5: 6800.0, 6: 6800.0}, 1.0, 0.0)
+    out = check_lap(tr, lim, HELD, SECTIONS, lap_time=float(tr["t"][-1]), shifts=shifts)
+    t = out["trace"]
+    n, step = len(t["driven"]), t["step_m"]
+    m = np.arange(n) * step
+    model = t["model"]["perfect"]
+    assert set(model) == {"throttle", "brake", "gear", "rpm"}
+    assert all(len(model[r]) == n for r in model)
+    thr, brk = np.array(model["throttle"]), np.array(model["brake"])
+    ph = np.array(t["model_phases"])
+    # full throttle wherever the model is, the pedal off while it brakes, never both
+    assert np.all(thr[ph == 2] == 100)
+    assert np.all((thr == 0) | (brk == 0))
+    for apex in (300, 700):  # braking into both corners, at about the driver's own pressure for that deceleration
+        into = (m > apex - 150) & (m < apex - 20)
+        assert brk[into].max() > 0 and np.all(thr[into & (brk > 0)] == 0)
+    hard = brk > 0
+    assert np.median(brk[hard] / (60 * np.abs(tr["ax"][::step][hard]))) == pytest.approx(1, abs=0.15)
+    assert np.all(brk[(m > 400) & (m < 450)] == 0)
+    # the ideal shift points: up at 6,800 rpm, the gear rising with the speed, the revs never past the limiter
+    gear, rpm = np.array(model["gear"]), np.array(model["rpm"])
+    assert set(gear.tolist()) <= {5, 6, 7} and np.all(rpm <= 7000)
+    v = np.array(t["perfect"])
+    # (the speeds are rounded to 0.1 km/h)
+    assert np.all(rpm == pytest.approx(np.array([shifts.ratio[g] for g in gear]) * v, abs=5))
+    assert np.all(rpm[gear == 5] < 6800) and np.all(rpm[gear == 6] < 6800)
+    # the realistic target's too; with no brake channel there is no brake pressure to give
+    del tr["brake"]
+    out2 = check_lap(tr, lim, HELD, SECTIONS, lap_time=float(tr["t"][-1]), shifts=shifts)
+    assert out2["trace"]["model"]["perfect"]["brake"] is None
+    assert len(out2["trace"]["model"]["realistic"]["throttle"]) == n
 
 
 def _costs_add_up(out: dict) -> None:
@@ -256,9 +294,19 @@ def test_technique_check_api(client):
     assert len(tr["driven"]) == len(tr["perfect"]) == len(tr["realistic"]) == body["length_m"] // tr["step_m"] + 1
     # the driver's inputs at the same points; the synthetic log has no gear channel
     ins = tr["inputs"]
-    assert {r: v is not None for r, v in ins.items()} == {"throttle": True, "brake": True, "steer": True, "gear": False}
+    assert {r: v is not None for r, v in ins.items()} == {"throttle": True, "brake": True, "steer": True, "gear": False,
+                                                       "rpm": False}
     assert all(len(ins[r]) == len(tr["driven"]) for r in ("throttle", "brake", "steer"))
     assert len(tr["model_phases"]) == len(tr["driven"])
+    # perfect driving's and the realistic target's inputs to lay over the driver's; no gear without a shift model
+    for which in ("perfect", "realistic"):
+        model = tr["model"][which]
+        assert len(model["throttle"]) == len(tr["driven"])
+        assert model["brake"] is None or len(model["brake"]) == len(tr["driven"])
+        assert model["gear"] is None and model["rpm"] is None
+    overlay = tr["model"]["best"]
+    assert len(overlay["speed"]) == len(tr["driven"]) and len(overlay["sources"]) == len(body["sections"])
+    assert overlay["time"] <= lap_["time"] + 1e-3
     assert body["inputs"]["throttle"] == {"channel": "rThrottlePedal", "unit": "%"}
     assert body["inputs"]["brake"]["channel"] == "Brake Torque" and body["inputs"]["gear"]["channel"] is None
     # the session's quickest lap is the event's fastest: nothing to lay over it
@@ -306,3 +354,71 @@ def test_technique_check_api(client):
     assert _wait(client, f"/technique/events/{event['id']}")["status"] == "ready"
     assert client.get("/technique/sessions/9999").status_code == 404
     assert client.get("/technique/events/9999").status_code == 404
+
+
+def test_what_a_mistake_really_costs_is_measured_on_the_laps():
+    from app.analysis.technique import mistake_stats, pool_stats
+    secs = [Section("T1", 0, 300, 150, ["T1"]), Section("T2", 300, 600, 450, ["T2"]), Section("T3", 600, N, 800, [])]
+    lift = {"kind": "exit_lift", "at_m": 200.0, "cost_s": 0.05}
+    rng = np.random.default_rng(1)
+    laps = []
+    for i in range(12):  # four laps lift out of T1 and lose 0.2 s down to T2's end; the others don't
+        times = [10.0 + rng.normal(0, 0.01), 8.0 + rng.normal(0, 0.01), 12.0]
+        obv = []
+        if i % 3 == 0:
+            times[0] += 0.05
+            times[1] += 0.15
+            obv = [lift]
+        laps.append(("PIA", times, obv))
+    laps.append(("RAC", [9.0, 7.0, 11.0], [lift]))  # another driver's, quicker: not compared with these
+    stats = mistake_stats(laps, secs)
+    pia = next(x for x in stats if x["driver"] == "PIA")
+    assert (pia["code"], pia["kind"], pia["laps_with"], pia["laps_without"]) == ("T1", "exit_lift", 4, 8)
+    assert pia["diff_s"] == pytest.approx(0.2, abs=0.03) and pia["model_s"] == pytest.approx(0.05)
+    pooled = pool_stats([stats])["T1:exit_lift"]
+    assert pooled["measured"] and pooled["clear"] and pooled["cost_s"] == pytest.approx(0.2, abs=0.03)
+    assert pooled["events"] == 1 and 0 < pooled["pm_s"] < 0.05
+    # within the noise: measured, not clear, and the model's estimate stands (the flag is never hidden)
+    noisy = [("PIA", [10.0 + rng.normal(0, 0.3), 8.0, 12.0], [lift] if i % 2 else []) for i in range(8)]
+    vague = pool_stats([mistake_stats(noisy, secs)])["T1:exit_lift"]
+    assert vague["measured"] and not vague["clear"] and vague["cost_s"] == pytest.approx(0.05)
+    # too few laps with it: the model's estimate stands, and says so
+    few = pool_stats([mistake_stats([*laps[:4], ("PIA", [10.0, 8.0, 12.0], [])], secs)])["T1:exit_lift"]
+    assert not few["measured"] and few["cost_s"] == pytest.approx(0.05)
+    # another event at the track adds to it
+    both = pool_stats([stats, stats])["T1:exit_lift"]
+    assert both["events"] == 2 and both["laps_with"] == 2 * pooled["laps_with"]
+
+
+def test_opposite_lock_on_the_power_out_of_a_corner_is_a_slide():
+    from app.analysis.technique import _power_slide, _steer_sign
+    n = 200
+    ay = np.full(n, 1.5)
+    steer = np.full(n, 6.0)
+    steer[100:115] = -4.0  # opposite lock, still cornering, full throttle
+    tr = {"steer": steer, "ay": ay, "throttle": np.full(n, 100.0)}
+    assert _steer_sign(tr) == 1.0
+    j, e, lock = _power_slide(tr, 50, 180, 1.0, 1.0)
+    assert (j, e, lock) == (100, 114, 4.0)
+    # off the throttle, or the car already straight: not a slide on the power
+    assert _power_slide({**tr, "throttle": np.full(n, 30.0)}, 50, 180, 1.0, 1.0) is None
+    assert _power_slide({**tr, "ay": np.full(n, 0.2)}, 50, 180, 1.0, 1.0) is None
+    # a left-hand corner on a log steering the other way round: the same slide
+    left = {"steer": steer, "ay": -ay, "throttle": tr["throttle"]}
+    assert _steer_sign(left) == -1.0 and _power_slide(left, 50, 180, -1.0, -1.0)[0] == 100
+
+
+def test_braking_grip_left_unused_is_judged_against_the_best_braking_there():
+    from app.analysis.technique import BRAKE_UNUSED_S, relative_braking
+
+    def raw(cost):
+        return {"T1": {"key": "T1:braking_unused", "kind": "braking_unused", "code": "T1", "cost_s": cost,
+                       "what": "Braking for T1.", "at_m": 200, "start_m": 190, "end_m": 300}}
+
+    costs = [0.01, 0.012, 0.015, 0.02, 0.03, 0.06]
+    obvious = [[] for _ in costs]
+    relative_braking([*(raw(c) for c in costs), {}], [*obvious, []])
+    flagged = [i for i, o in enumerate(obvious) if o]
+    assert flagged == [5]  # only the lap giving away clearly more than the best braking there
+    m = obvious[5][0]
+    assert m["cost_s"] >= BRAKE_UNUSED_S and m["cost_s"] < 0.06 and "best braking" in m["what"]

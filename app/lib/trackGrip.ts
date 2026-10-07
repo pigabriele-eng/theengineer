@@ -1,6 +1,6 @@
 // Client for the track's grip level session by session at an event, apart from the tyres' state
 // (server/app/routers/track_grip.py), and the prep report's guidance from past events (server/app/prep/track_grip.py).
-import { apiFetch } from '@/lib/api';
+import { apiFetchAgain } from '@/lib/retry';
 
 /** The tyres' state on a session's quick laps (medians): TPMS °C and hot bar per axle. */
 export type TyreState = { front_c: number | null; front_bar: number | null; rear_c: number | null; rear_bar: number | null };
@@ -49,7 +49,7 @@ export type TrackGripAnswer = {
 
 export async function fetchTrackGrip(event: number, car?: string): Promise<TrackGripAnswer> {
   const q = car ? `?car=${encodeURIComponent(car)}` : '';
-  const res = await apiFetch(`/track-grip/events/${event}${q}`);
+  const res = await apiFetchAgain(`/track-grip/events/${event}${q}`);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail ?? `Request failed (${res.status})`);

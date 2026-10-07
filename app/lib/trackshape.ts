@@ -1,6 +1,6 @@
 // Client for the track's shape (GET /sessions/{id}/shape and /events/{id}/shape): height along the lap, road bank
 // and vertical load, and the banked corners, crests and compressions found, on the line the track map is drawn from.
-import { apiFetch } from '@/lib/api';
+import { apiFetchAgain } from '@/lib/retry';
 
 export type ShapeKind = 'banked' | 'crest' | 'compression';
 
@@ -31,7 +31,7 @@ export type TrackShapeData = {
 /** The shape, or null when the logs can't tell it (no clean lap, too few laps): not a failure. */
 export async function fetchTrackShape(target: { session?: number; event?: number }): Promise<TrackShapeData | null> {
   const path = target.event != null ? `/events/${target.event}/shape` : `/sessions/${target.session}/shape`;
-  const res = await apiFetch(path);
+  const res = await apiFetchAgain(path);
   if (res.status === 404) return null;
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));

@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from sqlalchemy import inspect, select, update
 from sqlalchemy.orm import Session
 
-from app import empty_runs, heavy, models, plans, prebuild, schemas, storage
+from app import empty_runs, heavy, models, plans, prebuild, schemas, storage, upload_dupes
 from app.analysis.emptyrun import NoLaps
 from app.db import SessionLocal, get_db
 from app.importers import archive
@@ -102,7 +102,8 @@ def get_import(job_id: int, db: Session = Depends(get_db)):
     if job is None:
         raise HTTPException(404, "Import not found")
     # with the runs kept whose laps couldn't be timed (a missing lap beacon), and why
-    return {**schemas.ImportJobOut.model_validate(job).model_dump(), "untimed": empty_runs.untimed(db, job.session_ids)}
+    return {**schemas.ImportJobOut.model_validate(job).model_dump(), "untimed": empty_runs.untimed(db, job.session_ids),
+            "already_uploaded": sum(1 for x in job.skipped or [] if x.get("already"))}
 
 
 def fail_interrupted() -> None:
@@ -136,6 +137,7 @@ def _work() -> None:
 
 
 def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]], event_id: int | None = None) -> None:
+    topped_up: set[int] = set()  # events that had runs already and got new ones: named again from the timetable
     with SessionLocal() as db:
         job = db.get(models.ImportJob, job_id)
         if job is None:
@@ -152,13 +154,18 @@ def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]], event
                                                  for x in unmatched)]
                 job.message = found.stopped
                 db.commit()
-                run = _Run(db, job, found.archives, folder, event_id)
+                prints, already, homes = _already_uploaded(db, job, found.logs)
+                run = _Run(db, job, found.archives, folder, event_id, homes)
                 for i, item in enumerate(found.logs):
+                    if i in already:  # left out before it is read: listed in skipped
+                        job.done = i + 1
+                        continue
                     with heavy.lock:  # one log in memory at a time, across imports and requests
-                        run.add(item, ldx_for.get(i))
+                        run.add(item, ldx_for.get(i), prints[i])
                     job.done = i + 1
                     db.commit()
                 run.finish_events()
+                topped_up = set(homes.values()) if event_id is None else ({event_id} if already else set())
             _join_seasons(db, job)  # before it is done: the app then asks what the events were run with
             job.status = models.ImportStatus.done
         except Exception as e:
@@ -176,6 +183,7 @@ def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]], event
             if gone:
                 job.session_ids = [i for i in job.session_ids if i not in gone]
                 db.commit()
+            _name_runs(db, topped_up if job.session_ids else set())
         try:  # work out the pages of what was imported now, in the background, so they are ready when opened
             if prebuild.enabled():
                 prebuild.after_upload(db, list(job.session_ids or []))
@@ -183,6 +191,58 @@ def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]], event
                 reports.schedule_sessions(db, list(job.session_ids or []))
         except Exception:
             log.exception("Couldn't start the prebuild of import %s", job_id)
+
+
+def _already_uploaded(db: Session, job: models.ImportJob, logs: list[archive.Item]):
+    """The logs of the upload already in the app (upload_dupes.py), each listed in skipped as already uploaded; with
+    every log's print, and for each uploaded zip that has logs already in an event, that event: the zip's new logs go
+    into it rather than into a new event of the zip's name."""
+    if not upload_dupes.enabled():
+        return [None] * len(logs), set(), {}
+    known = upload_dupes.Known(db)
+    prints: list[upload_dupes.Print | None] = []
+    already: set[int] = set()
+    found: dict[int, list[int]] = {}  # zip -> the events its known logs are in
+    for i, item in enumerate(logs):
+        job.current = f"Checking {item.label}"[:255]
+        db.commit()
+        try:
+            p = upload_dupes.of(item)
+        except Exception:  # read again when it is imported, which says what is wrong with it
+            log.exception("Couldn't fingerprint %s", item.label)
+            prints.append(None)
+            continue
+        prints.append(p)
+        sid = known.run_of(p)
+        if sid is None:
+            known.add(p, 0)
+            continue
+        already.add(i)
+        twice = sid == 0
+        job.skipped = [*job.skipped, {"file": item.label, "already": True,
+                                      "reason": "Twice in this upload" if twice else "Already uploaded",
+                                      **({} if twice else {"session_id": sid})}]
+        ev = None if twice else db.scalar(select(models.RunSession.event_id).where(models.RunSession.id == sid))
+        if ev is not None and item.archive is not None:
+            found.setdefault(item.archive, []).append(ev)
+    job.current = None
+    db.commit()
+    homes = {a: max(set(evs), key=evs.count) for a, evs in found.items()}
+    if already:
+        log.warning("import %s: %s logs already uploaded, left out", job.id, len(already))
+    return prints, already, homes
+
+
+def _name_runs(db: Session, event_ids: set[int]) -> None:
+    """New runs in an event that had runs already take their place in its official sessions (a missing FP2 stint)."""
+    from app.routers import results  # here: it imports the routers
+
+    for eid in sorted(event_ids):
+        try:
+            results.event_run_names(eid, db)
+        except Exception:
+            db.rollback()
+            log.exception("Naming the runs of event %s after an upload failed", eid)
 
 
 def _join_seasons(db: Session, job: models.ImportJob) -> None:
@@ -197,16 +257,17 @@ class _Run:
     upload names the event every log goes into."""
 
     def __init__(self, db: Session, job: models.ImportJob, archives: list[str], folder: Path,
-                 event_id: int | None = None):
+                 event_id: int | None = None, homes: dict[int, int] | None = None):
         self.db, self.job, self.archives, self.folder = db, job, archives, folder
         self.target = event_id
+        self.homes = homes or {}  # zip -> the event its logs already uploaded are in
         self.events: dict[int, models.Event] = {}
         self.names: set[str] = set()
         if event_id is not None:  # names stay unique within the event the logs go into
             self.names = set(db.scalars(select(models.RunSession.name)
                                         .where(models.RunSession.event_id == event_id)).all()) - {None}
 
-    def add(self, item: archive.Item, ldx: archive.Item | None) -> None:
+    def add(self, item: archive.Item, ldx: archive.Item | None, fingerprint: upload_dupes.Print | None = None) -> None:
         db, job = self.db, self.job
         job.current = item.label[:255]
         db.commit()
@@ -228,8 +289,12 @@ class _Run:
             rec = add_log(db, s, path, item.name, beacons)
             if item.where and "/" in item.where:  # the folders it came in ("01_PTS/02"): which session it was
                 rec.meta = {**(rec.meta or {}), "folder": item.where.split("/", 1)[1]}
-            # no event picked: a planned event at the log's venue on its day, if there is one
-            target = db.get(models.Event, self.target) if self.target is not None else plans.planned_for(db, rec.meta)
+            if fingerprint is not None:
+                upload_dupes.remember(db, rec, fingerprint)
+            # no event picked: the event the zip's other logs are in, else a planned event at the log's venue on its day
+            home = self.homes.get(item.archive) if self.target is None and item.archive is not None else None
+            pick = self.target if self.target is not None else home
+            target = db.get(models.Event, pick) if pick is not None else plans.planned_for(db, rec.meta)
             if target is not None and target.id != self.target:
                 self.names |= set(db.scalars(select(models.RunSession.name)
                                              .where(models.RunSession.event_id == target.id)).all()) - {None}
