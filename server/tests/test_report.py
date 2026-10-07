@@ -311,3 +311,27 @@ def test_a_log_that_trips_the_reduction_leaves_only_its_session_out(client, monk
     assert body["status"] == "ready" and body["report"]["runs_analysed"] == 1
     note = {s["name"]: s for s in body["sessions"]}["Run 1"]
     assert not note["included"] and "unexpected layout" in note["note"]
+
+
+def test_a_log_storage_failed_to_hand_over_is_tried_again_next_time(client, monkeypatch):
+    from app import models
+    from app.db import SessionLocal
+    from app.routers import reports
+    from app import storage
+    event = client.post("/events", json={"name": "Test day"}).json()
+    s = client.post("/sessions", json={"event_id": event["id"], "name": "Run 1"}).json()
+    client.post(f"/sessions/{s['id']}/files", files={"file": ("run.ld", write_ld(simulate(paces=RUNS["Run 1"])[0]))})
+    real = reports.read_file
+
+    def down(f):
+        raise storage.StorageError("Supabase Storage couldn't read the file (503): try later")
+    monkeypatch.setattr(reports, "read_file", down)
+    body = _wait(client, f"/reports/events/{event['id']}")
+    assert body["report"] is None or body["report"]["runs_analysed"] == 0
+    with SessionLocal() as db:  # not kept as up to date: the next report reads the log again
+        rec = db.query(models.SessionTraces).filter_by(session_id=s["id"]).one()
+        assert rec.signature == "" and "downloaded" in rec.error
+    monkeypatch.setattr(reports, "read_file", real)
+    client.post(f"/reports/events/{event['id']}/refresh")
+    body = _wait(client, f"/reports/events/{event['id']}")
+    assert body["status"] == "ready" and body["report"]["runs_analysed"] == 1

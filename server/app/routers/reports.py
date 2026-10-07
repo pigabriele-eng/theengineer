@@ -21,6 +21,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+import httpx
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -136,12 +137,21 @@ def _used(plan: Plan) -> list[Item]:
 
 # ---------- the answer ----------
 
+def traces_of(db: Session, session_ids: list[int]) -> dict[int, models.SessionTraces]:
+    """The compact traces rows of these sessions, by session, in one query."""
+    if not session_ids:
+        return {}
+    rows = db.scalars(select(models.SessionTraces).where(models.SessionTraces.session_id.in_(session_ids)))
+    return {r.session_id: r for r in rows}
+
+
 def _sessions_out(db: Session, plan: Plan) -> list[dict]:
     out = []
+    traces = traces_of(db, [i.session.id for i in plan.items])
     for i in plan.items:
         s = i.session
         clean = [l.time_s for l in s.laps if l.clean and i.file is not None and l.file_id == i.file.id]
-        rec = db.scalar(select(models.SessionTraces).where(models.SessionTraces.session_id == s.id))
+        rec = traces.get(s.id)
         note = None
         if i.file is None:
             note = "No logger file"
@@ -434,7 +444,9 @@ def ensure_traces(db: Session, item: Item, track: models.Track | None) -> models
                 rec.path = storage.save(compact.to_bytes(cs), ".npz")
                 rec.laps = cs.n_laps
             del cs
-        except (FileNotFoundError, ValueError, storage.StorageError) as e:  # missing, or not a log it can read
+        except (storage.StorageError, httpx.HTTPError) as e:  # storage down or slow for a moment: tried again later
+            rec.error, rec.signature = f"Its log couldn't be downloaded: {e}", ""
+        except (FileNotFoundError, ValueError) as e:  # missing, or not a log it can read
             rec.error = f"Its log couldn't be read: {e}"
         except Exception as e:  # one log that trips the reduction leaves that session out, not the whole report
             log.exception("Reducing session %s failed", item.session.id)

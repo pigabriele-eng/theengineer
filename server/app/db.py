@@ -50,6 +50,10 @@ def create_tables() -> None:
     affected.
     """
     Base.metadata.create_all(engine)
+    # create_all makes a new table's indexes but not one added later to a table that exists: those are made here
+    for t in Base.metadata.sorted_tables:
+        for ix in t.indexes:
+            ix.create(engine, checkfirst=True)
     if engine.dialect.name == "postgresql":
         with engine.begin() as conn:
             for t in Base.metadata.sorted_tables:
