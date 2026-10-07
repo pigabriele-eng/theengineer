@@ -258,3 +258,21 @@ def test_a_dropped_run_folder_and_a_zip_in_a_folder(client):
     assert events[runs["01_D1S1"]["event_id"]] == "season"
     assert events[runs["03_D1S3"]["event_id"]] == "03_D1S3"
     assert runs["Session 1"]["event_id"] is None
+
+
+def test_a_log_that_fails_after_it_was_stored_leaves_no_file_behind(client, monkeypatch):
+    """Storage is small (1 GB on Supabase's free plan): a log whose import fails after it was stored is deleted
+    from storage again, as nothing points to it once its rows are rolled back."""
+    import os
+    from pathlib import Path
+
+    from app import plans
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("something went wrong after the log was stored")
+
+    monkeypatch.setattr(plans, "planned_for", boom)
+    job = upload(client, ("a.ld", log_bytes()))
+    assert job["status"] == "done" and job["session_ids"] == [] and len(job["errors"]) == 1
+    stored = Path(os.environ["STORAGE_DIR"])
+    assert not [p for p in stored.rglob("*") if p.is_file()]

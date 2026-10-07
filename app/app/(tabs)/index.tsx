@@ -31,6 +31,7 @@ import {
   shortName, Year, yearKey, yearOf,
 } from '@/lib/homeFolds';
 import { launchEvent } from '@/lib/openCurrent';
+import { weekendsOf } from '@/lib/weekendOpen';
 import { PrepAvailability } from '@/lib/prep';
 import { fetchFinishes, Finishes } from '@/lib/finishes';
 import { fetchReport, Report } from '@/lib/report';
@@ -74,7 +75,7 @@ export default function SessionsScreen() {
     eventsApi.folders().then(
       (f) => {
         if (!latest()) return;
-        setFolders(f);
+        setFolders(weekendsOf(f)); // coaching days have a list of their own (Coaching)
         setError(null);
         setLoads((n) => n + 1);
       },
@@ -196,10 +197,20 @@ export default function SessionsScreen() {
         </View>
       ) : (
         <View style={wide ? styles.toolsLine : styles.toolsLinePhone}>
-          {/* only what concerns the whole list here; comparing, tagging and the driver fingerprints are in each event
-              and under Tools (Gabriele, 2026-10-07: that row "is normally event specific") */}
-          <TextLink onPress={() => setMaking(true)} label="+ New event" />
-          {calendar && (
+          {/* only what concerns the whole list here, on one short line under the one big action (Upload), so the
+              first weekend shows on a phone without scrolling; comparing, tagging and the driver fingerprints are
+              in each event and under Tools (Gabriele, 2026-10-07: that row "is normally event specific") */}
+          <TextLink onPress={() => setMaking(true)} label="+ New event" small />
+          <TextLink href="/seasons" label="Seasons" arrow small />
+          {calendar && !calendar.feed && <TextLink href="/tools/calendar" label="Racing calendar" arrow small />}
+          {/* the questions about which season an upload belongs to, when the app isn't sure (its own top margin
+              taken back, to sit on the line) */}
+          {folders && (
+            <View style={styles.seasons}>
+              <SeasonMatchCount onChanged={load} />
+            </View>
+          )}
+          {calendar?.feed && (
             <View style={wide ? styles.sync : styles.syncPhone}>
               <CalendarLine calendar={calendar} onSynced={(c) => {
                 setCalendar(c);
@@ -207,12 +218,6 @@ export default function SessionsScreen() {
               }} />
             </View>
           )}
-        </View>
-      )}
-      {/* the questions about which season an upload belongs to, when the app isn't sure */}
-      {folders && (
-        <View style={styles.seasons}>
-          <SeasonMatchCount onChanged={load} />
         </View>
       )}
       {error && <Text style={styles.error}>Can&apos;t reach the server: {error}</Text>}
@@ -239,7 +244,7 @@ export default function SessionsScreen() {
           ))}
         </YearFold>
       ))}
-      <Colophon left="The Engineer · Sessions" links={[
+      <Colophon left="The Engineer · Weekend" links={[
         { label: 'Seasons', href: '/seasons' },
         { label: 'Garage', href: '/garage' },
         { label: 'Racing calendar', href: '/tools/calendar' },
@@ -353,34 +358,36 @@ function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged
             onRenamed(saved.name);
           }} />
       ) : (
-        <Pressable onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded: open }}
-          accessibilityLabel={`${f.name}, ${dates}, ${meta}, ${status.text}`}
-          accessibilityHint={open ? 'Folds the event' : 'Opens the event'} style={styles.itemHead}>
-          <View style={wide ? styles.itemLine : styles.itemLinePhone}>
-            <Text style={wide ? styles.itemDate : styles.itemDatePhone}>{dates}</Text>
-            <View style={styles.itemWhat}>
-              {country ? (
-                <View style={wide ? styles.nameLine : styles.nameLinePhone}>
-                  <CountryTag country={country} />
-                  <Text style={StyleSheet.flatten([wide ? styles.itemName : styles.itemNamePhone, styles.nameShrink])}>
-                    {shortName(f)}
-                  </Text>
-                </View>
-              ) : <Text style={wide ? styles.itemName : styles.itemNamePhone}>{shortName(f)}</Text>}
-              <Text style={styles.itemMeta}>{meta}</Text>
-            </View>
-            <Text style={StyleSheet.flatten([styles.status, { borderColor: status.line }])}>{status.text}</Text>
-          </View>
-          <Text style={wide ? styles.itemMark : styles.itemMarkPhone}>{open ? '▾' : '▸'}</Text>
-        </Pressable>
+        // the event's line is one tap into its weekend page; the mark beside it shows or folds its runs here
+        <View style={styles.itemHead}>
+          {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
+          <Link href={{ pathname: '/event/[id]', params: { id: f.key } }} asChild>
+            <Pressable accessibilityRole="link" accessibilityLabel={`${f.name}, ${dates}, ${meta}, ${status.text}`}
+              accessibilityHint="Opens the weekend" style={wide ? styles.itemLine : styles.itemLinePhone}>
+              <Text style={wide ? styles.itemDate : styles.itemDatePhone}>{dates}</Text>
+              <View style={styles.itemWhat}>
+                {country ? (
+                  <View style={wide ? styles.nameLine : styles.nameLinePhone}>
+                    <CountryTag country={country} />
+                    <Text style={StyleSheet.flatten([wide ? styles.itemName : styles.itemNamePhone, styles.nameShrink])}>
+                      {shortName(f)} →
+                    </Text>
+                  </View>
+                ) : <Text style={wide ? styles.itemName : styles.itemNamePhone}>{shortName(f)} →</Text>}
+                <Text style={styles.itemMeta}>{meta}</Text>
+              </View>
+              <Text style={StyleSheet.flatten([styles.status, { borderColor: status.line }])}>{status.text}</Text>
+            </Pressable>
+          </Link>
+          <Pressable onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded: open }}
+            accessibilityLabel={`${open ? 'Fold' : 'Show'} the runs of ${f.name}`} style={styles.foldButton}>
+            <Text style={wide ? styles.itemMark : styles.itemMarkPhone}>{open ? '▾' : '▸'}</Text>
+          </Pressable>
+        </View>
       )}
       {open && !renaming && (
         <View style={styles.itemBody}>
-          {planned ? (
-            <View style={styles.linksAlone}>
-              <TextLink href={{ pathname: '/event/[id]', params: { id: f.key } }} label="Event page" arrow />
-            </View>
-          ) : <Feature f={f} detail={detail} garage={garage} onGarage={onGarage} onChanged={onChanged} />}
+          {planned ? null : <Feature f={f} detail={detail} garage={garage} onGarage={onGarage} onChanged={onChanged} />}
           <View style={styles.itemActions}>
             <TextLink onPress={() => setRenaming(true)} label="Rename" small />
             {planned ? <RemovePlanned f={f} plan={plan} onRemoved={onChanged} />
@@ -489,13 +496,8 @@ function Feature({ f, detail, garage, onGarage, onChanged }: {
   return (
     <View style={full ? styles.featureFull : wide ? styles.feature : styles.featurePhone}>
       <View style={styles.featureMain}>
-        <View style={styles.links}>
-          <TextLink href={{ pathname: '/report', params: { event: id } }} label="Report" red arrow />
-          <TextLink href={{ pathname: '/technique', params: { event: id } }} label="Technique check" arrow />
-          <TextLink href={{ pathname: '/tools/stint', params: { event: id } }} label="Stint analysis" arrow />
-          <TextLink href={{ pathname: '/drivers/compare', params: { event: id } }} label="Compare drivers" arrow />
-          <TextLink href={{ pathname: '/event/[id]', params: { id: f.key } }} label="Event page" arrow />
-        </View>
+        {/* no row of links first (Gabriele, 2026-10-07: "too many clicks to get to the information"): the event's
+            line opens its weekend page, where every analysis sits with what it answers */}
         {!folder ? <ActivityIndicator style={styles.loading} /> : (
           <View style={full ? (oneRow ? styles.daysAcross : styles.daysHalf) : wide ? styles.days : styles.daysPhone}>
             {folder.days.map((day) => {
@@ -634,7 +636,7 @@ const useStyles = themed((c) => ({
   uploadBigPhone: { fontFamily: Fonts.display, fontSize: 26, lineHeight: 28, textTransform: 'uppercase', color: c.background },
   // the faint rule colour reads as a quiet grey on the ink block, in either scheme
   uploadSmall: { ...Type.label, fontFamily: Fonts.label, letterSpacing: 1, color: c.border, marginTop: 6 },
-  seasons: { paddingTop: 10 },
+  seasons: { marginTop: -18 },
   toolsLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 22, paddingTop: 12 },
   toolsLinePhone: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 18, rowGap: 12, paddingTop: 12 },
   sync: { marginLeft: 'auto' },
@@ -668,6 +670,7 @@ const useStyles = themed((c) => ({
   itemNamePhone: { fontFamily: Fonts.display, fontSize: 26, lineHeight: 28, textTransform: 'uppercase', color: c.text },
   itemMeta: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 22, color: c.textSecondary, marginTop: 4 },
   status: { ...Type.label, alignSelf: 'flex-start', borderBottomWidth: 3, paddingBottom: 2, color: c.text },
+  foldButton: { width: 44, minHeight: 44, alignItems: 'flex-end' },
   itemMark: { fontFamily: Fonts.label, fontSize: 20, lineHeight: 32, color: c.text, width: 20, textAlign: 'right' },
   itemMarkPhone: { fontFamily: Fonts.label, fontSize: 18, lineHeight: 20, color: c.text, width: 18, textAlign: 'right' },
   itemBody: { marginTop: 18, marginBottom: 6 },

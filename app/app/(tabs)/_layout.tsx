@@ -13,7 +13,7 @@ export default function TabLayout() {
         headerShown: false,
         sceneStyle: { backgroundColor: c.background },
       }}>
-      <Tabs.Screen name="index" options={{ title: 'Sessions' }} />
+      <Tabs.Screen name="index" options={{ title: 'Weekend' }} />
       <Tabs.Screen name="upload" options={{ title: 'Upload' }} />
       <Tabs.Screen name="debrief" options={{ title: 'Debrief' }} />
       <Tabs.Screen name="tools" options={{ title: 'Tools' }} />

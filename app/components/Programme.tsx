@@ -44,22 +44,25 @@ const today = () => {
   return `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 };
 
-type NavKey = 'sessions' | 'seasons' | 'upload' | 'debrief' | 'tools';
+// The app's activities (Gabriele, 2026-10-07): race weekends, coaching days, the drivers (fingerprints and habits),
+// then uploading and the tools. Seasons sit on the Weekend list and under Tools; a debrief is recorded from the
+// weekend page and from each run.
+type NavKey = 'weekend' | 'coaching' | 'drivers' | 'upload' | 'tools';
 const NAV: { key: NavKey; label: string; href: Href }[] = [
-  { key: 'sessions', label: 'Sessions', href: '/' },
-  { key: 'seasons', label: 'Seasons', href: '/seasons' },
+  { key: 'weekend', label: 'Weekend', href: '/' },
+  // Coaching joins with its page; Drivers opens on the driver fingerprints until the Drivers page is in
+  { key: 'drivers', label: 'Drivers', href: '/drivers/fingerprints' },
   { key: 'upload', label: 'Upload', href: '/upload' },
-  { key: 'debrief', label: 'Debrief', href: '/debrief' },
   { key: 'tools', label: 'Tools', href: '/tools' },
 ];
 
 /** Which part of the app a page belongs to: its masthead link is underlined. */
 export function navOf(pathname: string): NavKey {
-  if (pathname.startsWith('/seasons')) return 'seasons';
+  if (pathname.startsWith('/coaching')) return 'coaching';
+  if (pathname.startsWith('/drivers')) return 'drivers';
   if (pathname.startsWith('/upload')) return 'upload';
-  if (pathname.startsWith('/debrief')) return 'debrief';
-  if (pathname.startsWith('/tools') || pathname.startsWith('/garage')) return 'tools';
-  return 'sessions';
+  if (pathname.startsWith('/tools') || pathname.startsWith('/garage') || pathname.startsWith('/seasons')) return 'tools';
+  return 'weekend';
 }
 
 /** The paper masthead at the top of every page: the nameplate and today's date, the five parts of the app as text
@@ -91,7 +94,7 @@ export function Masthead() {
         <View style={styles.mastRow}>
           <View style={styles.nameplate}>
             <Link href="/" asChild>
-              <Pressable accessibilityRole="link" accessibilityLabel="The Engineer: sessions">
+              <Pressable accessibilityRole="link" accessibilityLabel="The Engineer: race weekends">
                 <Text style={styles.mark}>The Engineer</Text>
               </Pressable>
             </Link>
@@ -103,7 +106,7 @@ export function Masthead() {
         <>
           <View style={styles.nameplatePhone}>
             <Link href="/" asChild>
-              <Pressable accessibilityRole="link" accessibilityLabel="The Engineer: sessions">
+              <Pressable accessibilityRole="link" accessibilityLabel="The Engineer: race weekends">
                 <Text style={styles.markPhone}>The Engineer</Text>
               </Pressable>
             </Link>

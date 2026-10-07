@@ -1,5 +1,5 @@
 // Client for the grip use and traction control report (GET /report/grip?session=<id> or ?event=<id>).
-import { apiFetch } from '@/lib/api';
+import { apiFetchAgain } from '@/lib/retry';
 
 export type PhaseKey = 'braking' | 'trail' | 'mid' | 'exit';
 export const PHASES: { key: PhaseKey; label: string }[] = [
@@ -150,7 +150,7 @@ export type GripScope = { session?: number; event?: number };
 
 export async function fetchGrip({ session, event }: GripScope): Promise<GripResult> {
   const q = event != null ? `event=${event}` : `session=${session}`;
-  const res = await apiFetch(`/report/grip?${q}`);
+  const res = await apiFetchAgain(`/report/grip?${q}`);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail ?? `Request failed (${res.status})`);

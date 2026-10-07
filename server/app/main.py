@@ -5,8 +5,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import DataError, IntegrityError
 
-from app import calendar_sync, coaching, driver_prints, empty_runs, event_delete, prebuild, run_delete, storage, timing
+from app import calendar_sync, coaching, driver_prints, empty_runs, event_delete, event_modes, prebuild, run_delete
+from app import storage, timing
 from app.auth import check_settings, require_user, require_user_or_query_token
+from app.plain_errors import PlainErrors
 from app.db import create_tables
 from app.routers import catalog, debriefs, imports, insights, sessions, trackmap, tyres, vehicle
 from app.routers import balance as report_balance
@@ -16,6 +18,7 @@ from app.routers import prep as prep_report
 from app.routers import stint as stint_tool
 from app.routers import track_grip, trackshape
 from app.routers import driver_style, habits
+from app.routers import event_debriefs
 from app.vehicle import tyre_store
 from app import results
 
@@ -50,6 +53,9 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="The Engineer", lifespan=lifespan)
+# Inside the CORS layer below (added first, so it wraps closer to the routes): an error nobody handled still answers
+# with CORS headers, in words the app can show, instead of a bare 500 the browser reports as "Failed to fetch".
+app.add_middleware(PlainErrors)
 # Any origin: the app signs in with a bearer token, not cookies.
 # max_age: the browser asks again whether a cross-origin call is allowed (one more round trip before each
 # call with the sign-in token) after 2 hours rather than every 10 minutes (Chrome keeps the answer 2 hours at most).
@@ -88,6 +94,8 @@ app.include_router(event_delete.router, dependencies=signed_in)
 app.include_router(run_delete.router, dependencies=signed_in)
 app.include_router(prebuild.router, dependencies=signed_in)
 app.include_router(coaching.router, dependencies=signed_in)
+app.include_router(event_modes.router, dependencies=signed_in)
+app.include_router(event_debriefs.router, dependencies=signed_in)
 app.include_router(debriefs.media_router, dependencies=[Depends(require_user_or_query_token)])
 
 
@@ -107,6 +115,8 @@ def _storage_failed(_: Request, e: storage.StorageError):
     return JSONResponse({"detail": f"File storage failed: {e}"}, 502)
 
 
+# async: answered on the event loop, never queued behind requests that wait for the heavy-work lock in the thread
+# pool (Render stops sending traffic to a server whose health check doesn't answer within 5 s for 15 s)
 @app.get("/health")
-def health():
+async def health():
     return {"status": "ok"}

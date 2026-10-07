@@ -1,7 +1,7 @@
 // Client for the tyre and qualifying preparation report (GET /report/tyre-prep?session=<id> or ?event=<id>):
 // the quali-style runs found in the logs, how their warm-ups compare, when the tyres were ready and peaked, each
 // tyre's window on the fastest laps, the cold pressures that land in it and the long-run fade.
-import { apiFetch } from '@/lib/api';
+import { apiFetchAgain } from '@/lib/retry';
 import { Trend } from '@/lib/stint';
 
 export type Wheel = 'FL' | 'FR' | 'RL' | 'RR';
@@ -141,7 +141,7 @@ export type TyrePrep = {
 
 export async function fetchTyrePrep(scope: { session?: number; event?: number }): Promise<TyrePrep> {
   const q = scope.session != null ? `session=${scope.session}` : `event=${scope.event}`;
-  const res = await apiFetch(`/report/tyre-prep?${q}`);
+  const res = await apiFetchAgain(`/report/tyre-prep?${q}`);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail ?? `Request failed (${res.status})`);
