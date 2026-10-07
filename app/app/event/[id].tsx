@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-nati
 
 import { useLapColors } from '@/components/CompareViews';
 import { DeleteEvent } from '@/components/DeleteEvent';
+import { DriverGuessLine, useDriverGuess } from '@/components/DriverGuess';
 import { ErrorLine, FormActions, Input, MainButton, Note, Said, Tick } from '@/components/Controls';
 import { EventCompare, Pick, RunKey } from '@/components/EventCompare';
 import { EventForm } from '@/components/EventForm';
@@ -23,6 +24,7 @@ import { formatLap } from '@/lib/api';
 import { todayIso, When, whenOf } from '@/lib/calendar';
 import { MAX_LAPS } from '@/lib/compare';
 import { dateRange, dayLabel, eventsApi, Folder, FolderSession, KIND_NAMES, NO_EVENT } from '@/lib/events';
+import { EventGuess } from '@/lib/fingerprints';
 import { Garage, garageApi, RunFields } from '@/lib/garage';
 import { noPrint } from '@/lib/print';
 import { face, Fonts, PHOTOS, photoFor, themed, Type, useTheme } from '@/constants/Theme';
@@ -65,6 +67,8 @@ export default function EventScreen() {
   const topH = useRef(0); // the photo and its folio, above the page's body
   const compareY = useRef(0); // where Side by side starts in the body
   const prep = usePrepAvailability(); // events whose track has past data: the Prep report button
+  // who drove each run by driving style, asked again whenever the runs change (a driver set, a run added)
+  const guess = useDriverGuess(key === NO_EVENT ? null : Number(key), folder);
 
   const load = useCallback(() => {
     eventsApi.folder(key).then(
@@ -177,6 +181,7 @@ export default function EventScreen() {
       {timed && <TextLink href={{ pathname: '/technique', params: { event: eventId } }} label="Technique check" arrow />}
       {timed && <TextLink href={{ pathname: '/tools/stint', params: { event: eventId } }} label="Stint analysis" arrow />}
       {timed && <TextLink href={{ pathname: '/drivers/compare', params: { event: eventId } }} label="Compare drivers" arrow />}
+      {timed && <TextLink href="/drivers/fingerprints" label="Driver fingerprints" arrow />}
       <PrepButton eventId={eventId} info={prep[String(eventId)]} compact />
       <View style={wide ? styles.manage : styles.managePhone}>
         <TextLink onPress={() => showPanel(panel === 'rename' ? null : 'rename')} label="Rename" small />
@@ -258,7 +263,8 @@ export default function EventScreen() {
                   }}
                   garage={garage} eventDrivers={eventDrivers} open={open?.id === s.id ? open.what : null}
                   onOpen={(what) => setOpen(what ? { id: s.id, what } : null)} onPick={(fields) => pickFor(s, fields)}
-                  note={runNote?.id === s.id ? runNote.text : null} onNoteClose={() => setRunNote(null)} />
+                  note={runNote?.id === s.id ? runNote.text : null} onNoteClose={() => setRunNote(null)}
+                  guess={guess?.sessions.find((g) => g.session_id === s.id)} guessMode={guess?.mode} />
               ))}
             </View>
           );
@@ -472,7 +478,7 @@ function DayHead({ days, date }: { days: Folder['days']; date: string | null }) 
 /** One run: tick it for side by side, tap its name to rename it in place, its driver or car to set them, its best lap
  * (a purple block for the event's best, else a red bar for the gap to it) or its laps to open it. */
 function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, editing, onEdit, onSaved, garage,
-  eventDrivers, open, onOpen, onPick, note, onNoteClose }: {
+  eventDrivers, open, onOpen, onPick, note, onNoteClose, guess, guessMode }: {
   s: Run;
   no: number;
   color: string | null; // its colour in side by side, when ticked
@@ -491,6 +497,8 @@ function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, e
   onPick: (fields: RunFields) => void;
   note: string | null;
   onNoteClose: () => void;
+  guess?: EventGuess['sessions'][number]; // who the driving style says drove it
+  guessMode?: EventGuess['mode'];
 }) {
   const styles = useStyles();
   const wide = useWide();
@@ -532,6 +540,7 @@ function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, e
             </Pressable>
           </Link>
           <RunChips run={s} garage={garage} open={open} onOpen={onOpen} />
+          <DriverGuessLine guess={guess} mode={guessMode} onPick={onPick} onName={() => onOpen('driver')} />
         </View>
         {/* while the name is edited, the editor takes the row's width */}
         {!editing && (

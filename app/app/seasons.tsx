@@ -6,6 +6,7 @@ import {
   Choice, Choices, ErrorLine, Field, FormActions, Input, MainButton, Note, PageTitle, Said,
 } from '@/components/Controls';
 import { EntryFields, Lists, useLists } from '@/components/EventInfoForm';
+import { FoldHead } from '@/components/Fold';
 import { SeasonMatch } from '@/components/SeasonMatch';
 import PrintButton from '@/components/PrintButton';
 import { Block, Colophon, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
@@ -509,28 +510,13 @@ function SeasonHead({ no, season, open, onToggle, questions }: {
   onToggle: () => void;
   questions: number;
 }) {
-  const styles = useStyles();
-  const wide = useWide();
   const c = useTheme();
   const facts = `${season.year} · ${plural(season.rounds.length, 'round')}`;
   const asked = questions ? plural(questions, 'open question') : null;
   return (
-    <Pressable onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded: open }}
-      accessibilityLabel={`${season.name}, ${facts}${asked ? `, ${asked}` : ''}`}
-      accessibilityHint={open ? 'Folds the season' : 'Opens the season'}>
-      <View style={styles.foldRule} />
-      <View style={wide ? styles.foldHead : styles.foldHeadPhone}>
-        <View style={styles.foldNo}><Text style={styles.foldNoText}>{String(no).padStart(2, '0')}</Text></View>
-        <View style={styles.foldWords}>
-          <Text style={wide ? styles.foldTitle : styles.foldTitlePhone}>{season.name}</Text>
-          <View style={styles.foldFacts}>
-            <Text style={styles.foldFact}>{facts}</Text>
-            {asked ? <Block label={asked} color={c.mark} ink={inkOn(c.mark)} /> : null}
-          </View>
-        </View>
-        <Text style={wide ? styles.foldMark : styles.foldMarkPhone}>{open ? '▾' : '▸'}</Text>
-      </View>
-    </Pressable>
+    <FoldHead no={no} title={season.name} facts={facts} open={open} onToggle={onToggle} what="the season"
+      label={`${season.name}, ${facts}${asked ? `, ${asked}` : ''}`}
+      extra={asked ? <Block label={asked} color={c.mark} ink={inkOn(c.mark)} /> : null} />
   );
 }
 
@@ -696,19 +682,6 @@ const useStyles = themed((c) => ({
   // a season: its heading, folded or open
   season: { marginTop: 40 },
   seasonPhone: { marginTop: 30 },
-  foldRule: { height: 6, backgroundColor: c.rule },
-  foldHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 20, paddingTop: 10 },
-  foldHeadPhone: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, paddingTop: 10 },
-  foldNo: { backgroundColor: c.rule, paddingHorizontal: 8, paddingTop: 6, paddingBottom: 5 },
-  foldNoText: { fontFamily: Fonts.display, fontSize: 22, lineHeight: 24, letterSpacing: 0.9, color: c.background },
-  foldWords: { flex: 1, minWidth: 0, gap: 6 },
-  foldTitle: { fontFamily: Fonts.display, fontSize: 44, lineHeight: 46, textTransform: 'uppercase', color: c.text },
-  foldTitlePhone: { fontFamily: Fonts.display, fontSize: 27, lineHeight: 30, textTransform: 'uppercase', color: c.text },
-  foldFacts: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 6 },
-  foldFact: { ...Type.label, fontFamily: Fonts.label, fontSize: 13, letterSpacing: 1.2, color: c.textSecondary,
-    fontVariant: ['tabular-nums'] },
-  foldMark: { fontFamily: Fonts.label, fontSize: 26, lineHeight: 46, color: c.text, width: 26, textAlign: 'right' },
-  foldMarkPhone: { fontFamily: Fonts.label, fontSize: 22, lineHeight: 30, color: c.text, width: 20, textAlign: 'right' },
   seasonBody: { marginTop: 16 },
   seasonBodyPhone: { marginTop: 12 },
   seasonDek: { fontFamily: Type.dek.fontFamily, fontSize: 17, lineHeight: 24, color: c.textSecondary, marginBottom: 20 },
