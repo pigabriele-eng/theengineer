@@ -116,6 +116,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("PREBUILD", "off")  # only its own tests turn it on (tests/test_prebuild.py)
     monkeypatch.setenv("RUN_DUPES", "off")  # the same sample log is uploaded many times; tests/test_run_dupes.py on
     monkeypatch.setenv("UPLOAD_DUPES", "off")  # likewise; tests/test_upload_dupes.py on
+    _settle(server_up=False)  # never reloading the modules below under a thread at work
     import importlib
 
     import app.db
@@ -197,6 +198,7 @@ def client(tmp_path, monkeypatch):
               app.prep.track_grip, app.routers.prep):
         importlib.reload(m)
     importlib.reload(app.main)
+    _reload_stale_tables(app.db.Base)
     if TEST_DATABASE_URL:
         app.db.Base.metadata.drop_all(app.db.engine)
     # The app runs gc.collect() after every log it reads (heavy.release_memory and the like), and each one went
@@ -206,16 +208,91 @@ def client(tmp_path, monkeypatch):
     gc.freeze()
     with TestClient(app.main.app) as c:
         yield c
-        # imports and reports run in background threads: let them finish here, not in the next test's database
-        deadline = time.monotonic() + 120
-        while app.routers.imports._jobs.unfinished_tasks and time.monotonic() < deadline:
-            time.sleep(0.05)
-        import app.prebuild
-        app.prebuild.wait_idle()  # first: it asks for everything else
-        app.routers.prep.wait_idle()  # then: it asks for reports and technique checks
-        app.routers.technique.wait_idle()  # then: it asks for reports
-        app.lappacks.wait_idle()  # then: it may ask for reports
-        app.routers.reports.wait_idle()
-        app.driver_prints.wait_idle()
+        _settle(server_up=True)  # the test's background work is done here, not in the next test's database
+    _settle(server_up=False)  # and what shutting the server down started (the tyre data job's last round)
     app.db.engine.dispose()
     gc.unfreeze()
+
+
+def _reload_stale_tables(base) -> None:
+    """Reload any app module with a table of its own still on an earlier test's metadata: one left out of the reloads
+    above, or one a test first imported (inside a function) after them. Its table would be missing from this test's
+    database, which is made from base's metadata."""
+    import importlib
+    import sys
+
+    for name, module in list(sys.modules.items()):
+        if name.startswith("app.") and module is not None and any(
+                isinstance(v, type) and v.__module__ == name
+                and getattr(getattr(v, "__table__", None), "metadata", base.metadata) is not base.metadata
+                for v in list(vars(module).values())):
+            importlib.reload(module)
+
+
+# ---------- the app's background work ----------
+# The app works in threads of its own: imports, reports, the prebuild, re-timing logs, the start-up checks... No test
+# may leave any of it going. The next test's client fixture reloads the app's modules, and a thread still at work
+# then reads the models while models.py is only half run again: SQLAlchemy fails to set them up ("One or more mappers
+# failed to initialize ... failed to locate a name ('Corner')") and they stay broken for that whole test. Or the
+# thread works in the next test's database.
+WORK_QUEUES = {  # the workers that wait for work for good, by thread name: at work while their queue has some
+    "imports": ("app.routers.imports", "_jobs"), "prebuild": ("app.prebuild", "_queue"),
+    "prep": ("app.routers.prep", "_jobs"), "technique": ("app.routers.technique", "_jobs"),
+    "lap-packs": ("app.lappacks", "_jobs"), "reports": ("app.routers.reports", "_jobs"),
+    "retime": ("app.timing", "_queue"),
+}
+SERVER_LOOPS = ("tyre-data", "calendar-sync")  # run as long as the server does: it stops them when it shuts down
+SETTLE_S = 300  # longest a test's background work may go on after the test
+
+
+def _background_work(server_up: bool) -> list:
+    """What the app still does in the background: the work queues with work in them, and any other thread running the
+    app's code, whatever started it (so a new kind isn't missed). A worker waiting for work doesn't count, nor, while
+    the server is up, its loops."""
+    import sys
+    import threading
+
+    busy: list = [f"the {name} queue" for name, (module, queue) in WORK_QUEUES.items()
+                  if module in sys.modules and getattr(sys.modules[module], queue).unfinished_tasks]
+    for t in threading.enumerate():
+        target = getattr(t, "_target", None) or getattr(t, "function", None)  # a Thread's, a Timer's
+        if t.name in WORK_QUEUES or (server_up and t.name in SERVER_LOOPS):
+            continue
+        if str(getattr(target, "__module__", "")).startswith("app."):
+            busy.append(t)
+    return busy
+
+
+def _settle(server_up: bool) -> None:
+    """Until the app does nothing in the background, seen twice in a row (a job hands work on to another queue just
+    before it is done with its own). Still at work after SETTLE_S: the test fails, with where each thread is."""
+    import sys
+    import threading
+    import traceback
+
+    if not server_up:  # a start-up pass to come (app/driver_prints.py) was for a server that has stopped since
+        for t in threading.enumerate():
+            if isinstance(t, threading.Timer) and str(getattr(t.function, "__module__", "")).startswith("app."):
+                t.cancel()
+    deadline, idle = time.monotonic() + SETTLE_S, 0
+    while idle < 2:
+        busy = _background_work(server_up)
+        if not busy:
+            idle += 1
+            continue
+        if time.monotonic() > deadline:
+            frames = sys._current_frames()
+            raise RuntimeError(f"The app still works in the background {SETTLE_S} s after the test:\n" + "\n".join(
+                b if isinstance(b, str) else f"thread {b.name}\n" + "".join(traceback.format_stack(frames[b.ident]))
+                if b.ident in frames else f"thread {b.name}" for b in busy))
+        idle = 0
+        time.sleep(0.01)
+
+
+@pytest.fixture(autouse=True)
+def _no_background_work_left():
+    """Every test starts with the app doing nothing in the background (never reloading its modules under a thread
+    at work), and leaves it so."""
+    _settle(server_up=False)
+    yield
+    _settle(server_up=False)

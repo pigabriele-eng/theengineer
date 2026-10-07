@@ -1,15 +1,16 @@
-// Zooming charts along their x axis (Gabriele, 2026-10-07: "add possibility to zoom on graphs"). On a computer the
-// wheel (or a trackpad pinch) zooms about the pointer, a drag draws a box to zoom into and, once zoomed, a drag pans.
-// On a phone two fingers pinch and one finger pans a zoomed chart sideways; a vertical swipe still scrolls the page.
-// A double tap or double click, or the Reset zoom link, shows the whole axis again. Charts in one ZoomGroup share
-// their zoom: zoom the speed trace into a corner and the throttle, brake and every other trace there follow. The
-// math is in lib/zoom.ts.
+// Zooming charts (Gabriele, 2026-10-07: "add possibility to zoom on graphs"). On a computer the wheel (or a trackpad
+// pinch) zooms about the pointer, a drag draws a box to zoom into and, once zoomed, a drag pans. On a phone two
+// fingers pinch and one finger pans a zoomed chart sideways; a vertical swipe still scrolls the page. A double tap or
+// double click, or the Reset zoom link, shows the whole chart again. A chart zooms along its x axis (ZoomArea), or a
+// map both ways at once, keeping its shape (ZoomPlane). Charts in one ZoomGroup share their zoom: zoom the speed
+// trace into a corner and the throttle, brake and every other trace there follow. The math is in lib/zoom.ts.
 import { createContext, ReactNode, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { GestureResponderEvent, LayoutChangeEvent, Platform, StyleProp, StyleSheet, View, ViewStyle } from 'react-native';
 
 import { TextLink } from '@/components/Programme';
 import {
-  boxView, dragView, isDoubleTap, isZoomed, panBy, pinchView, Range, valueAt, wheelFactor, zoomAround,
+  boxPlane, boxView, dragPlane, dragView, isDoubleTap, isZoomed, panBy, pinchPlane, pinchView, Plane, Point, Range,
+  shownRange, valueAt, wheelFactor, zoomAround, zoomPlaneAt,
 } from '@/lib/zoom';
 import { themed } from '@/constants/Theme';
 
@@ -47,7 +48,8 @@ export function useZoom(): Zoom {
 
 /** "Reset zoom", only while zoomed: the group's (inside a ZoomGroup) or the zoom given. Left off the printed page.
  * `reserve` keeps its place while not zoomed, so the charts under it don't move when a zoom starts. */
-export function ResetZoom({ zoom, reserve }: { zoom?: Zoom; reserve?: boolean }) {
+export function ResetZoom({ zoom, reserve }: { zoom?: { view: unknown; setView: (v: null) => void };
+  reserve?: boolean }) {
   const group = useContext(ZoomContext);
   const z = zoom ?? group;
   if (!z?.view) {
@@ -65,47 +67,55 @@ export const ZOOM_HINT = 'Pinch or scroll on a chart to zoom in, or drag a box a
   + 'double-tap or double-click for the whole view again.';
 
 type Mode = 'idle' | 'box' | 'pan' | 'scrub' | 'pinch' | 'done';
+type Pt = Point;
 const TAP_PX = 6; // a touch that moves less than this is a tap
 let lastPageWheel = 0; // when the page last scrolled under a wheel: a chart arriving under the pointer lets it go on
 let watching = false;
 
-type AreaProps = {
-  zoom: Zoom;
-  full: Range; // the whole axis, in its own units
-  view: Range; // the part shown
-  left: number; // the plot area, in pixels from the area's left edge
-  width: number;
-  minSpan?: number; // the narrowest view, in axis units (a hundredth of the axis by default)
-  onCursor: (px: number) => void; // the pointer's or finger's x, to move the crosshair to
-  onLeave?: () => void; // the mouse left the chart
-  onRelease?: (touch: boolean) => void; // a tap, a click or a scrub ended (not a zoom or a pan)
-  onLayout?: (e: LayoutChangeEvent) => void;
-  style?: StyleProp<ViewStyle>;
-  children: ReactNode;
+// What a chart's zoom does with each gesture, on the zoom it keeps (`S`: a range of its axis, or a map's scale and
+// centre; null for the whole chart). Each returns the new zoom.
+type Ops<S> = {
+  zoomed: (s: S) => boolean;
+  pinch: (start: S, p: [Pt, Pt], q: [Pt, Pt]) => S;
+  drag: (start: S, dx: number, dy: number) => S;
+  box: (start: S, a: Pt, b: Pt) => S | undefined; // undefined: too small to be a box
+  wheel: (base: S, at: Pt, factor: number) => S;
+  slide: (base: S, dx: number, dy: number) => S; // a sideways scroll on a zoomed chart
 };
 
-/** The part of a chart that takes the zoom gestures and the crosshair: wrap the plot in it. */
-export function ZoomArea({ zoom, full, view, left, width, minSpan, onCursor, onLeave, onRelease, onLayout, style,
-  children }: AreaProps) {
-  const styles = useStyles();
-  const ref = useRef<View>(null);
-  const [box, setBox] = useState<Range | null>(null);
-  const live = useRef({ zoom, full, view, left, width, minSpan, onCursor, onLeave, onRelease });
-  live.current = { zoom, full, view, left, width, minSpan, onCursor, onLeave, onRelease };
-  // the gesture under way: the pointers down (their x), where it started and on which view
-  const g = useRef({ mode: 'idle' as Mode, pts: new Map<number, number>(), x0: 0, start: view, pinch: [0, 0] as Range,
-    moved: false, lastTap: null as { t: number; x: number } | null, origin: 0 }).current;
+type Live<S> = {
+  view: S; // the zoom as the page has it
+  setView: (s: S) => void;
+  ops: Ops<S>;
+  onCursor: (x: number, y: number) => void;
+  onLeave?: () => void;
+  onRelease?: (touch: boolean, x: number, y: number) => void;
+};
 
-  // a new view at most once a frame; the latest asked for is the base of the next wheel step, also while React has
+/** The gestures, on the web (pointer events and the wheel, straight on the element) and on phones (the responder's
+ * touches): the element's ref, the props for the native responder, and the box being dragged. `plane`: a drawing
+ * zoomed both ways, which a finger pans every way once zoomed. */
+function useGestures<S>(cfg: Live<S>, whole: S, plane: boolean) {
+  const ref = useRef<View>(null);
+  const [box, setBox] = useState<[Pt, Pt] | null>(null);
+  const live = useRef(cfg);
+  live.current = cfg;
+  // the gesture under way: the pointers down, where it started and on which zoom
+  const g = useRef({ mode: 'idle' as Mode, pts: new Map<number, Pt>(), p0: { x: 0, y: 0 } as Pt, start: whole,
+    pinch: [{ x: 0, y: 0 }, { x: 0, y: 0 }] as [Pt, Pt], moved: false, captured: false,
+    lastTap: null as { t: number; x: number } | null, origin: { x: 0, y: 0 } as Pt }).current;
+
+  // a new zoom at most once a frame; the latest asked for is the base of the next wheel step, also while React has
   // yet to draw the one last sent
-  const pending = useRef<{ v: Range | null } | null>(null);
-  const sent = useRef<{ v: Range | null; before: Range | null } | null>(null);
+  const pending = useRef<{ v: S } | null>(null);
+  const sent = useRef<{ v: S; before: S } | null>(null);
   const frame = useRef(0);
-  const current = (): Range => {
-    const ask = pending.current ?? (sent.current && sent.current.before === live.current.zoom.view ? sent.current : null);
-    return ask ? ask.v ?? live.current.full : live.current.view;
+  const current = (): S => {
+    if (pending.current) return pending.current.v;
+    if (sent.current && sent.current.before === live.current.view) return sent.current.v;
+    return live.current.view;
   };
-  const apply = (v: Range | null) => {
+  const apply = (v: S) => {
     pending.current = { v };
     if (frame.current) return;
     const run = () => {
@@ -113,8 +123,8 @@ export function ZoomArea({ zoom, full, view, left, width, minSpan, onCursor, onL
       const p = pending.current;
       pending.current = null;
       if (!p) return;
-      sent.current = { v: p.v, before: live.current.zoom.view };
-      live.current.zoom.setView(p.v);
+      sent.current = { v: p.v, before: live.current.view };
+      live.current.setView(p.v);
     };
     frame.current = typeof requestAnimationFrame === 'function' ? requestAnimationFrame(run) : (setTimeout(run, 16) as any);
   };
@@ -124,42 +134,45 @@ export function ZoomArea({ zoom, full, view, left, width, minSpan, onCursor, onL
 
   const h = useMemo(() => {
     const L = () => live.current;
-    const zoomed = () => isZoomed(current(), L().full);
-    const down = (id: number, x: number, mouse: boolean, shift = false) => {
-      g.pts.set(id, x);
+    const zoomed = () => L().ops.zoomed(current());
+    const two = (): [Pt, Pt] => {
+      const [a, b] = [...g.pts.values()];
+      return [a, b];
+    };
+    const down = (id: number, p: Pt, mouse: boolean, shift = false) => {
+      g.pts.set(id, p);
       if (g.pts.size === 1) {
-        g.x0 = x;
+        g.p0 = p;
         g.start = current();
         g.moved = false;
+        g.captured = false;
         g.mode = mouse ? (shift || !zoomed() ? 'box' : 'pan') : zoomed() ? 'pan' : 'scrub';
-        L().onCursor(x);
+        L().onCursor(p.x, p.y);
       } else if (g.pts.size === 2) {
-        const [a, b] = [...g.pts.values()];
         g.mode = 'pinch';
-        g.pinch = [a, b];
+        g.pinch = two();
         g.start = current();
         setBox(null);
       }
     };
-    const move = (id: number, x: number) => {
+    const move = (id: number, p: Pt) => {
       if (!g.pts.has(id)) return;
-      g.pts.set(id, x);
-      const { full, left, width, minSpan } = L();
-      if (g.mode !== 'pinch' && Math.abs(x - g.x0) > TAP_PX) g.moved = true;
+      g.pts.set(id, p);
+      const { ops } = L();
+      if (g.mode !== 'pinch' && Math.hypot(p.x - g.p0.x, p.y - g.p0.y) > TAP_PX) g.moved = true;
       if (g.mode === 'pinch') {
-        const [a, b] = [...g.pts.values()];
-        apply(pinchView(g.start, full, g.pinch, [a, b], left, width, minSpan));
+        apply(ops.pinch(g.start, g.pinch, two()));
       } else if (g.mode === 'box') {
-        if (g.moved) setBox([g.x0, x]);
-        L().onCursor(x);
+        if (g.moved) setBox([g.p0, p]);
+        L().onCursor(p.x, p.y);
       } else if (g.mode === 'pan') {
-        if (g.moved) apply(dragView(g.start, full, x - g.x0, width, minSpan));
-        L().onCursor(x);
+        if (g.moved) apply(ops.drag(g.start, p.x - g.p0.x, p.y - g.p0.y));
+        L().onCursor(p.x, p.y);
       } else if (g.mode === 'scrub') {
-        L().onCursor(x);
+        L().onCursor(p.x, p.y);
       }
     };
-    const up = (id: number, x: number, touch: boolean) => {
+    const up = (id: number, p: Pt, touch: boolean) => {
       if (!g.pts.delete(id)) return;
       if (g.mode === 'pinch') {
         g.mode = g.pts.size ? 'done' : 'idle'; // the finger left on the glass doesn't pan from where it is
@@ -171,52 +184,50 @@ export function ZoomArea({ zoom, full, view, left, width, minSpan, onCursor, onL
       if (was === 'done') return;
       if (was === 'box' && g.moved) {
         setBox(null);
-        const { full, left, width, minSpan } = L();
-        const v = boxView(g.start, full, g.x0, x, left, width, TAP_PX, minSpan);
-        if (v) apply(v);
+        const v = L().ops.box(g.start, g.p0, p);
+        if (v !== undefined) apply(v);
         return;
       }
       if (was === 'pan' && g.moved) return;
       if (touch && !g.moved) {
         const t = Date.now();
-        if (isDoubleTap(g.lastTap, t, x)) {
+        if (isDoubleTap(g.lastTap, t, p.x)) {
           g.lastTap = null;
-          apply(null);
+          apply(whole);
           return;
         }
-        g.lastTap = { t, x };
+        g.lastTap = { t, x: p.x };
       }
-      L().onRelease?.(touch);
+      L().onRelease?.(touch, p.x, p.y);
     };
     const cancel = () => {
       g.pts.clear();
       g.mode = 'idle';
       setBox(null);
     };
-    const wheel = (e: WheelEvent, x: number) => {
+    const wheel = (e: WheelEvent, at: Pt) => {
       const pinch = e.ctrlKey; // a trackpad pinch
       if (!pinch && Date.now() - lastPageWheel < 400) return; // the page is scrolling under the pointer
-      const { full, left, width, minSpan } = L();
+      const { ops } = L();
       const base = current();
       if (!pinch && Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
-        if (!isZoomed(base, full)) return;
+        if (!ops.zoomed(base)) return;
         e.preventDefault();
-        apply(panBy(base, full, (e.deltaX / (width || 1)) * (base[1] - base[0]), minSpan));
+        apply(ops.slide(base, e.deltaX, plane ? e.deltaY : 0));
         return;
       }
-      if (!pinch && e.deltaY > 0 && !isZoomed(base, full)) return; // nothing to zoom out of: the page scrolls
+      if (!pinch && e.deltaY > 0 && !ops.zoomed(base)) return; // nothing to zoom out of: the page scrolls
       e.preventDefault();
-      const anchor = valueAt(Math.min(left + width, Math.max(left, x)), base, left, width);
-      apply(zoomAround(base, full, anchor, wheelFactor(e.deltaY, e.deltaMode, pinch), minSpan));
+      apply(ops.wheel(base, at, wheelFactor(e.deltaY, e.deltaMode, pinch)));
     };
     return { down, move, up, cancel, wheel };
     // the handlers read everything else from `live`
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // the web: pointer events and the wheel, straight on the element (React's wheel listener can't stop the page
+  // the web: pointer events and the wheel on the element itself (React's wheel listener can't stop the page
   // scrolling). touch-action pan-y leaves vertical swipes to the browser, so the page scrolls; sideways drags and
-  // pinches come here.
+  // pinches come here (on a zoomed map every drag does: it pans every way).
   useEffect(() => {
     if (Platform.OS !== 'web') return;
     const el = ref.current as unknown as HTMLElement | null;
@@ -227,22 +238,30 @@ export function ZoomArea({ zoom, full, view, left, width, minSpan, onCursor, onL
         if (!e.defaultPrevented) lastPageWheel = Date.now();
       }, { passive: true });
     }
-    el.style.touchAction = 'pan-y';
     el.style.userSelect = 'none';
     el.style.setProperty('-webkit-user-select', 'none');
-    const rel = (e: MouseEvent) => e.clientX - el.getBoundingClientRect().left;
+    const rel = (e: MouseEvent): Pt => {
+      const r = el.getBoundingClientRect();
+      return { x: e.clientX - r.left, y: e.clientY - r.top };
+    };
     const onDown = (e: PointerEvent) => {
       const mouse = e.pointerType === 'mouse';
       if (mouse && e.button !== 0) return;
-      if (mouse) {
-        e.preventDefault(); // no text selected by the drag
-        el.setPointerCapture?.(e.pointerId);
-      }
+      if (mouse) e.preventDefault(); // no text selected by the drag
       h.down(e.pointerId, rel(e), mouse, e.shiftKey);
     };
     const onMove = (e: PointerEvent) => {
-      if (g.pts.has(e.pointerId)) h.move(e.pointerId, rel(e));
-      else if (e.pointerType === 'mouse' && g.mode === 'idle') live.current.onCursor(rel(e)); // hover
+      if (g.pts.has(e.pointerId)) {
+        h.move(e.pointerId, rel(e));
+        // the mouse is held once it drags (a box or a pan), so it can leave the chart; a click stays a click
+        if (e.pointerType === 'mouse' && g.moved && !g.captured) {
+          g.captured = true;
+          el.setPointerCapture?.(e.pointerId);
+        }
+      } else if (e.pointerType === 'mouse' && g.mode === 'idle') {
+        const p = rel(e);
+        live.current.onCursor(p.x, p.y); // hover
+      }
     };
     const onUp = (e: PointerEvent) => h.up(e.pointerId, rel(e), e.pointerType !== 'mouse');
     const onCancel = () => h.cancel(); // the browser took the touch to scroll the page
@@ -250,7 +269,7 @@ export function ZoomArea({ zoom, full, view, left, width, minSpan, onCursor, onL
       if (e.pointerType === 'mouse' && !g.pts.size) live.current.onLeave?.();
     };
     const onWheel = (e: WheelEvent) => h.wheel(e, rel(e));
-    const onDouble = () => apply(null);
+    const onDouble = () => apply(whole);
     el.addEventListener('pointerdown', onDown);
     el.addEventListener('pointermove', onMove);
     el.addEventListener('pointerup', onUp);
@@ -269,40 +288,152 @@ export function ZoomArea({ zoom, full, view, left, width, minSpan, onCursor, onL
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  const panAll = plane && cfg.ops.zoomed(cfg.view);
+  useEffect(() => {
+    const el = ref.current as unknown as HTMLElement | null;
+    if (Platform.OS === 'web' && el?.style) el.style.touchAction = panAll ? 'none' : 'pan-y';
+  }, [panAll]);
 
-  // iOS and Android: the responder's touches, each finger by its identifier, x from the area's left edge
+  // iOS and Android: the responder's touches, each finger by its identifier, from the area's top left corner
   const native = Platform.OS === 'web' ? {} : {
     onStartShouldSetResponder: () => true,
     onMoveShouldSetResponder: () => true,
-    // a scroll of the page may take the touch over, except in the middle of a pinch
-    onResponderTerminationRequest: () => g.mode !== 'pinch',
+    // a scroll of the page may take the touch over, except in the middle of a pinch or a zoomed map's pan
+    onResponderTerminationRequest: () => g.mode !== 'pinch' && !(plane && g.mode === 'pan'),
     onResponderGrant: (e: GestureResponderEvent) => {
-      g.origin = e.nativeEvent.pageX - e.nativeEvent.locationX;
+      g.origin = { x: e.nativeEvent.pageX - e.nativeEvent.locationX, y: e.nativeEvent.pageY - e.nativeEvent.locationY };
       sync(e);
     },
     onResponderMove: (e: GestureResponderEvent) => sync(e),
     onResponderRelease: (e: GestureResponderEvent) => {
-      for (const id of [...g.pts.keys()]) h.up(id, e.nativeEvent.pageX - g.origin, true);
+      const at = { x: e.nativeEvent.pageX - g.origin.x, y: e.nativeEvent.pageY - g.origin.y };
+      for (const id of [...g.pts.keys()]) h.up(id, at, true);
     },
     onResponderTerminate: () => h.cancel(),
   };
   function sync(e: GestureResponderEvent) {
     const touches = e.nativeEvent.touches ?? [];
-    const now = new Map(touches.map((t) => [Number(t.identifier), t.pageX - g.origin]));
-    for (const [id, x] of [...g.pts]) if (!now.has(id)) h.up(id, x, true);
-    for (const [id, x] of now) {
-      if (g.pts.has(id)) h.move(id, x);
-      else if (g.mode !== 'done') h.down(id, x, false);
+    const now = new Map(touches.map((t) => [Number(t.identifier), { x: t.pageX - g.origin.x, y: t.pageY - g.origin.y }]));
+    for (const [id, p] of [...g.pts]) if (!now.has(id)) h.up(id, p, true);
+    for (const [id, p] of now) {
+      if (g.pts.has(id)) h.move(id, p);
+      else if (g.mode !== 'done') h.down(id, p, false);
     }
   }
+  return { ref, native, box };
+}
 
-  const lo = box ? Math.max(left, Math.min(box[0], box[1])) : 0;
-  const hi = box ? Math.min(left + width, Math.max(box[0], box[1])) : 0;
+type AreaProps = {
+  zoom: Zoom;
+  full: Range; // the whole axis, in its own units
+  view?: Range; // no longer read: the area works out the range shown from `zoom` and `full` itself
+  left: number; // the plot area, in pixels from the area's left edge
+  width: number;
+  minSpan?: number; // the narrowest view, in axis units (a hundredth of the axis by default)
+  onCursor: (x: number, y: number) => void; // the pointer's or finger's place, to move the crosshair to
+  onLeave?: () => void; // the mouse left the chart
+  onRelease?: (touch: boolean, x: number, y: number) => void; // a tap, a click or a scrub ended (not a zoom or a pan)
+  onLayout?: (e: LayoutChangeEvent) => void;
+  style?: StyleProp<ViewStyle>;
+  children: ReactNode;
+};
+
+/** The part of a chart zoomed along its x axis that takes the gestures and the crosshair: wrap the plot in it. */
+export function ZoomArea({ zoom, full, left, width, minSpan, onCursor, onLeave, onRelease, onLayout, style,
+  children }: AreaProps) {
+  const styles = useStyles();
+  const at = useRef({ full, left, width, minSpan });
+  at.current = { full, left, width, minSpan };
+  const ops = useMemo<Ops<Range | null>>(() => {
+    const A = () => at.current;
+    const shown = (s: Range | null) => shownRange(s, A().full, A().minSpan);
+    return {
+      zoomed: (s) => isZoomed(shown(s), A().full),
+      pinch: (s, p, q) => pinchView(shown(s), A().full, [p[0].x, p[1].x], [q[0].x, q[1].x], A().left, A().width,
+        A().minSpan),
+      drag: (s, dx) => dragView(shown(s), A().full, dx, A().width, A().minSpan),
+      box: (s, a, b) => boxView(shown(s), A().full, a.x, b.x, A().left, A().width, TAP_PX, A().minSpan) ?? undefined,
+      wheel: (s, p, factor) => {
+        const v = shown(s);
+        const anchor = valueAt(Math.min(A().left + A().width, Math.max(A().left, p.x)), v, A().left, A().width);
+        return zoomAround(v, A().full, anchor, factor, A().minSpan);
+      },
+      slide: (s, dx) => {
+        const v = shown(s);
+        return panBy(v, A().full, (dx / (A().width || 1)) * (v[1] - v[0]), A().minSpan);
+      },
+    };
+  }, []);
+  const { ref, native, box } = useGestures<Range | null>({ view: zoom.view, setView: zoom.setView, ops, onCursor,
+    onLeave, onRelease }, null, false);
+  const lo = box ? Math.max(left, Math.min(box[0].x, box[1].x)) : 0;
+  const hi = box ? Math.min(left + width, Math.max(box[0].x, box[1].x)) : 0;
   return (
     <View ref={ref} onLayout={onLayout} style={style} {...native}>
       {children}
       {box && hi > lo && (
-        <View pointerEvents="none" style={StyleSheet.flatten([styles.box, { left: lo, width: hi - lo }])}>
+        <View pointerEvents="none" style={StyleSheet.flatten([styles.box, { top: 0, bottom: 0, left: lo, width: hi - lo }])}>
+          <View style={styles.boxFill} />
+        </View>
+      )}
+    </View>
+  );
+}
+
+/** A map's or a diagram's zoom: both ways at once, keeping its shape; back to the whole drawing when `reset`
+ * changes. */
+export type PlaneZoom = { view: Plane | null; setView: (v: Plane | null) => void };
+export function usePlaneZoom(reset?: unknown): PlaneZoom {
+  const [view, setView] = useState<Plane | null>(null);
+  const [last, setLast] = useState(reset);
+  if (last !== reset) {
+    setLast(reset);
+    setView(null);
+  }
+  return useMemo(() => ({ view: last !== reset ? null : view, setView }), [view, last, reset]);
+}
+
+type PlaneProps = {
+  zoom: PlaneZoom;
+  width: number; // the drawing, px: the frame it zooms in
+  height: number;
+  maxScale?: number;
+  onCursor?: (x: number, y: number) => void; // the pointer or finger, in the frame's pixels
+  onLeave?: () => void;
+  onRelease?: (touch: boolean, x: number, y: number) => void; // a tap or a click (not a zoom or a pan)
+  onLayout?: (e: LayoutChangeEvent) => void;
+  style?: StyleProp<ViewStyle>;
+  children: ReactNode;
+};
+
+/** The part of a map or a diagram that zooms both ways: the wheel or a pinch about the pointer, a box dragged across
+ * it, a drag (any way) once zoomed; a double tap or double click for the whole drawing again. Draw what it holds
+ * through `toFrame(zoom.view, width, height, point)`. */
+export function ZoomPlane({ zoom, width, height, maxScale, onCursor, onLeave, onRelease, onLayout, style,
+  children }: PlaneProps) {
+  const styles = useStyles();
+  const at = useRef({ width, height, maxScale });
+  at.current = { width, height, maxScale };
+  const ops = useMemo<Ops<Plane | null>>(() => {
+    const A = () => at.current;
+    return {
+      zoomed: (s) => !!s,
+      pinch: (s, p, q) => pinchPlane(s, A().width, A().height, p, q, A().maxScale),
+      drag: (s, dx, dy) => dragPlane(s, A().width, A().height, dx, dy, A().maxScale),
+      box: (s, a, b) => boxPlane(s, A().width, A().height, a, b, TAP_PX, A().maxScale) ?? undefined,
+      wheel: (s, p, factor) => zoomPlaneAt(s, A().width, A().height, p, factor, A().maxScale),
+      slide: (s, dx, dy) => dragPlane(s, A().width, A().height, -dx, -dy, A().maxScale),
+    };
+  }, []);
+  const { ref, native, box } = useGestures<Plane | null>({ view: zoom.view, setView: zoom.setView, ops,
+    onCursor: onCursor ?? (() => {}), onLeave, onRelease }, null, true);
+  return (
+    <View ref={ref} onLayout={onLayout} style={style} {...native}>
+      {children}
+      {box && (
+        <View pointerEvents="none" style={StyleSheet.flatten([styles.box, styles.boxAround, {
+          left: Math.min(box[0].x, box[1].x), top: Math.min(box[0].y, box[1].y),
+          width: Math.abs(box[1].x - box[0].x), height: Math.abs(box[1].y - box[0].y) }])}>
           <View style={styles.boxFill} />
         </View>
       )}
@@ -311,7 +442,8 @@ export function ZoomArea({ zoom, full, view, left, width, minSpan, onCursor, onL
 }
 
 const useStyles = themed((c) => ({
-  box: { position: 'absolute', top: 0, bottom: 0, borderLeftWidth: 1, borderRightWidth: 1, borderColor: c.chart.ink2,
+  box: { position: 'absolute', borderLeftWidth: 1, borderRightWidth: 1, borderColor: c.chart.ink2,
     backgroundColor: 'transparent' },
+  boxAround: { borderTopWidth: 1, borderBottomWidth: 1 },
   boxFill: { flex: 1, backgroundColor: c.chart.ink, opacity: 0.08 },
 }));

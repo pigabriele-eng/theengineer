@@ -339,6 +339,8 @@ export default function SessionScreen() {
             ))}
           </View>
         )}
+        {/* recording opens on this run (Debrief left the masthead: it is recorded from the run and the weekend page) */}
+        <TextLink href={{ pathname: '/debrief', params: { session: sessionId } }} label="Record a debrief for this run" arrow />
       </View>
     ) });
 

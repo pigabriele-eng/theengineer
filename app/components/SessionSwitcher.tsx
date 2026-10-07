@@ -8,7 +8,8 @@ import { Text, View } from '@/components/Themed';
 import { api, formatLap } from '@/lib/api';
 import { dateRange, dayTitle, eventsApi, Folder, FolderSession } from '@/lib/events';
 import { noPrint } from '@/lib/print';
-import { Fonts, themed, Type } from '@/constants/Theme';
+import { Fonts, TAP, tapRoom, themed, Type } from '@/constants/Theme';
+import { codeOf } from '@/lib/driverTag';
 
 /** An event with its sessions by day: null when there is none (eventId null) or until it is loaded. While eventId
  * is not known yet (undefined) the last event is kept, so a screen switching between sessions doesn't flicker. */
@@ -74,8 +75,10 @@ export function SessionSwitcher({ folder, current, onPick, onWhole, onlyTimed = 
         {link && folder.id != null ? (
           // Link asChild hands its child's style to a web anchor, which can't take a style array: one object
           <Link href={{ pathname: '/event/[id]', params: { id: folder.id } }} asChild>
-            <Pressable hitSlop={6} style={styles.eventLink} accessibilityRole="link">
-              <Text style={styles.event} numberOfLines={1}>{folder.name} →</Text>
+            <Pressable style={styles.eventHit} accessibilityRole="link">
+              <View style={styles.eventLink}>
+                <Text style={styles.event} numberOfLines={1}>{folder.name} →</Text>
+              </View>
             </Pressable>
           </Link>
         ) : (
@@ -100,9 +103,12 @@ export function SessionSwitcher({ folder, current, onPick, onWhole, onlyTimed = 
               const on = s.id === current;
               return (
                 <Pressable key={s.id} onPress={() => !on && onPick(s)} style={run(on)} accessibilityRole="tab"
-                  accessibilityState={{ selected: on }} accessibilityLabel={`${s.name}, best ${formatLap(s.best_lap_s)}`}>
+                  accessibilityState={{ selected: on }}
+                  accessibilityLabel={`${s.name}${s.driver ? `, ${s.driver}` : ''}, best ${formatLap(s.best_lap_s)}`}>
                   <Text style={StyleSheet.flatten([styles.name, on && styles.nameOn, s.best_lap_s == null && styles.dim])}
                     numberOfLines={1}>
+                    {/* the driver first, plainly: runs are picked by who drove them */}
+                    {s.driver ? <Text style={styles.driver}>{`${codeOf(s.driver)} `}</Text> : null}
                     {s.name}
                   </Text>
                   <Text style={StyleSheet.flatten([styles.detail, s.best_lap_s == null && styles.dim])}>
@@ -124,16 +130,21 @@ const useStyles = themed((c) => ({
   box: { gap: 8, paddingTop: 12, paddingBottom: 10, borderBottomWidth: 1, borderColor: c.rule, backgroundColor: 'transparent' },
   head: { flexDirection: 'row', alignItems: 'baseline', columnGap: 12, rowGap: 2, flexWrap: 'wrap',
     backgroundColor: 'transparent' },
-  eventLink: { flexShrink: 1, borderBottomWidth: 2, borderColor: c.rule },
+  // the event's link: a 44 px tap target around its underlined name, which stays as drawn
+  eventHit: { flexShrink: 1, ...tapRoom(13) },
+  eventLink: { flexShrink: 1, borderBottomWidth: 2, borderColor: c.rule, backgroundColor: 'transparent' },
   event: { ...Type.link, fontSize: 13, color: c.text },
-  sub: { ...Type.label, fontFamily: Fonts.label, fontSize: 11, letterSpacing: 1, color: c.textMuted },
+  sub: { ...Type.label, fontFamily: Fonts.label, fontSize: 13, letterSpacing: 1, color: c.textMuted },
   day: { gap: 4, backgroundColor: 'transparent' },
-  dayTitle: { ...Type.label, fontSize: 11, letterSpacing: 1.1, color: c.textMuted },
+  dayTitle: { ...Type.label, fontSize: 13, letterSpacing: 1.1, color: c.textMuted },
   row: { flexDirection: 'row', gap: 18, backgroundColor: 'transparent' },
-  run: { maxWidth: 190, paddingBottom: 3, borderBottomWidth: 3, borderColor: 'transparent' },
+  // 44 px tall with its underline (a tap target; the strip scrolls sideways, so the room can't spill out of it)
+  run: { maxWidth: 190, minWidth: TAP, paddingTop: 4, paddingBottom: 3, borderBottomWidth: 3, borderColor: 'transparent' },
   runOn: { borderColor: c.mark },
   name: { ...Type.label, fontSize: 13, letterSpacing: 0.8, color: c.textSecondary },
   nameOn: { color: c.text },
+  driver: { color: c.text },
   detail: { ...Type.number, fontSize: 13, color: c.textMuted },
-  dim: { opacity: 0.45 },
+  // a run without laps: in the caption grey, not faded (it must still read at 4.5:1)
+  dim: { color: c.textMuted },
 }));

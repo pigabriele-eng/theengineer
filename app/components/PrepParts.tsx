@@ -183,9 +183,9 @@ const useStyles = themed((c) => ({
   itemBody: { flex: 1, minWidth: 0, gap: 6 },
 
   field: { fontFamily: face('label', 600), fontSize: 20, fontVariant: ['tabular-nums'], color: c.text,
-    borderBottomWidth: 2, borderColor: c.rule, paddingHorizontal: 2, paddingTop: 4, paddingBottom: 4, borderRadius: 0,
+    borderBottomWidth: 2, borderColor: c.rule, paddingHorizontal: 2, paddingTop: 8, paddingBottom: 8, minHeight: 44, borderRadius: 0,
     ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null) } as TextStyle,
-  fieldFocus: { borderBottomWidth: 3, paddingBottom: 3, borderColor: c.mark },
+  fieldFocus: { borderBottomWidth: 3, paddingBottom: 7, borderColor: c.mark },
 
   pick: { paddingBottom: 3, borderBottomWidth: 3, borderColor: 'transparent' },
   pickOn: { borderColor: c.mark },

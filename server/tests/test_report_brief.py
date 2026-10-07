@@ -2,7 +2,7 @@
 until it is ready (the app's run page)."""
 from tests.test_events import _session, _track, _wait
 
-HEAD = {"scope", "id", "title", "track", "status", "progress", "error", "stale"}
+HEAD = {"scope", "id", "title", "part", "track", "status", "progress", "error", "stale"}
 
 
 def test_a_brief_answer_is_the_status_without_the_report(client):

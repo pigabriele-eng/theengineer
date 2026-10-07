@@ -61,6 +61,7 @@ export function DriverGuessLine({ guess, mode, onPick, onName }: {
 const useStyles = themed((c) => ({
   line: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 10, rowGap: 2, marginTop: 4 },
   text: { fontFamily: face('body', 400, true), fontSize: 14, lineHeight: 19, color: c.textMuted },
-  act: StyleSheet.flatten({ borderBottomWidth: 2, borderColor: c.tint }),
-  actText: { fontFamily: face('label', 700), fontSize: 12, letterSpacing: 1.2, textTransform: 'uppercase', color: c.text },
+  // 44 px tall, a tap target: the room is above the word, its underline stays under it
+  act: StyleSheet.flatten({ borderBottomWidth: 2, borderColor: c.tint, minHeight: 44, justifyContent: 'flex-end' }),
+  actText: { fontFamily: face('label', 700), fontSize: 13, letterSpacing: 1.2, textTransform: 'uppercase', color: c.text },
 }));

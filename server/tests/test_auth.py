@@ -102,3 +102,41 @@ def test_browsers_may_send_the_token_from_another_origin(signed_in):
     assert "authorization" in r.headers["access-control-allow-headers"].lower()
     r = client.get("/sessions", headers={"Origin": "https://theengineer-web.onrender.com"})
     assert r.status_code == 401 and r.headers["access-control-allow-origin"] == "*"  # the app can read the 401
+
+
+def test_requests_sent_together_ask_supabase_once(signed_in, monkeypatch):
+    """A page sends its requests together: with a token not yet remembered, one asks Supabase and the rest wait."""
+    import threading
+    import time
+
+    client, calls = signed_in
+    real = auth.httpx.get
+
+    def slow_get(*a, **k):
+        time.sleep(0.2)
+        return real(*a, **k)
+
+    monkeypatch.setattr(auth.httpx, "get", slow_get)
+    codes = []
+    threads = [threading.Thread(target=lambda: codes.append(client.get("/sessions", headers=bearer("good-token"))
+                                                             .status_code)) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert codes == [200] * 8
+    assert len(calls) == 1
+
+
+def test_a_token_is_never_remembered_past_its_expiry():
+    import base64
+    import json
+    import time
+
+    def jwt(exp):
+        part = base64.urlsafe_b64encode(json.dumps({"exp": exp}).encode()).decode().rstrip("=")
+        return f"head.{part}.sig"
+
+    assert 25 <= auth._left(jwt(time.time() + 30)) <= 30
+    assert auth._left(jwt(time.time() - 5)) == 0.0
+    assert auth._left("good-token") == auth.TOKEN_TTL_S

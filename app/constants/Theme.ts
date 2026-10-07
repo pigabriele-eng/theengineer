@@ -308,6 +308,20 @@ export function inkOn(fill: string) {
   return contrast(INK.onLight, fill) >= contrast(INK.onDark, fill) ? INK.onLight : INK.onDark;
 }
 
+/** A fill that one of the two inks reads on at 4.5:1: the fill itself, or (in the middle of a ramp, where neither
+ * near-black nor white reaches 4.5:1) the nearest step darker or lighter that one of them does. */
+export function legibleFill(fill: string) {
+  const best = (f: string) => Math.max(contrast(INK.onLight, f), contrast(INK.onDark, f));
+  if (!/^#[0-9a-f]{6}$/i.test(fill) || best(fill) >= 4.5) return fill;
+  for (let k = 0.02; k <= 0.5; k += 0.02) {
+    const darker = ramp([fill, '#000000'], k);
+    const lighter = ramp([fill, '#ffffff'], k);
+    if (contrast(INK.onDark, darker) >= 4.5) return darker;
+    if (contrast(INK.onLight, lighter) >= 4.5) return lighter;
+  }
+  return fill;
+}
+
 /** Light and dark versions of a set of colours made from the tokens, picked with `[scheme]`. */
 export function byScheme<T>(make: (c: Palette) => T): Record<Scheme, T> {
   return { light: make(Colors.light), dark: make(Colors.dark) };
