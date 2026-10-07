@@ -286,7 +286,7 @@ export default function SessionScreen() {
     dek: debriefs.length ? 'Its setup sheet for this run, and what the driver said.' : 'Its setup sheet for this run.',
     body: (
       <View style={styles.stack}>
-        <SetupCard sessionId={sessionId} />
+        <SetupCard sessionId={sessionId} bare />
         {debriefs.length > 0 && (
           <View>
             <Text style={styles.subhead}>Debriefs</Text>
