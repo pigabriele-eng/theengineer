@@ -56,7 +56,8 @@ export type ObviousMistake = {
 };
 
 export type Budget = {
-  mistakes: number; // the named mistakes
+  mistakes: number; // the named mistakes and every obvious one, each at its own cost
+  in_targets?: number; // zero or less: the part of them perfect driving already carries from this lap
   at_limit: number; // flat out, on the ABS or on the traction control, yet the car below its best
   optimism: number; // the perfect lap's optimism: the car's best at every place rather than a quick lap's usual
   pit_lane: number; // the lap ends in the pit lane

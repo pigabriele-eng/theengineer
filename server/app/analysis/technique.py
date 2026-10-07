@@ -614,6 +614,7 @@ EXIT_LIFT_PTS = 20.0  # % pedal: the throttle falls this far below the most it r
 EXIT_LIFT_HOLD_S = 0.15  # ...and stays 10 points or more below it this long (a jolt of the foot on a kerb is not)
 EXIT_REACH_M = 150  # the exit runs this far past full throttle, at most (and never into the next corner's lift)
 MIN_LIFT_FROM = 40.0  # % pedal: a lift is from at least this much throttle
+EXIT_PAST_APEX_M = 10  # a lift from full throttle this far past the slowest point is on the way out, cornering or not
 STEP_RATE = 300.0  # %/s over STEP_WINDOW_S: the throttle stepped on rather than squeezed
 STEP_WINDOW_S = 0.2
 STEP_FORCES_S = 1.5  # a lift or steering correction this soon after a step was forced by it
@@ -1120,7 +1121,10 @@ def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Enve
                 cost = sum(lift_cost(tr, x, e, stop, most) for x, e, _, _ in dips)
                 most_g = float(np.max(np.abs(ay[c.m:j + 1])))
                 cornering = max(abs(ay[x]) for x, _, _, _ in dips) > EXIT_AY_SHARE * most_g
-                if len(dips) == 1 and not cornering:
+                # off full throttle past the slowest point is a lift on the way out, however hard the car is still
+                # cornering (a long fast corner's exit is still cornering)
+                from_full = dips[0][2] >= FULL_THROTTLE and j >= c.m + EXIT_PAST_APEX_M
+                if len(dips) == 1 and (not cornering or from_full):
                     _, _, high, low = dips[0]
                     after = f" {j - c.m} m after the slowest point ({c.m} m)" if j > c.m else ""
                     what = (f"On the way out of {c.code} you were at {high:.0f}% throttle, then lifted to {low:.0f}% "
@@ -1155,6 +1159,12 @@ def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Enve
                         stall = round(max(gain_cost(tr, j, e, extra, stop, most), 0.0), 3)
                         lift_item["cost_s"] = max(lift_item["cost_s"], stall)
                         lift_item["end_m"] = max(lift_item["end_m"], e)
+                        if "speed stopped" not in lift_item["what"]:
+                            drop = float(v[j] - v[j:e + 1].min())
+                            lift_item["what"] += (f" With it the speed stopped climbing from {j} m to {e} m"
+                                                  + (f", dropping {drop:.0f} km/h." if drop >= 1 else "."))
+                            if lift_item["kind"] == "exit_lift":
+                                lift_item["title"] = f"Lifted on the exit of {c.code}, the speed stalled"
                     continue
                 drop = float(v[j] - v[j:e + 1].min())
                 how = f"dropped {drop:.0f} km/h" if drop >= 1 else "stopped climbing"
@@ -1596,6 +1606,30 @@ def best_technique(view: Pass, passes: list[Pass], sections: list[Section],
     return out
 
 
+EXIT_KINDS = ("exit_lift", "exit_stall", "on_off_throttle", "power_step", "power_oversteer")
+
+
+def _with_exit_lifts(obvious: list[dict], items: list[dict], tr: dict[str, np.ndarray]) -> list[dict]:
+    """The obvious mistakes, with every lift on the way out that the comparison with the realistic target names
+    (the throttle coming back off before full throttle, with the target already flat) and the obvious check missed:
+    a lift from part throttle, or one that starts at the slowest point, is still a lift on the way out."""
+    v = tr["speed"]
+    out = list(obvious)
+    for x in items:
+        if x["kind"] != "exit_lift" or x["cost_s"] < MIN_OBVIOUS_S:
+            continue
+        a, b = int(x["start_m"]), int(x["end_m"])
+        if any(o["code"] == x["code"] and o["kind"] in EXIT_KINDS and o["start_m"] <= b and a <= o["end_m"]
+               for o in out):
+            continue
+        what = (f"On the way out of {x['code']} you came off the throttle before reaching full throttle, and the "
+                f"speed only went from {v[a]:.0f} to {v[b]:.0f} km/h from {a} m to {b} m. " + x["what"])
+        out.append({"key": f"{x['code']}:exit_lift", "kind": "exit_lift", "code": x["code"], "phase": "exit",
+                    "start_m": a, "end_m": b, "at_m": x["at_m"], "cost_s": x["cost_s"],
+                    "title": f"Lifted on the exit of {x['code']}", "what": what, "do": x["do"]})
+    return sorted(out, key=lambda o: -o["cost_s"])
+
+
 def check_lap(tr: dict[str, np.ndarray], perfect: PlaceLimits, held: PlaceLimits, sections: list[Section], *,
               lap_time: float, units: dict[str, str] | None = None, detail: bool = True,
               calibrations: tuple[Calibration | None, Calibration | None] = (None, None),
@@ -1637,11 +1671,26 @@ def check_lap(tr: dict[str, np.ndarray], perfect: PlaceLimits, held: PlaceLimits
     items.sort(key=lambda x: -x["cost_s"])
     braking: dict[str, dict] = {}
     obvious = obvious_mistakes(tr, corners, env, env_r, shifts, braking)
+    obvious = _with_exit_lifts(obvious, items, tr)
     trace_time = float(tr["t"][-1])
     named_at = {x["start_m"] for x in items}
     named = sum(p.cost for p in pieces if p.start in named_at)
+    # the obvious mistakes count too, each at its own cost, where no named mistake already covers them: on the
+    # fastest lap the targets are built on, its own mistakes are in the targets, so only they show what it lost
+    def beyond(o: dict) -> float:  # what an obvious mistake costs beyond the named ones over it
+        return o["cost_s"] - sum(x["cost_s"] for x in items if x["code"] == o["code"] and x["start_m"] <= o["end_m"]
+                                 and o["start_m"] <= x["end_m"])
+
+    unnamed = [(o, beyond(o)) for o in obvious]
+    unnamed = [(o, c) for o, c in unnamed if c > 0]
+    named += sum(c for _, c in unnamed)
     pit = sum(p.cost for p in pieces if p.role == "pit")
     rest = [p for p in pieces if p.start not in named_at and p.role != "pit"]
+    # the pieces an obvious mistake explains are that mistake: what the mistake costs beyond them, perfect driving
+    # already carries (it is built on the quickest laps, this one's mistakes and all)
+    covered = [any(o["start_m"] <= p.end and p.start <= o["end_m"] for o, _ in unnamed) for p in rest]
+    in_targets = -max(sum(c for _, c in unnamed) - sum(p.cost for p, c in zip(rest, covered, strict=True) if c), 0.0)
+    rest = [p for p, c in zip(rest, covered, strict=True) if not c]
     # a loss where the pedals were at the limit; where such a piece beat the realistic target it is a gain like others
     limited = [p.cost > 0 and (p.limit or (p.role == "straight" and _flat(tr, p))) for p in rest]
     at_limit = sum(p.cost for p, x in zip(rest, limited, strict=True) if x)
@@ -1658,13 +1707,16 @@ def check_lap(tr: dict[str, np.ndarray], perfect: PlaceLimits, held: PlaceLimits
         # the gap to the perfect lap, split: the named mistakes; at the limit (flat out, or braking with the ABS or
         # driving out with the traction control working, yet the car below its best); the perfect lap's optimism
         # (the best of every place against a quick lap's usual); the pit lane, when the lap ends in it; and the rest:
-        # small losses no single mistake explains, less the places the lap beat the realistic target
+        # small losses no single mistake explains, less the places the lap beat the realistic target. The mistakes
+        # are the named ones and every obvious one at its own cost; in_targets (zero or less) is the part of them
+        # perfect driving already carries from this lap, so the parts still add up to the gap
         "budget": {
             "mistakes": round(named, 3),
+            "in_targets": round(in_targets, 3),
             "at_limit": round(at_limit, 3),
             "optimism": round(optimism, 3),
             "pit_lane": round(pit, 3),
-            "other": round(lap_time - sim.time - named - at_limit - optimism - pit, 3),
+            "other": round(lap_time - sim.time - named - in_targets - at_limit - optimism - pit, 3),
             "other_losses": round(sum(c for c in other if c > 0), 3),
             "other_gains": round(sum(c for c in other if c < 0), 3),
         },

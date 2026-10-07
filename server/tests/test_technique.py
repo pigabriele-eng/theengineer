@@ -164,11 +164,15 @@ def test_perfect_drivings_inputs_to_lay_over_the_drivers(env, k, lim):
 
 def _costs_add_up(out: dict) -> None:
     b = out["budget"]
-    assert b["mistakes"] + b["at_limit"] + b["optimism"] + b["pit_lane"] + b["other"] == pytest.approx(out["gap"],
-                                                                                                         abs=2e-3)
+    assert b["mistakes"] + b["in_targets"] + b["at_limit"] + b["optimism"] + b["pit_lane"] + b["other"] == \
+        pytest.approx(out["gap"], abs=2e-3)
     # what no mistake explains is the sum of the small losses and gains: every piece of the lap is counted once
     assert b["other_losses"] + b["other_gains"] == pytest.approx(b["other"], abs=2e-3)
-    assert b["mistakes"] == pytest.approx(sum(m["cost_s"] for m in out["mistakes"]), abs=2e-3)
+    # every mistake listed counts, the obvious ones too where no named one covers them
+    beyond = [o["cost_s"] - sum(x["cost_s"] for x in out["mistakes"] if x["code"] == o["code"]
+                                and x["start_m"] <= o["end_m"] and o["start_m"] <= x["end_m"]) for o in out["obvious"]]
+    assert b["mistakes"] == pytest.approx(sum(m["cost_s"] for m in out["mistakes"]) + sum(c for c in beyond if c > 0),
+                                          abs=2e-3)
 
 
 def test_early_soft_braking_is_named_and_costed(env, k, lim):
@@ -288,7 +292,7 @@ def test_technique_check_api(client):
     assert lap_["number"] == best["number"] == body["best_lap"]
     assert lap_["perfect"] <= lap_["realistic"] and lap_["gap"] == pytest.approx(lap_["time"] - lap_["perfect"],
                                                                                  abs=1e-3)
-    assert sum(lap_["budget"][k] for k in ("mistakes", "at_limit", "optimism", "pit_lane", "other")) == \
+    assert sum(lap_["budget"][k] for k in ("mistakes", "in_targets", "at_limit", "optimism", "pit_lane", "other")) == \
         pytest.approx(lap_["gap"], abs=2e-3)
     tr = lap_["trace"]
     assert len(tr["driven"]) == len(tr["perfect"]) == len(tr["realistic"]) == body["length_m"] // tr["step_m"] + 1

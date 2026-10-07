@@ -173,6 +173,29 @@ def test_a_lift_on_the_way_out_of_a_corner_is_an_obvious_mistake(fastest):
     clean = check_lap(fastest.trace, t.perfect, t.held, SECTIONS, lap_time=fastest.time,
                       calibrations=(t.calibration, t.held_calibration))
     assert clean["obvious"] == []
+    assert out["budget"]["mistakes"] >= lifts[0]["cost_s"]
+    # the fastest lap itself, the targets built on it, lift and all: the lift still counts in what it lost to
+    # mistakes, and the part perfect driving copies of it is shown apart, so the parts still add up to the gap
+    own = targets([lifted], lifted.trace, lifted.time, SECTIONS)
+    out = check_lap(lifted.trace, own.perfect, own.held, SECTIONS, lap_time=lifted.time,
+                    calibrations=(own.calibration, own.held_calibration))
+    lift = next(m for m in out["obvious"] if m["kind"] == "exit_lift")
+    b = out["budget"]
+    assert b["mistakes"] >= lift["cost_s"] > 0 and b["in_targets"] < 0
+    assert sum(b[k] for k in ("mistakes", "in_targets", "at_limit", "optimism", "pit_lane", "other")) == \
+        pytest.approx(out["gap"], abs=2e-3)
+
+
+def test_a_lift_from_full_throttle_past_the_slowest_point_is_on_the_way_out_however_hard_it_corners(fastest):
+    d = np.arange(N + 1, dtype=float)
+    lifted = Lap(1 - 0.06 * _step(d, 360, 420, 10))
+    lifted.trace["throttle"] = np.where((d >= 350) & (d <= 400), 20.0, lifted.trace["throttle"])
+    ay = lifted.trace["ay"]
+    ay[340:420] = 1.2 * float(np.max(np.abs(ay[290:340]))) * np.sign(ay[300])  # a long corner, still loaded
+    t = targets([fastest, lifted], fastest.trace, fastest.time, SECTIONS)
+    out = check_lap(lifted.trace, t.perfect, t.held, SECTIONS, lap_time=lifted.time,
+                    calibrations=(t.calibration, t.held_calibration))
+    assert [m["kind"] for m in out["obvious"] if m["code"] == "T1"][:1] == ["exit_lift"]
 
 
 def test_braking_below_the_limit_costs_the_later_brake_point():
