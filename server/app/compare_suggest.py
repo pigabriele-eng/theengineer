@@ -61,7 +61,7 @@ MIN_STINT_LAPS = 4  # clean laps a stint needs for its typical lap to mean somet
 MIN_TYPICAL_GAP_S = 0.05  # a typical lap this close to the best: nothing to learn from the pair
 RECENT_DAYS = 3  # the prebuild works the suggestions out for events whose newest run is this recent
 
-ORDER_PREFIX = re.compile(r"^\d+[_\- ]+")  # "03_Q" -> "Q"
+ORDER_PREFIX = run_tyres.ORDER_PREFIX  # "03_Q" -> "Q"
 QUALIFYING = re.compile(r"^(?:PQ|Q\d*|QUALI\w*|PRE-QUALI\w*)\b", re.I)
 RACE = re.compile(r"^(?:R\d+|RACE)\b", re.I)
 PRACTICE = re.compile(r"^(?:FP\d*|PT\d*|PTS\d*|P\d+|FREE PRACTICE|PRACTICE)\b", re.I)
