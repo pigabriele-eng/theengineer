@@ -283,7 +283,9 @@ def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | Non
     order: dict[int, datetime] = {}
     for r in runs:
         m = marks.get(r.id)
-        order[r.id] = windows.get(r.id, (r.created_at.replace(tzinfo=None),))[0]
+        # by when its first lap began: two runs split from one log (one per driver) keep their order
+        first = min((lap.start_s for lap in r.laps), default=0.0)
+        order[r.id] = windows.get(r.id, (r.created_at.replace(tzinfo=None),))[0] + timedelta(seconds=first)
         if m is not None and m.answered and m.code:
             codes[r.id] = m.code
             continue
