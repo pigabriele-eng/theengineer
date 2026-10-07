@@ -2,12 +2,17 @@ import { useRouter } from 'expo-router';
 import { Fragment, ReactNode, useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 
+import CornerTrace, { cornerTraceReady } from '@/components/CornerTrace';
+import { FoldHead } from '@/components/Fold';
+import GearMap from '@/components/GearMap';
 import { OfficialResults, Prediction } from '@/components/PrepOfficial';
 import { Cells, DeltaBlock, Item, Pick, SubHead, usePrepType, ValueBlock } from '@/components/PrepParts';
 import { Fig, Label, Section, SpecLine, TextLink, useWide } from '@/components/Programme';
 import { GripChart } from '@/components/report/TrackGrip';
 import { Text, View } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
+import { fetchGuide, gearName, Guide, GuideCorner } from '@/lib/guide';
+import { cornersOf } from '@/lib/trackmap';
 import {
   CornerRow,
   fetchPrep,
@@ -25,7 +30,7 @@ import { deltaColor, face, Fonts, themed, Type, useTheme } from '@/constants/The
 import { pct } from '@/lib/trackGrip';
 
 const POLL_MS = 2000;
-const CORNERS_SHOWN = 4; // corners open before "Show all"
+const GUIDE_POLL_MS = 3000; // the gear map and corner graphs, while the past events' laps are read
 const RUNS_SHOWN = 6;
 const VERDICT: Record<string, string> = {
   agree: 'data agrees', slight: 'data leans the same way', normal: 'data reads normal', disagree: 'data says the opposite',
@@ -37,12 +42,14 @@ const span = (r: [number, number] | null | undefined, unit: string) =>
 const pastEvents = (n: number) => (n === 1 ? 'one past event' : `${n} past events`);
 
 /** The race weekend's "Before" view (the prep report): what every past event at this track with this car learned, as a
- * briefing in the race programme's numbered sections. The briefing first (the lap to aim for in big figures), then
- * the performance year by year with the weather, the official results and the prediction, corner by corner with the
- * ideal way through each, quali prep, track grip, pressures, the setup to open with, how the car behaved on each setup,
- * and each driver's recurring technique points. Rendered by the prep page (app/prep.tsx) under its own headline, and
- * by the event page's Before tab. The car picker sits at its top; the car picked also goes in the page's ?car=.
- * onAnswer hands the page the event the report is for (its name, track and dates for the headline). */
+ * briefing in the race programme's numbered sections, the answers first. The lap to aim for in big figures with the
+ * briefing and the weather; the gear map of the best lap here; corner by corner, the most effective way through each
+ * in words beside its graph (the best pass here against a typical one: speed, throttle, brake); the track's grip and
+ * what the tyres did (quali prep, pressures); the setup to start with, how the car behaved on each setup and each
+ * driver's recurring technique points; and folded at the end, the year by year, the official results and the
+ * prediction. Rendered by the prep page (app/prep.tsx) under its own headline, and by the event page's Before tab.
+ * The car picker sits at its top; the car picked also goes in the page's ?car=. onAnswer hands the page the event the
+ * report is for (its name, track and dates for the headline). */
 export default function WeekendBefore({ eventId, car: carParam, onAnswer }: { eventId: number;
   car?: string | number | null; onAnswer?: (answer: PrepAnswer) => void }) {
   const styles = useStyles();
@@ -109,6 +116,30 @@ export default function WeekendBefore({ eventId, car: carParam, onAnswer }: { ev
   }, [key, officialRound]); // eslint-disable-line react-hooks/exhaustive-deps -- the key holds the event and the car
   const reloadOfficial = useCallback(() => setOfficialRound((n) => n + 1), []);
 
+  // the gear map and the corner graphs: from the past events' lap traces, ready at once when they are kept, else
+  // asked again while the server reads them
+  const [guide, setGuide] = useState<Guide | null>(null);
+  useEffect(() => {
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    setGuide(null);
+    const poll = async () => {
+      try {
+        const g = await fetchGuide(eventId, car);
+        if (!live) return;
+        setGuide(g);
+        if (g.status === 'working') timer = setTimeout(poll, GUIDE_POLL_MS);
+      } catch {
+        if (live) timer = setTimeout(poll, GUIDE_POLL_MS * 3);
+      }
+    };
+    poll();
+    return () => {
+      live = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps -- the key holds the event and the car
+
   const retry = useCallback(async () => {
     try {
       setAnswer(await refreshPrep(eventId, car));
@@ -155,7 +186,7 @@ export default function WeekendBefore({ eventId, car: carParam, onAnswer }: { ev
       )}
       {report && (
         <Body report={report} weather={weather} official={official} eventId={eventId} reloadOfficial={reloadOfficial}
-          openEvent={(id) => router.push({ pathname: '/report', params: { event: String(id) } })} />
+          guide={guide} openEvent={(id) => router.push({ pathname: '/report', params: { event: String(id) } })} />
       )}
     </>
   );
@@ -214,30 +245,21 @@ function Progress({ answer }: { answer: PrepAnswer }) {
 
 type Part = { key: string; render: (no: number) => ReactNode };
 
-function Body({ report, weather, official, eventId, reloadOfficial, openEvent }: { report: PrepReport;
+function Body({ report, weather, official, eventId, reloadOfficial, openEvent, guide }: { report: PrepReport;
   weather: PrepWeather | null; official: PrepOfficial | null; eventId: number; reloadOfficial: () => void;
-  openEvent: (id: number) => void }) {
+  openEvent: (id: number) => void; guide: Guide | null }) {
   const type = usePrepType();
-  const wide = useWide();
   const g = report.track_grip;
   const drivers = report.technique.filter((d) => d.habits.length);
-  // the sections there is something to say in, numbered in order
+  // the sections there is something to say in, numbered in order: the answers first (the lap to aim for, the gears,
+  // the corners), then the grip and the tyres, the setup, and the year by year, results and prediction folded last
   const parts: (Part | null | false)[] = [
-    { key: 'brief', render: (no) => <Briefing no={no} report={report} weather={weather} official={official} /> },
-    { key: 'years', render: (no) => (
-      <Section no={no} title="Year by year" dek="Each past event here: its laps, then the conditions it was driven in.">
-        <Performance rows={report.performance} weather={weather} official={official} openEvent={openEvent} />
-        {report.trend && <Text style={StyleSheet.flatten([wide ? type.read : type.readPhone, { marginTop: 14 }])}>
-          {report.trend}</Text>}
-      </Section>
-    ) },
-    { key: 'results', render: (no) => <OfficialResultsSection no={no} eventId={eventId} official={official}
-      reload={reloadOfficial} /> },
-    !!official?.prediction && { key: 'prediction', render: (no) => <PredictionSection no={no} official={official} /> },
-    { key: 'corners', render: (no) => <Corners no={no} corners={report.corners} /> },
-    !!report.quali && { key: 'quali', render: (no) => <Quali no={no} report={report} /> },
+    { key: 'brief', render: (no) => <Briefing no={no} report={report} weather={weather} /> },
+    { key: 'gears', render: (no) => <Gears no={no} guide={guide} /> },
+    { key: 'corners', render: (no) => <Corners no={no} corners={report.corners} guide={guide} /> },
     !!g && (g.guidance.length > 0 || g.notes.length > 0) && {
       key: 'grip', render: (no) => <TrackGripSection no={no} report={report} /> },
+    !!report.quali && { key: 'quali', render: (no) => <Quali no={no} report={report} /> },
     !!report.pressures && { key: 'pressures', render: (no) => <Pressures no={no} report={report} weather={weather} /> },
     !!report.recommendation && { key: 'setup', render: (no) => <Setup no={no} report={report} /> },
     report.setups.runs.length > 0 && { key: 'runs', render: (no) => <Runs no={no} report={report} /> },
@@ -247,6 +269,8 @@ function Body({ report, weather, official, eventId, reloadOfficial, openEvent }:
         {report.notes.map((n) => <Text key={n} style={type.note}>{n}</Text>)}
       </Section>
     ) },
+    { key: 'later', render: (no) => <Later no={no} report={report} weather={weather} official={official}
+      eventId={eventId} reloadOfficial={reloadOfficial} openEvent={openEvent} /> },
   ];
   const shown = parts.filter((p): p is Part => !!p);
   return (
@@ -254,6 +278,37 @@ function Body({ report, weather, official, eventId, reloadOfficial, openEvent }:
       {shown.map((p, i) => <Fragment key={p.key}>{p.render(i + 1)}</Fragment>)}
       <Method lines={report.method} />
     </>
+  );
+}
+
+/** Folded at the end: each past event's laps and conditions, the series' official results here and the prediction
+ * for this round. Interesting, not the priority before a weekend. */
+function Later({ no, report, weather, official, eventId, reloadOfficial, openEvent }: { no: number;
+  report: PrepReport; weather: PrepWeather | null; official: PrepOfficial | null; eventId: number;
+  reloadOfficial: () => void; openEvent: (id: number) => void }) {
+  const styles = useStyles();
+  const type = usePrepType();
+  const wide = useWide();
+  const [open, setOpen] = useState(false);
+  const years = report.performance.map((r) => r.year);
+  const facts = [years.length ? `${years.join(', ')}` : null, 'official results',
+    official?.prediction ? `prediction for ${official.year}` : null].filter(Boolean).join(' · ');
+  return (
+    <View style={styles.later}>
+      <FoldHead no={no} title="Year by year, results, prediction" facts={facts} open={open}
+        onToggle={() => setOpen(!open)} what="the year by year, the official results and the prediction" />
+      {open && (
+        <>
+          <Section no={no + 1} title="Year by year"
+            dek="Each past event here: its laps, then the conditions it was driven in.">
+            <Performance rows={report.performance} weather={weather} official={official} openEvent={openEvent} />
+            {report.trend && <Text style={StyleSheet.flatten([wide ? type.read : type.readPhone, { marginTop: 14 }])}>
+              {report.trend}</Text>}
+          </Section>
+          <OfficialSections first={no + 2} eventId={eventId} official={official} reload={reloadOfficial} />
+        </>
+      )}
+    </View>
   );
 }
 
@@ -291,20 +346,14 @@ function PredictionSection({ no, official }: { no: number; official: PrepOfficia
 
 // ---------------------------------------------------------------- 01 before the weekend
 
-function Briefing({ no, report, weather, official }: { no: number; report: PrepReport; weather: PrepWeather | null;
-  official: PrepOfficial | null }) {
+function Briefing({ no, report, weather }: { no: number; report: PrepReport; weather: PrepWeather | null }) {
   const styles = useStyles();
   const type = usePrepType();
   const wide = useWide();
   const read = wide ? type.read : type.readPhone;
   const f = weather?.forecast?.summary;
-  // the official results and the prediction go right after the lap time to aim for
-  const extra = [
-    official?.lines.length ? { key: 'results', title: 'Results here', text: official.lines.join(' ') } : null,
-    official?.prediction?.line ? { key: 'prediction', title: `Prediction for ${official.year}`,
-      text: official.prediction.line } : null,
-  ].filter((x): x is { key: string; title: string; text: string } => x != null);
-  const items = [...report.briefing.slice(0, 1), ...extra, ...report.briefing.slice(1)];
+  // the official results and the prediction are folded at the end of the page (Later)
+  const items = report.briefing;
   const sky = f || weather?.compare;
   return (
     <Section no={no} title="Before the weekend" dek="The few things to know, most important first.">
@@ -463,68 +512,143 @@ function Performance({ rows, weather, official, openEvent }: { rows: PerfRow[]; 
 
 // ---------------------------------------------------------------- corner by corner
 
-function Corners({ no, corners }: { no: number; corners: PrepReport['corners'] }) {
-  const styles = useStyles();
+/** The gear map of the best lap here (components/GearMap.tsx), or why there isn't one yet. */
+function Gears({ no, guide }: { no: number; guide: Guide | null }) {
   const type = usePrepType();
-  const wide = useWide();
-  const [all, setAll] = useState(false);
-  const rows = all ? corners.rows : corners.rows.slice(0, CORNERS_SHOWN);
-  if (!corners.rows.length) {
-    return <Section no={no} title="Corner by corner"><Text style={type.note}>{corners.note}</Text></Section>;
-  }
+  const b = guide?.best_lap;
+  const caption = b
+    ? `From the best lap here: ${b.session}, lap ${b.lap} (${formatLap(b.time)})${b.year ? `, ${b.year}` : ''}` +
+      `${b.driver ? `, ${b.driver}` : ''}. The number on the track is the gear held there; after each braking, the ` +
+      'gear for the corner.'
+    : undefined;
   return (
-    <Section no={no} title="Corner by corner" dek="Most time to find first. The ideal pass is what the quickest passes did.">
-      {corners.changes && <Text style={StyleSheet.flatten([wide ? type.read : type.readPhone, styles.before])}>
-        {corners.changes}</Text>}
-      {corners.note && <Text style={StyleSheet.flatten([type.note, styles.before])}>{corners.note}</Text>}
-      {rows.map((r) => <Corner key={r.code} r={r} />)}
-      {corners.rows.length > CORNERS_SHOWN && (
-        <View style={styles.more}>
-          <TextLink label={all ? 'Show fewer corners' : `Show all ${corners.rows.length} corners`}
-            onPress={() => setAll(!all)} />
-        </View>
+    <Section no={no} title="Gear map" dek="The best lap here in the gear held at each point, and where its braking starts.">
+      {!guide && <Text style={type.note}>Loading the gear map…</Text>}
+      {guide?.status === 'working' && <Text style={type.note}>Reading the past events&apos; laps for the gear map…</Text>}
+      {guide?.status === 'none' && <Text style={type.note}>{guide.reason}</Text>}
+      {guide?.status === 'ready' && !guide.map && (
+        <Text style={type.note}>The best lap&apos;s log has no GPS position, so the track can&apos;t be drawn.</Text>
+      )}
+      {guide?.status === 'ready' && guide.map && (
+        <GearMap map={guide.map} caption={caption} asLogged={guide.gears?.as_logged} />
       )}
     </Section>
   );
 }
 
-function Corner({ r }: { r: CornerRow }) {
+/** "3rd" through a one-corner section, "3rd T2–T4 · 6th T5" through a longer one: the lowest gear at each official
+ * corner in it (from the gear map), consecutive corners with the same gear run together. */
+function cornerGears(code: string, guide: Guide | null): string | null {
+  const map = guide?.map;
+  if (!map) return null;
+  const inside = cornersOf(code);
+  const at = map.corners.filter((k) => inside.includes(k.code) && k.gear != null);
+  const name = (g: number) => (guide?.gears?.as_logged ? `gear ${g}` : gearName(g));
+  if (!at.length) {
+    const s = map.sections.find((k) => k.code === code);
+    return s?.gear != null ? name(s.gear) : null;
+  }
+  if (at.length === 1 || at.every((k) => k.gear === at[0].gear)) return name(at[0].gear!);
+  const groups: { gear: number; from: string; to: string }[] = [];
+  for (const k of at) {
+    const last = groups[groups.length - 1];
+    if (last && last.gear === k.gear) last.to = k.code;
+    else groups.push({ gear: k.gear!, from: k.code, to: k.code });
+  }
+  return groups.map((g) => `${name(g.gear)} ${g.from}${g.to !== g.from ? `–${g.to}` : ''}`).join(' · ');
+}
+
+/** The section the guide drew a prep row's corner in: the same code, else the one holding its first official corner. */
+const guideCornerFor = (r: CornerRow, guide: Guide | null): GuideCorner | undefined => {
+  const all = guide?.corners ?? [];
+  return all.find((k) => k.code === r.code) ?? all.find((k) => k.corners.includes(cornersOf(r.code)[0]));
+};
+
+/** A corner code's place on the lap when the guide isn't there to order them: "T2-T5" by its 2, "C3" by its 3. */
+const lapOrder = (code: string) => Number(/\d+/.exec(code)?.[0] ?? 999);
+
+function Corners({ no, corners, guide }: { no: number; corners: PrepReport['corners']; guide: Guide | null }) {
+  const styles = useStyles();
+  const type = usePrepType();
+  const wide = useWide();
+  if (!corners.rows.length) {
+    return <Section no={no} title="Corner by corner"><Text style={type.note}>{corners.note}</Text></Section>;
+  }
+  // in lap order: the guide's sections when it is ready, the corner numbers until then
+  const order = guide?.status === 'ready' && guide.corners?.length
+    ? (r: CornerRow) => {
+        const k = guideCornerFor(r, guide);
+        return k ? guide.corners!.indexOf(k) : 999 + lapOrder(r.code);
+      }
+    : (r: CornerRow) => lapOrder(r.code);
+  const rows = [...corners.rows].sort((a, b) => order(a) - order(b));
+  const top = [...corners.rows].sort((a, b) => (b.gain_s ?? 0) - (a.gain_s ?? 0)).slice(0, 3).map((r) => r.code);
+  const graphs = guide?.status === 'working' ? 'The graphs follow once the past events’ laps are read.'
+    : guide?.status === 'none' ? guide.reason : null;
+  return (
+    <Section no={no} title="Corner by corner"
+      dek={`In lap order. The ideal pass is what the quickest passes did; its graph is the best pass here against a ` +
+        `typical one. Most time to find: ${top.join(', ')}.`}>
+      {corners.changes && <Text style={StyleSheet.flatten([wide ? type.read : type.readPhone, styles.before])}>
+        {corners.changes}</Text>}
+      {corners.note && <Text style={StyleSheet.flatten([type.note, styles.before])}>{corners.note}</Text>}
+      {graphs && <Text style={StyleSheet.flatten([type.note, styles.before])}>{graphs}</Text>}
+      {rows.map((r) => <Corner key={r.code} r={r} guide={guide} top={top.includes(r.code)} />)}
+    </Section>
+  );
+}
+
+function Corner({ r, guide, top }: { r: CornerRow; guide: Guide | null; top: boolean }) {
   const styles = useStyles();
   const type = usePrepType();
   const theme = useTheme();
   const wide = useWide();
   const read = wide ? type.read : type.readPhone;
   const years = Object.values(r.per_event);
+  const k = guideCornerFor(r, guide);
+  const gears = cornerGears(k?.code ?? r.code, guide);
+  const graph = k && cornerTraceReady(k) ? k : null;
   return (
     <View style={wide ? styles.corner : styles.cornerPhone}>
-      <View style={wide ? styles.cornerSide : styles.cornerSidePhone}>
-        <Text style={wide ? styles.code : styles.codePhone}>{r.code}</Text>
-        {r.gain_s != null && (
-          <Fig value={r.gain_s.toFixed(2)} unit="s" size={wide ? 52 : 56} color={deltaColor(theme, r.gain_s)}
-            note="a lap to find" />
-        )}
-      </View>
-      <View style={styles.cornerMain}>
-        {r.change && (
-          <View style={styles.change}>
-            <DeltaBlock seconds={r.change.typical} />
-            <Text style={type.small}>typical, against {r.change.from}</Text>
+      <View style={wide ? styles.cornerText : undefined}>
+        <View style={styles.cornerHead}>
+          <Text style={wide ? styles.code : styles.codePhone}>{r.code}</Text>
+          <View style={styles.cornerFacts}>
+            {r.gain_s != null && (
+              <Text style={StyleSheet.flatten([styles.gain, { color: deltaColor(theme, r.gain_s) ?? theme.text }])}>
+                {r.gain_s.toFixed(2)} s a lap to find{top ? ' · top 3' : ''}
+              </Text>
+            )}
+            {gears && <Text style={styles.gearLine}>Gear {gears}</Text>}
           </View>
-        )}
-        <Text style={type.small}>
-          {years.map((y) => `${y.year}: best ${y.best?.toFixed(2) ?? '–'} s, typical ${y.typical?.toFixed(2) ?? '–'} s`)
-            .join(' · ')}
-          {r.best_by.driver ? ` · best pass by ${r.best_by.driver}` : ''}
-        </Text>
-        {r.ideal && <Text style={read}><Text style={type.inLabel}>Ideal pass  </Text>{r.ideal}</Text>}
-        {r.why && <Text style={read}><Text style={type.inLabel}>Why  </Text>{r.why}</Text>}
-        {r.advice.length > 0 && (
-          <Text style={read}><Text style={type.inLabel}>To change  </Text>{r.advice.join('. ')}.</Text>
-        )}
-        {r.drivers.map((d) => (
-          <Text key={`${d.driver}-${d.text}`} style={type.note}>{d.driver ?? 'Untagged laps'}: {d.text}</Text>
-        ))}
+        </View>
+        <View style={styles.cornerMain}>
+          {r.ideal && <Text style={read}><Text style={type.inLabel}>Ideal pass  </Text>{r.ideal}</Text>}
+          {r.why && <Text style={read}><Text style={type.inLabel}>Why  </Text>{r.why}</Text>}
+          {r.advice.length > 0 && (
+            <Text style={read}><Text style={type.inLabel}>To change  </Text>{r.advice.join('. ')}.</Text>
+          )}
+          {r.drivers.map((d) => (
+            <Text key={`${d.driver}-${d.text}`} style={type.note}>{d.driver ?? 'Untagged laps'}: {d.text}</Text>
+          ))}
+          {r.change && (
+            <View style={styles.change}>
+              <DeltaBlock seconds={r.change.typical} />
+              <Text style={type.small}>typical, against {r.change.from}</Text>
+            </View>
+          )}
+          <Text style={type.small}>
+            {years.map((y) => `${y.year}: best ${y.best?.toFixed(2) ?? '–'} s, typical ${y.typical?.toFixed(2) ?? '–'} s`)
+              .join(' · ')}
+            {r.best_by.driver ? ` · best pass by ${r.best_by.driver}` : ''}
+          </Text>
+        </View>
       </View>
+      {graph && (
+        <View style={wide ? styles.cornerGraph : styles.cornerGraphPhone}>
+          <CornerTrace corner={graph} step={guide?.step_m ?? 3} brakeUnit={guide?.units?.brake} wide={wide} />
+        </View>
+      )}
     </View>
   );
 }
@@ -837,15 +961,23 @@ const useStyles = themed((c) => ({
     borderBottomWidth: 1, borderColor: c.separator, paddingTop: 4, paddingBottom: 7 },
   bestPhoneValue: { alignItems: 'flex-end', gap: 3, flexShrink: 1 },
 
-  // corners
-  corner: { flexDirection: 'row', gap: 32, borderTopWidth: 3, borderColor: c.rule, paddingTop: 12, paddingBottom: 18 },
-  cornerPhone: { borderTopWidth: 3, borderColor: c.rule, paddingTop: 10, paddingBottom: 18, gap: 12 },
-  cornerSide: { width: 220 },
-  cornerSidePhone: {},
-  cornerMain: { flex: 1, minWidth: 0, gap: 9 },
-  code: { fontFamily: Fonts.display, fontSize: 40, lineHeight: 44, color: c.text, marginBottom: 6 },
-  codePhone: { fontFamily: Fonts.display, fontSize: 34, lineHeight: 38, color: c.text, marginBottom: 4 },
+  // corners: the words beside the graph (under it on a phone)
+  corner: { flexDirection: 'row', alignItems: 'flex-start', gap: 32, borderTopWidth: 3, borderColor: c.rule,
+    paddingTop: 12, paddingBottom: 22 },
+  cornerPhone: { borderTopWidth: 3, borderColor: c.rule, paddingTop: 10, paddingBottom: 22, gap: 14 },
+  cornerText: { width: '40%', minWidth: 0 },
+  cornerGraph: { flex: 1, minWidth: 0 },
+  cornerGraphPhone: {},
+  cornerHead: { flexDirection: 'row', alignItems: 'flex-end', flexWrap: 'wrap', columnGap: 16, rowGap: 4,
+    marginBottom: 10 },
+  cornerFacts: { gap: 2, flexShrink: 1, paddingBottom: 4 },
+  cornerMain: { minWidth: 0, gap: 9 },
+  code: { fontFamily: Fonts.display, fontSize: 40, lineHeight: 44, color: c.text },
+  codePhone: { fontFamily: Fonts.display, fontSize: 34, lineHeight: 38, color: c.text },
+  gain: { fontFamily: face('label', 700), fontSize: 16, lineHeight: 20, letterSpacing: 0.2 },
+  gearLine: { fontFamily: face('label', 600), fontSize: 15, lineHeight: 20, color: c.text },
   change: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
+  later: { marginTop: 48 },
 
   // setup
   suggestions: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 36, marginTop: 8 },
