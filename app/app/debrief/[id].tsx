@@ -68,11 +68,29 @@ export default function DebriefReport() {
 
   // Recordings are transcribed and structured on the server; check back until that's done.
   const pending = d?.status === 'queued' || d?.status === 'processing';
+  // The next look is set after each answer, so a slow server never has two asks in flight.
   useEffect(() => {
     if (!pending) return;
-    const t = setInterval(load, POLL_MS);
-    return () => clearInterval(t);
-  }, [pending, load]);
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = () => api.debrief(debriefId).then(
+      (x) => {
+        if (!live) return;
+        setD(x); // done: this effect is cleaned up and the chain stops
+        timer = setTimeout(poll, POLL_MS);
+      },
+      (e) => {
+        if (!live) return;
+        setError(e.message);
+        timer = setTimeout(poll, POLL_MS);
+      },
+    );
+    timer = setTimeout(poll, POLL_MS);
+    return () => {
+      live = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [pending, debriefId]);
 
   // Once the points exist, fetch what the logger recorded at each corner they mention, then check every point
   // against the data. One after the other: each reads the whole log, and the server is small.
