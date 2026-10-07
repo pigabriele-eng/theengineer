@@ -354,12 +354,16 @@ def detect_corners(ref: dict[str, np.ndarray], min_drop_kmh: float = 15.0) -> li
     """
     v = _smooth(ref["speed"])
     n = len(v)
+    w = np.pad(v, 150, mode="wrap")  # the lap wraps round at the line: a hairpin just before it is still a corner
     apexes: list[int] = []
-    for i in range(60, n - 60):
-        if v[i] == v[i - 60:i + 61].min() and v[max(0, i - 150):i + 151].max() - v[i] > min_drop_kmh:
+    for i in range(n if n > 120 else 0):
+        j = i + 150
+        if v[i] == w[j - 60:j + 61].min() and w[j - 150:j + 151].max() - v[i] > min_drop_kmh:
             if apexes and i - apexes[-1] <= 60:
                 continue  # the same flat-bottomed minimum, not a second corner
             apexes.append(i)
+    if len(apexes) > 1 and apexes[0] + n - apexes[-1] <= 60:
+        apexes.pop()  # the same minimum seen at both ends of the lap
     bounds = [0]
     for a, b in pairwise(apexes):
         bounds.append(max(bounds[-1] + 1, a + int(np.argmax(v[a:b])) - 40))

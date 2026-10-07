@@ -106,6 +106,19 @@ def test_a_flat_bottomed_corner_is_one_corner():
     assert found[1].start < 600 < found[1].apex < found[1].end
 
 
+def test_a_corner_just_before_the_line_is_found():
+    d = np.arange(4000)
+    v = 200 - 120 * np.exp(-((d - 1500) / 45.0) ** 2) - 120 * np.exp(-((d - 3970) / 45.0) ** 2)
+    v -= 120 * np.exp(-((d + 30) / 45.0) ** 2)  # the hairpin's braking zone wraps round past the line
+    found = detect_corners({"speed": v})
+    assert [c.code for c in found] == ["C1", "C2"]
+    assert found[0].apex == 1500 and abs(found[1].apex - 3970) <= 2
+    # a flat-bottomed slowest point straddling the line counts once
+    v = np.roll(v, 30)
+    v[-20:], v[:20] = v[0], v[0]
+    assert [c.code for c in detect_corners({"speed": v})] == ["C1", "C2"]
+
+
 def test_two_drivers_compared():
     fast = load_session(read_ld(write_ld(simulate(paces=(1.0, 0.99, 0.995))[0])))
     slow = load_session(read_ld(write_ld(simulate(paces=(0.96, 0.95, 0.955))[0])))
