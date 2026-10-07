@@ -569,7 +569,8 @@ def analyze(data: SessionData, ref_number: int | None = None, corners: list[Corn
     return {
         "reference_lap": ref.number,
         "length_m": length,
-        "theoretical_best": round(sum(min(m["time"] for m in c["laps"].values()) for c in result_corners), 3),
+        "theoretical_best": round(sum(min(m["time"] for m in c["laps"].values()) for c in result_corners), 3)
+        if result_corners else None,  # no corners, nothing to add up
         "laps": [{"number": l.number, "time": l.time, "clean": l.clean} for l in data.laps],
         "numbering": numbering,
         "corners": result_corners,
