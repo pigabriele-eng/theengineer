@@ -235,6 +235,16 @@ def test_event_and_session_reports(client):
     again = client.get(f"/reports/events/{event['id']}").json()
     assert again["status"] == "ready" and again["report"] == rep
 
+    # asked in the moment between the job saving the report and letting go of it: ready, never "done"
+    from app.routers import reports
+    scope = f"event:{event['id']}"
+    assert reports.claim(reports._lock, reports._pending, scope)
+    try:
+        assert client.get(f"/reports/events/{event['id']}").json()["status"] == "ready"
+    finally:
+        with reports._lock:
+            reports._pending.discard(scope)
+
     one = _wait(client, f"/reports/sessions/{ids[1]}")
     assert one["status"] == "ready" and one["report"]["runs_analysed"] == 1
 

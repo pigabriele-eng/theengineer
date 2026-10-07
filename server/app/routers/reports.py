@@ -178,7 +178,9 @@ def report_for(db: Session, kind: str, id_: int) -> dict:
     if not _used(plan):
         return _answer(db, plan, row, "empty")
     if row is not None and row.signature == plan.signature and plan.scope in _pending:
-        return _answer(db, plan, row, row.status)  # being worked out (again, after a refresh)
+        # being worked out (again, after a refresh); "done" is the moment between the job saving its result and
+        # letting go of the scope: the report is ready
+        return _answer(db, plan, row, "ready" if row.status == "done" else row.status)
     if row is not None and row.result is not None and row.result_signature == plan.signature:
         return _answer(db, plan, row, "ready")
     if row is not None and row.signature == plan.signature and row.status == "failed":

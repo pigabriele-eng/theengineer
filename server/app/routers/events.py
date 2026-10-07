@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, selectinload
 
-from app import event_delete, models, seasons, storage
+from app import event_delete, garage, models, seasons, storage
 from app.analysis import compact
 from app.analysis.insights import consistency
 from app.analysis.side_by_side import Reference, best_index, reference_of, summarise
@@ -180,11 +180,25 @@ def _key_event(db: Session, key: str) -> models.Event | None:
     return _event(db, int(key))
 
 
+def _crew(rows: list[dict], cars: dict[int, str]) -> dict:
+    """Who drove an event and in what: its runs' drivers and cars (a car by its model, else its name), each once,
+    the most laps first."""
+    def most_laps(key) -> list:
+        laps: dict = {}
+        for r in rows:
+            if (k := key(r)) is not None:
+                laps[k] = laps.get(k, 0) + r["laps"]
+        return sorted(laps, key=lambda k: (-laps[k], str(k)))
+    return {"drivers": most_laps(lambda r: r["driver"]),
+            "cars": [cars[c] for c in most_laps(lambda r: r["car_id"]) if c in cars]}
+
+
 @router.get("/events/folders")
 def list_folders(db: Session = Depends(get_db)):
     """Every event as a folder (newest first), and the sessions in no event as one more folder when there are
     any (first, so they are filed). Each event also says the season it is in ({"id", "name", "year", "round"}, null
-    when none), so the list can be grouped by championship."""
+    when none), so the list can be grouped by championship, and who drove it in what (drivers and cars, the most
+    laps first)."""
     sessions = db.scalars(select(models.RunSession).options(
         selectinload(models.RunSession.laps), selectinload(models.RunSession.files),
         selectinload(models.RunSession.driver))).all()
@@ -194,11 +208,19 @@ def list_folders(db: Session = Depends(get_db)):
     dates = {d.event_id: d for d in db.scalars(select(models.EventDates)).all()}
     events = db.scalars(select(models.Event).options(selectinload(models.Event.track))).all()
     in_season = seasons.seasons_of_events(db)
-    out = [{**_folder(ev, by_event.get(ev.id, []), dates.get(ev.id)), "season": in_season.get(ev.id)}
+    cars = {cid: model or name for cid, name, model in db.execute(
+        select(models.Car.id, models.Car.name, garage.CarInfo.model)
+        .outerjoin(garage.CarInfo, garage.CarInfo.car_id == models.Car.id)).all()}
+
+    def summary(ev: models.Event | None, sessions: list[models.RunSession], d: models.EventDates | None) -> dict:
+        rows = [session_row(s) for s in sessions]
+        return {**_folder(ev, sessions, d, rows), **_crew(rows, cars)}
+
+    out = [{**summary(ev, by_event.get(ev.id, []), dates.get(ev.id)), "season": in_season.get(ev.id)}
            for ev in events]
     out.sort(key=lambda f: (f["end"] or f["start"] or "", f["id"]), reverse=True)
     if by_event.get(None):
-        out.insert(0, {**_folder(None, by_event[None], None), "season": None})
+        out.insert(0, {**summary(None, by_event[None], None), "season": None})
     return out
 
 
