@@ -38,7 +38,8 @@ export type MeasuredCost = { key: string; code: string; kind: ObviousMistake['ki
 
 export type ObviousMistake = {
   key: string;
-  kind: 'exit_lift' | 'exit_stall' | 'on_off_throttle' | 'power_step' | 'soft_straight_braking' | 'early_shift' | 'late_shift';
+  kind: 'exit_lift' | 'exit_stall' | 'on_off_throttle' | 'power_step' | 'power_oversteer' | 'soft_straight_braking'
+    | 'braking_unused' | 'early_shift' | 'late_shift';
   code: string;
   phase: Phase;
   start_m: number;

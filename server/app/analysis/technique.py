@@ -789,6 +789,124 @@ def _dips(seg: np.ndarray, ts: np.ndarray, top: np.ndarray, ay: np.ndarray, a: i
     return out
 
 
+BRAKE_TRAIL_AY = 1.0  # g: the braking is judged up to the turn-in, where the cornering takes over the grip
+BRAKE_UNUSED_S = 0.03  # what braking at the limit up to there finds over the best braking there: a mistake
+BRAKE_EASED = 0.8  # the pedal below this share of its peak in the braking: eased off
+BRAKE_REACHED = 0.9  # the braking is judged from where it first reaches this share of the grip
+
+
+BRAKE_FLOOR_PCT = 10  # the best braking at a corner: this percentile of what every lap's gives away there
+
+
+def relative_braking(raw: list[dict[str, dict]], obvious: list[list[dict]]) -> None:
+    """Every lap's braking left unused at each corner (obvious_mistakes' braking) against the best braking there
+    across the laps (BRAKE_FLOOR_PCT; a lap with none gives nothing away): where a lap gives away BRAKE_UNUSED_S more
+    than that, an obvious mistake, costing the difference, added to its obvious mistakes (in place, most costly
+    first)."""
+    codes = {code for r in raw for code in r}
+    for code in codes:
+        floor = float(np.percentile([r[code]["cost_s"] if code in r else 0.0 for r in raw], BRAKE_FLOOR_PCT))
+        for r, obv in zip(raw, obvious, strict=True):
+            x = r.get(code)
+            if x is None or x["cost_s"] - floor < BRAKE_UNUSED_S:
+                continue
+            obv.append({**x, "cost_s": round(x["cost_s"] - floor, 3),
+                        "what": x["what"] + f" The best braking here on the other laps gives away {floor:.2f} s."})
+            obv.sort(key=lambda m: -m["cost_s"])
+
+
+def _braking_unused(tr: dict[str, np.ndarray], env: Envelope, a: int, b: int) -> tuple[float, int, float,
+                                                                                         float | None] | None:
+    """What the braking gives away from where it first reaches the limit (BRAKE_REACHED; a is the brake point) up
+    to the turn-in (BRAKE_TRAIL_AY of cornering, or b, the release), against the deceleration the car has shown at
+    each metre of it while cornering as it was (env.brake_limit): the same end speed from a later brake point.
+    (time, end metre, the share of the grip used, the least pedal pressure as a share of its peak where it was eased
+    off, or None) or None."""
+    ay = np.abs(np.asarray(tr["ay"], float))
+    e = next((i for i in range(a, b) if ay[i] >= BRAKE_TRAIL_AY), b)
+    if e - a < 10:
+        return None
+    v = np.asarray(tr["speed"], float) / 3.6
+    lim = np.array([env.brake_limit(i, ay[i]) for i in range(a, e + 1)])
+    dec = -(np.asarray(tr["ax"][a:e + 1], float) - env.grade[a:e + 1])
+    # from where the pedal first reaches the limit: how fast it gets there is the brake point's own matter
+    hit = np.flatnonzero(dec >= BRAKE_REACHED * lim)
+    if not len(hit) or e - (a + int(hit[0])) < 10:
+        return None
+    a, lim, dec = a + int(hit[0]), lim[hit[0]:], dec[hit[0]:]
+    bw = v[a:e + 1].copy()
+    for k in range(e - a - 1, -1, -1):
+        bw[k] = max(v[a + k], (bw[k + 1] ** 2 + 2 * lim[k + 1] * G) ** 0.5)
+    f = np.maximum(v[a:e + 1], np.minimum(bw, v[a]))  # never quicker than the speed it braked from
+    took = float(np.sum(2 / (v[a:e] + v[a + 1:e + 1])))
+    could = float(np.sum(2 / (f[:-1] + f[1:])))
+    on = dec > 0.2
+    share = float(dec[on].sum() / max(lim[on].sum(), 1e-9)) if on.any() else 0.0
+    eased = None
+    if "brake" in tr:
+        p = np.asarray(tr["brake"][a:e + 1], float)
+        pk = int(np.argmax(p))
+        if p[pk] > 0 and pk < len(p) - 1 and float(p[pk:].min()) < BRAKE_EASED * p[pk]:
+            eased = float(p[pk:].min() / p[pk] * 100)
+    return took - could, e, share, eased
+
+
+SLIDE_LOCK_DEG = 1.5  # steering this far the other way to the corner, on the throttle: opposite lock
+SLIDE_THROTTLE = 80.0  # % throttle
+SLIDE_AY = 0.5  # g of cornering still: the car is still turning, not straightening up
+SLIDE_MIN_M = 4  # metres of opposite lock
+SLIDE_LEAD_M = 20  # the rear steps out (and the drive goes) this far before the opposite lock goes on
+SLIDE_BEFORE_M = 20  # the acceleration before the slide, over this far
+SLIDE_SMOOTH_M = 9  # the acceleration is read over this many metres
+SLIDE_AFTER_M = 25  # the drive the slide takes, counted this far past the opposite lock
+
+
+def _acc(tr: dict[str, np.ndarray]) -> np.ndarray:
+    """m/s² at every metre, read over SLIDE_SMOOTH_M."""
+    v = np.asarray(tr["speed"], float) / 3.6
+    t = np.asarray(tr["t"], float)
+    if len(t) <= SLIDE_SMOOTH_M or not np.all(np.diff(t) > 0):
+        return np.zeros(len(v))
+    a = np.gradient(v, t)
+    w = SLIDE_SMOOTH_M
+    return np.convolve(np.pad(a, w, mode="edge"), np.ones(w) / w, mode="same")[w:-w]
+
+
+def _steer_sign(tr: dict[str, np.ndarray]) -> float:
+    """+1 where the log's steering turns the way its lateral g does (steering right for a right-hand corner), -1
+    where the other way; 0 without a steering channel."""
+    if "steer" not in tr:
+        return 0.0
+    st, ay = np.asarray(tr["steer"], float), np.asarray(tr["ay"], float)
+    m = np.isfinite(st) & (np.abs(ay) > 0.8)
+    return float(np.sign(np.sum(st[m] * ay[m]))) if m.sum() >= 20 else 0.0
+
+
+def _power_slide(tr: dict[str, np.ndarray], a: int, b: int, side: float,
+                 steer_sign: float) -> tuple[int, int, float] | None:
+    """The first stretch from metre a to b where the driver holds opposite lock (SLIDE_LOCK_DEG or more against the
+    corner) on the throttle while the car is still cornering (SLIDE_AY) for SLIDE_MIN_M or longer: the rear stepping
+    out under power. (start metre, end metre, the most opposite lock in degrees) or None."""
+    if side == 0 or b - a < SLIDE_MIN_M:
+        return None
+    st = np.asarray(tr["steer"][a:b], float) * steer_sign * side  # positive: into the corner
+    thr = np.asarray(tr["throttle"][a:b], float)
+    ay = np.asarray(tr["ay"][a:b], float) * side
+    hit = (st <= -SLIDE_LOCK_DEG) & (thr >= SLIDE_THROTTLE) & (ay >= SLIDE_AY)
+    k = 0
+    while k < len(hit):
+        if hit[k]:
+            e = k
+            while e + 1 < len(hit) and (hit[e + 1] or (st[e + 1] < 0 and thr[e + 1] >= SLIDE_THROTTLE)):
+                e += 1
+            if e - k + 1 >= SLIDE_MIN_M:
+                return a + k, a + e, float(-st[k:e + 1].min())
+            k = e + 1
+        else:
+            k += 1
+    return None
+
+
 def _stalls(tr: dict[str, np.ndarray], a: int, b: int, ay: np.ndarray,
             side: float) -> list[tuple[int, int, np.ndarray, float]]:
     """Where the speed, climbing out of a corner (from metre a to b, the next corner's lift or brake point), stops
@@ -866,13 +984,15 @@ def _correction(st: np.ndarray, ts: np.ndarray, j: int, until_s: float) -> int |
 
 
 def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Envelope, env_r: Envelope,
-                     shifts: ShiftModel | None = None) -> list[dict]:
+                     shifts: ShiftModel | None = None, braking: dict[str, dict] | None = None) -> list[dict]:
     """The mistakes that are wrong whatever the target: a lift on the way out of a corner, the throttle on and off
     through it, the throttle stepped on so early or so hard that the car forces a lift or a steering correction,
     braking in a straight line, with no cornering to share the grip with, below the deceleration the car shows at
     that place, and upshifts early or late (shifts). Each with what it alone costs (lift_cost and gain_cost, never
     past the speed the car's best cornering allows; brake_cost; else the span against the realistic target), per
-    corner, most costly first; under MIN_OBVIOUS_S left out."""
+    corner, most costly first; under MIN_OBVIOUS_S left out. Given braking (a dict), the braking up to each turn-in
+    below the grip a quick lap usually shows there goes in it by corner, as it is only a mistake against the best
+    braking there on the other laps (relative_braking)."""
     thr = tr.get("throttle")
     if thr is None:
         return []
@@ -880,6 +1000,7 @@ def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Enve
     most = np.asarray(env.vc, float)  # m/s: the speed the car's best cornering allows at each metre
     n = len(v) - 1
     st = tr.get("steer")
+    steer_sign = _steer_sign(tr)
     out = []
 
     def item(kind: str, c: Corner, a: int, b: int, at: int, title: str, what: str, do: str,
@@ -888,8 +1009,9 @@ def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Enve
         if cost is None:  # what the span costs against the realistic target
             cost = span_cost(env_r, tr, a, b)
         return {"key": f"{c.code}:{kind}", "kind": kind, "code": c.code,
-                "phase": {"soft_straight_braking": "braking", "early_shift": "full throttle",
-                          "late_shift": "full throttle", "on_off_throttle": "mid-corner"}.get(kind, "exit"),
+                "phase": {"soft_straight_braking": "braking", "braking_unused": "braking",
+                          "early_shift": "full throttle", "late_shift": "full throttle",
+                          "on_off_throttle": "mid-corner"}.get(kind, "exit"),
                 "start_m": a, "end_m": b, "at_m": at,
                 "cost_s": round(max(cost, 0.0), 3), "title": title, "what": what, "do": do}
 
@@ -984,6 +1106,32 @@ def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Enve
                                 "Keep the car accelerating from the slowest point to the next brake point: open the "
                                 "steering and add throttle steadily; no lift, no scrub.",
                                 gain_cost(tr, j, e, extra, stop, most)))
+            # ---- the rear stepping out under power: opposite lock on the throttle while still cornering
+            slide = _power_slide(tr, a, b, side, steer_sign) if steer_sign else None
+            if slide is not None:
+                lock_at, e, lock = slide
+                j = max(lock_at - SLIDE_LEAD_M, a)
+                acc = _acc(tr)
+                was = float(np.mean(acc[max(j - SLIDE_BEFORE_M, a):j])) if j > a else float(acc[j])
+                upto = min(e + SLIDE_AFTER_M, stop, n)
+                extra = np.clip(was - acc[j:upto], 0.0, None)
+                cost = gain_cost(tr, j, upto, extra, stop, most)
+                over = [x for x in out if x["code"] == c.code and x["kind"] in ("exit_stall", "power_step")
+                        and x["start_m"] <= upto and j <= x["end_m"]]
+                for x in over:  # the slide is why: one mistake, named for its cause
+                    out.remove(x)
+                    cost = max(cost, x["cost_s"])
+                rs = (f", the rear slipping up to {float(np.max(tr['rear_slip'][j:e + 1])):.0f}%"
+                      if "rear_slip" in tr and np.max(tr["rear_slip"][j:e + 1]) > 0 else "")
+                tc = " with the traction control cutting in" if "tc_on" in tr and np.any(tr["tc_on"][j:e + 1] > 0.5) \
+                    else ""
+                what = (f"On the way out of {c.code} at full throttle the rear stepped out at {v[j]:.0f} km/h: from "
+                        f"{lock_at} m you had to hold {lock:.0f}° of opposite lock while the car was still cornering "
+                        f"at {abs(float(ay[lock_at])):.1f} g{rs}{tc}. The drive the slide took is speed lost all "
+                        "the way down the next straight.")
+                out.append(item("power_oversteer", c, j, upto, j, f"Oversteer on the power out of {c.code}", what,
+                                "Open the steering before adding the last of the throttle, and squeeze it on as the "
+                                "lock comes off, so the rear tyres are never asked for more than they have.", cost))
         # ---- the upshifts on the way out, early or late against the revs where the next gear drives harder
         if shifts is not None and c.pickup is not None:
             def gear_of(m: int) -> int:
@@ -1030,6 +1178,21 @@ def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Enve
                                         f"Braked below the car's limit in a straight line into {c.code}", what,
                                         "Brake harder at once, to the limit, while the car is straight; then brake "
                                         "later to match.", brake_cost(v[a] / 3.6, v[end] / 3.6, got, can)))
+            # ---- the whole braking, into the turn-in too, below the grip the car shows there (ABS or not)
+            if braking is not None and not any(x["code"] == c.code and x["kind"] == "soft_straight_braking"
+                                               for x in out):
+                unused = _braking_unused(tr, env_r, a, b)
+                if unused is not None and unused[0] > 0:
+                    cost, e, share, eased = unused
+                    ease = (f"; you eased off the pedal to {eased:.0f}% of its peak while the car could still take "
+                            "more" if eased is not None else "")
+                    what = (f"Braking for {c.code} from {a} m ({v[a]:.0f} km/h) to {e} m, the car slowed at "
+                            f"{share:.0%} of the grip it has shown at each metre of it, cornering as it was{ease}. "
+                            "Braking at the limit all the way to the turn-in, you could brake later.")
+                    # kept aside: what it costs is judged against the best braking there (relative_braking)
+                    braking[c.code] = item("braking_unused", c, a, e, a, f"Braking grip left unused into {c.code}",
+                                           what, "Hold the pressure at the limit until the turn-in, and release it "
+                                           "only as the steering goes on; then move the brake point later.", cost)
     out = [x for x in out if x["cost_s"] >= MIN_OBVIOUS_S]
     out.sort(key=lambda x: -x["cost_s"])
     return out
@@ -1173,8 +1336,8 @@ def model_inputs(tr: dict[str, np.ndarray], env: Envelope, sim: SimLap, step: in
     return out
 
 
-FIXED_KINDS = ("exit_lift", "exit_stall", "on_off_throttle", "power_step", "soft_straight_braking", "early_shift",
-               "late_shift")
+FIXED_KINDS = ("exit_lift", "exit_stall", "on_off_throttle", "power_step", "soft_straight_braking", "braking_unused",
+               "power_oversteer", "early_shift", "late_shift")
 SHIFT_KINDS = ("early_shift", "late_shift")
 
 
@@ -1203,7 +1366,7 @@ def without_mistakes(tr: dict[str, np.ndarray], env_r: Envelope, sections: list[
         if sec.apex is not None and 0 <= sec.apex <= n:
             seed[sec.apex] = driven[sec.apex]
     for o in todo:
-        if o["kind"] == "soft_straight_braking":
+        if o["kind"] in ("soft_straight_braking", "braking_unused"):
             e = min(int(o["end_m"]), n)
             seed[e] = min(seed[e], driven[e])
     bw = np.empty(n + 1)
@@ -1280,6 +1443,7 @@ class Pass:
     times: list[float]  # s through each section
     obvious: list[dict]
     trace: dict
+    braking: dict[str, dict] = field(default_factory=dict)  # obvious_mistakes' braking: by corner
 
 
 def section_times(tr: dict[str, np.ndarray], sections: list[Section]) -> list[float]:
@@ -1405,7 +1569,8 @@ def check_lap(tr: dict[str, np.ndarray], perfect: PlaceLimits, held: PlaceLimits
                       "title": mk.title, "what": mk.what, "do": mk.do,
                       "value": None if mk.value is None else round(float(mk.value), 3), "unit": mk.unit})
     items.sort(key=lambda x: -x["cost_s"])
-    obvious = obvious_mistakes(tr, corners, env, env_r, shifts)
+    braking: dict[str, dict] = {}
+    obvious = obvious_mistakes(tr, corners, env, env_r, shifts, braking)
     trace_time = float(tr["t"][-1])
     named_at = {x["start_m"] for x in items}
     named = sum(p.cost for p in pieces if p.start in named_at)
@@ -1441,6 +1606,9 @@ def check_lap(tr: dict[str, np.ndarray], perfect: PlaceLimits, held: PlaceLimits
         # the mistakes that are wrong whatever the target (exit lifts, power stepped on and forcing a lift or a
         # correction, soft straight-line braking): shown first, each with what it costs; they may overlap the above
         "obvious": obvious,
+        # the braking up to each turn-in below a quick lap's usual grip, by corner: a mistake only against the best
+        # braking there on the other laps (relative_braking)
+        "braking": braking,
     }
     if detail:
         step = TRACE_STEP_M

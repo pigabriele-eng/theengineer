@@ -457,7 +457,8 @@ const OVERLAYS: { key: Overlay; label: string; legend: string | null }[] = [
 
 const PUT_RIGHT: Partial<Record<ObviousMistake['kind'], string>> = {
   exit_lift: 'exit lift', exit_stall: 'exit stall', on_off_throttle: 'throttle on and off', power_step: 'stepped power',
-  soft_straight_braking: 'soft braking', early_shift: 'early upshift', late_shift: 'late upshift',
+  soft_straight_braking: 'soft braking', braking_unused: 'braking grip unused', power_oversteer: 'power oversteer',
+  early_shift: 'early upshift', late_shift: 'late upshift',
 };
 
 /** Where the best-technique lap comes from, section by section, and what it finds over this lap. */

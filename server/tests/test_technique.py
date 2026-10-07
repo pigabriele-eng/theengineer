@@ -383,3 +383,37 @@ def test_what_a_mistake_really_costs_is_measured_on_the_laps():
     # another event at the track adds to it
     both = pool_stats([stats, stats])["T1:exit_lift"]
     assert both["events"] == 2 and both["laps_with"] == 2 * pooled["laps_with"]
+
+
+def test_opposite_lock_on_the_power_out_of_a_corner_is_a_slide():
+    from app.analysis.technique import _power_slide, _steer_sign
+    n = 200
+    ay = np.full(n, 1.5)
+    steer = np.full(n, 6.0)
+    steer[100:115] = -4.0  # opposite lock, still cornering, full throttle
+    tr = {"steer": steer, "ay": ay, "throttle": np.full(n, 100.0)}
+    assert _steer_sign(tr) == 1.0
+    j, e, lock = _power_slide(tr, 50, 180, 1.0, 1.0)
+    assert (j, e, lock) == (100, 114, 4.0)
+    # off the throttle, or the car already straight: not a slide on the power
+    assert _power_slide({**tr, "throttle": np.full(n, 30.0)}, 50, 180, 1.0, 1.0) is None
+    assert _power_slide({**tr, "ay": np.full(n, 0.2)}, 50, 180, 1.0, 1.0) is None
+    # a left-hand corner on a log steering the other way round: the same slide
+    left = {"steer": steer, "ay": -ay, "throttle": tr["throttle"]}
+    assert _steer_sign(left) == -1.0 and _power_slide(left, 50, 180, -1.0, -1.0)[0] == 100
+
+
+def test_braking_grip_left_unused_is_judged_against_the_best_braking_there():
+    from app.analysis.technique import BRAKE_UNUSED_S, relative_braking
+
+    def raw(cost):
+        return {"T1": {"key": "T1:braking_unused", "kind": "braking_unused", "code": "T1", "cost_s": cost,
+                       "what": "Braking for T1.", "at_m": 200, "start_m": 190, "end_m": 300}}
+
+    costs = [0.01, 0.012, 0.015, 0.02, 0.03, 0.06]
+    obvious = [[] for _ in costs]
+    relative_braking([*(raw(c) for c in costs), {}], [*obvious, []])
+    flagged = [i for i, o in enumerate(obvious) if o]
+    assert flagged == [5]  # only the lap giving away clearly more than the best braking there
+    m = obvious[5][0]
+    assert m["cost_s"] >= BRAKE_UNUSED_S and m["cost_s"] < 0.06 and "best braking" in m["what"]

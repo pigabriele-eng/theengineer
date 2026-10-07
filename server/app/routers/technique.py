@@ -38,6 +38,7 @@ from app.analysis.technique import (
     habits,
     mistake_stats,
     pool_stats,
+    relative_braking,
     section_times,
 )
 from app.db import SessionLocal, get_db
@@ -60,6 +61,8 @@ TECHNIQUE_VERSION = 11  # raise when the check changes, so every kept one is wor
 #     driver's, and the driver's revs among their inputs; the best technique: the driver's quickest clean pass of
 #     the event through every section, built where none beats the lap; every obvious mistake's cost measured on the
 #     laps (with it against without it), pooled over the track's checks
+#     power oversteer (opposite lock on the throttle out of a corner); braking grip left unused up to the turn-in,
+#     against the best braking there on the other laps
 TRACES_WAIT_S = 3600  # longest the check waits for the logs to be read into lap traces
 HABITS_SHOWN = 12
 DETAILS_KEPT = 16  # laps' full checks kept in memory
@@ -477,7 +480,9 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
                      "obvious": out["obvious"], "detail": member})
         details[member] = {"mistakes": out["mistakes"], "trace": out["trace"]}
         passes.append(Pass(x.run, x.number, x.time, x.driver, section_times(x.trace, prep.sections), out["obvious"],
-                           out["trace"]))
+                           out["trace"], out["braking"]))
+    # braking left unused at a corner is a mistake against the best braking there on the other laps
+    relative_braking([p.braking for p in passes], [p.obvious for p in passes])
     # every lap's best technique: the driver's quickest clean pass of the event through each section, or built
     blobs = {}
     for i, p in enumerate(passes):
