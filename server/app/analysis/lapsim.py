@@ -127,7 +127,7 @@ class Calibration:
     """The model's own error along the fastest lap, metre by metre: the lap's real time and speed against perfect
     driving at its own limits on its line (local_limits.place_limits own=True). Every point of the line's distance
     grid, the timing line at both ends. For the theoretical lap, also what it takes from the best pass of a section
-    that is quicker than it (to_best)."""
+    that is quicker than it, or gives back where it would beat every pass the car has really made (to_best)."""
     t: np.ndarray  # s to each metre: the fastest lap's real time
     speed: np.ndarray  # km/h: its real speed
     own: SimLap  # perfect driving at its own limits on its line
@@ -157,19 +157,31 @@ class Calibration:
             t, speed = t + self.best_t, speed + self.best_v
         return SimLap(speed, t, float(t[-1]), sim.limited_by)
 
-    def to_best(self, sim: SimLap, best: list[tuple[int, int, float]]) -> Calibration:
+    def to_best(self, sim: SimLap, best: list[tuple[int, int, float]],
+                cap: list[tuple[int, int, float]] | None = None) -> Calibration:
         """This calibration for a target that is never slower than the best pass through any section (start metre,
-        end metre, the best pass's time): where the target would be, its time through the section is scaled to the
-        best pass's, its speed with it."""
+        end metre, the best pass's time) and, given cap, never quicker than cap's pass through it either. Where it
+        would be slower, its time through the section is scaled to that pass's, its speed with it; where it would be
+        quicker, what it gains over the fastest lap is scaled down at every metre, so it stays never slower than that
+        lap anywhere."""
         lap = self.target(sim)
         dt = np.diff(lap.t)
         extra, dv = np.zeros_like(dt), np.zeros_like(lap.speed)
-        for a, b, quickest in best:
+        bound = {(a, b): (q, None) for a, b, q in best}
+        for a, b, q in cap or []:
+            bound[(a, b)] = (bound.get((a, b), (None, None))[0], q)
+        own_dt = np.diff(self.t)
+        for (a, b), (slowest, quickest) in bound.items():
             took = float(lap.t[b] - lap.t[a])
-            if quickest < took:
-                f = quickest / took
+            if slowest is not None and slowest < took and took > 0:  # quicker, at every metre alike
+                f = slowest / took
                 extra[a:b] = dt[a:b] * (f - 1)
                 dv[a + 1:b] = lap.speed[a + 1:b] * (1 / f - 1)
+            elif quickest is not None and quickest > took:  # less of the gain over the fastest lap, at every metre
+                gained = float(self.t[b] - self.t[a]) - took
+                keep = max(float(self.t[b] - self.t[a]) - quickest, 0.0) / gained if gained > 0 else 0.0
+                extra[a:b] = (own_dt[a:b] - dt[a:b]) * (1 - keep)
+                dv[a + 1:b] = (self.speed[a + 1:b] - lap.speed[a + 1:b]) * (1 - keep)
         return Calibration(self.t, self.speed, self.own, np.concatenate([[0.0], np.cumsum(extra)]), dv)
 
     @property
