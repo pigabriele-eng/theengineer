@@ -89,7 +89,7 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
   const badges: { n: number; x: number }[] = [];
   for (const b of [...shown].sort((a, z) => a.n - z.n)) {
     const bx = px((Math.max(b.start_m, x0) + Math.min(b.end_m, x1)) / 2);
-    if (badges.every((o) => Math.abs(o.x - bx) >= 17) || b.n === selected) badges.push({ n: b.n, x: bx });
+    if (badges.every((o) => Math.abs(o.x - bx) >= 19) || b.n === selected) badges.push({ n: b.n, x: bx });
   }
   const ticksX: { label: string; x: number }[] = [];
   for (const k of [...corners].sort((a, z) => a.at_m - z.at_m)) {
@@ -202,7 +202,7 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
             </G>
             {/* the mistake's number in a square block: ink when picked, grey otherwise */}
             {badges.map((b) => (
-              <Rect key={`c${b.n}`} x={b.x - 8} y={PAD.top - 19} width={16} height={16}
+              <Rect key={`c${b.n}`} x={b.x - 9} y={PAD.top - 20} width={18} height={18}
                 fill={b.n === selected ? c.text : c.axis} stroke={c.surface} strokeWidth={1.5} />
             ))}
             {badges.map((b) => (
