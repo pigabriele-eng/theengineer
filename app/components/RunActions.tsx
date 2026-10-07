@@ -74,19 +74,24 @@ export type RunActions = ReturnType<typeof useRunActions>;
 const byFinger = (e: GestureResponderEvent) =>
   !web || String((e.nativeEvent as unknown as { type?: string }).type ?? '').startsWith('touch');
 
-/** On the web: the click that follows a press is stopped before it reaches anything (unless the press turns into a
- * scroll, or none comes soon). */
-function swallowClick() {
+/** On the web: the click that follows the press `down` (a tap) is stopped before it reaches anything. A press that
+ * turns into a scroll or a drag (another row's swipe) has no click: nothing is stopped then, nor later. */
+function swallowClick(down: PointerEvent) {
   const stop = (e: Event) => {
     e.preventDefault();
     e.stopPropagation();
     done();
   };
+  const up = (e: PointerEvent) => {
+    if (Math.hypot(e.clientX - down.clientX, e.clientY - down.clientY) > 10) done();
+  };
   const done = () => {
     document.removeEventListener('click', stop, true);
+    document.removeEventListener('pointerup', up, true);
     document.removeEventListener('pointercancel', done, true);
   };
   document.addEventListener('click', stop, true);
+  document.addEventListener('pointerup', up, true);
   document.addEventListener('pointercancel', done, true);
   setTimeout(done, 800);
 }
@@ -151,11 +156,11 @@ export function SwipeRow({ run, name, disabled, bleed, children }: {
   useEffect(() => {
     if (!web || state !== 'open' || typeof document === 'undefined') return;
     const node = box.current as unknown as HTMLElement | null;
-    const down = (e: Event) => {
+    const down = (e: PointerEvent) => {
       // (closed already, sliding back: the press is the next thing's, a confirm's button say)
       if (!open.current || !node || node.contains(e.target as Node)) return;
       settle(false);
-      swallowClick();
+      swallowClick(e);
     };
     document.addEventListener('pointerdown', down, true);
     return () => document.removeEventListener('pointerdown', down, true);
