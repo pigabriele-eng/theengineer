@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app import garage, models, schemas, storage
+from app import garage, heavy, models, page_cache, schemas, storage
 from app.analysis.emptyrun import NoLaps, judge
 from app.analysis.laps import CornerSpec, LapTiming, SessionData, analyze, compare_laps, load_session, time_laps
 from app.db import get_db
@@ -99,8 +99,16 @@ def upload_file(session_id: int, file: UploadFile, db: Session = Depends(get_db)
         from app import season_match  # here: it uses the seasons, which use this module's importers
 
         season_match.safely("a log was added", season_match.after_import, db, [s.id])
+    _prebuild(db, s)
     db.refresh(s)
     return _with_best(s)
+
+
+def _prebuild(db: Session, s: models.RunSession) -> None:
+    """Work out the run's pages and its event's in the background now (app/prebuild.py), so they open at once."""
+    from app import prebuild  # here: it uses the routers, which use this module
+
+    prebuild.after_upload(db, [s.id])
 
 
 def _attach_track(db: Session, s: models.RunSession, rec: models.LoggerFile) -> None:
@@ -182,6 +190,9 @@ def _attach_ldx(db: Session, s: models.RunSession, name: str, raw: bytes) -> dic
         ld = read_file(rec)
         track = _track_for(db, s, ld)
         store_laps(db, s, rec, time_laps(ld, beacons, track_line(track)), track)
+        del ld
+        db.commit()
+        _prebuild(db, s)  # its laps were timed again
     db.commit()
     db.refresh(s)
     return _with_best(s)
@@ -231,14 +242,24 @@ def load_main_file(db: Session, s: models.RunSession,
 
 
 @router.get("/{session_id}/analysis")
-@one_at_a_time
 def session_analysis(session_id: int, file_id: int | None = None, reference_lap: int | None = None,
                      db: Session = Depends(get_db)):
     """Every clean lap against the reference lap, corner by corner. Corners carry the track's official numbers
     when it has them (numbering "official"); otherwise they are the slow points of the speed trace, numbered
-    C1, C2... in lap order (numbering "detected")."""
-    f, data, track = load_main_file(db, _get(db, session_id), file_id)
-    return {"file_id": f.id, **analyze(data, reference_lap, official_corners(track))}
+    C1, C2... in lap order (numbering "detected"). The session page's view (its main log against its best lap) is
+    kept once worked out (app/page_cache.py)."""
+    s = _get(db, session_id)
+
+    def work() -> dict:
+        f, data, track = load_main_file(db, s, file_id)
+        return {"file_id": f.id, **analyze(data, reference_lap, official_corners(track))}
+
+    main = max(s.files, key=lambda f: f.meta.get("duration_s", 0)) if s.files else None
+    if main is None or reference_lap is not None or file_id not in (None, main.id):
+        with heavy.lock:
+            return work()
+    return page_cache.cached(db, f"session:{s.id}|analysis",
+                             lambda: page_cache.session_signature(db, "analysis", s, main), work)
 
 
 @router.get("/{session_id}/compare")

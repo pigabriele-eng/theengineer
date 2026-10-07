@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import heavy, models
+from app import heavy, models, page_cache
 from app.analysis.laps import DEFAULT_CHANNEL_MAP, load_session
 from app.analysis.trackmap import MAP_ROLES, NoGpsError, NoLapError, track_map
 from app.db import get_db
@@ -51,6 +51,19 @@ def _known_track(db: Session, s: models.RunSession, f: models.LoggerFile) -> mod
     return db.scalar(select(models.Track).where(models.Track.name == venue)) if venue else None
 
 
+def _draw(db: Session, s: models.RunSession, f: models.LoggerFile, reference_lap: int | None) -> dict:
+    """Read the log and draw the map; HTTPException 404 or 422 when this log can't. The caller holds heavy.lock."""
+    ld = read_file(f)
+    track = _track_for(db, s, ld)
+    data = load_session(ld, _map_channels(s), beacons=f.meta.get("beacons"), line=_line(track))
+    del ld
+    try:
+        return {"session_id": s.id, "session_name": s.name, "file_id": f.id,
+                **track_map(data, official_corners(track), reference_lap)}
+    except (NoLapError, NoGpsError) as e:
+        raise HTTPException(404 if isinstance(e, NoLapError) else 422, str(e)) from e
+
+
 def session_map(db: Session, s: models.RunSession, reference_lap: int | None = None) -> dict:
     f = _main_file(s)
     if f is None:
@@ -63,18 +76,20 @@ def session_map(db: Session, s: models.RunSession, reference_lap: int | None = N
             if isinstance(hit, tuple):  # this log can't draw the map: known without reading it again
                 raise HTTPException(*hit)
             return hit
-    with heavy.lock:
-        ld = read_file(f)
-        track = _track_for(db, s, ld)
-        data = load_session(ld, _map_channels(s), beacons=f.meta.get("beacons"), line=_line(track))
-        del ld
-        try:
-            out: dict | tuple[int, str] = {"session_id": s.id, "session_name": s.name, "file_id": f.id,
-                                           **track_map(data, official_corners(track), reference_lap)}
-        except (NoLapError, NoGpsError) as e:
-            out = (404 if isinstance(e, NoLapError) else 422, str(e))
+    try:
+        if reference_lap is None:  # the map every page draws: kept in the database too (app/page_cache.py)
+            out: dict | tuple[int, str] = page_cache.cached(
+                db, f"session:{s.id}|map", lambda: page_cache.session_signature(db, "map", s, f),
+                lambda: _draw(db, s, f, None))
+        else:
+            with heavy.lock:
+                out = _draw(db, s, f, reference_lap)
+    except HTTPException as e:
+        if e.status_code not in (404, 422):
+            raise
+        out = (e.status_code, e.detail)
     with _cache_lock:
-        _cache[_key(s, f, track, reference_lap)] = out
+        _cache[_key(s, f, _known_track(db, s, f), reference_lap)] = out
         while len(_cache) > CACHE_SIZE:
             _cache.popitem(last=False)
     if isinstance(out, tuple):

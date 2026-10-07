@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import heavy, models
+from app import heavy, models, page_cache
 from app.analysis import grip
 from app.analysis.grip import GripStudy
 from app.analysis.laps import SessionData, load_session
@@ -67,12 +67,12 @@ def grip_report(session: int | None = None, event: int | None = None, db: Sessio
         if hit is not None and hit[0] == fp:
             _cache.move_to_end(key)
             return hit[1]
-    with heavy.lock:  # one log-reading job at a time: each holds a whole log in memory while it reads it
-        with _cache_lock:  # a request that waited on the lock may find its report already built
-            hit = _cache.get(key)
-        if hit is not None and hit[0] == fp:
-            return hit[1]
-        result = _build(db, sessions, track)
+    # kept in the database too (app/page_cache.py); else built under heavy.lock, one log-reading job at a time (each
+    # holds a whole log in memory while it reads it): a request that waited on the lock may find it built meanwhile
+    result = page_cache.cached(
+        db, f"{key[0]}:{key[1]}|grip",
+        lambda: page_cache.signature("grip", page_cache.sessions_part(db, sessions), page_cache.track_part(track)),
+        lambda: _build(db, sessions, track))
     with _cache_lock:
         _cache[key] = (fp, result)
         _cache.move_to_end(key)

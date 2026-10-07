@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app import heavy, models
+from app import heavy, models, page_cache
 from app.analysis.balance import car_geometry
 from app.analysis.fuel import FUEL_DENSITY
 from app.analysis.insights import RunInput
@@ -114,6 +114,45 @@ def reduced(db: Session, f: models.LoggerFile) -> tuple[LogSummary, models.Track
 
 
 def stint_view(db: Session, file_ids: list[int]) -> dict:
+    """The stints of the logs. Two views are kept once worked out (app/page_cache.py), with their lap tags in their
+    signature: one log's (the session page's) and an event's main logs together (the report's quick laps)."""
+    ids = list(dict.fromkeys(file_ids))
+    files = [db.get(models.LoggerFile, i) for i in ids]
+    if ids and None not in files:
+        if len(files) == 1:
+            f = files[0]
+            return page_cache.cached(db, f"session:{f.session_id}|stint|file:{f.id}",
+                                     lambda: _view_signature(db, f), lambda: _stint_view(db, ids), locked=False)
+        events = {f.session.event_id for f in files}
+        if len(events) == 1 and None not in events and sorted(ids) == event_files(db, (eid := events.pop())):
+            return page_cache.cached(
+                db, f"event:{eid}|stint",
+                lambda: page_cache.signature("stint", sorted(_view_signature(db, f) for f in files)),
+                lambda: _stint_view(db, ids), locked=False)
+    return _stint_view(db, ids)
+
+
+def event_files(db: Session, event_id: int) -> list[int]:
+    """The logs the report's quick laps read for an event (the app asks for these): each session's main log, when
+    it has laps."""
+    out = []
+    for s in db.scalars(select(models.RunSession).where(models.RunSession.event_id == event_id)):
+        f = main_file(s)
+        if f is not None and any(l.file_id == f.id for l in s.laps):
+            out.append(f.id)
+    return sorted(out)
+
+
+def _view_signature(db: Session, f: models.LoggerFile) -> str:
+    s = f.session
+    preset, mass, density = _car(db, s)
+    track = session_track(db, s)
+    return page_cache.session_signature(db, "stint", s, f, preset, mass, density, s.car_id, len(s.files),
+                                        f.filename, track.name if track else None,
+                                        sorted(tags_for_files(db, [f.id]).get(f.id, {}).items()))
+
+
+def _stint_view(db: Session, file_ids: list[int]) -> dict:
     ids = list(dict.fromkeys(file_ids))
     if not ids:
         raise HTTPException(422, "Tick at least one log")

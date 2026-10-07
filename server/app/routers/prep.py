@@ -229,6 +229,46 @@ def _work() -> None:
             jobs.task_done()
 
 
+def prebuild(event_id: int) -> str:
+    """For the prebuild (app/prebuild.py): the event's prep report (for the car it opens with), worked out now on the
+    calling thread unless it is up to date, failed for these very inputs, or queued or being worked out already. The
+    past events' reports and technique checks it is made from are worked out first, here too, so none of it is left
+    to the other jobs' queues. What it did."""
+    def state() -> tuple[str | None, str | None]:
+        with SessionLocal() as db:
+            p = prep_plan.plan(db, event_id, None)
+            if p is None or p.error or not p.past:
+                return None, "nothing to do"
+            sig = signature(db, p)
+            row = _row(db, p.scope)
+            if row is not None and row.result is not None and row.result_signature == sig:
+                return None, "up to date"
+            if row is not None and row.signature == sig and row.status == "failed":
+                return None, "failed before"
+            for pe in p.past:
+                past.setdefault(pe.id, None)
+            return p.scope, None
+
+    past: dict[int, None] = {}
+    scope, why = state()
+    if scope is None:
+        return why
+    for pe in past:
+        reports.prebuild("event", pe)
+        technique.prebuild("event", pe)
+    scope, why = state()  # again: what it is made from may have changed meanwhile
+    if scope is None:
+        return why
+    if not reports.claim(_lock, _pending, scope):
+        return "queued already"
+    try:
+        run_job(scope)
+    finally:
+        with _lock:
+            _pending.discard(scope)
+    return "done"
+
+
 def wait_idle(timeout: float = 120) -> bool:
     """Wait until every prep report asked for is worked out (for tests). True when nothing is left."""
     deadline = time.monotonic() + timeout
