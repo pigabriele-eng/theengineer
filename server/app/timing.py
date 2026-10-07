@@ -150,11 +150,25 @@ def schedule(track_id: int | None) -> None:
 
 def check_all_tracks() -> None:
     """On startup: every track and the logs at no track, in the background (a database timed by older code
-    corrects itself)."""
+    corrects itself). The logs are read from the database once and grouped by track: only the tracks with a log to
+    re-time or a line to learn are scheduled (check_track would find nothing to do at the others)."""
     with app_db.SessionLocal() as db:
-        ids = db.scalars(select(models.Track.id).order_by(models.Track.id)).all()
-    for track_id in [*ids, NO_TRACK]:
+        tracks = db.scalars(select(models.Track).order_by(models.Track.id)).all()
+        by_track = _files_by_track(db)
+        due = [t.id for t in tracks if _has_work(t, by_track.get(t.id, []))]
+        if _has_work(None, by_track.get(NO_TRACK, [])):
+            due.append(NO_TRACK)
+    for track_id in due:
         schedule(track_id)
+
+
+def _has_work(track: models.Track | None, files: list[models.LoggerFile]) -> bool:
+    """Whether check_track has anything to do for these logs at the track: a marker log to learn the line from, or a
+    log that isn't up to date."""
+    if track is not None and (track.timing_line or {}).get("source") != "marker" \
+            and any(f.meta.get("lap_source") == "marker" for f in files):
+        return True
+    return not all(_up_to_date(f, track) for f in files)
 
 
 def wait_idle() -> None:
@@ -225,19 +239,22 @@ def files_at(db: Session, track: models.Track | None) -> list[models.LoggerFile]
     """The logs driven at the track, as the sessions router finds a log's track: its session's event's track,
     else the venue in its header (track None: the logs at no track). Read from the database only, no log is
     opened."""
+    return _files_by_track(db).get(track.id if track is not None else NO_TRACK, [])
+
+
+def _files_by_track(db: Session) -> dict[int | None, list[models.LoggerFile]]:
+    """Every log by the id of the track it was driven at (files_at), NO_TRACK for the logs at no track; in id order."""
     rows = db.scalars(select(models.LoggerFile).order_by(models.LoggerFile.id)
                       .options(selectinload(models.LoggerFile.session).selectinload(models.RunSession.event))).all()
-    names = set(db.scalars(select(models.Track.name))) if track is None else set()
-    out = []
+    ids = {name: tid for tid, name in db.execute(select(models.Track.id, models.Track.name))}  # names are unique
+    out: dict[int | None, list[models.LoggerFile]] = {}
     for f in rows:
         ev = f.session.event
-        venue = (f.meta.get("venue") or "")[:120]
         if ev is not None and ev.track_id is not None:
-            at = track is not None and ev.track_id == track.id
+            at = ev.track_id
         else:
-            at = venue == track.name if track is not None else venue not in names
-        if at:
-            out.append(f)
+            at = ids.get((f.meta.get("venue") or "")[:120], NO_TRACK)
+        out.setdefault(at, []).append(f)
     return out
 
 

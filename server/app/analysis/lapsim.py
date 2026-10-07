@@ -15,6 +15,7 @@ check's perfect driving from any point of a lap (technique.Envelope), so they al
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -26,6 +27,7 @@ AY_STEP = 0.01  # g, lookup resolution
 AY_MAX = 4.0
 TOP_SPEED_MARGIN = 1.02  # perfect driving may beat the laps' top speed by this much (a better exit)
 MIN_CORNER_G = 0.05  # where the laps never turned, a straight line is not a corner
+EXACT = math.ulp(0.0)  # run_up's tol for the very same speed
 LIMITED_BY = ("corner", "accel", "brake")
 
 
@@ -62,22 +64,76 @@ class LapModel:
         self._vc = self.vc.tolist()
         self._power = lim.power
 
-        # forward two laps from the timing line, so the line is crossed at the speed the lap really carries
+        # forward two laps from the timing line, so the line is crossed at the speed the lap really carries. The
+        # second lap only differs from the first until the two meet (both capped by the same corner, say): from the
+        # same speed at the same metre on, each step is the same
         fwd = [0.0] * (2 * n + 1)
         fwd[0] = self._vc[0]
-        for i in range(2 * n):
-            fwd[i + 1] = self.step_up(i % n, fwd[i])
-        # braking back from every corner, two laps so the corners just after the line count at its end
-        bwd = self._vc[:-1] * 2 + [self._vc[0]]
-        for i in range(2 * n - 1, -1, -1):
-            v = bwd[i + 1]
-            b = self.brake_at((i + 1) % n, v)
-            bwd[i] = min(bwd[i], (v * v + 2 * b * G) ** 0.5)
+        fwd[1:n + 1] = self.run_up(0, fwd[0], n)
+        tail = self.run_up(0, fwd[n], n, fwd, EXACT)
+        fwd[n + 1:n + 1 + len(tail)] = tail
+        if len(tail) < n:  # met the first lap at metre len(tail): the rest of it is the first lap's
+            fwd[n + 1 + len(tail):] = fwd[1 + len(tail):n + 1]
         self.F = fwd[n:]
-        self.B = bwd[:n + 1]
+        self.B = self._braking()
         self.P = np.minimum(np.array(self.F), np.array(self.B))
         seg = 2 / (self.P[:-1] + self.P[1:])
         self.cum = np.concatenate([[0.0], np.cumsum(seg)])  # perfect driving's time to each metre
+
+    def run_up(self, i0: int, v0: float, stop: int, meet: list[float] | None = None, tol: float = EXACT) -> list[float]:
+        """Speeds at metres i0 + 1 .. stop accelerating as hard as the car can from v0 (m/s) at metre i0: step_up
+        metre by metre, written out for speed. meet: speeds at every metre; the run stops at the first metre whose
+        speed is within tol of meet's there (that metre not included: from there on the run is meet's); the
+        smallest tol, EXACT, only where the speeds are the same. Each step is step_up's arithmetic, operation for
+        operation, so that it gives the very same speeds for any type of v0 (a numpy float32 too)."""
+        k, base, drive, vc, acc = self.k, self.base, self.drive, self._vc, self._acc
+        na, c0, c1, c2 = self.na, *self._power
+        g, step, s_min = G, AY_STEP, 30 / 3.6
+        out = []
+        append = out.append
+        v = v0
+        for i in range(i0, stop):
+            vv = v * v
+            ay = int(vv * k[i] / g / step + 0.5)
+            if ay > na:
+                ay = na
+            grip = acc[base[i] + ay]
+            s = s_min if s_min > v else v
+            a = c0 / s + c1 + c2 * s * s + drive[i]
+            if not a < grip:
+                a = grip
+            x = vv + 2 * a * g
+            if 1.0 > x:
+                x = 1.0
+            x = x ** 0.5
+            cap = vc[i + 1]
+            v = cap if cap < x else x
+            if meet is not None and abs(v - meet[i + 1]) < tol:
+                break
+            append(v)
+        return out
+
+    def _braking(self) -> list[float]:
+        """B at metres 0..n: braking back from every corner (brake_at, metre by metre, written out for speed), two
+        laps so the corners just after the line count at its end. The first lap only differs from the second until
+        the two meet: from the same speed at the same metre on, each step back is the same."""
+        n, k, base, brk = self.n, self.k, self.base, self._brk
+        na, g, step = self.na, G, AY_STEP
+        bwd = self._vc[:-1] * 2 + [self._vc[0]]
+        for i in range(2 * n - 1, -1, -1):
+            v = bwd[i + 1]
+            if i < n and v == bwd[i + 1 + n]:  # met the lap after: the rest back to the line is its
+                bwd[:i + 1] = bwd[n:i + 1 + n]
+                break
+            j = (i + 1) % n
+            vv = v * v
+            ay = int(vv * k[j] / g / step + 0.5)
+            if ay > na:
+                ay = na
+            x = (vv + 2 * brk[base[j] + ay] * g) ** 0.5
+            if x < bwd[i]:
+                bwd[i] = x
+        return bwd[:n + 1]
 
     def _ay(self, v: float, i: int) -> int:
         return min(int(v * v * self.k[i] / G / AY_STEP + 0.5), self.na)

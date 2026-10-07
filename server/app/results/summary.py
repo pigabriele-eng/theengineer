@@ -222,16 +222,18 @@ def our_row(s: rm.ResultSession, team: str | None, car_number: str | None, same_
     return min(placed, key=lambda r: r.position) if placed else (mine[0] if mine else None)
 
 
-def our_driver(db: Session, series: str, car_number: str | None, year: int | None) -> str | None:
+def our_driver(db: Session, series: str, car_number: str | None, year: int | None,
+               rounds: list[rm.ResultRound] | None = None) -> str | None:
     """The driver who follows our car across seasons, as a surname ('piana'): of the drivers of this car number in
     ``year`` (its results, else its entry list), the one who drove the most of our own runs (the garage's drivers),
-    else the one who raced the most seasons of the series. None when the number is unknown that year."""
+    else the one who raced the most seasons of the series. None when the number is unknown that year. rounds: the
+    series' rounds (_rounds) when already loaded."""
     from app import models  # the app's runs and drivers
 
     n = _num(car_number)
     if not n or year is None:
         return None
-    rounds = _rounds(db, series)
+    rounds = rounds if rounds is not None else _rounds(db, series)
     crew: Counter[str] = Counter()
     for rnd in rounds:
         if rnd.year == year:
@@ -368,10 +370,11 @@ def circuit_trend(per: list[dict]) -> list[dict]:
     return sorted(out, key=lambda c: (c["quali_offset_pct"] is None, c["quali_offset_pct"] or 0))
 
 
-def model_sessions(db: Session, series: str = "gt4-europe") -> list[dict]:
-    """Every loaded classification in the shape the predictions read (results/predict.py)."""
+def model_sessions(db: Session, series: str = "gt4-europe", rounds: list[rm.ResultRound] | None = None) -> list[dict]:
+    """Every loaded classification in the shape the predictions read (results/predict.py). rounds: the series'
+    rounds (_rounds) when already loaded."""
     out = []
-    for rnd in _rounds(db, series):
+    for rnd in rounds if rounds is not None else _rounds(db, series):
         for s in rnd.sessions:
             if not is_classification(s.code):
                 continue
