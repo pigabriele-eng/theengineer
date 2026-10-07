@@ -16,9 +16,10 @@ def _m(kind: str, code: str, cost: float = 0.1, phase: str = "exit") -> dict:
     return {"key": f"{code}:{kind}", "kind": kind, "code": code, "phase": phase, "cost_s": cost}
 
 
-def _lap(session_id: int, mistakes: list[dict], obvious: list[dict] | None = None, key: str = "") -> dict:
-    return {"key": key or f"{session_id}:{len(mistakes)}", "session_id": session_id, "mistakes": mistakes,
-            "obvious": obvious or [], "time": 90.0}
+def _lap(session_id: int, obvious: list[dict], perfect: list[dict] | None = None, key: str = "") -> dict:
+    """A checked lap: its obvious mistakes, and the pieces of its gap to the perfect lap (which never count)."""
+    return {"key": key or f"{session_id}:{len(obvious)}", "session_id": session_id, "mistakes": perfect or [],
+            "obvious": obvious, "time": 90.0}
 
 
 def test_corner_types_come_from_the_slowest_point():
@@ -29,9 +30,10 @@ def test_corner_types_come_from_the_slowest_point():
     assert [ht.corner_type(v) for v in (99, 100, 150, 151, None)] == ["slow", "medium", "medium", "fast", "flat"]
 
 
-def test_a_mistake_named_and_obvious_at_one_corner_counts_once():
+def test_one_kind_at_one_corner_counts_once_and_only_obvious_mistakes_count():
     res = {"sections": SECTIONS, "laps": [
-        _lap(1, [_m("exit_lift", "T1", 0.2)], [_m("exit_lift", "T1", 0.3), _m("on_off_throttle", "T1", 0.25)]),
+        _lap(1, [_m("exit_lift", "T1", 0.2), _m("exit_lift", "T1", 0.3), _m("on_off_throttle", "T1", 0.25)],
+             [_m("min_speed", "T3", 0.5, "mid-corner")]),  # a piece of the gap to the perfect lap: left out
         _lap(1, [_m("brake_early", "T2", 0.1, "braking")]),
         _lap(2, [_m("exit_lift", "T2", 0.4)]),
         _lap(9, [_m("exit_lift", "T2", 0.4)]),  # a run nobody is named for: left out
@@ -46,6 +48,7 @@ def test_a_mistake_named_and_obvious_at_one_corner_counts_once():
     assert a.group_hits["braking"] == 1
     assert a.type_hits == {"slow": 1, "fast": 1} and a.type_passes["slow"] == 2
     assert t[22].hits["exit_lift"] == 1
+    assert "min_speed" not in a.hits
 
 
 def test_a_habit_getting_better_worse_or_the_same():

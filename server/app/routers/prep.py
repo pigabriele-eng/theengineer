@@ -43,7 +43,7 @@ from app.setup.models import SessionSetup
 router = APIRouter(prefix="/prep")
 log = logging.getLogger(__name__)
 
-PREP_VERSION = 3  # raise when the report changes, so every kept one is worked out again
+PREP_VERSION = 4  # raise when the report changes, so every kept one is worked out again
 STEPS_PER_EVENT = 4  # report, technique check, tyre prep, setups and balance
 
 _jobs: queue.Queue[str] = queue.Queue()

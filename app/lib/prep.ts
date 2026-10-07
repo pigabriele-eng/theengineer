@@ -20,15 +20,12 @@ export type PerfRow = {
   clean_laps: number;
   other_cars: boolean;
   best: LapRef;
-  ideal: number | null;
-  realistic: number | null;
-  theoretical: number | null;
   typical: number | null;
   quali: (LapRef & { basis: 'qualifying' | 'quali run'; lap?: number }) | null;
   race_pace: { time: number; laps: number; basis: 'race' | 'long runs' } | null;
   drivers: { name: string; best: number; laps: number }[];
   conditions: { ambient_c: [number, number] | null; track_c: [number, number] | null; tyres: string[] };
-  change: { best?: number; ideal?: number; race_pace?: number; quali?: number } | null;
+  change: { best?: number; race_pace?: number; quali?: number } | null;
 };
 
 export type CornerRow = {
@@ -39,13 +36,12 @@ export type CornerRow = {
   main_phase: string | null;
   year: string;
   best: number | null;
-  theoretical: number | null;
   best_by: { session: string | null; driver: string | null };
-  per_event: Record<string, { year: string; best: number | null; typical: number | null; theoretical: number | null;
+  per_event: Record<string, { year: string; best: number | null; typical: number | null;
     gain: number | null; main_phase: string | null }>;
   top_in: string[];
   change: { typical: number; best: number; from: string; to: string } | null;
-  ideal: string | null;
+  ideal: string | null; // what the quick passes did, in one sentence
   why: string | null;
   advice: string[];
   drivers: { driver: string | null; text: string }[];

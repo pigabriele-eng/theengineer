@@ -6,7 +6,7 @@ import {
 
 import PrintButton from '@/components/PrintButton';
 import {
-  B, Block, Colophon, Fig, Folio, Hero, Label, Page, Section, Swatch, TextLink, useGutter, useWide,
+  B, Colophon, Fig, Folio, Hero, Label, Page, Section, Swatch, TextLink, useGutter, useWide,
 } from '@/components/Programme';
 import { Bars, LineChart, LineSeries, useChartColors } from '@/components/ReportCharts';
 import { Balance } from '@/components/report/Balance';
@@ -41,17 +41,9 @@ import {
   SectionReport,
 } from '@/lib/report';
 import {
-  deltaColor, Fonts, inkOn, lossStep, Palette, phaseColor, Photo, PHOTOS, photoFor, TAP, tapRoom, themed, Type, useTheme,
+  deltaColor, Fonts, lossStep, Palette, phaseColor, Photo, PHOTOS, photoFor, TAP, tapRoom, themed, Type, useTheme,
 } from '@/constants/Theme';
 
-const MEDAL = { gold: 'Gold', silver: 'Silver', bronze: 'Bronze' } as const;
-const SCORE_NAMES: Record<string, string> = {
-  braking: 'Braking', turn_in: 'Turn-in', mid_corner: 'Mid-corner', traction: 'Traction',
-};
-// each sub-score's bar in its driving phase's colour
-const SCORE_PHASE: Record<string, string> = {
-  braking: 'braking', turn_in: 'entry', mid_corner: 'mid-corner', traction: 'full throttle',
-};
 // "Most of it on exit", "0.94 s of 1.72 s is on the way out of the corners"
 const PHASE_WORDS: Record<string, { most: string; where: string; title: string }> = {
   braking: { most: 'under braking', where: 'under braking', title: 'Under braking' },
@@ -60,7 +52,6 @@ const PHASE_WORDS: Record<string, { most: string; where: string; title: string }
   exit: { most: 'on exit', where: 'on the way out of the corners', title: 'On exit' },
   'full throttle': { most: 'on full throttle', where: 'on full throttle', title: 'On full throttle' },
 };
-const SCORE_FLOOR = 95; // the sub-score bars run from 95 % to 100 %
 
 const s2 = (v: number) => `${v.toFixed(2)} s`;
 // what a report is for: the whole event, one official session of it (FP1, Q1, R1: every run of it) or one run
@@ -270,7 +261,7 @@ export default function EventReport({
   const sections: { title: string; dek?: string; body: ReactNode; onLayout?: (e: LayoutChangeEvent) => void }[] = [];
   if (report) {
     const h = report.headline;
-    sections.push({ title: 'The lap', dek: 'What the car and the quickest passes say is there.',
+    sections.push({ title: 'The lap', dek: 'The fastest lap, and what a typical clean lap does.',
       body: <TheLap report={report} names={names} width={Math.min(width, 1240) - 2 * gutter} /> });
     sections.push({ title: report.gains.length === 3 ? 'Top three gains' : 'Where to gain',
       dek: `Where a typical lap (${formatLap(h.typical)}) gives the most away to the quick passes.`,
@@ -326,7 +317,7 @@ export default function EventReport({
         body: 'event' in runScope ? <GripReport event={runScope.event} bare />
           : <GripReport session={runScope.session} bare /> });
       sections.push({ title: 'Car balance & setup',
-        dek: 'Where the car limits the lap, and the setup changes to try.',
+        dek: 'The setup changes to try, and how the car is balanced.',
         body: 'event' in runScope ? <Balance event={runScope.event} bare />
           : <Balance session={runScope.session} bare /> });
     }
@@ -565,55 +556,31 @@ function Progress({ answer }: { answer: ReportAnswer }) {
 
 // ---------- 01 the lap ----------
 
+/** The lap in real laps only: the fastest lap in big figures, then the typical lap (the median clean lap), the gap
+ * between the two and how many clean laps there are. Never a lap stitched from sections or simulated. */
 function TheLap({ report, names, width }: { report: Report; names: RunNamer; width: number }) {
   const styles = useStyles();
   const wide = useWide();
   const c = useTheme();
   const h = report.headline;
-  const sc = h.score;
-  // the ideal lap as large as its column allows (Anton's figures are about 0.45 of their size wide)
-  const left = wide ? (width * 1.55) / 2.55 - 32 : width;
-  const ideal = Math.floor(Math.min(wide ? 188 : 104, left / (formatLap(h.ideal).length * 0.47)));
-  const trio: [string, number, string][] = [
-    ['Fastest lap', h.fastest.time, `${names.name(h.fastest.run, h.fastest.session_id)}, lap ${h.fastest.lap}`],
-    ['Realistic target', h.realistic, 'a quick lap’s usual grip at each place'],
-    ['Theoretical', h.theoretical, 'the car’s best at every place'],
+  // the fastest lap as large as the column allows (Anton's figures are about 0.45 of their size wide)
+  const big = Math.floor(Math.min(wide ? 188 : 104, width / (formatLap(h.fastest.time).length * 0.47)));
+  const spread = Math.max(h.typical - h.fastest.time, 0);
+  const trio: [string, string, string][] = [
+    ['Typical lap', formatLap(h.typical), 'the median clean lap'],
+    ['Fastest to typical', `${spread.toFixed(2)} s`, 'what a typical lap gives away'],
+    ['Clean laps', String(report.laps_analysed), `from ${report.runs_analysed} run${report.runs_analysed === 1 ? '' : 's'}`],
   ];
   return (
-    <View style={wide ? styles.lapFeature : undefined}>
-      <View style={wide ? styles.lapLeft : undefined}>
-        <Fig label="Ideal lap · best pass of every section" value={formatLap(h.ideal)} size={ideal} bar={c.timing.best}
-          barHeight={12} />
-        <View style={styles.trio}>
-          {trio.map(([label, v, note], i) => (
-            <View key={label} style={StyleSheet.flatten([styles.trioCell, i > 0 && styles.trioNext])}>
-              <Fig label={label} value={formatLap(v)} size={wide ? 54 : 30} note={note} />
-            </View>
-          ))}
-        </View>
-      </View>
-      <View style={wide ? styles.lapRight : styles.lapRightPhone}>
-        <View style={styles.scoreHead}>
-          <Label>Driving score</Label>
-          {sc.medal && <Block label={MEDAL[sc.medal]} color={c.medal[sc.medal]} ink={inkOn(c.medal[sc.medal])} size={14} />}
-        </View>
-        <Fig value={sc.extraction.toFixed(1)} unit="%" size={wide ? 132 : 100}
-          note={`of the car’s theoretical pace, on the fastest lap${sc.next_medal ? `; ${
-            sc.next_medal.seconds_to_find >= 0.01 ? `${sc.next_medal.seconds_to_find.toFixed(2)} s to `
-              : 'on the edge of '}${sc.next_medal.medal}` : ''}`} />
-        <View style={styles.subscores}>
-          {Object.entries(sc.scores).map(([k, v]) => (
-            <View key={k} style={styles.subscore}>
-              <Text style={styles.subName}>{SCORE_NAMES[k] ?? k}</Text>
-              <View style={styles.subTrack}>
-                <View style={{ height: 12, backgroundColor: phaseColor(c, SCORE_PHASE[k] ?? k),
-                  width: `${Math.round(Math.max(0, Math.min(1, (v - SCORE_FLOOR) / (100 - SCORE_FLOOR))) * 100)}%` }} />
-              </View>
-              <Text style={styles.subValue}>{v.toFixed(1)}%</Text>
-            </View>
-          ))}
-          <Label muted small style={styles.subNote}>Bars from {SCORE_FLOOR} % to 100 %</Label>
-        </View>
+    <View>
+      <Fig label="Fastest lap" value={formatLap(h.fastest.time)} size={big} bar={c.timing.best} barHeight={12}
+        note={`${names.name(h.fastest.run, h.fastest.session_id)}, lap ${h.fastest.lap}`} />
+      <View style={styles.trio}>
+        {trio.map(([label, v, note], i) => (
+          <View key={label} style={StyleSheet.flatten([styles.trioCell, i > 0 && styles.trioNext])}>
+            <Fig label={label} value={v} size={wide ? 54 : 30} note={note} />
+          </View>
+        ))}
       </View>
     </View>
   );
@@ -846,12 +813,10 @@ function DrivingCard({ section: s, report, names, tone, onMap }: {
             <Text style={styles.h4}>Section times</Text>
             <Text style={styles.times}>
               Fastest lap {t.fastest_lap.toFixed(2)} · best {t.best.toFixed(2)} ({names.lap(t.best_lap)}) · typical{' '}
-              {t.typical.toFixed(2)} · quick passes {t.quick.toFixed(2)} · realistic {t.realistic.toFixed(2)} ·
-              theoretical {t.theoretical.toFixed(2)}
+              {t.typical.toFixed(2)} · quick passes {t.quick.toFixed(2)}
             </Text>
             <Text style={styles.note}>
-              Fastest lap to the best pass {s2(s.ladder.driving)} (driving), best pass to realistic{' '}
-              {s2(s.ladder.car)}, realistic to theoretical {s2(s.ladder.theoretical)}.
+              The fastest lap is {s2(Math.max(t.fastest_lap - t.best, 0))} off the best pass here.
             </Text>
           </View>
         </View>
@@ -887,7 +852,6 @@ function HabitRow({ habit: h }: { habit: Habit }) {
       <Text style={styles.habitValues}>
         typical {fmtHabit(h.typical, h.unit)} · quick {fmtHabit(h.quick, h.unit)} · fastest lap{' '}
         {fmtHabit(h.fastest_lap, h.unit)}
-        {h.theoretical != null ? ` · theoretical ${fmtHabit(h.theoretical, h.unit)}` : ''}
       </Text>
       {(link || h.worth_s != null) && (
         <Text style={styles.small}>
@@ -907,7 +871,7 @@ function SectionSpeed({ section: s, report }: { section: SectionReport; report: 
   const x = useMemo(() => Array.from({ length: i1 - i0 + 1 }, (_, k) => (i0 + k) * step), [i0, i1, step]);
   const cut = (v: number[]) => v.slice(i0, i1 + 1);
   const series: LineSeries[] = [
-    { key: 'theoretical', label: 'Theoretical', values: cut(report.trace.theoretical), color: c.s3 },
+    { key: 'fastest', label: 'Fastest lap', values: cut(report.trace.fastest_lap), color: c.s3 },
     { key: 'typical', label: 'Typical pass', values: cut(report.trace.typical), color: c.s2 },
     { key: 'quick', label: 'Quick passes', values: cut(report.trace.quick), color: c.s1 },
   ];
@@ -964,7 +928,6 @@ function Trends({ report, names }: { report: Report; names: RunNamer }) {
             <Text style={styles.th}>Best</Text>
             <Text style={styles.th}>Median</Text>
             <Text style={styles.th}>Consistency</Text>
-            <Text style={styles.th}>Score</Text>
           </View>
           {tr.runs.map((r) => (
             <View key={r.run} style={styles.tr}>
@@ -976,14 +939,13 @@ function Trends({ report, names }: { report: Report; names: RunNamer }) {
               <Text style={styles.td}>{formatLap(r.best)}</Text>
               <Text style={styles.td}>{formatLap(r.median)}</Text>
               <Text style={styles.td}>{r.consistency != null ? `${r.consistency.toFixed(1)}%` : '–'}</Text>
-              <Text style={styles.td}>{r.extraction.toFixed(1)}%</Text>
             </View>
           ))}
         </View>
       </ScrollView>
       <Text style={styles.note}>
         Consistency is 100% when every clean lap matches the session&apos;s best, 10 points off for each 1% the median
-        lap is slower; score is the best lap&apos;s share of the theoretical pace.
+        lap is slower.
         {tr.consistency != null ? ` Across all ${report.laps_analysed} laps: ${tr.consistency.toFixed(1)}%.` : ''}
       </Text>
       {longest >= 2 && (
@@ -1105,21 +1067,9 @@ const useStyles = themed((c) => ({
   headLinks: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 20, rowGap: 8, marginTop: 16 },
 
   // 01 the lap
-  lapFeature: { flexDirection: 'row' },
-  lapLeft: { flex: 1.55, paddingRight: 32, borderRightWidth: 1, borderColor: c.rule },
-  lapRight: { flex: 1, paddingLeft: 32 },
-  lapRightPhone: { borderTopWidth: 6, borderColor: c.rule, marginTop: 28, paddingTop: 10 },
   trio: { flexDirection: 'row', borderTopWidth: 1, borderColor: c.rule, marginTop: 26 },
   trioCell: { flex: 1, minWidth: 0, paddingTop: 12, paddingRight: 10 },
   trioNext: { paddingLeft: 12, borderLeftWidth: 1, borderColor: c.rule },
-  scoreHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 },
-  subscores: { marginTop: 18, borderTopWidth: 3, borderColor: c.rule },
-  subscore: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: 7, paddingBottom: 6, borderBottomWidth: 1,
-    borderColor: c.separator },
-  subName: { ...Type.label, width: 92, color: c.text },
-  subTrack: { flex: 1, height: 12 },
-  subValue: { ...Type.number, fontFamily: face700(), fontSize: 16, width: 56, textAlign: 'right', color: c.text },
-  subNote: { marginTop: 6 },
 
   // 02 the gains
   gains: { flexDirection: 'row' },

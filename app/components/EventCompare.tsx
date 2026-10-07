@@ -139,7 +139,6 @@ function rowsOf(data: SideBySide): { title: string; rows: Row[]; note?: string }
   const lapRows: Row[] = [
     timeRow('Best lap', ss.map((s) => s.best_lap_s)),
     timeRow('Typical lap', ss.map((s) => s.typical_s), 'median clean lap'),
-    timeRow('Best sections', ss.map((s) => s.ideal_s), 'added up'),
     { label: 'Clean laps', values: ss.map((s) => `${s.clean_laps} of ${s.laps}`) },
     { label: 'Consistency', values: ss.map((s) => (s.consistency != null ? `${s.consistency.toFixed(0)}/100` : null)),
       best: minIndex(ss.map((s) => s.consistency), true), hint: '100: every lap as quick as the best' },

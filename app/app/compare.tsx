@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
 
 import { CompareTraces, LineKey, SectionTable, useLapColors, WhereTheTimeIs } from '@/components/CompareViews';
-import { Choice, PageHead, Toggle, useText } from '@/components/Picks';
+import { Choice, PageHead, useText } from '@/components/Picks';
 import PrintButton from '@/components/PrintButton';
 import { Colophon, Page, Section, TextLink } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
@@ -41,7 +41,7 @@ export default function CompareScreen() {
   const styles = useStyles();
   const t = useText();
   const theme = useTheme();
-  const params = useLocalSearchParams<{ session?: string; laps?: string; ideal?: string }>();
+  const params = useLocalSearchParams<{ session?: string; laps?: string }>();
   const router = useRouter();
   const [groups, setGroups] = useState<TrackGroup[] | null>(null);
   const [picks, setPicks] = useState<Pick[]>(() =>
@@ -50,7 +50,6 @@ export default function CompareScreen() {
       .slice(0, MAX_LAPS)
       .map((p, i) => ({ ...p, slot: i })),
   );
-  const [ideal, setIdeal] = useState(params.ideal === '1');
   const [adding, setAdding] = useState(false);
   const [shown, setShown] = useState<Shown | null>(null);
   const [busy, setBusy] = useState(false);
@@ -81,8 +80,8 @@ export default function CompareScreen() {
 
   // keep the picks in the address, so a comparison can be reloaded or sent on
   useEffect(() => {
-    router.setParams({ laps: encodePicks(picks) || undefined, ideal: ideal ? '1' : undefined, session: undefined });
-  }, [picks, ideal, router]);
+    router.setParams({ laps: encodePicks(picks) || undefined, session: undefined });
+  }, [picks, router]);
 
   // compare once the picks settle; a late answer to an older pick list is dropped. The answers already had on this
   // page are kept, so going back to laps compared before shows them at once.
@@ -286,13 +285,6 @@ export default function CompareScreen() {
             {adding && picks.length >= MIN_LAPS && <TextLink label="Done" onPress={() => setAdding(false)} />}
           </View>
         )}
-
-        {picks.length >= MIN_LAPS && (
-          <View style={styles.idealRow}>
-            <Toggle on={ideal} onChange={setIdeal} label="Ideal lap"
-              detail={`The quickest of these laps in each section, put together${data ? `: ${formatLap(data.ideal.time)}` : ''}`} />
-          </View>
-        )}
       </Section>
 
       {error && <Text style={StyleSheet.flatten([t.error, styles.gapTop])}>{error}</Text>}
@@ -308,9 +300,9 @@ export default function CompareScreen() {
         <View style={StyleSheet.flatten([styles.results, stale && styles.stale])}
           onLayout={(e) => (resultsY.current = e.nativeEvent.layout.y)}>
           <WhereTheTimeIs no={2} data={data} colors={colors} focus={focus} onFocus={onFocus} onShow={showSection} />
-          <SectionTable no={3} data={data} colors={colors} ideal={ideal} onPick={showSection} />
+          <SectionTable no={3} data={data} colors={colors} onPick={showSection} />
           <View onLayout={(e) => (tracesY.current = e.nativeEvent.layout.y)} style={styles.transparent}>
-            <CompareTraces no={4} data={data} colors={colors} ideal={ideal} zoom={zoom} onZoom={setZoom} cursor={cursor}
+            <CompareTraces no={4} data={data} colors={colors} zoom={zoom} onZoom={setZoom} cursor={cursor}
               onCursor={setCursor} />
           </View>
         </View>
@@ -350,7 +342,6 @@ const useStyles = themed((c) => ({
     borderColor: c.separator },
   addWord: { ...Type.link, fontSize: 12, letterSpacing: 1.2, color: c.text, borderBottomWidth: 2, borderColor: c.rule,
     paddingBottom: 1 },
-  idealRow: { marginTop: 18, maxWidth: 640 },
   busy: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   gapTop: { marginTop: 18 },
   results: { backgroundColor: 'transparent' },

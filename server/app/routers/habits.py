@@ -26,7 +26,7 @@ from app.routers.imports import _date
 router = APIRouter()
 log = logging.getLogger(__name__)
 
-VERSION = 2  # raise when the answer changes, so the kept one is worked out again
+VERSION = 3  # raise when the answer changes, so the kept one is worked out again
 SCOPE = "drivers|habits"
 
 

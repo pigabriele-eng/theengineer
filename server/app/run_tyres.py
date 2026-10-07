@@ -1,10 +1,10 @@
-"""A run's tyres, new or used, so the perfect lap and the best technique compare like with like.
+"""A run's tyres, new or used, so the mistake detector and the best real passes compare like with like.
 
 Qualifying is always on new tyres with low fuel, and the races run on the qualifying set: a theoretical race lap
 built from qualifying grip is no use. Paid tests and free practice run new tyres sometimes. So every lap is checked
 only against laps on the same tyres: qualifying is new and a race used, for sure; a test or practice run is guessed
-from its laps (a short run as quick as qualifying was on new tyres, anything else on used ones) until the driver
-says which (RunTyres), and the guess is shown as one, never taken silently.
+from its laps (a short run as quick as qualifying was on new tyres, anything else, or any run of an event with no
+qualifying, on used ones) until the driver says which (RunTyres), and the guess is shown as one, never taken silently.
 """
 from __future__ import annotations
 
@@ -46,8 +46,9 @@ def kind_of(kind: str, name: str | None) -> str:
 def guess(runs: list[RunLaps]) -> dict[int, dict]:
     """Each run's tyres by session id: {"tyres": new|used, "sure": bool, "why": ...}."""
     kinds = {r.session_id: kind_of(r.kind, r.name) for r in runs}
+    # with no qualifying to measure against (a test day), every run is guessed on the same tyres until the driver says
     quali = [min(r.times) for r in runs if kinds[r.session_id] == "qualifying" and r.times]
-    best = min(quali) if quali else min((min(r.times) for r in runs if r.times), default=None)
+    best = min(quali) if quali else None
     out = {}
     for r in runs:
         k = kinds[r.session_id]
@@ -58,11 +59,12 @@ def guess(runs: list[RunLaps]) -> dict[int, dict]:
         elif best is not None and r.times and min(r.times) <= best * (1 + NEW_WITHIN) and len(r.times) <= SHORT_RUN:
             out[r.session_id] = {"tyres": NEW, "sure": False,
                                  "why": f"a short run ({len(r.times)} clean lap{'s' if len(r.times) > 1 else ''}) "
-                                        f"as quick as {'qualifying' if quali else 'the quickest of the event'}"}
+                                        "as quick as qualifying"}
         else:
             out[r.session_id] = {"tyres": USED, "sure": False,
-                                 "why": "not as quick as qualifying" if r.times and best is not None
-                                 and min(r.times) > best * (1 + NEW_WITHIN) else "a long run"}
+                                 "why": "no qualifying to compare with" if best is None
+                                 else "not as quick as qualifying" if r.times and min(r.times) > best * (1 + NEW_WITHIN)
+                                 else "a long run"}
     return out
 
 

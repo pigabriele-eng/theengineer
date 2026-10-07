@@ -5,8 +5,6 @@ import { apiFetchAgain } from '@/lib/retry';
 
 export type ReportScope = { event: number } | { session: number };
 
-export type Medal = 'gold' | 'silver' | 'bronze' | null;
-
 export type Gain = {
   code: string;
   seconds: number; // a typical pass against the quick passes
@@ -24,7 +22,6 @@ export type Habit = {
   typical: number;
   quick: number;
   fastest_lap: number | null;
-  theoretical: number | null;
   r: number | null;
   link: 'strong' | 'clear' | 'weak' | null;
   worth_s: number | null;
@@ -44,14 +41,11 @@ export type SectionReport = {
     best_lap: string; // "<run>#<lap>"
     typical: number;
     quick: number;
-    realistic: number;
-    theoretical: number;
   };
   quick_passes: number;
   gain_s: number;
   where: Record<string, number>; // phase -> seconds a typical pass loses to the quick passes
   main_phase: string | null;
-  ladder: { driving: number; car: number; theoretical: number };
   headline: string | null;
   advice: string[];
   habits: Habit[];
@@ -82,10 +76,9 @@ export type RunTrend = {
   best_lap: number;
   median: number;
   consistency: number | null;
-  extraction: number;
 };
 
-export type LapRow = { run: string; lap: number; time: number; index_in_run: number; extraction: number };
+export type LapRow = { run: string; lap: number; time: number; index_in_run: number };
 
 export type Report = {
   length_m: number;
@@ -94,17 +87,7 @@ export type Report = {
   runs_analysed: number;
   headline: {
     fastest: { time: number; run: string; lap: number; session_id: number | null };
-    ideal: number;
-    realistic: number;
-    theoretical: number;
     typical: number;
-    score: {
-      extraction: number;
-      medal: Medal;
-      scores: Record<string, number>;
-      next_medal: { medal: string; seconds_to_find: number } | null;
-      realistic_extraction: number;
-    };
   };
   summary: string;
   gains: Gain[];
@@ -115,8 +98,6 @@ export type Report = {
     typical: number[];
     quick: number[];
     fastest_lap: number[];
-    realistic: number[];
-    theoretical: number[];
   };
   lap_time_relations: Relation[];
   trends: {

@@ -109,7 +109,8 @@ def test_a_two_year_briefing_puts_the_target_first_and_compares_the_years():
     keys = [b["key"] for b in out["briefing"]]
     assert keys[:5] == ["target", "corners", "quali", "pressures", "setup"]
     target = out["briefing"][0]["text"]
-    assert target.startswith("Aim for 1:46.83") and "1:47.23 (2026, Run 2, Anna)" in target
+    # the best real lap here, never a lap stitched from sections or simulated
+    assert target.startswith("Aim for 1:47.23: the best lap here (2026, Run 2, Anna).")
     assert "Most time to find in T2-T5 (0.29 s a lap, also in 2025)" in out["briefing"][1]["text"]
     assert out["briefing"][2]["text"].startswith("What worked in 2026: warm up like Run 1") \
         and out["briefing"][2]["text"].endswith("2025 needed the same push temperatures.")
@@ -120,9 +121,8 @@ def test_a_two_year_briefing_puts_the_target_first_and_compares_the_years():
     assert [r["code"] for r in rows] == ["T2-T5", "T1", "T6"] and out["corners"]["comparable"]
     t1 = next(r for r in rows if r["code"] == "T1")
     assert t1["change"]["typical"] == pytest.approx(-0.17)
-    assert t1["ideal"] == ("Brake at 161 m (perfect driving brakes at 172 m), off the brake at 230 m at 166 km/h, "
-                           "156 km/h at the slowest point (the car can do 160 km/h), throttle back on at 265 m, full "
-                           "throttle at 280 m, 208 km/h at the end of the section (the car can do 210 km/h).")
+    assert t1["ideal"] == ("Brake at 161 m, off the brake at 230 m at 166 km/h, 156 km/h at the slowest point, "
+                           "throttle back on at 265 m, full throttle at 280 m, 208 km/h at the end of the section.")
     assert t1["why"].startswith("A typical pass gives away 0.26 s here: 0.15 s on exit") and "counts twice" in t1["why"]
     t2 = next(r for r in rows if r["code"] == "T2-T5")  # along the track: the slowest point, then T4, then after it
     assert t2["ideal"] == ("76 km/h at the slowest point, throttle back on at 845 m, 116 km/h at T4, 200 km/h after "

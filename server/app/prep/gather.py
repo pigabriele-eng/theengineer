@@ -20,7 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import heavy, models
-from app.analysis.technique import habits
+from app.analysis.technique import HABITS, habits
 from app.analysis.tyreprep import aggregate
 from app.prep.plan import ANY, Plan, PastEvent, car_of, lap_times, session_kind
 from app.routers import reports, technique
@@ -92,16 +92,26 @@ def wait_technique(db: Session, pe: PastEvent, progress: Progress) -> tuple[dict
 
 
 def driver_habits(tech: dict | None, pe: PastEvent) -> dict[str, dict]:
-    """The mistakes that repeat for each driver at this event (their own laps only): driver -> {laps, habits}."""
+    """The obvious mistakes that repeat for each driver at this event (their own laps only), each with the time it
+    really cost: driver -> {laps, habits}. Never the pieces of the gap to the perfect lap."""
     if not tech:
         return {}
     ids = {s.id for s in pe.sessions}
     names = {s.id: s.driver.name if s.driver else None for s in pe.sessions}
     by: dict[str | None, list[list[dict]]] = defaultdict(list)
+    titles: dict[str, str] = {}
     for x in tech.get("laps", []):
         if x["session_id"] in ids and x.get("pit_from_m") is None:
-            by[names.get(x["session_id"]) or x.get("driver")].append(x["mistakes"])
-    return {name or "": {"laps": len(laps), "habits": habits(laps)[:8]} for name, laps in by.items()}
+            # an obvious mistake has no size of its own nor a cost against perfect driving: habits() reads both
+            by[names.get(x["session_id"]) or x.get("driver")].append(
+                [{"unit": None, "cost_perfect_s": 0.0, **m} for m in x.get("obvious") or []])
+            titles.update((m["key"], m["title"]) for m in x.get("obvious") or [] if m.get("title"))
+
+    def named(h: dict) -> dict:  # a kind with no habit name of its own goes by the mistake's own title
+        return h if h["kind"] in HABITS else {**h, "title": titles.get(h["key"], h["title"])}
+
+    return {name or "": {"laps": len(laps), "habits": [named(h) for h in habits(laps)[:8]]}
+            for name, laps in by.items()}
 
 
 # ---------- tyres and quali preparation ----------

@@ -116,7 +116,6 @@ export type SectionResult = {
   clear: boolean;
   gap_by_phase: Record<Phase, number>;
   main_phase: Phase;
-  theoretical: number;
   technique: TechniqueRow[];
   why: TechniqueRow | null;
   times: Record<Side, number[]>; // section time of every lap, in the order of Comparison.laps for that side
@@ -150,7 +149,6 @@ export type SideSummary = {
   best: number;
   median: number;
   consistency: number | null;
-  median_extraction: number;
   style: Record<string, number>;
 };
 

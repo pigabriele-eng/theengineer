@@ -12,7 +12,6 @@ import { isZoomed, shownRange } from '@/lib/zoom';
 import {
   CompareResult,
   formatLap,
-  IDEAL_COLOR,
   LAP_COLORS,
   lapLabel,
   Opportunity,
@@ -26,7 +25,7 @@ export function useLapColors(slots: number[]) {
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   const key = slots.join(',');
   return useMemo(
-    () => ({ laps: slots.map((s) => LAP_COLORS[scheme][s % LAP_COLORS[scheme].length]), ideal: IDEAL_COLOR[scheme] }),
+    () => ({ laps: slots.map((s) => LAP_COLORS[scheme][s % LAP_COLORS[scheme].length]) }),
     [scheme, key], // eslint-disable-line react-hooks/exhaustive-deps -- the slots, by value
   );
 }
@@ -71,7 +70,7 @@ export const WhereTheTimeIs = memo(function WhereTheTimeIs({ data, colors, focus
       <Text style={StyleSheet.flatten([t.lead, styles.measure])}>
         {opp.sections.length === 0
           ? `${lapLabel(lap)} is the quickest of these laps in every section.`
-          : `${lapLabel(lap)} is ${opp.to_ideal.toFixed(2)} s off the ideal lap (${formatLap(data.ideal.time)}), the quickest of each section. Most of it is here:`}
+          : `Where ${lapLabel(lap)} loses most to the quickest of the other laps, section by section:`}
       </Text>
       {top3.length > 0 && (
         <View style={wide ? styles.cols : styles.colsPhone}>
@@ -114,13 +113,13 @@ export const WhereTheTimeIs = memo(function WhereTheTimeIs({ data, colors, focus
   );
 });
 
-type TableProps = { data: CompareResult; colors: Colors; ideal: boolean; onPick: (code: string) => void; no?: number };
+type TableProps = { data: CompareResult; colors: Colors; onPick: (code: string) => void; no?: number };
 
 const CELL = 74;
 
 /** Section times on the official corner numbers: the quickest in each section on a purple block, the others as the
  * gap to it on a wash that deepens with the gap. */
-export const SectionTable = memo(function SectionTable({ data, colors, ideal, onPick, no = 3 }: TableProps) {
+export const SectionTable = memo(function SectionTable({ data, colors, onPick, no = 3 }: TableProps) {
   const theme = useTheme();
   const styles = useStyles();
   const t = useText();
@@ -143,14 +142,6 @@ export const SectionTable = memo(function SectionTable({ data, colors, ideal, on
                 </Text>
               </View>
             ))}
-            {ideal && (
-              <View style={StyleSheet.flatten([styles.cellBox, { width: CELL }])}>
-                <View style={styles.colHeadKey}>
-                  <LineKey color={colors.ideal} />
-                  <Text style={styles.th}>Ideal</Text>
-                </View>
-              </View>
-            )}
           </View>
           {data.sections.map((s) => (
             <Pressable key={s.code} style={styles.row} onPress={() => onPick(s.code)} accessibilityRole="button"
@@ -168,11 +159,6 @@ export const SectionTable = memo(function SectionTable({ data, colors, ideal, on
                   </View>
                 );
               })}
-              {ideal && (
-                <View style={StyleSheet.flatten([styles.cellFill, { width: CELL }])}>
-                  <Text style={styles.cell}>{s.times[s.best].toFixed(2)}</Text>
-                </View>
-              )}
             </Pressable>
           ))}
           <View style={StyleSheet.flatten([styles.row, styles.footFirst])}>
@@ -182,22 +168,6 @@ export const SectionTable = memo(function SectionTable({ data, colors, ideal, on
                 <Text style={StyleSheet.flatten([styles.cell, styles.strong])}>{formatLap(l.time)}</Text>
               </View>
             ))}
-            {ideal && (
-              <View style={StyleSheet.flatten([styles.cellFill, { width: CELL }])}>
-                <Text style={StyleSheet.flatten([styles.cell, styles.strong])}>{formatLap(data.ideal.time)}</Text>
-              </View>
-            )}
-          </View>
-          <View style={styles.row}>
-            <Text style={StyleSheet.flatten([styles.footName, styles.first])}>To ideal</Text>
-            {data.laps.map((l, i) => (
-              <View key={i} style={StyleSheet.flatten([styles.cellFill, { width: CELL }])}>
-                <Text style={StyleSheet.flatten([styles.cell, { color: deltaColor(theme, l.to_ideal) ?? theme.text }])}>
-                  +{l.to_ideal.toFixed(2)}
-                </Text>
-              </View>
-            ))}
-            {ideal && <View style={{ width: CELL }} />}
           </View>
         </View>
       </ScrollView>
@@ -217,7 +187,6 @@ export const SectionTable = memo(function SectionTable({ data, colors, ideal, on
 type TracesProps = {
   data: CompareResult;
   colors: Colors;
-  ideal: boolean;
   zoom: string | null;
   onZoom: (code: string | null) => void;
   cursor: number | null;
@@ -235,7 +204,7 @@ const CHARTS: { role: TraceRole; title: string; unit: string; height: number; do
 
 /** Every lap on one distance axis: time gained or lost against the reference, then speed, pedals, steering and
  * gear, with one crosshair across all of them. Zoom to a section to see a corner in detail. */
-export function CompareTraces({ data, colors, ideal, zoom, onZoom, cursor, onCursor, no = 4 }: TracesProps) {
+export function CompareTraces({ data, colors, zoom, onZoom, cursor, onCursor, no = 4 }: TracesProps) {
   const styles = useStyles();
   const t = useText();
   const tr = data.traces;
@@ -249,8 +218,8 @@ export function CompareTraces({ data, colors, ideal, zoom, onZoom, cursor, onCur
   }, [section, tr.distance]);
   const d0 = tr.distance[i0];
   const distance = useMemo(() => tr.distance.slice(i0, i1 + 1).map((d) => d - d0), [tr.distance, i0, i1, d0]);
-  const ref = ideal ? tr.ideal : tr.laps[data.reference];
-  const refName = ideal ? 'the ideal lap' : `L${data.laps[data.reference].lap} · ${data.laps[data.reference].session}`;
+  const ref = tr.laps[data.reference];
+  const refName = `L${data.laps[data.reference].lap} · ${data.laps[data.reference].session}`;
   // the charts zoom together, within the section picked; another section starts from all of it
   const free = useZoomState(`${zoom}`);
   const full: [number, number] = [0, distance[distance.length - 1] ?? 0];
@@ -263,20 +232,17 @@ export function CompareTraces({ data, colors, ideal, zoom, onZoom, cursor, onCur
       const out = x.slice(i0, i1 + 1).map((v, k) => v - ref.t[i0 + k]);
       return out.map((v) => v - out[0]);
     };
-    // the ideal lap first, so it is drawn under the laps: where it is one of them, that lap stays visible
-    const series = ideal ? [{ values: sliced(tr.ideal.t), color: colors.ideal }] : [];
-    return [...series, ...tr.laps.map((l, i) => ({ values: sliced(l.t), color: colors.laps[i] }))];
-  }, [tr, ref, i0, i1, ideal, colors]);
+    return tr.laps.map((l, i) => ({ values: sliced(l.t), color: colors.laps[i] }));
+  }, [tr, ref, i0, i1, colors]);
   // each chart's lines, kept from one render to the next so a chart only redraws them when they or its view change
   const byRole = useMemo(() => {
     const part = (values: number[] | undefined, color: string) => (values ? [{ values: values.slice(i0, i1 + 1), color }] : []);
     const out: Partial<Record<TraceRole, { values: number[]; color: string }[]>> = {};
     for (const role of tr.roles) {
-      out[role] = [...(ideal ? part(tr.ideal[role], colors.ideal) : []),
-        ...tr.laps.flatMap((l, i) => part(l[role], colors.laps[i]))];
+      out[role] = tr.laps.flatMap((l, i) => part(l[role], colors.laps[i]));
     }
     return out;
-  }, [tr, i0, i1, ideal, colors]);
+  }, [tr, i0, i1, colors]);
   const seriesOf = (role: TraceRole) => byRole[role] ?? [];
   // whole gears on the axis, the same however far the charts are zoomed: a range of at least five keeps the labels
   // whole numbers
@@ -303,7 +269,6 @@ export function CompareTraces({ data, colors, ideal, zoom, onZoom, cursor, onCur
       <Tabs label="Zoom" value={zoom} onChange={onZoom} style={styles.tabs}
         items={[null, ...data.sections.map((s) => s.code)].map((code) => ({ key: code, label: code ?? 'Whole lap' }))} />
       <View style={styles.legend}>
-        {ideal && <Swatch color={colors.ideal} label="Ideal lap" width={14} height={4} />}
         {data.laps.map((l, i) => (
           <Swatch key={i} color={colors.laps[i]} label={`L${l.lap} · ${l.session}`} width={14} height={4} />
         ))}

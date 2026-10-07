@@ -432,8 +432,8 @@ function LooseRuns({ f, onChanged }: { f: FolderSummary; onChanged: () => void }
 
 /** An event open on the page: its links, its runs by day (each with its best lap: a purple block for the event's
  * best, else a red bar for the gap to it, and its driver, or who the driving style says, with Change), and beside
- * them the best lap, clean laps, ideal lap (the lead event's, from its report; runs for the others) and the event's
- * facts. */
+ * them the best lap, clean laps, typical lap (the median clean lap of the lead event's report; runs for the others)
+ * and the event's facts. */
 function Feature({ f, detail, garage, onGarage, onChanged }: {
   f: FolderSummary;
   detail?: Detail;
@@ -560,7 +560,7 @@ function Feature({ f, detail, garage, onGarage, onChanged }: {
           <View style={styles.pairLeft}><Fig label="Clean laps" value={String(f.clean_laps)} size={64} /></View>
           <View style={styles.pairRight}>
             {report
-              ? <Fig label="Ideal lap" value={formatLap(report.headline.ideal)} size={64} />
+              ? <Fig label="Typical lap" value={formatLap(report.headline.typical)} size={64} />
               : <Fig label="Runs" value={String(f.sessions)} size={64} />}
           </View>
         </View>

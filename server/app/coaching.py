@@ -1,8 +1,8 @@
 """Coaching: the three things to change on the next run, and whether the run after did change them.
 
-Both read the technique check (routers/technique.py), which costs every mistake of every clean lap against perfect
-driving and keeps, per session, the mistakes that repeat (its habits): per corner and kind, in how many laps and what
-they cost a lap on average.
+Both read the technique check (routers/technique.py), which finds every clean lap's obvious mistakes, each with the
+time it cost, and keeps, per session, the ones that repeat (its habits): per corner and kind, in how many laps and
+what they cost a lap on average. Never a comparison with a perfect lap.
 
 GET /coaching/sessions/{id}/top: the run's three costliest repeated mistakes, each at a different corner, with what
 to do instead and the time it is worth. GET /coaching/sessions/{id}/fixed: the previous run's three things checked on
@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import models
+from app.analysis.technique import HABITS, habits
 from app.db import get_db
 from app.routers import technique
 from app.setup.sheet import run_time
@@ -37,7 +38,10 @@ class _Run:
         self.head = technique._head(plan, self.row, self.status)
         res = self.row.result if self.row is not None else None
         self.laps = [x for x in res["laps"] if x["session_id"] == s.id] if res else []
-        self.habits = res["habits"]["sessions"].get(str(s.id), []) if res else []
+        # the run's obvious mistakes that repeat, each at the time it really cost (an obvious mistake has no size of
+        # its own nor a cost against perfect driving, which habits() reads)
+        self.habits = habits([[{"unit": None, "cost_perfect_s": 0.0, **m} for m in x.get("obvious") or []]
+                              for x in self.laps]) if self.laps else []
 
     @property
     def ready(self) -> bool:
@@ -51,13 +55,15 @@ class _Run:
 
     def advice(self, key: str) -> dict:
         """What the mistake is and what to do instead, from the lap where it cost the most."""
-        worst = max(((m["cost_s"], x) for x in self.laps for m in x["mistakes"] if m["key"] == key),
+        worst = max(((m["cost_s"], m, x) for x in self.laps for m in x.get("obvious") or [] if m["key"] == key),
                     key=lambda p: p[0], default=None)
-        if worst is None or self.row is None:
+        if worst is None:
             return {}
-        detail = technique._detail(self.row, worst[1]["detail"]) or {}
-        m = next((m for m in detail.get("mistakes", []) if m["key"] == key), None)
-        return {"what": m.get("what"), "do": m.get("do"), "lap": worst[1]["number"]} if m else {}
+        _, m, lap = worst
+        out = {"what": m.get("what"), "do": m.get("do"), "lap": lap["number"]}
+        if m["kind"] not in HABITS and m.get("title"):  # a kind with no habit name of its own: the mistake's title
+            out["title"] = m["title"]
+        return out
 
 
 def _session(db: Session, session_id: int) -> models.RunSession:
@@ -76,7 +82,8 @@ def top_things(run: _Run, n: int = TOP_N) -> list[dict]:
         corners.add(h["code"])
         out.append({"rank": len(out) + 1, "key": h["key"], "code": h["code"], "kind": h["kind"],
                     "phase": h["phase"], "title": h["title"], "laps": h["laps"], "of": h["of"],
-                    "gain_s": h["cost_per_lap_s"], "value": h["value"], "unit": h["unit"], **run.advice(h["key"])})
+                    "gain_s": h["cost_per_lap_s"], "value": h.get("value"), "unit": h.get("unit"),
+                    **run.advice(h["key"])})
         if len(out) == n:
             break
     return out
@@ -129,17 +136,19 @@ def fixed_things(before: _Run, after: _Run) -> list[dict]:
     # a mistake on a single lap of this run doesn't make a habit: it still counts against the fix
     once: dict[str, float] = {}
     for x in after.laps:
-        for m in x["mistakes"]:
+        for m in x.get("obvious") or []:
             once[m["key"]] = once.get(m["key"], 0.0) + m["cost_s"]
     n = max(len(after.laps), 1)
     out = []
     for t in top_things(before):
         h = now.get(t["key"])
         cost = h["cost_per_lap_s"] if h else round(once.get(t["key"], 0.0) / n, 3)
-        laps = h["laps"] if h else sum(1 for x in after.laps if any(m["key"] == t["key"] for m in x["mistakes"]))
-        out.append({**{k: t[k] for k in ("rank", "key", "code", "kind", "phase", "title", "do")},
+        laps = h["laps"] if h else sum(1 for x in after.laps
+                                       if any(m["key"] == t["key"] for m in x.get("obvious") or []))
+        out.append({**{k: t.get(k) for k in ("rank", "key", "code", "kind", "phase", "title", "do")},
                     "before": {"cost_s": t["gain_s"], "laps": t["laps"], "of": t["of"], "value": t["value"]},
-                    "after": {"cost_s": cost, "laps": laps, "of": len(after.laps), "value": h["value"] if h else None},
+                    "after": {"cost_s": cost, "laps": laps, "of": len(after.laps),
+                              "value": h.get("value") if h else None},
                     "gained_s": round(t["gain_s"] - cost, 3), "verdict": verdict(t["gain_s"], cost),
                     "unit": t["unit"]})
     return out

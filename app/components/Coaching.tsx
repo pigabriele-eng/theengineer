@@ -43,7 +43,7 @@ function Waiting({ answer, error }: { answer: { status: TechniqueStatus; error: 
     const p = answer.progress;
     return (
       <Text style={styles.note}>
-        Checking the laps against perfect driving{p && p.total ? ` (${p.done} of ${p.total})` : ''}…
+        Checking the laps for mistakes{p && p.total ? ` (${p.done} of ${p.total})` : ''}…
       </Text>
     );
   }

@@ -252,19 +252,18 @@ def _fmt(v: float, unit: str, brake_unit: str) -> str:
     return f"{v:.1f}"
 
 
-def _sentence(h: Habit, t: float, q: float, th: float | None, brake_unit: str, prev: str | None) -> str:
+def _sentence(h: Habit, t: float, q: float, brake_unit: str, prev: str | None) -> str:
     """One thing to do, in the driver's words, with the numbers that back it."""
     def f(v):
         return _fmt(v, h.unit, brake_unit)
     key = h.key
     d = abs(q - t)
     more = q > t
-    theo = f", theoretical {th:.1f}" if th is not None else ""
     if key.startswith("corner_speed_"):
-        return (f"Carry {q:.1f} km/h through {h.corner} (typical {t:.1f}{theo})" if more
+        return (f"Carry {q:.1f} km/h through {h.corner} (typical {t:.1f})" if more
                 else f"Take {h.corner} slower, {q:.1f} km/h against {t:.1f}, to set up what follows")
     if key.startswith("after_"):
-        return f"Leave {h.corner} faster: {q:.1f} km/h at {h.at} m against {t:.1f}{theo}"
+        return f"Leave {h.corner} faster: {q:.1f} km/h at {h.at} m against {t:.1f}"
     if key == "brake_point":
         return f"Brake {d:.0f} m {'later' if more else 'earlier'}, at {q:.0f} m"
     if key == "peak_brake":
@@ -281,7 +280,7 @@ def _sentence(h: Habit, t: float, q: float, th: float | None, brake_unit: str, p
     if key == "speed_at_release":
         return f"Let the brake go at {q:.0f} km/h, not {t:.0f}"
     if key == "min_speed":
-        return (f"Carry {q:.1f} km/h at the slowest point (typical {t:.1f}{theo})" if more
+        return (f"Carry {q:.1f} km/h at the slowest point (typical {t:.1f})" if more
                 else f"Slow the car more: {q:.1f} km/h at the slowest point against {t:.1f}, for a better exit")
     if key == "coasting":
         return (f"Coast less between brake and throttle: {f(q)} against {f(t)}" if not more
@@ -305,7 +304,7 @@ def _sentence(h: Habit, t: float, q: float, th: float | None, brake_unit: str, p
         return (f"Commit to the throttle on the way out: {f(q)} rear wheel slip against {f(t)}" if more
                 else f"Less wheelspin on the way out: {f(q)} against {f(t)}")
     if key == "exit_speed":
-        return f"Drive out at {q:.1f} km/h (typical {t:.1f}{theo})"
+        return f"Drive out at {q:.1f} km/h (typical {t:.1f})"
     if key == "entry_speed":
         where = f"the exit of {prev}" if prev else "the corner before"
         return f"Flat out: its time is set by {where}. The quick passes start it at {q:.1f} km/h against {t:.1f}"
@@ -364,7 +363,7 @@ def _section(prep: Prepared, s: Section, prev: str | None, realistic, brake_unit
         unlinked = r is None  # too few laps to measure a link: the difference alone
         if big and (linked or unlinked) and (not h.outcome or h.key in ("exit_speed", "entry_speed")):
             actions.append({"key": h.key, "phase": h.phase, "worth": worth, "typical": t, "quick": q, "row": row,
-                            "text": _sentence(h, t, q, theo.get(h.key), brake_unit, prev)})
+                            "text": _sentence(h, t, q, brake_unit, prev)})
     by_phase = _phase_split(prep, s, quick, gain)
     # the most telling habits, told in the order they happen in the corner
     ranked = sorted(actions, key=lambda a: (-(a["worth"] or 0), PHASE_ORDER.index(a["phase"])))
@@ -668,8 +667,7 @@ def build_report(prep: Prepared, extras: Extras | None = None, corners: list | N
     spread = sorted(({"code": sec["code"], "spread_s": sec["spread_s"]} for sec in sections),
                     key=lambda r: -r["spread_s"])
 
-    summary = _summary(fastest, score, round(typical_lap, 3), round(ideal, 3), round(realistic.time, 3), gains,
-                       where_total, len(laps))  # the numbers as the screen shows them
+    summary = _summary(fastest, round(typical_lap, 3), gains, where_total, len(laps))  # as the screen shows them
     trace = _profiles(prep, sections, realistic)
     for sec in sections:
         del sec["_quick"], sec["_rows"]
@@ -698,24 +696,10 @@ def build_report(prep: Prepared, extras: Extras | None = None, corners: list | N
     }
 
 
-def _summary(fastest: LapRecord, score: dict, typical: float, ideal: float, realistic: float, gains: list[dict],
-             where_total: dict[str, float], n_laps: int) -> str:
-    medal = score.get("medal")
-    nxt = score.get("next_medal")
-    out = (f"The fastest lap, {fastest.run} lap {fastest.number} ({lap_text(fastest.time)}), took "
-           f"{score['extraction']:.1f}% of the car's theoretical pace")
-    if medal:
-        out += f": a {medal} score"
-        if nxt:
-            gap = nxt["seconds_to_find"]
-            out += f", {gap:.2f} s from {nxt['medal']}." if gap >= 0.01 else f", on the edge of {nxt['medal']}."
-        else:
-            out += "."
-    else:
-        out += "."
-    if ideal < fastest.time - 0.01:
-        out += (f" The best pass of every section adds up to {lap_text(ideal)}, and the realistic target (the grip a "
-                f"quick lap usually shows at each place, used without a mistake) is {lap_text(realistic)}.")
+def _summary(fastest: LapRecord, typical: float, gains: list[dict], where_total: dict[str, float],
+             n_laps: int) -> str:
+    """The report in a few sentences, from real laps only: never a lap stitched from sections or simulated."""
+    out = f"The fastest lap is {fastest.run} lap {fastest.number} ({lap_text(fastest.time)})."
     if gains:
         names = ", ".join(f"{g['code']} ({g['seconds']:.2f} s)" for g in gains)
         out += (f" A typical lap ({lap_text(typical)}) gains most by driving like the quickest passes in {names}")
@@ -730,17 +714,6 @@ def _summary(fastest: LapRecord, score: dict, typical: float, ideal: float, real
 METHOD = [
     "Every clean lap is lined up on the fastest lap by position (GPS, with wheel-speed distance between fixes) and "
     "timed line to line.",
-    "The car's limits are learned place by place, every 5 m, from the laps within 2% of the quickest: the cornering "
-    "it showed there, how hard it braked and drove out while cornering that hard, and its power against speed. A "
-    "banked corner or a crest keeps its own grip and lends it to no other corner.",
-    "The theoretical lap is the fastest lap's line driven without a mistake at the best of those limits at every "
-    "place (90th percentile of the laps; never less than the fastest lap itself showed there).",
-    "The realistic target is the same at what a quick lap usually shows at each place (the median, and again never "
-    "less than the fastest lap): no lap puts the best of every place together, but this is within reach.",
-    "Both are measured from the fastest lap itself: its real time at every metre, less only what the simulation "
-    "gains there at those limits over the same simulation at the fastest lap's own limits. So the simulation's own "
-    "error cancels, a section gains only what other laps really showed there, and neither target is slower than the "
-    "fastest lap anywhere. The theoretical lap is also never slower than the best pass of a section.",
     "Sections run from the fast point before a corner to the same point before the next one, so each holds the "
     "braking, the corner and the straight after it. They carry the track's official corner numbers.",
     "Quick passes are the quickest tenth of all passes of a section (at least three). Typical is the median pass. "

@@ -29,3 +29,9 @@ def test_overlapping_mistakes_in_a_corner_count_once():
     apart = [_o("T10", 100, 160, 0.12), _o("T10", 300, 340, 0.05), _o("T11", 150, 170, 0.03)]
     assert mistakes_total(apart) == 0.2
     assert mistakes_total([]) == 0.0
+
+
+def test_with_no_qualifying_every_run_is_guessed_on_the_same_tyres():
+    g = guess([RunLaps(1, "test", "Run 1", [101.0, 101.2]), RunLaps(2, "test", "Run 2", [99.0, 99.3])])
+    assert {v["tyres"] for v in g.values()} == {USED} and not any(v["sure"] for v in g.values())
+    assert g[2]["why"] == "no qualifying to compare with"
