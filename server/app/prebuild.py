@@ -3,10 +3,11 @@ for, so they open at once instead of working it out while Gabriele waits.
 
 For each uploaded run and the event it is in, in this order (the pages that ask for it in brackets):
 1. the run's compact lap traces, one log at a time (Report, Technique, Track grip, the event's side by side);
-2. the event's report, its track map and shape and its track grip (Report; the session page's best section times);
+2. the event's report, track map and shape, track grip, grip use, balance and its main logs' stint view (Report; the
+   session page's best section times);
 3. the run's lap analysis, stint view, track map and track shape (the session page);
 4. the event's technique check, or the run's when it is in no event (Technique);
-5. the run's tyre prep (Quali) and its own report (Report of one run);
+5. the run's tyre prep (Quali), and its own report, grip use and balance (Report of one run);
 6. the prep report of each event at the venue that draws on this one (Prep), after the past events it uses;
 7. the warm-ups other modules add (warm(), register()).
 Insights (GET /sessions/{id}/insights) are kept once asked for (app/page_cache.py) but not made here: no page of the
@@ -87,13 +88,15 @@ def pieces(db: Session, session_ids: list[int], prep: bool = True) -> list[Piece
     events = list(dict.fromkeys(s.event_id for s in runs if s.event_id is not None))
     out: list[Piece] = [("traces", (sid,)) for sid in sids]
     for e in events:
-        out += [("report", ("event", e)), ("event map", (e,)), ("event shape", (e,)), ("track grip", (e,))]
+        out += [("report", ("event", e)), ("event map", (e,)), ("event shape", (e,)), ("track grip", (e,)),
+                ("grip", ("event", e)), ("balance", ("event", e)), ("event stint", (e,))]
     for sid in sids:
         out += [("analysis", (sid,)), ("stint", (sid,)), ("map", (sid,)), ("shape", (sid,))]
     out += [("technique", ("event", e)) for e in events]
     out += [("technique", ("session", s.id)) for s in runs if s.event_id is None]
     for sid in sids:
-        out += [("tyre prep", (sid,)), ("report", ("session", sid))]
+        out += [("tyre prep", (sid,)), ("report", ("session", sid)), ("grip", ("session", sid)),
+                ("balance", ("session", sid))]
     if prep:
         out += [("prep", (t,)) for t in prep_targets(db, events)]
     if sids:
@@ -194,6 +197,25 @@ def _event_shape(eid: int) -> None:
     _with_db(lambda db: _quietly(trackshape.get_event_shape, eid, db))
 
 
+def _grip(kind: str, id_: int) -> None:
+    from app.routers import report_grip
+    _with_db(lambda db: _quietly(report_grip.grip_report, *((id_, None) if kind == "session" else (None, id_)), db))
+
+
+def _balance(kind: str, id_: int) -> None:
+    from app.routers import balance
+    _with_db(lambda db: _quietly(balance.balance_report, *((id_, None) if kind == "session" else (None, id_)), db))
+
+
+def _event_stint(eid: int) -> None:
+    from app.routers import stint
+
+    def go(db: Session) -> None:
+        if files := stint.event_files(db, eid):
+            _quietly(stint.stint_view, db, files)
+    _with_db(go)
+
+
 def _tyre_prep(sid: int) -> None:
     from app.routers import tyreprep
 
@@ -263,7 +285,8 @@ def register(fn: Callable[[list[int]], None]) -> Callable[[list[int]], None]:
 RUN: dict[str, Callable] = {
     "traces": _traces, "report": _report, "analysis": _analysis, "stint": _stint, "map": _map, "shape": _shape,
     "event map": _event_map, "event shape": _event_shape, "technique": _technique, "track grip": _track_grip,
-    "tyre prep": _tyre_prep, "prep": _prep, "warm": lambda sids: warm(list(sids)),
+    "tyre prep": _tyre_prep, "prep": _prep, "grip": _grip, "balance": _balance, "event stint": _event_stint,
+    "warm": lambda sids: warm(list(sids)),
 }
 
 

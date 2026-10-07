@@ -114,13 +114,33 @@ def reduced(db: Session, f: models.LoggerFile) -> tuple[LogSummary, models.Track
 
 
 def stint_view(db: Session, file_ids: list[int]) -> dict:
-    """The stints of the logs; the view of one log (the session page's) is kept once worked out (app/page_cache.py),
-    with its lap tags in its signature."""
+    """The stints of the logs. Two views are kept once worked out (app/page_cache.py), with their lap tags in their
+    signature: one log's (the session page's) and an event's main logs together (the report's quick laps)."""
     ids = list(dict.fromkeys(file_ids))
-    if len(ids) == 1 and (f := db.get(models.LoggerFile, ids[0])) is not None:
-        return page_cache.cached(db, f"session:{f.session_id}|stint|file:{f.id}", lambda: _view_signature(db, f),
-                                 lambda: _stint_view(db, ids), locked=False)
+    files = [db.get(models.LoggerFile, i) for i in ids]
+    if ids and None not in files:
+        if len(files) == 1:
+            f = files[0]
+            return page_cache.cached(db, f"session:{f.session_id}|stint|file:{f.id}",
+                                     lambda: _view_signature(db, f), lambda: _stint_view(db, ids), locked=False)
+        events = {f.session.event_id for f in files}
+        if len(events) == 1 and None not in events and sorted(ids) == event_files(db, (eid := events.pop())):
+            return page_cache.cached(
+                db, f"event:{eid}|stint",
+                lambda: page_cache.signature("stint", sorted(_view_signature(db, f) for f in files)),
+                lambda: _stint_view(db, ids), locked=False)
     return _stint_view(db, ids)
+
+
+def event_files(db: Session, event_id: int) -> list[int]:
+    """The logs the report's quick laps read for an event (the app asks for these): each session's main log, when
+    it has laps."""
+    out = []
+    for s in db.scalars(select(models.RunSession).where(models.RunSession.event_id == event_id)):
+        f = main_file(s)
+        if f is not None and any(l.file_id == f.id for l in s.laps):
+            out.append(f.id)
+    return sorted(out)
 
 
 def _view_signature(db: Session, f: models.LoggerFile) -> str:

@@ -33,7 +33,7 @@ from app.db import Base
 log = logging.getLogger(__name__)
 
 # Raise a page's version when what it answers changes, so every kept answer of that page is worked out again.
-VERSIONS = {"insights": 1, "analysis": 1, "stint": 1, "map": 1, "shape": 1, "tyreprep": 1}
+VERSIONS = {"insights": 1, "analysis": 1, "stint": 1, "map": 1, "shape": 1, "tyreprep": 1, "grip": 1, "balance": 1}
 KEPT_ERRORS = (404, 422)  # answers that say what a log can't give (no lap, no GPS): the same log gives the same answer
 
 
@@ -90,6 +90,17 @@ def known_track(db: Session, s: models.RunSession, f: models.LoggerFile | None) 
 def session_signature(db: Session, page: str, s: models.RunSession, f: models.LoggerFile | None, *extra) -> str:
     """The signature of a page read from one of a session's logs: the log, the session and the track's parts."""
     return signature(page, log_part(s, f), track_part(known_track(db, s, f)), *extra)
+
+
+def main_file(s: models.RunSession) -> models.LoggerFile | None:
+    """The log the pages read for a session: the longest."""
+    return max(s.files, key=lambda f: f.meta.get("duration_s", 0)) if s.files else None
+
+
+def sessions_part(db: Session, sessions: list[models.RunSession]) -> list:
+    """For a page read from several sessions' main logs: each one's log and track parts, and its car."""
+    return [[log_part(s, f), track_part(known_track(db, s, f)), s.car_id, s.car.name if s.car else None]
+            for s in sessions for f in [main_file(s)]]
 
 
 def _pack(x) -> bytes:
@@ -163,7 +174,8 @@ def cached(db: Session, scope: str, sig: Callable[[], str], work: Callable[[], o
             if e.status_code in KEPT_ERRORS and isinstance(e.detail, str):
                 store(db, scope, sig(), e.detail, e.status_code)
             raise
-    store(db, scope, sig(), out)
+        # kept before the lock is let go: an event deleted meanwhile (it takes the lock) leaves no answer behind
+        store(db, scope, sig(), out)
     return out
 
 
