@@ -1,8 +1,8 @@
 // The driver's inputs under the technique check's speed trace: throttle, brake, steering, gear and revs on the same
 // distance axis (the same margins as TechniqueTrace, so the cursor lines up), with the fastest lap's laid under them as
-// a quieter line, perfect driving's (or the realistic target's) laid over them dashed, the same mistake bands, the
-// obvious mistakes marked where they happen, and perfect driving's own phases as a thin strip above. This lap is slot
-// 1 of the validated chart palette and perfect driving slot 3, as in the speed trace; the fastest lap, the bands and
+// a quieter line, the driver's best real passes on the same tyres laid over them dashed, the same mistake bands and
+// the obvious mistakes marked where they happen (and, given one, a model's phases as a thin strip above). This lap is
+// slot 1 of the validated chart palette and the overlay slot 3, as in the speed trace; the fastest lap, the bands and
 // the phases are neutral ink, so colour keeps meaning one thing. Every channel zooms with the speed trace above it.
 import { useId, useMemo, useState } from 'react';
 import { LayoutChangeEvent, Platform, StyleSheet } from 'react-native';
@@ -22,10 +22,10 @@ type Props = {
   inputs: Inputs;
   fastest: Inputs | null; // the fastest lap's, laid under this lap's
   fastestLabel: string | null;
-  model?: Inputs | null; // perfect driving's or the realistic target's, laid over this lap's, dashed
+  model?: Inputs | null; // the best real passes', laid over this lap's, dashed
   modelLabel?: string | null;
   marks?: { at_m: number; code: string }[]; // the obvious mistakes, where each happens
-  phases?: number[]; // perfect driving's own, an index into MODEL_PHASES at each point
+  phases?: number[]; // a model's own, an index into MODEL_PHASES at each point
   channels?: Partial<Record<InputRole, { channel: string | null; unit: string | null }>>;
   bands: Band[];
   selected: number | null;
@@ -130,7 +130,7 @@ export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, 
       {phases && phases.length === points && (
         <ZoomArea {...area}>
           <View style={styles.head}>
-            <Text style={styles.title}>Perfect driving</Text>
+            <Text style={styles.title}>The model</Text>
             <Text style={styles.readout}>{local != null ? MODEL_PHASES[phases[local]] ?? '' : ' '}</Text>
           </View>
           {width > 0 && <PhaseStrip geo={geo} phases={phases} colors={phaseColors} cursor={local} />}
@@ -159,7 +159,7 @@ export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, 
         {fastestMissing.length
           ? `The fastest lap's log has no ${fastestMissing.map((ch) => ch.missing).join(' or ')} channel. `
           : ''}
-        {phases ? 'Perfect driving’s model has no pedal positions: the strip is what it does at each place.' : ''}
+        {phases ? 'The model has no pedal positions: the strip is what it does at each place.' : ''}
       </Text>
     </View>
   );
@@ -216,7 +216,7 @@ type ChannelProps = {
   role: InputRole;
   values: number[];
   under: number[] | null;
-  over: number[] | null; // perfect driving's, dashed
+  over: number[] | null; // the best real passes', dashed
   bands: Band[];
   selected: number | null;
   marks: { at_m: number; code: string }[];
@@ -308,7 +308,7 @@ function Channel({ geo, title, unit, digits, role, values, under, over, bands, s
       {width > 0 && (
         <Svg width={width} height={height + axisRow} pointerEvents="none"
           accessibilityLabel={`${title} along the lap${under ? ', with the fastest lap’s' : ''}${
-            over ? ', with perfect driving’s' : ''}`}>
+            over ? ', with the best real passes’' : ''}`}>
           {geo.zoomed && (
             <Defs>
               <ClipPath id={clip}>

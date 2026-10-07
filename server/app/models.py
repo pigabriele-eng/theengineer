@@ -283,6 +283,17 @@ class ReportCache(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
 
+class RunTyres(Base):
+    """A run's tyres as the driver set them: "new" or "used" (run_tyres.py guesses the rest from the logs). The
+    perfect lap and the best technique of a lap only take laps on the same tyres."""
+    __tablename__ = "run_tyres"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("run_sessions.id", ondelete="CASCADE"), unique=True,
+                                            index=True)
+    tyres: Mapped[str] = mapped_column(String(8))  # new, used
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
 class TechniqueCache(Base):
     """The technique check of every clean lap of an event or a session (routers/technique.py), and the progress of
     the one being worked out. The full check of each lap is kept in file storage (details)."""

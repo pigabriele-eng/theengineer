@@ -8,7 +8,7 @@ from app.analysis.insights import _closed_sim
 from app.analysis.laps import Section
 from app.analysis.local_limits import PlaceLimits
 from app.analysis.shifts import ShiftModel
-from app.analysis.technique import Envelope, check_lap, habits
+from app.analysis.technique import Envelope, check_lap, habits, mistakes_total
 from tests.synthetic import curvature_at, simulate, write_ld
 
 G = 9.81
@@ -290,24 +290,22 @@ def test_technique_check_api(client):
     best = min(body["laps"], key=lambda x: x["time"])
     lap_ = body["lap"]
     assert lap_["number"] == best["number"] == body["best_lap"]
-    assert lap_["perfect"] <= lap_["realistic"] and lap_["gap"] == pytest.approx(lap_["time"] - lap_["perfect"],
-                                                                                 abs=1e-3)
-    assert sum(lap_["budget"][k] for k in ("mistakes", "in_targets", "at_limit", "optimism", "pit_lane", "other")) == \
-        pytest.approx(lap_["gap"], abs=2e-3)
+    # no perfect lap reaches the page: the lap, its mistakes and what it would have been without them
+    for gone in ("perfect", "realistic", "gap", "budget", "mistakes"):
+        assert gone not in lap_
+    assert lap_["mistakes_s"] == pytest.approx(mistakes_total(lap_["obvious"]), abs=1e-3)
+    assert lap_["without_mistakes"] == pytest.approx(lap_["time"] - lap_["mistakes_s"], abs=1e-3)
+    assert all(x["without_mistakes"] <= x["time"] for x in body["laps"])
+    # the test day has no qualifying: its runs' tyres are guessed, to confirm
+    assert body["tyres"]["sure"] is False and lap_["tyres"] == body["tyres"]["tyres"]
     tr = lap_["trace"]
-    assert len(tr["driven"]) == len(tr["perfect"]) == len(tr["realistic"]) == body["length_m"] // tr["step_m"] + 1
+    assert "perfect" not in tr and "realistic" not in tr and set(tr["model"]) <= {"best"}
+    assert len(tr["driven"]) == body["length_m"] // tr["step_m"] + 1
     # the driver's inputs at the same points; the synthetic log has no gear channel
     ins = tr["inputs"]
     assert {r: v is not None for r, v in ins.items()} == {"throttle": True, "brake": True, "steer": True, "gear": False,
                                                        "rpm": False}
     assert all(len(ins[r]) == len(tr["driven"]) for r in ("throttle", "brake", "steer"))
-    assert len(tr["model_phases"]) == len(tr["driven"])
-    # perfect driving's and the realistic target's inputs to lay over the driver's; no gear without a shift model
-    for which in ("perfect", "realistic"):
-        model = tr["model"][which]
-        assert len(model["throttle"]) == len(tr["driven"])
-        assert model["brake"] is None or len(model["brake"]) == len(tr["driven"])
-        assert model["gear"] is None and model["rpm"] is None
     overlay = tr["model"]["best"]
     assert len(overlay["speed"]) == len(tr["driven"]) and len(overlay["sources"]) == len(body["sections"])
     assert overlay["time"] <= lap_["time"] + 1e-3
@@ -315,9 +313,6 @@ def test_technique_check_api(client):
     assert body["inputs"]["brake"]["channel"] == "Brake Torque" and body["inputs"]["gear"]["channel"] is None
     # the session's quickest lap is the event's fastest: nothing to lay over it
     assert lap_["fastest"]["this_lap"] and lap_["fastest"]["inputs"] is None
-    for x in lap_["mistakes"]:
-        assert x["code"] in {"T1", "T2"} and x["phase"] in {"braking", "entry", "mid-corner", "exit", "full throttle"}
-        assert x["what"] and x["do"] and x["cost_s"] >= 0.02
     assert isinstance(lap_["obvious"], list)  # the obvious mistakes reach the page with each lap
     for x in lap_["obvious"]:
         assert x["code"] in {"T1", "T2"} and x["what"] and x["do"] and x["cost_s"] >= 0.01
@@ -339,6 +334,19 @@ def test_technique_check_api(client):
     assert ev["status"] == "ready" and ev["laps_checked"] == 6
     assert ev["best"] == {"session_id": ids[1], "number": best["number"], "time": best["time"]}
     assert [s["laps"] for s in ev["sessions"]] == [3, 3]
+
+    # the driver says Run 1 was on used tyres and Run 2 on new ones: their laps are no longer compared
+    r = client.put(f"/technique/sessions/{ids[0]}/tyres", json={"tyres": "used"})
+    assert r.status_code == 200 and r.json()["status"] == "queued"
+    assert client.put(f"/technique/sessions/{ids[1]}/tyres", json={"tyres": "new"}).status_code == 200
+    assert client.put(f"/technique/sessions/{ids[0]}/tyres", json={"tyres": "soft"}).status_code == 422
+    first = _wait(client, f"/technique/sessions/{ids[0]}")
+    assert first["tyres"] == {"tyres": "used", "sure": True, "why": "set by you", "laps": 3}
+    assert {x["tyres"] for x in first["laps"]} == {"used"}
+    ev = client.get(f"/technique/events/{event['id']}").json()
+    assert [s["tyres"]["tyres"] for s in ev["sessions"]] == ["used", "new"]
+    for x in first["lap"]["trace"]["model"]["best"]["sources"]:  # Run 2's passes lend Run 1's laps nothing
+        assert x["kind"] != "pass" or x["run"] != "Run 2"
 
     # a session of no event is checked on its own
     import app.db
