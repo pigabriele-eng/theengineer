@@ -22,7 +22,7 @@ import {
   dayLabel, eventsApi, Folder, FolderSession, FolderSummary, NO_EVENT,
 } from '@/lib/events';
 import {
-  byYear, carLine, Championship, champKey, driversLine, eventKey, Folds, monthSpan, openByDefault, readFolds, saveFolds,
+  byYear, carLine, Championship, champKey, driverLapsLine, eventKey, Folds, monthSpan, openByDefault, readFolds, saveFolds,
   shortName, Year, yearKey, yearOf,
 } from '@/lib/homeFolds';
 import { launchEvent } from '@/lib/openCurrent';
@@ -312,7 +312,7 @@ function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged
   const past = whenOf(f, todayIso()) === 'past';
   const round = f.season?.round != null ? `Round ${f.season.round}` : null;
   const meta = planned ? [round, plannedLine(f, plan)].filter(Boolean).join(' · ')
-    : [round, f.track, driversLine(f), carLine(f), plural(f.sessions, 'run'),
+    : [round, f.track, driverLapsLine(f), carLine(f), plural(f.sessions, 'run'),
       f.clean_laps ? plural(f.clean_laps, 'clean lap') : null]
       .filter(Boolean).join(' · ');
   const status = planned ? { text: past ? 'No data' : 'Planned', line: past ? c.textMuted : c.rule }

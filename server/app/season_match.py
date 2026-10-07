@@ -42,7 +42,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import JSON, DateTime, Integer, String, delete, func, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, selectinload
 
-from app import calendar_sync, garage, models, plans, seasons
+from app import calendar_sync, garage, models, plans, season_car, seasons
 from app import db as app_db  # SessionLocal is looked up when used: the tests swap the database
 from app.db import Base, get_db
 from app.known_tracks import known_track
@@ -539,14 +539,6 @@ def link(db: Session, ev: models.Event, season: seasons.Season, rnd: seasons.Sea
     fill_runs(db, ev, season, None, row)
 
 
-def _car_numbered(db: Session, number: str | None) -> int | None:
-    number = (number or "").strip().lstrip("#")
-    if not number:
-        return None
-    ids = db.scalars(select(garage.CarInfo.car_id).where(garage.CarInfo.number == number)).all()
-    return ids[0] if len(ids) == 1 else None
-
-
 def _words_of(text: str | None) -> list[str]:
     return plans._plain(text).split()
 
@@ -581,18 +573,19 @@ def _entry_used(car_id: int | None, drivers: list[models.Driver]) -> dict:
     return {"car_id": car_id, "drivers": [d.id for d in drivers]}
 
 
-def _entry_now(db: Session, season: seasons.Season) -> dict:
+def _entry_now(db: Session, ev: models.Event, season: seasons.Season, cache: dict | None = None) -> dict:
     entry = seasons.entry_row(season.entry)
-    car_id = seasons._exists(db, models.Car, entry["car_id"]) or _car_numbered(db, season.car_number)
+    car_id = season_car.for_event(db, ev, season, cache)
     return _entry_used(car_id, [d for i in entry["drivers"] if (d := db.get(models.Driver, i)) is not None])
 
 
 def fill_runs(db: Session, ev: models.Event, season: seasons.Season, run_ids: list[int] | None,
               row: SeasonMatch) -> None:
-    """The event's runs (or these of them) get the season's car, the car its runs' logger, and their driver; only
-    what a run doesn't have. Runs whose driver can't be told are left to the driving style (driver_prints.settle)."""
+    """The event's runs (or these of them) get the event's car (season_car: set on the event, else the season's), the
+    car its runs' logger, and their driver; only what a run doesn't have. Runs whose driver can't be told are left to
+    the driving style (driver_prints.settle)."""
     entry = seasons.entry_row(season.entry)
-    car_id = seasons._exists(db, models.Car, entry["car_id"]) or _car_numbered(db, season.car_number)
+    car_id = season_car.for_event(db, ev, season)
     drivers = [d for i in entry["drivers"] if (d := db.get(models.Driver, i)) is not None]
     q = (select(models.RunSession).where(models.RunSession.event_id == ev.id)
          .options(selectinload(models.RunSession.files)).order_by(models.RunSession.id).limit(MAX_RUNS))
@@ -722,8 +715,8 @@ def _event_ids_with_data(db: Session) -> list[int]:
 
 
 def scan(db: Session, season_id: int | None = None) -> dict:
-    """Match every event with data; with season_id (a season just made or changed), its events' runs are filled
-    again from its entry (only what they lack). Commits. How many were linked and asked."""
+    """Match every event with data; then the events of every season whose car or drivers changed (a season just made
+    or saved: season_id) get them on their runs (only what they lack). Commits. How many were linked and asked."""
     with calendar_sync._lock:
         before = db.scalar(select(SeasonMatch.id).order_by(SeasonMatch.id.desc()).limit(1)) or 0
         for eid in _event_ids_with_data(db):
@@ -731,14 +724,7 @@ def scan(db: Session, season_id: int | None = None) -> dict:
             if ev is not None:
                 consider(db, ev)
                 db.flush()
-        if season_id is not None and (season := db.get(seasons.Season, season_id)) is not None:
-            now = _entry_now(db, season)
-            for row in db.scalars(select(SeasonMatch).where(SeasonMatch.status.in_(("linked", "yes")),
-                                                            SeasonMatch.kind.in_(("round", "official")))).all():
-                ev = db.get(models.Event, row.event_id)
-                done = row.done or {}
-                if ev is not None and done.get("season_id") == season_id and done.get("entry") != now:
-                    fill_runs(db, ev, season, None, row)
+        season_car.put_on_events(db)  # every season's car (and drivers) on its events' runs, where it changed
         db.commit()
         made = db.scalars(select(SeasonMatch.status).where(SeasonMatch.id > before)).all()
     return {"linked": made.count("linked"), "asked": made.count("pending")}
@@ -825,12 +811,9 @@ def _season_from_calendar(db: Session, ev: models.Event, opt: dict, number: str)
                       if c and c.get("car_number") == number), None)
         ours = rm.ResultEntry(car_number=number, drivers=known["drivers"], team=known.get("team"),
                               car_model=known.get("car_model")) if known else None
-    if ours is not None:
-        numbered = select(garage.CarInfo.id).where(garage.CarInfo.number == number).limit(1)
-        if seasons.entry_row(season.entry)["car_id"] is None and db.scalar(numbered) is None:
-            _make_car(db, number, ours.car_model, ours.team)
-        seasons.fill_entry(db, season, seasons.EntryRowIn(car_number=number[:8], drivers=list(ours.drivers or [])[:10],
-                                                           team=(ours.team or None), car_model=ours.car_model))
+    if ours is not None:  # our car (the garage's like it, else made from the row) and the entry's blanks
+        season_car.remember(db, season, {"car_number": number, "drivers": ours.drivers, "team": ours.team,
+                                         "car_model": ours.car_model})
     rnd = db.scalars(select(seasons.SeasonRound).where(seasons.SeasonRound.season_id == season.id,
                                                        seasons.SeasonRound.round_id == opt.get("round_id"))).first()
     return season, rnd
@@ -849,18 +832,19 @@ def _entry_row(db: Session, series: str, year: int, round_id: str | None, number
     return rows[0][0] if rows else None
 
 
-def _make_car(db: Session, number: str, model: str | None, team: str | None) -> None:
-    """Our car in the garage, as the entry list gives it, when the garage has none of our number."""
+def _make_car(db: Session, number: str, model: str | None, team: str | None) -> int:
+    """Our car in the garage, as the entry list gives it, when the garage has none like it (season_car.car_like)."""
     model = (model or "").strip()[:100] or None
     car = models.Car(name=garage.car_name(number, model))
     db.add(car)
     db.flush()
-    info = garage.CarInfo(car_id=car.id, number=number[:8], model=model)
+    info = garage.CarInfo(car_id=car.id, number=number[:8] or None, model=model)
     if (team or "").strip():
         t = seasons._team_named(db, team.strip())
         info.team_id, car.team = t.id, t.name
     db.add(info)
     db.flush()
+    return car.id
 
 
 def _undo(db: Session, row: SeasonMatch) -> None:
@@ -1030,7 +1014,7 @@ def _summary(db: Session, row: SeasonMatch) -> str:
     drivers = sum(1 for v in runs.values() if v.get("driver_id"))
     car = db.get(models.Car, done.get("car_id")) if done.get("car_id") else None
     if cars and car is not None:
-        parts.append(f"{_plural(cars, 'run')} got {car.name}.")
+        parts.append(season_car.set_on(db, car.id, season, cars))
     if done.get("loggers"):
         parts.append(f"Logger {', '.join(map(str, done['loggers']))} is now fitted to it, so later logs get it too.")
     if drivers:

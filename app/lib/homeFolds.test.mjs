@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  byYear, carLine, champKey, driversLine, eventKey, monthSpan, openByDefault, OTHER, shortName, surname, yearKey,
+  byYear, carLine, champKey, driverLapsLine, driversLine, eventKey, monthSpan, openByDefault, OTHER, shortName, surname, yearKey,
 } from './homeFolds.ts';
 
 const ev = (id, start, end, extra = {}) => ({
@@ -81,4 +81,17 @@ test("an event's drivers by surname and its main car", () => {
   assert.equal(carLine({ cars: ['Car #7', 'Car #8', 'Car #9'] }), 'Car #7 +2');
   assert.equal(carLine({ cars: [] }), null);
   assert.equal(carLine({}), null);
+});
+
+test("each driver's laps: three letters of the surname, then the laps nobody is set on", () => {
+  const f = { drivers: ['Gabriele Piana', 'Michael Rackl'], unassigned_laps: 12,
+    driver_laps: [{ name: 'Gabriele Piana', laps: 84 }, { name: 'Michael Rackl', laps: 71 }] };
+  assert.equal(driverLapsLine(f), 'PIA 84 laps · RAC 71 laps · 12 laps unassigned');
+  assert.equal(driverLapsLine({ ...f, unassigned_laps: 0, driver_laps: [{ name: 'Gabriele Piana', laps: 1 }] }), 'PIA 1 lap');
+  // two drivers with the same three letters: their surnames
+  assert.equal(driverLapsLine({ drivers: [], unassigned_laps: 0, driver_laps: [
+    { name: 'Anna Piana', laps: 3 }, { name: 'Marco Pianari', laps: 2 }] }), 'Piana 3 laps · Pianari 2 laps');
+  assert.equal(driverLapsLine({ drivers: [], driver_laps: [], unassigned_laps: 5 }), '5 laps unassigned');
+  assert.equal(driverLapsLine({ drivers: [], driver_laps: [], unassigned_laps: 0 }), null);
+  assert.equal(driverLapsLine({ drivers: ['Gabriele Piana'] }), 'Piana'); // an older server: the names only
 });

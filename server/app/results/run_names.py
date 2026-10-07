@@ -261,6 +261,18 @@ def _clashing(windows: dict[int, tuple[datetime, datetime]]) -> set[int]:
     return out
 
 
+def _by_driver(runs: list[models.RunSession], codes: dict[int, str], asks: dict[int, list[str]],
+               order: dict[int, datetime]) -> dict[int, str]:
+    """Qualifying runs the lap times can't tell apart (Q1 or Q2), told by who drove: the Q1 driver starts Race 1,
+    so the run of the driver of Race 1's first stint is Q1 and a run of the other driver Q2."""
+    open_q = [r for r in runs if r.id in asks and set(asks[r.id]) <= {"Q1", "Q2"} and r.driver_id]
+    r1 = sorted((r for r in runs if codes.get(r.id) == "R1" and r.driver_id), key=lambda r: (order[r.id], r.id))
+    if not open_q or not r1:
+        return {}
+    starter = r1[0].driver_id
+    return {r.id: "Q1" if r.driver_id == starter else "Q2" for r in open_q}
+
+
 def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | None = None) -> dict:
     """Name the event's runs after the official sessions of ``rnd`` (only runs with laps: a log of a few seconds
     keeps its name); returns what was named and what to ask."""
@@ -281,9 +293,12 @@ def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | Non
     codes_in = {c for c, _, _ in table}
     codes: dict[int, str] = {}
     order: dict[int, datetime] = {}
+    asks: dict[int, list[str]] = {}
     for r in runs:
         m = marks.get(r.id)
-        order[r.id] = windows.get(r.id, (r.created_at.replace(tzinfo=None),))[0]
+        # by when its first lap began: two runs split from one log (one per driver) keep their order
+        first = min((lap.start_s for lap in r.laps), default=0.0)
+        order[r.id] = windows.get(r.id, (r.created_at.replace(tzinfo=None),))[0] + timedelta(seconds=first)
         if m is not None and m.answered and m.code:
             codes[r.id] = m.code
             continue
@@ -301,10 +316,16 @@ def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | Non
         if code is not None:
             codes[r.id] = code
         elif ask and looks_given(r, m):
+            asks[r.id] = ask
+    for rid, code in _by_driver(runs, codes, asks, order).items():
+        codes[rid] = code
+        del asks[rid]
+    for r in runs:
+        if r.id in asks:
             out["questions"].append({"session_id": r.id, "name": r.name,
                                      "starts": (windows[r.id][0] + timedelta(hours=h)).isoformat()
                                      if r.id in timed else None,
-                                     "options": [{"code": c, "label": label(c)} for c in ask]})
+                                     "options": [{"code": c, "label": label(c)} for c in asks[r.id]]})
     by_code: dict[str, list[models.RunSession]] = {}
     for r in runs:
         if codes.get(r.id) and codes[r.id] != NONE:

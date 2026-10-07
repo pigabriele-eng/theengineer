@@ -25,6 +25,8 @@ export type FolderSummary = {
   // who drove it and in what (in the list only): the runs' drivers and cars (a car by its model, else its name),
   // each once, the most laps first
   drivers?: string[];
+  driver_laps?: { name: string; laps: number }[]; // each driver's laps in all, the most first
+  unassigned_laps?: number; // laps of runs without a driver yet
   cars?: string[];
 };
 
