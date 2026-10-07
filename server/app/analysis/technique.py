@@ -33,6 +33,7 @@ from app.analysis.channels import EXIT, POWER
 from app.analysis.lapsim import TOP_SPEED_MARGIN, Calibration, LapModel, SimLap
 from app.analysis.laps import Section
 from app.analysis.local_limits import PlaceLimits, on_own_line
+from app.analysis.shifts import ShiftModel
 
 MIN_COST_S = 0.02  # a piece that costs less than this (against the realistic target) is not named
 CORNER_WINDOW_M = 100  # a corner's slowest point is looked for this far either side of the section's
@@ -633,6 +634,9 @@ NEXT_TURN_G = 0.5  # this much, in g) or loads up the same way (by NEXT_TURN_RIS
 NEXT_TURN_RISE = 0.3
 EXIT_AY_SHARE = 0.8  # a lift with the car still cornering this hard (of the most it did from the slowest point) is
 # balancing it in the corner, not a lift on the way out
+SHIFT_MARGIN_RPM = 150  # an upshift this far off the ideal revs is early or late
+LIMITER_RPM = 80  # revs within this of the limiter: on it
+LIMITER_HELD_M = 10  # metres on the limiter before an upshift: late, wherever the ideal revs are
 MIN_OBVIOUS_S = 0.01  # an obvious mistake that costs less than this is the car at its limit (or noise)
 
 
@@ -656,12 +660,79 @@ def lift_cost(tr: dict[str, np.ndarray], j: int, end: int, stop: int, most: np.n
     x = np.arange(end - j + 1, dtype=float)
     held = np.minimum(np.sqrt(v[j] ** 2 + 2 * acc * x), np.minimum(v[j:end + 1] + MAX_LIFT_LOSS, most[j:end + 1]))
     held = np.maximum(held, v[j:end + 1])
-    lost = float(np.sum(1 / v[j:end] - 1 / held[:-1]))
-    more = float(held[-1] - v[end])
-    if more > 0 and stop > end:
-        after = v[end:stop]
-        lost += float(np.sum(1 / after - 1 / np.minimum(after + more * v[end] / after, most[end:stop])))
-    return lost
+    return float(np.sum(1 / v[j:end] - 1 / held[:-1])) + _carried(v, end, float(held[-1]), stop, most)
+
+
+def _carried(v: np.ndarray, end: int, start: float, stop: int, most: np.ndarray) -> float:
+    """What the lap loses from metre end to stop (m/s at each metre in v) for not being at start there: the car at
+    start drives on with the acceleration the lap itself had at each speed on the way (its gears, its drag), so the
+    speed it has more shrinks as the lap's own acceleration falls with speed. Never above most."""
+    if start <= v[end] or stop <= end:
+        return 0.0
+    seg = v[end:stop + 1]
+    acc = (seg[1:] ** 2 - seg[:-1] ** 2) / 2  # m/s² at each metre (per metre of road)
+    order = np.argsort(seg[:-1])
+    at_v, acc_v = seg[:-1][order], acc[order]
+    held, lost = start, 0.0
+    for k in range(len(seg) - 1):
+        held = min(max(held, seg[k]), most[end + k])
+        lost += 1 / seg[k] - 1 / held
+        held = np.sqrt(max(held ** 2 + 2 * float(np.interp(held, at_v, acc_v)), 0.0))
+    return float(lost)
+
+
+def gain_cost(tr: dict[str, np.ndarray], j: int, end: int, extra: np.ndarray, stop: int,
+              most: np.ndarray | None = None) -> float:
+    """What the lap lost from metre j to end for want of extra acceleration (m/s² at each metre of it): the car
+    driven with it from j, then what it would have had more at end carried down the straight (as lift_cost)."""
+    v = np.asarray(tr["speed"], float) / 3.6
+    most = np.full_like(v, np.inf) if most is None else np.maximum(np.asarray(most, float), v)
+    held = v[j:end + 1].copy()
+    for k in range(1, len(held)):
+        up = held[k - 1] ** 2 + v[j + k] ** 2 - v[j + k - 1] ** 2 + 2 * max(float(extra[k - 1]), 0.0)
+        held[k] = min(max(np.sqrt(max(up, 0.0)), v[j + k]), most[j + k])
+    return float(np.sum(1 / v[j:end] - 1 / held[:-1])) + _carried(v, end, float(held[-1]), stop, most)
+
+
+def shift_mistakes(tr: dict[str, np.ndarray], model: ShiftModel, a: int, stop: int) -> list[dict]:
+    """The upshifts from metre a to stop (the way out of a corner, to the next one's lift or brake point) made early
+    (before the revs where the next gear drives harder, by SHIFT_MARGIN_RPM or more) or late (past them, or held on
+    the rev limiter), each with the stretch it cost drive over and the acceleration missing there."""
+    need = ("gear", "rpm", "throttle")
+    if any(k not in tr for k in need) or stop - a < 5:
+        return []
+    g = np.rint(np.asarray(tr["gear"], float)).astype(int)
+    rpm, v, thr = (np.asarray(tr[k], float) for k in ("rpm", "speed", "throttle"))
+    nm = np.asarray(tr["engine_torque"], float) if "engine_torque" in tr else None
+    out = []
+    for k in a + np.flatnonzero(np.diff(g[a:stop]) > 0):
+        k = int(k)
+        gear, into = int(g[k]), int(g[k + 1])
+        if gear not in model.ideal or model.next_gear(gear) != into or thr[max(k - 10, a):k + 1].mean() < 95:
+            continue
+        ideal = model.ideal[gear]
+        at = float(rpm[max(k - 10, a):k + 1].max())
+        v_ideal = ideal / model.ratio[gear]
+        on_limit = int(np.sum(rpm[max(k - 60, a):k + 1] >= model.limit - LIMITER_RPM))
+        if at < ideal - SHIFT_MARGIN_RPM:
+            e = k + 1
+            while e < stop and v[e] < v_ideal and thr[e] >= 90 and g[e] == into:
+                e += 1
+            extra = model.per_force * np.clip(model.force(gear, v[k:e]) - model.force(into, v[k:e]), 0, None)
+            out.append({"kind": "early_shift", "j": k, "end": e, "extra": extra, "rpm": at, "ideal": ideal,
+                        "kmh": float(v[k]), "ideal_kmh": float(v_ideal)})
+        elif at > ideal + SHIFT_MARGIN_RPM or on_limit >= LIMITER_HELD_M:
+            j = k
+            while j > a and g[j - 1] == gear and v[j - 1] >= v_ideal and thr[j - 1] >= 90:
+                j -= 1
+            if k - j < 3:
+                continue
+            had = (np.clip(nm[j:k], 0, None) * model.ratio[gear] if nm is not None
+                   else model.force(gear, v[j:k]))
+            extra = model.per_force * np.clip(model.force(into, v[j:k]) - had, 0, None)
+            out.append({"kind": "late_shift", "j": j, "end": k, "extra": extra, "rpm": at, "ideal": ideal,
+                        "kmh": float(v[k]), "ideal_kmh": float(v_ideal), "limiter_m": on_limit})
+    return out
 
 
 def brake_cost(va: float, vb: float, got: float, can: float) -> float:
@@ -733,7 +804,7 @@ def _correction(st: np.ndarray, ts: np.ndarray, j: int, until_s: float) -> int |
 
 
 def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Envelope, env_r: Envelope,
-                     perfect: SimLap | None = None) -> list[dict]:
+                     perfect: SimLap | None = None, shifts: ShiftModel | None = None) -> list[dict]:
     """The mistakes that are wrong whatever the target: a lift on the way out of a corner, the throttle stepped on so
     early or so hard that the car forces a lift or a steering correction, and braking in a straight line, with no
     cornering to share the grip with, below the deceleration the car shows at that place. Each with what it alone
@@ -754,7 +825,8 @@ def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Enve
         if cost is None:  # what the span costs against the realistic target
             cost = span_cost(env_r, tr, a, b)
         return {"key": f"{c.code}:{kind}", "kind": kind, "code": c.code,
-                "phase": "braking" if kind == "soft_straight_braking" else "exit", "start_m": a, "end_m": b, "at_m": at,
+                "phase": {"soft_straight_braking": "braking", "early_shift": "full throttle",
+                          "late_shift": "full throttle"}.get(kind, "exit"), "start_m": a, "end_m": b, "at_m": at,
                 "cost_s": round(max(cost, 0.0), 3), "title": title, "what": what, "do": do}
 
     for i, c in enumerate(corners):
@@ -811,6 +883,31 @@ def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Enve
                 out.append(item("power_step", c, step_at, corr + 10, step_at,
                                 "Stepped on the power, then corrected", what,
                                 "Squeeze the throttle on rather than stepping on it, so the rear stays with you."))
+        # ---- the upshifts on the way out, early or late against the revs where the next gear drives harder
+        if shifts is not None and c.pickup is not None:
+            def gear_of(m: int) -> int:
+                return int(np.rint(tr["gear"][m]))
+
+            for sh in shift_mistakes(tr, shifts, c.pickup, min(stop, n)):
+                j, e = sh["j"], sh["end"]
+                cost = gain_cost(tr, j, e, sh["extra"], min(stop, n), most)
+                if sh["kind"] == "early_shift":
+                    upto = (f"all the way to the rev limiter ({shifts.limit:,.0f} rpm)" if shifts.to_limit(gear_of(j))
+                            else f"up to {sh['ideal']:,.0f} rpm ({sh['ideal_kmh']:.0f} km/h)")
+                    what = (f"On the way out of {c.code} you shifted up at {sh['rpm']:,.0f} rpm ({sh['kmh']:.0f} "
+                            "km/h). The engine's torque and the gear ratios say this gear pulls harder than the next "
+                            f"one {upto}, so the car drove with less force until {e} m.")
+                    out.append(item("early_shift", c, j, e, j, f"Shifted up early out of {c.code}", what,
+                                    f"Hold the gear to {sh['ideal']:,.0f} rpm before shifting up.", cost))
+                else:
+                    held = (f", {sh['limiter_m']} m of it on the rev limiter" if sh["limiter_m"] >= LIMITER_HELD_M
+                            else "")
+                    what = (f"On the way out of {c.code} you held the gear past {sh['ideal']:,.0f} rpm from {j} m, "
+                            f"where the next gear already drives harder, and shifted up at {sh['kmh']:.0f} km/h"
+                            f"{held}.")
+                    out.append(item("late_shift", c, j, e, j, f"Shifted up late out of {c.code}", what,
+                                    f"Shift up at {sh['ideal']:,.0f} rpm"
+                                    + (", just before the limiter." if shifts.to_limit(gear_of(j)) else "."), cost))
         # ---- braking in a straight line below the car's deceleration there
         if c.brake is not None:
             a, b = c.brake, c.release or c.m
@@ -886,7 +983,8 @@ def model_phases(env: Envelope, sim: SimLap, step: int) -> list[int]:
 
 def check_lap(tr: dict[str, np.ndarray], perfect: PlaceLimits, held: PlaceLimits, sections: list[Section], *,
               lap_time: float, units: dict[str, str] | None = None, detail: bool = True,
-              calibrations: tuple[Calibration | None, Calibration | None] = (None, None)) -> dict:
+              calibrations: tuple[Calibration | None, Calibration | None] = (None, None),
+              shifts: ShiftModel | None = None) -> dict:
     """The lap's mistakes against perfect driving, most costly first, and how the gap to the perfect lap splits:
     named mistakes, losses with the pedals at the limit, the perfect lap's optimism, the pit lane and what no single
     mistake explains.
@@ -922,7 +1020,7 @@ def check_lap(tr: dict[str, np.ndarray], perfect: PlaceLimits, held: PlaceLimits
                       "title": mk.title, "what": mk.what, "do": mk.do,
                       "value": None if mk.value is None else round(float(mk.value), 3), "unit": mk.unit})
     items.sort(key=lambda x: -x["cost_s"])
-    obvious = obvious_mistakes(tr, corners, env, env_r, sim)
+    obvious = obvious_mistakes(tr, corners, env, env_r, sim, shifts)
     trace_time = float(tr["t"][-1])
     named_at = {x["start_m"] for x in items}
     named = sum(p.cost for p in pieces if p.start in named_at)
