@@ -1,5 +1,6 @@
 """Engine views over one or more sessions: opportunities, trends, setup, scores, driver comparison,
 debrief check."""
+from collections.abc import Callable
 from dataclasses import replace
 from functools import partial
 
@@ -11,7 +12,7 @@ from app import lappacks, models, page_cache
 from app.analysis.balance import car_geometry
 from app.analysis.compare import ROLES as COMPARE_ROLES
 from app.analysis.compare import RunSource, compare_groups
-from app.analysis.insights import RunInput, analyze_runs
+from app.analysis.insights import LazyRun, RunInput, analyze_lazily, analyze_runs
 from app.analysis.laps import load_session
 from app.db import get_db
 from app.debrief.check import check_debrief
@@ -52,6 +53,31 @@ def _runs(db: Session, session_ids: list[int]) -> tuple[list[RunInput], models.T
     return runs, next(iter(tracks.values()))
 
 
+def _lazy_runs(db: Session, session_ids: list[int]) -> tuple[list[LazyRun], Callable[[], models.Track | None]]:
+    """_runs() as runs to read one at a time (analyze_lazily), and their track once they are read."""
+    runs, names, tracks = [], [], {}
+
+    def load(s: models.RunSession, name: str) -> RunInput:
+        run, track = _run(db, s, name)
+        tracks[track.id if track else None] = track
+        if len(tracks) > 1:
+            raise HTTPException(422, "These sessions are from different tracks; compare sessions from one track")
+        return run
+
+    for sid in dict.fromkeys(session_ids):
+        s = _get(db, sid)
+        if not s.files:
+            raise HTTPException(404, f"No logger file uploaded for session {s.id}")
+        name = s.name or f"Session {s.id}"
+        if name in names:
+            name = f"{name} #{s.id}"
+        names.append(name)
+        f = main_file(s)
+        clean = [l.time_s for l in s.laps if l.file_id == f.id and l.clean]
+        runs.append(LazyRun(partial(load, s, name), min(clean, default=None)))
+    return runs, lambda: next(iter(tracks.values()), None)
+
+
 @router.get("/sessions/{session_id}/insights")
 def session_insights(session_id: int, db: Session = Depends(get_db)):
     """Lap time opportunities, driving trends, setup checks and driver scores for one session; kept once worked
@@ -74,9 +100,10 @@ class InsightsIn(BaseModel):
 @router.post("/insights")
 @one_at_a_time
 def multi_insights(body: InsightsIn, db: Session = Depends(get_db)):
-    """The same across several sessions at one track (a test day, an event): the car's limits come from all."""
-    runs, track = _runs(db, body.session_ids)
-    return analyze_runs(runs, official_corners(track), drop_channels=True)
+    """The same across several sessions at one track (a test day, an event): the car's limits come from all. The
+    sessions' logs are read one at a time, so many fit in the server's memory."""
+    runs, track = _lazy_runs(db, body.session_ids)
+    return analyze_lazily(runs, lambda: official_corners(track()))
 
 
 class LapPick(BaseModel):

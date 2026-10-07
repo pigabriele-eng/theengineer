@@ -176,6 +176,32 @@ def test_not_an_export():
         read_csv_log(write_ld(simulate()[0]))  # a native log renamed .csv
 
 
+@pytest.mark.parametrize("quoted", [False, True])
+def test_long_export_is_read_in_little_memory(tmp_path, quoted):
+    """The server has 512 MB: a long export is read straight into numbers, never held as cells of text (which take
+    over ten times the file's size)."""
+    import tracemalloc
+
+    q = '"' if quoted else ""
+    rows = np.round(np.random.default_rng(0).normal(100, 30, (20_000, 30)), 3)
+    rows[:, 0] = np.arange(len(rows)) / HZ
+    head = ['"Format","MoTeC CSV File"', '"Venue","Test Track"', ""] if quoted else []
+    lines = [*head, ",".join(["Time", "Ground Speed", *(f"Chan {k}" for k in range(28))]), "s,km/h" + "," * 28,
+             *(",".join(f"{q}{x:.3f}{q}" for x in r) for r in rows)]
+    path = tmp_path / "long.csv"
+    path.write_text("\r\n".join(lines) + "\r\n")
+    del lines
+    tracemalloc.start()
+    try:
+        log = read_csv_log(path)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert np.allclose(log.channel("Chan 27").values(), rows[:, 29])
+    assert log.duration == pytest.approx(len(rows) / HZ)
+    assert peak < 3 * path.stat().st_size
+
+
 def test_stored_logs_open_by_type(tmp_path, run):
     (tmp_path / "a.csv").write_text(aim_csv(run))
     (tmp_path / "b.ld").write_bytes(write_ld(simulate()[0]))
