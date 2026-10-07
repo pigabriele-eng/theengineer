@@ -4,8 +4,8 @@ import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
-from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from app import garage, heavy, models, page_cache, schemas, storage
 from app.analysis.emptyrun import NoLaps, judge
@@ -34,6 +34,9 @@ def _get(db: Session, session_id: int) -> models.RunSession:
     return s
 
 
+SESSION_COLUMNS = ("id", "created_at", *schemas.SessionIn.model_fields)  # SessionOut's own
+
+
 def _with_best(s: models.RunSession) -> dict:
     clean = [l.time_s for l in s.laps if l.clean]
     out = schemas.SessionDetail.model_validate(s).model_dump()
@@ -60,11 +63,24 @@ def create_session(body: schemas.SessionIn, db: Session = Depends(get_db)):
 
 @router.get("", response_model=list[schemas.SessionOut])
 def list_sessions(db: Session = Depends(get_db)):
-    rows = db.scalars(select(models.RunSession)
-                      .options(selectinload(models.RunSession.laps), selectinload(models.RunSession.files),
-                               selectinload(models.RunSession.event).selectinload(models.Event.track))
-                      .order_by(models.RunSession.created_at.desc())).all()
-    return [_with_best(s) for s in rows]
+    """Every session, newest first, as _with_best has it less its files and laps: read column by column, the best
+    lap by the database, and the files' headers only for the sessions whose event has no track."""
+    S, E, T = models.RunSession, models.Event, models.Track
+    rows = db.execute(select(*(getattr(S, c) for c in SESSION_COLUMNS), E.name, T.name)
+                      .outerjoin(E, S.event_id == E.id).outerjoin(T, E.track_id == T.id)
+                      .order_by(S.created_at.desc())).all()
+    best = dict(db.execute(select(models.Lap.session_id, func.min(models.Lap.time_s))
+                           .where(models.Lap.clean.is_(True)).group_by(models.Lap.session_id)).all())
+    no_track = [r.id for r in rows if r[-1] is None]
+    venues: dict[int, str] = {}
+    for i in range(0, len(no_track), 500):
+        for sid, meta in db.execute(select(models.LoggerFile.session_id, models.LoggerFile.meta)
+                                    .where(models.LoggerFile.session_id.in_(no_track[i:i + 500]))
+                                    .order_by(models.LoggerFile.id)):
+            if sid not in venues and meta.get("venue"):
+                venues[sid] = meta["venue"]
+    return [{**{c: r[j] for j, c in enumerate(SESSION_COLUMNS)}, "best_lap_s": best.get(r.id), "event_name": r[-2],
+             "track_name": r[-1] if r[-1] is not None else venues.get(r.id)} for r in rows]
 
 
 @router.get("/{session_id}", response_model=schemas.SessionDetail)
@@ -269,8 +285,8 @@ def session_analysis(session_id: int, file_id: int | None = None, reference_lap:
 def session_compare(session_id: int, lap: int, reference_lap: int | None = None, file_id: int | None = None,
                     step: float = 5.0, db: Session = Depends(get_db)):
     """Speed, throttle, brake and time delta of one lap against the reference lap, for charts, with the
-    reference lap's corners numbered as in the analysis. The session page's views (a lap of its main log against
-    its best lap) are kept once worked out (app/page_cache.py), one per lap."""
+    reference lap's corners numbered as in the analysis. Each view of a lap of one of its logs (against the lap
+    picked, at the step asked) is kept once worked out (app/page_cache.py), so picking it again reads no log."""
     s = _get(db, session_id)
     step = max(1.0, min(step, 50.0))
 
@@ -281,15 +297,17 @@ def session_compare(session_id: int, lap: int, reference_lap: int | None = None,
         except ValueError as e:
             raise HTTPException(404, str(e)) from e
 
-    main = page_cache.main_file(s)
-    if main is None or file_id not in (None, main.id) or step != 5.0 \
-            or reference_lap not in (None, default_reference_lap(s, main)) \
-            or lap not in {l.number for l in s.laps if l.file_id == main.id}:
-        with heavy.lock:  # another view: worked out each time, as before
+    files = [f for f in s.files if file_id is None or f.id == file_id]
+    f = max(files, key=lambda f: f.meta.get("duration_s", 0)) if files else None  # the one load_main_file reads
+    numbers = {l.number for l in s.laps if f is not None and l.file_id == f.id}
+    if f is None or lap not in numbers or (reference_lap is not None and reference_lap not in numbers):
+        with heavy.lock:  # no such log or lap (or the fastest lap stands in for the reference): as before
             return work()
+    # the session page's view (its main log, 5 m steps) keeps the scope it always had: the prebuild makes it
+    view = "" if f.id == page_cache.main_file(s).id and step == 5.0 else f"|{f.id}|{step!r}"
     return page_cache.RawJSON(page_cache.cached(
-        db, f"session:{s.id}|compare|{lap}|{reference_lap}",
-        lambda: page_cache.session_signature(db, "compare", s, main), work, raw=True))
+        db, f"session:{s.id}|compare|{lap}|{reference_lap}{view}",
+        lambda: page_cache.session_signature(db, "compare", s, f), work, raw=True))
 
 
 def default_reference_lap(s: models.RunSession, f: models.LoggerFile) -> int | None:

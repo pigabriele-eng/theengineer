@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app import catalog, models
+from app import catalog, models, page_cache
 from app.db import get_db
 from app.heavy import one_at_a_time
 from app.importers.motec import LdFormatError
@@ -46,7 +46,21 @@ def _sessions(db: Session, car_id: int | None, session_ids: list[int] | None) ->
     return list(db.scalars(q).all())
 
 
-@one_at_a_time
+def _log_runs(db: Session, s: models.RunSession, f: models.LoggerFile) -> dict | None:
+    """What the pressure model reads from one log: the logger's conditions and its cold-to-hot runs; None when it isn't
+    a log it can read. Kept once read (app/page_cache.py), so the next request reads no log and doesn't wait for the
+    heavy-work lock; OSError when the log can't be fetched (not kept)."""
+    def work() -> dict | None:
+        try:
+            ld = read_file(f)
+        except LdFormatError:
+            return None
+        return page_cache.plain({"logger": logger_conditions(ld), "runs": measure_runs(ld)})
+
+    return page_cache.cached(db, f"session:{s.id}|tyreruns|{f.id}",
+                             lambda: page_cache.signature("tyreruns", page_cache.log_part(s, f)), work)
+
+
 def logged_runs(db: Session, car_id: int | None = None, session_ids: list[int] | None = None) -> list[dict]:
     """Every cold start in the sessions' logs with the hot pressure it reached, per corner."""
     out = []
@@ -55,14 +69,16 @@ def logged_runs(db: Session, car_id: int | None = None, session_ids: list[int] |
             if Path(f.filename).suffix.lower() not in LOG_FILES:
                 continue
             try:
-                ld = read_file(f)
-            except (LdFormatError, OSError):
+                read = _log_runs(db, s, f)
+            except OSError:
                 continue
-            logger = logger_conditions(ld)
+            if read is None:
+                continue
+            logger = read["logger"]
             ambient, source = s.ambient_temp_c, "session"
             if ambient is None:
                 ambient, source = logger.get("ambient_c"), "logger at speed"
-            for r in measure_runs(ld):
+            for r in read["runs"]:
                 out.append({"session_id": s.id, "session": s.name or f"Session {s.id}", "file_id": f.id,
                             "file": f.filename, **r, "ambient_c": ambient,
                             "ambient_source": source if ambient is not None else None, "track_c": s.track_temp_c,

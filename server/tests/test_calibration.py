@@ -200,3 +200,17 @@ def test_the_throttle_on_and_off_twice_is_two_lifts():
     ts = np.arange(n) * 0.025  # 40 m/s
     out = _dips(thr, ts, np.maximum.accumulate(thr), np.full(n, -1.5), 0, -1.0, 0)
     assert [(a, lo) for a, _, _, lo in out] == [(50, 40.0), (90, 30.0)]
+
+
+def test_speed_that_stops_climbing_on_the_way_out_is_a_stall():
+    from app.analysis.technique import _stalls
+    # out of a corner at 2 m/s², flat for 10 m (0.4 s at about 25 m/s), then climbing again; no braking
+    x = np.arange(200, dtype=float)
+    v2 = np.where(x < 80, 20.0 ** 2 + 4 * x, np.where(x < 90, 20.0 ** 2 + 320, 20.0 ** 2 + 320 + 4 * (x - 90)))
+    ms = np.sqrt(v2)
+    t = np.concatenate([[0.0], np.cumsum(2 / (ms[:-1] + ms[1:]))])
+    tr = {"speed": ms * 3.6, "t": t, "braking": np.zeros(200)}
+    out = _stalls(tr, 0, 199, np.full(200, -0.3), -1.0)
+    assert len(out) == 1 and 70 <= out[0][0] <= 85 and 85 <= out[0][1] <= 100
+    tr["braking"][75:] = 1.0  # the same, braking for the next corner: not a stall
+    assert _stalls(tr, 0, 199, np.full(200, -0.3), -1.0) == []

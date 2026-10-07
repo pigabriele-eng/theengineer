@@ -300,7 +300,8 @@ const METHOD = [
     'control working) and the car still fell short, that is the car on the day, not a mistake. ABS and traction ' +
     'control on their own aren\'t mistakes: the event\'s quicker laps use more of both.',
   'Obvious mistakes are wrong whatever the target: a lift on the way out of a corner (not a lift for the next ' +
-    'corner), the throttle on and off through a corner, the power stepped on so early or so hard that the car forced ' +
+    'corner), the throttle on and off through a corner, the speed that stops climbing or drops on the way out ' +
+    '(whatever the pedal shows), the power stepped on so early or so hard that the car forced ' +
     'a lift or a steering correction, and braking in a straight line, with no cornering to share the grip, below ' +
     'the deceleration the car has shown there. Each costs what it alone lost: the speed a lift took off, carried ' +
     'down the straight, or the later braking point missed. Under 0.01 s they are left out.',
