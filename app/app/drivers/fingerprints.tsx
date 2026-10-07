@@ -9,9 +9,8 @@ import { Colophon, Label, Page, Section, TextLink } from '@/components/Programme
 import { Text, View } from '@/components/Themed';
 import { Driver, driversApi } from '@/lib/drivers';
 import { FingerprintDb, fingerprintsApi, LapLink } from '@/lib/fingerprints';
+import { poll } from '@/lib/poll';
 import { tapRoom, themed, useTheme } from '@/constants/Theme';
-
-const POLL_MS = 5000;
 
 // The driver fingerprint database: how each driver drives, learned from the runs tagged with their name and set
 // against their teammates in the same car, which habits go with quicker laps in all the data, and the styles still
@@ -23,20 +22,24 @@ export default function FingerprintsScreen() {
   const [db, setDb] = useState<FingerprintDb | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [drivers, setDrivers] = useState<Driver[]>([]);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stopPoll = useRef<(() => void) | null>(null);
   const live = useRef(true); // false once the page is gone: an answer still on its way is dropped, not polled on
 
+  // read again while the latest uploads are still being added (lib/poll.ts: less and less often)
   const load = useCallback(() => {
-    fingerprintsApi.all().then(
+    stopPoll.current?.();
+    stopPoll.current = poll((wanted) => fingerprintsApi.all().then(
       (d) => {
-        if (!live.current) return;
+        if (!live.current || !wanted()) return false;
         setDb(d);
         setError(null);
-        if (timer.current) clearTimeout(timer.current);
-        if (d.updating) timer.current = setTimeout(load, POLL_MS); // the latest uploads are still being added
+        return !!d.updating;
       },
-      (e) => live.current && setError((e as Error).message),
-    );
+      (e) => {
+        if (live.current && wanted()) setError((e as Error).message);
+        return false;
+      },
+    ));
   }, []);
   const loadDrivers = useCallback(() => {
     driversApi.list().then((d) => live.current && setDrivers(d), () => live.current && setDrivers([]));
@@ -47,7 +50,7 @@ export default function FingerprintsScreen() {
     loadDrivers();
     return () => {
       live.current = false;
-      if (timer.current) clearTimeout(timer.current);
+      stopPoll.current?.();
     };
   }, [load, loadDrivers]);
   const named = useCallback(() => {

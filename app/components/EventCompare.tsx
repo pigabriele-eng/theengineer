@@ -12,9 +12,9 @@ import { Text, View } from '@/components/Themed';
 import { DETECTED_CORNERS_NOTE, formatLap } from '@/lib/api';
 import { encodePicks } from '@/lib/compare';
 import { ComparedSession, dayLabel, eventsApi, KIND_NAMES, SideBySide } from '@/lib/events';
+import { poll } from '@/lib/poll';
 import { deltaMark, face, Fonts, themed, Type, useTheme } from '@/constants/Theme';
 
-const POLL_MS = 3000;
 const COL_MIN = 104; // a run's column: as wide as the space allows, within these
 const COL_MAX = 172;
 const WHEELS = ['fl', 'fr', 'rl', 'rr'] as const;
@@ -49,29 +49,32 @@ export function EventCompare({ folderKey, picks, onClear }: {
   const colors = useLapColors(picks.map((p) => p.slot));
   const ask = useRef(0);
 
-  // ask once the picks settle; while the report is still reading logs, ask again every few seconds
+  // ask once the picks settle; while the report is still reading logs, ask again (lib/poll.ts: less and less often)
   useEffect(() => {
     const id = ++ask.current;
     if (ids.length < 2) return;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const run = async () => {
-      setBusy(true);
-      try {
-        const d = await eventsApi.compare(folderKey, ids);
-        if (id !== ask.current) return;
-        setData(d);
-        setError(null);
-        if (d.status === 'working') timer = setTimeout(run, POLL_MS);
-      } catch (e) {
-        if (id === ask.current) setError((e as Error).message);
-      } finally {
-        if (id === ask.current) setBusy(false);
-      }
-    };
-    timer = setTimeout(run, 150);
+    let stop: (() => void) | undefined;
+    const timer = setTimeout(() => {
+      stop = poll(async (live) => {
+        setBusy(true);
+        try {
+          const d = await eventsApi.compare(folderKey, ids);
+          if (!live() || id !== ask.current) return false;
+          setData(d);
+          setError(null);
+          return d.status === 'working';
+        } catch (e) {
+          if (id === ask.current) setError((e as Error).message);
+          return false;
+        } finally {
+          if (id === ask.current) setBusy(false);
+        }
+      });
+    }, 150);
     return () => {
       ask.current++;
-      if (timer) clearTimeout(timer);
+      clearTimeout(timer);
+      stop?.();
     };
   }, [folderKey, key]); // eslint-disable-line react-hooks/exhaustive-deps -- the ids, by value
 

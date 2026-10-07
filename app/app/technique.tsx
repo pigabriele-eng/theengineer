@@ -4,7 +4,7 @@ import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, useWind
 
 import { Choice, FigRow, Meter, Notice, PageHead, Tabs, useText } from '@/components/Picks';
 import PrintButton from '@/components/PrintButton';
-import { Colophon, Fig, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
+import { Colophon, Fig, Label, Page, Section, TextLink, useGutter, useWide } from '@/components/Programme';
 import { Bars } from '@/components/ReportCharts';
 import { SessionSwitcher, useEventFolder, useSessionEvent } from '@/components/SessionSwitcher';
 import { TechniqueInputs } from '@/components/TechniqueInputs';
@@ -21,6 +21,7 @@ import {
   EventTechnique,
   fetchEventTechnique,
   fetchSessionTechnique,
+  fetchTechniqueProgress,
   Habit,
   habitSize,
   LapCheck,
@@ -69,18 +70,40 @@ export default function TechniqueScreen() {
   const sideWidth = Math.round(Math.min(440, Math.max(320, width * 0.28)));
   const sideBySide = width - (side ? sideWidth : 0) >= SIDE_BY_SIDE;
 
-  // the session's check of one lap; while the server works it out, asked again (lib/poll.ts: less and less often)
+  // the event's check is asked for once more when the session's (the same check) comes in after it was being worked
+  // out: the event's answer from before then still says "working"
+  const evWorking = useRef(false);
+  const [evRound, setEvRound] = useState(0);
+
+  // the session's check of one lap; while the server works it out, only how far it is is asked again (lib/poll.ts:
+  // less and less often, ?brief), and the check once more when it's ready
   useEffect(() => {
     if (sessionId == null) return;
     setLoading(true);
+    let read = false; // the check itself read once already
+    let waited = false; // ... and it was being worked out
     return poll(async (live) => {
       try {
+        if (read) {
+          const h = await fetchTechniqueProgress({ session: sessionId });
+          if (!live()) return false;
+          if (working(h.status)) {
+            setAnswer((a) => a && { ...a, ...h }); // its progress
+            return true;
+          }
+        }
         const a = await fetchSessionTechnique(sessionId, lap);
         if (!live()) return false;
+        read = true;
         setAnswer(a);
         setError(null);
         setLoading(false);
-        return working(a.status);
+        if (working(a.status)) {
+          waited = true;
+          return true;
+        }
+        if (waited && evWorking.current) setEvRound((k) => k + 1);
+        return false;
       } catch (e) {
         if (!live()) return false;
         setError((e as Error).message);
@@ -98,25 +121,32 @@ export default function TechniqueScreen() {
   const eventId = eventParam ?? answer?.event?.id ?? lookedUp ?? lastEvent.current;
   if (eventId != null) lastEvent.current = eventId;
   const folder = useEventFolder(eventId ?? (answer ? null : undefined));
-  const sessionSettled = sessionId == null || (answer != null && !working(answer.status));
   // the lap's track map: the event's for a session of an event (as the check's `map` says), else the session's own
   const mapPath = eventId != null ? `/events/${eventId}/map`
     : sessionId != null && lookedUp === null ? `/sessions/${sessionId}/map` : null;
   useEffect(() => {
     if (mapPath) prefetch(mapPath);
   }, [mapPath]);
-  // the event's check, asked for at once. Opened at the event, it is asked again while it's worked out (its answer
-  // picks the session); opened at a session, the session's check (the same one) is what's asked again, and the
-  // event's once more when that is in
+  // the event's check, asked for at once. Opened at the event, how far it is is asked again while it's worked out
+  // (?brief), and the check once more when it's ready (its answer picks the session); opened at a session, the
+  // session's check (the same one) is what's asked again, and the event's once more when that is in (evRound)
   const eventLed = sessionId == null;
-  const evWorking = useRef(false);
-  const again = sessionSettled && evWorking.current;
   useEffect(() => {
     if (eventId == null) return;
+    let read = false;
     return poll(async (live) => {
       try {
+        if (read) {
+          const h = await fetchTechniqueProgress({ event: eventId });
+          if (!live()) return false;
+          if (working(h.status)) {
+            setEv((a) => a && { ...a, ...h });
+            return true;
+          }
+        }
         const a = await fetchEventTechnique(eventId);
         if (!live()) return false;
+        read = true;
         evWorking.current = working(a.status);
         setEv(a);
         if (working(a.status)) return eventLed;
@@ -128,7 +158,7 @@ export default function TechniqueScreen() {
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [eventId, nonce, again]);
+  }, [eventId, nonce, evRound]);
 
   const check = answer?.lap ?? null;
   useEffect(() => setSelected(check?.mistakes.length ? 1 : null), [check?.key]);
@@ -274,7 +304,7 @@ export default function TechniqueScreen() {
         {answer?.lap_note && <Text style={t.note}>{answer.lap_note}</Text>}
       </View>
 
-      {check && answer && <LapSummary check={check} />}
+      {check && answer && <LapSummary check={check} room={width - (side ? sideWidth : 0)} />}
 
       {check && answer && !!check.obvious?.length && (
         <Section no={next()} title="Obvious mistakes"
@@ -518,13 +548,16 @@ function Progress({ head }: { head: SessionTechnique | EventTechnique }) {
   );
 }
 
-function LapSummary({ check }: { check: LapCheck }) {
+function LapSummary({ check, room }: { check: LapCheck; room: number }) {
   const t = useText();
   const theme = useTheme();
   const wide = useWide();
+  const gutter = useGutter();
   const styles = useStyles();
   const named = check.budget.mistakes;
-  const size = wide ? 76 : 44;
+  // the three lap times share the page's column (beside the map on a computer): as big as fits on one line each
+  const cell = (Math.min(room, 1240) - 2 * gutter) / (wide ? 3 : 2) - (wide ? 36 : 18);
+  const size = Math.floor(Math.min(wide ? 76 : 44, cell / 3.6));
   return (
     <View style={styles.summary}>
       <FigRow>

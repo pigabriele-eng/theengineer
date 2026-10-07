@@ -183,6 +183,11 @@ async function call<T>(p: string, init?: RequestInit): Promise<T> {
 export const fetchSessionTechnique = (session: number, lap?: number | null) =>
   call<SessionTechnique>(`/technique/sessions/${session}${lap != null ? `?lap=${lap}` : ''}`);
 export const fetchEventTechnique = (event: number) => call<EventTechnique>(`/technique/events/${event}`);
+/** How far a check is, without the check (?brief=true): what a page waiting for it asks again and again. */
+export type TechniqueProgress = Head;
+export const fetchTechniqueProgress = (of: { session: number } | { event: number }) =>
+  call<TechniqueProgress>('session' in of ? `/technique/sessions/${of.session}?brief=true`
+    : `/technique/events/${of.event}?brief=true`);
 export const refreshSessionTechnique = (session: number) =>
   call<SessionTechnique>(`/technique/sessions/${session}/refresh`, { method: 'POST' });
 

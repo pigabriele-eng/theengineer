@@ -14,11 +14,11 @@ import { Text, useThemeColor } from '@/components/Themed';
 import { useSeriesColors } from '@/components/TraceChart';
 import { ResetZoom, useZoom, ZoomArea } from '@/components/Zoom';
 import { formatLap } from '@/lib/api';
+import { poll } from '@/lib/poll';
 import { fetchTrackGrip, GripSession, pct, TrackGripAnswer, TrackGripResult } from '@/lib/trackGrip';
 import { isZoomed, pixelOf, Range, shownRange, valueAt } from '@/lib/zoom';
 import { chartPlate, Fonts, themed, Type, useTheme } from '@/constants/Theme';
 
-const POLL_MS = 4000;
 const C = { left: 44, right: 12, top: 22, bottom: 44, height: 230 };
 const CHAR_W = 7.2; // rough width of one character at fontSize 12
 // SVG text takes the browser's default (serif) face on web: give it the system sans the rest of the app uses
@@ -56,20 +56,11 @@ export function TrackGrip({ event, bare }: { event: number; bare?: boolean }) {
     }
   }, [event]);
 
+  // asked again while the server waits for what it needs (lib/poll.ts: less and less often)
   useEffect(() => {
-    let live = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     setBusy(true);
     setAnswer(null);
-    const tick = async () => {
-      const again = await load();
-      if (live && again) timer = setTimeout(tick, POLL_MS);
-    };
-    tick();
-    return () => {
-      live = false;
-      if (timer) clearTimeout(timer);
-    };
+    return poll(async (live) => (await load()) && live());
   }, [load]);
 
   const result = answer?.result;
