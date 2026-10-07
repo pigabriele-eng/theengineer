@@ -170,6 +170,8 @@ def test_an_import_is_prebuilt_and_every_page_then_opens_at_once(client, monkeyp
             assert client.get(path).status_code == 200, path
     status = client.get("/prebuild").json()
     assert status["enabled"] and status["queued"] == 0 and status["current"] is None and status["worked"] > 0
+    with app_db.SessionLocal() as db:  # and the lap packs the lap and driver comparisons read instead of the logs
+        assert {r.session_id for r in db.scalars(select(models.LapPackFile)) if r.path} == set(sids)
 
     # a log added to a run: its pages and its event's are made again, the other run's are still up to date
     analysed = []

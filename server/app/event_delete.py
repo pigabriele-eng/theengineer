@@ -22,11 +22,11 @@ Rows that only point at the event and belong to something that stays keep the ro
 a season's round (unlinked, as when its event is gone), a calendar entry (left out of later syncs, as when a planned
 event is removed) and a setup copied from a run that goes. Drivers, cars, teams, tracks and official results stay.
 
-The database part is one transaction; the stored files (logs, compact lap traces, technique details, debrief
-recordings) are deleted after its commit: a file left behind is harmless, a row naming a missing file is not, and a
-file already missing is logged. It all runs under heavy.lock, so no analysis is reading a log as it goes. An analysis
-job that had already started on the event's runs may still write a row for them once the lock is let go; when such
-jobs are running, the same search runs again once they are done (sweep) and removes what they left.
+The database part is one transaction; the stored files (logs, compact lap traces, lap packs, technique details,
+debrief recordings) are deleted after its commit: a file left behind is harmless, a row naming a missing file is not,
+and a file already missing is logged. It all runs under heavy.lock, so no analysis is reading a log as it goes. An
+analysis job that had already started on the event's runs may still write a row for them once the lock is let go; when
+such jobs are running, the same search runs again once they are done (sweep) and removes what they left.
 """
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ KEEP: dict[tuple[str, str], dict] = {
     ("session_setups", "copied_from_session_id"): {"copied_from_session_id": None},
 }
 STORED = {"logger_files": ("path",), "debriefs": ("audio_path",), "session_traces": ("path",),
-          "technique_cache": ("details",)}  # columns holding storage keys
+          "lap_packs": ("path",), "technique_cache": ("details",)}  # columns holding storage keys
 SCOPES = ("event", "session")  # scope parts naming an event or a run: "event:3", "session:12", "event:3|car:..."
 SCOPE_TABLES = {"event": "events", "session": "run_sessions"}
 MENTION_KEYS = {"event_id": "events", "session_id": "run_sessions", "file_id": "logger_files"}
@@ -292,7 +292,7 @@ def _not_importing(db: Session) -> None:
     """An import adds runs to events as it goes: none is deleted meanwhile."""
     busy = (models.ImportStatus.queued, models.ImportStatus.running)
     if db.scalar(select(models.ImportJob.id).where(models.ImportJob.status.in_(busy)).limit(1)) is not None:
-        raise HTTPException(409, "An upload is still being imported: delete the event once it is done")
+        raise HTTPException(409, "An upload is still being imported: delete once it is done")
 
 
 def counts(f: Found, sizes: dict[str, int] | None) -> dict:
