@@ -392,8 +392,9 @@ def _runs(ch: dict[str, np.ndarray], laps: list[Lap], lap_m: float | None, ambie
     t_first = (still[-1] + 1) / HZ if len(still) else 0.0  # rolling out of the garage starts the first run
     t_last = moving[-1] / HZ
     long = _stops(v, LONG_STOP_S, STILL_KMH)
-    starts = [t_first] + [b for a, b in long if t_first < b < t_last]
-    ends = [a for a, b in long if t_first < a < t_last] + [t_last]
+    inner = [(a, b) for a, b in long if t_first < a and b < t_last]  # stops with driving on both sides
+    starts = [t_first] + [b for a, b in inner]
+    ends = [a for a, b in inner] + [t_last]
     warm_above = PRE_WARMED_C if ambient_c is None else ambient_c + PRE_WARMED_ABOVE_AMBIENT_C
     runs, install, number = [], None, 0
     for s0, s1 in zip(starts, ends, strict=True):

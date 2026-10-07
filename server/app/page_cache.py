@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import zlib
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -105,7 +106,7 @@ def sessions_part(db: Session, sessions: list[models.RunSession]) -> list:
 
 
 def _pack(x) -> bytes:
-    return zlib.compress(json.dumps(x, separators=(",", ":"), default=_plain).encode(), 6)
+    return zlib.compress(json.dumps(_finite(x), separators=(",", ":"), default=_plain).encode(), 6)
 
 
 def _plain(x):
@@ -114,9 +115,22 @@ def _plain(x):
     return str(x)
 
 
+def _finite(x):
+    """NaN and infinity as None: the API answers without them (a kept NaN would fail every request after)."""
+    if isinstance(x, dict):
+        return {k: _finite(v) for k, v in x.items()}
+    if isinstance(x, list | tuple):
+        return [_finite(v) for v in x]
+    if isinstance(x, float):
+        return x if math.isfinite(x) else None
+    if hasattr(x, "tolist"):  # numpy numbers and arrays
+        return _finite(x.tolist())
+    return x
+
+
 def plain(x):
-    """The value as it reads back from here (lists for tuples and arrays, string keys)."""
-    return json.loads(json.dumps(x, default=_plain))
+    """The value as it reads back from here (lists for tuples and arrays, string keys, None for NaN)."""
+    return json.loads(json.dumps(_finite(x), default=_plain))
 
 
 def lookup(db: Session, scope: str, sig: str) -> tuple[int, object] | None:

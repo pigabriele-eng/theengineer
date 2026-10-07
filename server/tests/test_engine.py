@@ -7,6 +7,7 @@ from app.analysis.align import aligned_trace, track_line
 from app.analysis.channels import BRAKE, POWER, math_channels
 from app.analysis.compare import compare_groups, sources_from_runs
 from app.analysis.insights import RunInput, analyze_runs, make_sections
+from app.analysis import laps
 from app.analysis.laps import analyze, compare_laps, detect_corners, lap_trace, load_session
 from app.analysis.scan import channel_scan
 from app.debrief.check import read_claim
@@ -104,6 +105,19 @@ def test_a_flat_bottomed_corner_is_one_corner():
     assert len(found) == 2 and found[0].apex == 300 and 680 < found[1].apex < 720
     # the second corner starts on the straight before it, so its braking zone is inside it
     assert found[1].start < 600 < found[1].apex < found[1].end
+
+
+def test_a_corner_just_before_the_line_is_found():
+    d = np.arange(4000)
+    v = 200 - 120 * np.exp(-((d - 1500) / 45.0) ** 2) - 120 * np.exp(-((d - 3970) / 45.0) ** 2)
+    v -= 120 * np.exp(-((d + 30) / 45.0) ** 2)  # the hairpin's braking zone wraps round past the line
+    found = detect_corners({"speed": v})
+    assert [c.code for c in found] == ["C1", "C2"]
+    assert found[0].apex == 1500 and abs(found[1].apex - 3970) <= 2
+    # a flat-bottomed slowest point straddling the line counts once
+    v = np.roll(v, 30)
+    v[-20:], v[:20] = v[0], v[0]
+    assert [c.code for c in detect_corners({"speed": v})] == ["C1", "C2"]
 
 
 def test_two_drivers_compared():
@@ -276,6 +290,13 @@ def test_session_corners_without_official_numbers_are_not_t_numbers(data):
     assert [c["code"] for c in res["corners"]] == ["C1", "C2"]
     cmp = compare_laps(d, lap_number=3)
     assert cmp["numbering"] == "detected" and [c["code"] for c in cmp["corners"]] == ["C1", "C2"]
+
+
+def test_no_corners_means_no_theoretical_best(data, monkeypatch):
+    d, _ = data
+    monkeypatch.setattr(laps, "corner_sections", lambda *_: ([], "detected"))
+    res = analyze(d)
+    assert res["corners"] == [] and res["theoretical_best"] is None
 
 
 def test_session_page_endpoints_number_corners_from_the_track(client):

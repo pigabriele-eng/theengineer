@@ -1,13 +1,15 @@
 """The pages' answers kept in the database (app/page_cache.py), the prebuild that works them out in the background
 after an upload (app/prebuild.py), and background work giving the heavy-work lock to requests first (app/heavy.py)."""
+import json
 import os
 import sys
 import threading
 import time
+import zlib
 
+import numpy as np
 import pytest
 from sqlalchemy import select
-
 from tests.synthetic import simulate, write_ld
 from tests.test_imports import log_bytes, make_zip, upload
 
@@ -395,3 +397,13 @@ def test_a_page_that_keeps_polling_holds_a_piece_up_only_so_long(monkeypatch):
         poller.join()
     assert [name for name, _ in ran] == ["upload", "start"]
     assert 0.5 <= ran[0][1] - t0 < 3 and ran[1][1] - ran[0][1] >= 1.0
+
+
+def test_a_kept_answer_has_no_nan():
+    from app import page_cache
+
+    x = {"a": float("nan"), "b": np.array([1.0, np.inf]), "c": [np.float64("nan"), (2, -np.inf)], "d": "NaN"}
+    back = json.loads(zlib.decompress(page_cache._pack(x)))
+    assert back == {"a": None, "b": [1.0, None], "c": [None, [2, None]], "d": "NaN"}
+    assert page_cache.plain(x) == back
+    json.dumps(back, allow_nan=False)  # as the API answers

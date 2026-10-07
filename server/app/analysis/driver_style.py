@@ -272,7 +272,7 @@ def lap_features(tr: dict[str, np.ndarray], corners: list[Corner], brake_top: fl
         else:
             s0 = max(a - 100, lo)
             back = _first(thr[s0:hi] > THROTTLE_ON)
-            t_on = s0 + (back or 0)
+            t_on = s0 + (back if back is not None else hi - s0)
             f[f"{k}_lift"] = float(thr[lo:a].min())
         f[f"{k}_throttle_on"] = float(t_on - a)
         full = _first(thr[t_on:hi] > THROTTLE_FULL)

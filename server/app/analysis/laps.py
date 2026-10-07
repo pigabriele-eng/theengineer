@@ -283,15 +283,18 @@ def split_laps(ld: LdFile, beacons: list[float] | None = None,
     """Laps between consecutive line crossings, with the dash's own lap time where it agrees."""
     starts, source = lap_starts(ld, beacons, line)
     lap_time = ld.channel("Lap Time")
-    speed = ld.channel(*DEFAULT_CHANNEL_MAP["speed"])
+    sc = ld.channel(*DEFAULT_CHANNEL_MAP["speed"])
+    speed = (sc.times(), sc.values(), sc.freq) if sc is not None else None  # decoded once, not once a lap
+    if lap_time is not None:
+        lt_t, lt_v = lap_time.times(), lap_time.values()
     laps = []
     for i in range(len(starts) - 1):
         a, b = float(starts[i]), float(starts[i + 1])
         time = b - a
         if lap_time is not None:
             # the dash publishes the completed lap's time shortly after the line
-            k = min(np.searchsorted(lap_time.times(), b + 1.5), lap_time.count - 1)
-            logged = float(lap_time.values()[k])
+            k = min(np.searchsorted(lt_t, b + 1.5), lap_time.count - 1)
+            logged = float(lt_v[k])
             if abs(logged - time) < (1.0 if source == "counter" else 0.25):
                 time = logged
         laps.append(Lap(number=i + 1, start=a, end=b, time=round(time, 3)))
@@ -306,12 +309,13 @@ def split_laps(ld: LdFile, beacons: list[float] | None = None,
     return laps, source
 
 
-def _has_slow_section(speed, lap: Lap) -> bool:
+def _has_slow_section(speed: tuple[np.ndarray, np.ndarray, int] | None, lap: Lap) -> bool:
+    """speed: the speed channel's times, values and rate."""
     if speed is None:
         return False
-    t = speed.times()
-    v = speed.values()[(t >= lap.start) & (t < lap.end)]
-    return len(v) > 0 and np.count_nonzero(v < PIT_SPEED_KMH) / speed.freq > PIT_SECONDS
+    t, v, freq = speed
+    v = v[(t >= lap.start) & (t < lap.end)]
+    return len(v) > 0 and np.count_nonzero(v < PIT_SPEED_KMH) / freq > PIT_SECONDS
 
 
 def lap_trace(data: SessionData, lap: Lap, length: float, step: float = 1.0) -> dict[str, np.ndarray]:
@@ -354,12 +358,16 @@ def detect_corners(ref: dict[str, np.ndarray], min_drop_kmh: float = 15.0) -> li
     """
     v = _smooth(ref["speed"])
     n = len(v)
+    w = np.pad(v, 150, mode="wrap")  # the lap wraps round at the line: a hairpin just before it is still a corner
     apexes: list[int] = []
-    for i in range(60, n - 60):
-        if v[i] == v[i - 60:i + 61].min() and v[max(0, i - 150):i + 151].max() - v[i] > min_drop_kmh:
+    for i in range(n if n > 120 else 0):
+        j = i + 150
+        if v[i] == w[j - 60:j + 61].min() and w[j - 150:j + 151].max() - v[i] > min_drop_kmh:
             if apexes and i - apexes[-1] <= 60:
                 continue  # the same flat-bottomed minimum, not a second corner
             apexes.append(i)
+    if len(apexes) > 1 and apexes[0] + n - apexes[-1] <= 60:
+        apexes.pop()  # the same minimum seen at both ends of the lap
     bounds = [0]
     for a, b in pairwise(apexes):
         bounds.append(max(bounds[-1] + 1, a + int(np.argmax(v[a:b])) - 40))
@@ -565,7 +573,8 @@ def analyze(data: SessionData, ref_number: int | None = None, corners: list[Corn
     return {
         "reference_lap": ref.number,
         "length_m": length,
-        "theoretical_best": round(sum(min(m["time"] for m in c["laps"].values()) for c in result_corners), 3),
+        "theoretical_best": round(sum(min(m["time"] for m in c["laps"].values()) for c in result_corners), 3)
+        if result_corners else None,  # no corners, nothing to add up
         "laps": [{"number": l.number, "time": l.time, "clean": l.clean} for l in data.laps],
         "numbering": numbering,
         "corners": result_corners,
