@@ -135,7 +135,6 @@ export default function SessionsScreen() {
     }
   }, [leadKey, leadBestSession, loads]);
 
-  const timed = folders?.some((f) => f.best_lap_s != null) ?? false;
   const leadDetail = lead ? details[lead.key] : undefined;
   const renamed = (key: string) => (name: string) => {
     setFolders((list) => list?.map((x) => (x.key === key ? { ...x, name } : x)) ?? list);
@@ -191,11 +190,9 @@ export default function SessionsScreen() {
         </View>
       ) : (
         <View style={wide ? styles.toolsLine : styles.toolsLinePhone}>
+          {/* only what concerns the whole list here; comparing, tagging and the driver fingerprints are in each event
+              and under Tools (Gabriele, 2026-10-07: that row "is normally event specific") */}
           <TextLink onPress={() => setMaking(true)} label="+ New event" />
-          {timed && <TextLink href="/compare" label="Compare laps" />}
-          <TextLink href="/drivers/tag" label="Tag drivers" />
-          <TextLink href="/drivers/compare" label="Compare drivers" />
-          <TextLink href="/drivers/fingerprints" label="Driver fingerprints" />
           {calendar && (
             <View style={wide ? styles.sync : styles.syncPhone}>
               <CalendarLine calendar={calendar} onSynced={(c) => {
