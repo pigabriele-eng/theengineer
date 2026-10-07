@@ -68,7 +68,7 @@ export type ModelInputs = { perfect: Inputs; realistic: Inputs; fixed?: Inputs; 
  * run and lap), this lap's pass with its obvious mistakes taken out (built), or this lap's own pass, already the
  * best clean one (own); and what it finds over this lap there. */
 export type BestSource = { code: string; start_m: number; end_m: number; kind: 'pass' | 'built' | 'own';
-  run?: string; number?: number; gain_s: number };
+  run?: string; number?: number; gain_s: number; put_right?: ObviousMistake['kind'][] };
 /** The driver's best technique through every section, blended at the joins; speed among its inputs. */
 export type BestTechnique = Inputs & { time: number; sources: BestSource[] };
 /** Perfect driving's own phases (trace.model_phases indexes these). Its model has no pedal positions and never

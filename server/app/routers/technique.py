@@ -436,7 +436,7 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
     blobs = {}
     for i, p in enumerate(passes):
         member = f"l{i}"
-        details[member]["trace"]["model"]["best"] = reports._plain(best_technique(p, passes, prep.sections))
+        details[member]["trace"]["model"]["best"] = reports._plain(best_technique(p, passes, prep.sections, shifts))
         blobs[member] = np.frombuffer(json.dumps(details[member]).encode(), np.uint8)
     del details, passes
     by_session: dict[int, list[list[dict]]] = {}

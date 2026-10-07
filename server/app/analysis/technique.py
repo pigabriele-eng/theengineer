@@ -1177,21 +1177,27 @@ def model_inputs(tr: dict[str, np.ndarray], env: Envelope, sim: SimLap, step: in
     return out
 
 
-FIXED_KINDS = ("exit_lift", "exit_stall", "on_off_throttle", "power_step", "soft_straight_braking")
+FIXED_KINDS = ("exit_lift", "exit_stall", "on_off_throttle", "power_step", "soft_straight_braking", "early_shift",
+               "late_shift")
+SHIFT_KINDS = ("early_shift", "late_shift")
 
 
 def without_mistakes(tr: dict[str, np.ndarray], env_r: Envelope, sections: list[Section],
-                     obvious: list[dict]) -> np.ndarray:
+                     obvious: list[dict], shifts: ShiftModel | None = None) -> np.ndarray:
     """The lap's speed (km/h, every metre) with its obvious mistakes taken out, the rest as driven: from where each
     mistake starts the car drives on as hard as the lap itself showed it can at each speed on the way (and a quick
     lap's grip allows, env_r), until it has to
     brake for the next corner as hard as the car has shown there, or meets the lap's own speed again. So an exit
     lifted on, stalled or stepped on runs on smoothly, and soft straight-line braking starts later and brakes
-    harder. Never slower than the lap anywhere. Shifts are left alone: they move the speed too little to see."""
+    harder. An upshift made early or late (given the shift model) is made at the ideal revs instead: the drive
+    the wrong gear lost is added back over the stretch it cost (as gain_cost), and the speed gained carried on.
+    Never slower than the lap anywhere."""
     driven = np.asarray(tr["speed"], float)
     n = len(driven) - 1
     fixed = driven.copy()
-    todo = sorted((o for o in obvious if o["kind"] in FIXED_KINDS), key=lambda o: o["start_m"])
+    todo = sorted((o for o in obvious if o["kind"] in FIXED_KINDS and (shifts is not None or
+                                                                       o["kind"] not in SHIFT_KINDS)),
+                  key=lambda o: o["start_m"])
     if not todo:
         return fixed
     # braking for every corner as hard as the car has shown: back from each apex at the lap's own speed there, and
@@ -1225,6 +1231,17 @@ def without_mistakes(tr: dict[str, np.ndarray], env_r: Envelope, sections: list[
         at_v = seg[:-1][order]
         most = np.maximum.accumulate(acc[order][::-1])[::-1]
         v = fixed[i] / 3.6
+        if o["kind"] in SHIFT_KINDS:  # the drive the wrong gear lost, added back where it was lost
+            sh = next((x for x in shift_mistakes(tr, shifts, i, min(end + 2, n)) if x["kind"] == o["kind"]), None)
+            if sh is None:
+                continue
+            j, e, extra = sh["j"], min(sh["end"], n), sh["extra"]
+            held = v = fixed[j] / 3.6
+            for k in range(j + 1, e + 1):
+                up = held * held + ms[k] ** 2 - ms[k - 1] ** 2 + 2 * max(float(extra[k - 1 - j]), 0.0)
+                held = min(max(up, 0.0) ** 0.5, bw[k])
+                fixed[k] = max(fixed[k], held * 3.6)
+            i, end, v = e, e, max(held, ms[e])
         while i < n:
             own = (v * v + 2 * max(float(np.interp(v, at_v, most)), 0.0)) ** 0.5
             v = min(own, env_r.step_up(i, v), bw[i + 1])
@@ -1240,7 +1257,7 @@ def fixed_inputs(tr: dict[str, np.ndarray], env_r: Envelope, realistic: SimLap, 
     """This lap with its obvious mistakes taken out (without_mistakes), every step metres: its speed, and the
     driver's own inputs except where a mistake was taken out, where they are what the new speed asks of the car
     (model_inputs) and the ideal gear and revs."""
-    fixed = without_mistakes(tr, env_r, sections, obvious)
+    fixed = without_mistakes(tr, env_r, sections, obvious, shifts)
     changed = (fixed - np.asarray(tr["speed"], float))[::step] > 0.05
     model = model_inputs(tr, env_r, SimLap(fixed, realistic.t, realistic.time, realistic.limited_by), step, shifts)
     own = lap_inputs(tr, step)
@@ -1281,35 +1298,51 @@ def _through(kmh: list[float], s: Section, step: int) -> float:
     return float(np.sum(2 * step / (v[:-1] + v[1:])))
 
 
-def best_technique(view: Pass, passes: list[Pass], sections: list[Section]) -> dict:
+def best_technique(view: Pass, passes: list[Pass], sections: list[Section],
+                   shifts: ShiftModel | None = None) -> dict:
     """The lap to lay over this one: through every section the driver's own quickest clean pass of the event (no
-    obvious mistake in it) where it beats this lap's, else this lap's own pass with its obvious mistakes taken out
-    (built; fixed_inputs), or as driven where it had none (own). Blended over BLEND_M at every join, so the speed
-    runs on smoothly. Each section says where it comes from (a real pass, its run and lap; built; or own) and what
-    it finds over this lap there; its time is this lap's less all of that."""
+    obvious mistake in it but its upshifts) where it beats this lap's, else this lap's own pass with its obvious
+    mistakes taken out (built; fixed_inputs), or as driven where it had none (own). Every pass shifts up at the ideal
+    revs (without_mistakes), so a real pass's early or late upshifts are put right and the time that finds counted.
+    Blended over BLEND_M at every join, so the speed runs on smoothly; the gear and revs are the ideal shift points'
+    at its speed (given the shift model). Each section says where it comes from (a real pass, its run and lap, and
+    what was put right in it; built; or own) and what it finds over this lap there; its time is this lap's less all
+    of that."""
     tr = view.trace
     step = int(tr["step_m"])
     n = len(tr["driven"])
     roles = ("throttle", "brake", "gear", "rpm")
-    built = tr["model"]["fixed"]  # this lap with its obvious mistakes taken out
     mine = [p for p in passes if view.driver is None or p.driver in (None, view.driver)]
     chosen, sources = [], []
     for k, s in enumerate(sections):
-        def clean(p: Pass, s: Section = s) -> bool:
-            return not any(s.start <= o["at_m"] < s.end for o in p.obvious)
-        quicker = [p for p in mine if p is not view and clean(p) and p.times[k] < view.times[k] - BEST_MIN_GAIN_S]
-        best = min(quicker, key=lambda p: p.times[k], default=None)
-        if best is None:
-            chosen.append(built)
-            gain = max(_through(tr["driven"], s, step) - _through(built["speed"], s, step), 0.0)
-            # built where a mistake was taken out; else this lap's own pass is already the driver's best clean one
+        def put_right(p: Pass, s: Section = s) -> list[str]:
+            return sorted({o["kind"] for o in p.obvious if s.start <= o["at_m"] < s.end})
+
+        def fixed_time(p: Pass, k: int = k, s: Section = s) -> float:
+            """The pass's real time through the section less what taking its mistakes out finds there."""
+            ptr = p.trace
+            return p.times[k] - max(_through(ptr["driven"], s, step) - _through(ptr["model"]["fixed"]["speed"], s,
+                                                                                step), 0.0)
+
+        best, best_t = view, fixed_time(view)
+        for p in mine:
+            if p is view or any(x not in SHIFT_KINDS for x in put_right(p)):
+                continue
+            if p.times[k] >= view.times[k] - BEST_MIN_GAIN_S:  # no quicker than this lap's as driven
+                continue
+            t = fixed_time(p)
+            if t < best_t - BEST_MIN_GAIN_S:
+                best, best_t = p, t
+        gain = max(view.times[k] - best_t, 0.0)
+        src = best.trace["model"]["fixed"]
+        chosen.append(src)
+        if best is view:  # built where a mistake was taken out; else this lap's own pass is already its best
             sources.append({"code": s.code, "start_m": s.start, "end_m": s.end,
-                            "kind": "built" if gain >= BEST_MIN_GAIN_S else "own", "gain_s": round(gain, 3)})
-            continue
-        bt = best.trace
-        chosen.append({"speed": bt["driven"], **{r: bt["inputs"].get(r) for r in roles}})
-        sources.append({"code": s.code, "start_m": s.start, "end_m": s.end, "kind": "pass", "run": best.run,
-                        "number": best.number, "gain_s": round(view.times[k] - best.times[k], 3)})
+                            "kind": "built" if gain >= BEST_MIN_GAIN_S else "own", "gain_s": round(gain, 3),
+                            "put_right": put_right(view) if gain >= BEST_MIN_GAIN_S else []})
+        else:
+            sources.append({"code": s.code, "start_m": s.start, "end_m": s.end, "kind": "pass", "run": best.run,
+                            "number": best.number, "gain_s": round(gain, 3), "put_right": put_right(best)})
     m = np.arange(n) * step
     # each point's weight on every section's source: 1 inside it, falling over BLEND_M across each join
     weights = np.zeros((len(sections), n))
@@ -1330,6 +1363,9 @@ def best_technique(view: Pass, passes: list[Pass], sections: list[Section]) -> d
             out[r] = g.tolist()
         else:
             out[r] = np.round(np.nansum(vals * weights, axis=0), 1).tolist()
+    if shifts is not None and out["speed"] is not None:  # the ideal shift points at its speed
+        gear, rpm = _ideal_gears(shifts, np.asarray(out["speed"], float))
+        out["gear"], out["rpm"] = gear.tolist(), np.round(rpm).tolist()
     out["time"] = round(view.time - sum(x["gain_s"] for x in sources), 3)  # less what every section finds
     return out
 

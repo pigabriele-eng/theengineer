@@ -452,17 +452,26 @@ const OVERLAYS: { key: Overlay; label: string; legend: string | null }[] = [
   { key: 'off', label: 'Off', legend: null },
 ];
 
+const PUT_RIGHT: Partial<Record<ObviousMistake['kind'], string>> = {
+  exit_lift: 'exit lift', exit_stall: 'exit stall', on_off_throttle: 'throttle on and off', power_step: 'stepped power',
+  soft_straight_braking: 'soft braking', early_shift: 'early upshift', late_shift: 'late upshift',
+};
+
 /** Where the best-technique lap comes from, section by section, and what it finds over this lap. */
 function BestSources({ best, lapTime }: { best: BestTechnique; lapTime: number }) {
   const t = useText();
-  const from = (x: BestSource) => (x.kind === 'pass' ? `${x.run} L${x.number}`
-    : x.kind === 'built' ? 'this lap, mistakes taken out' : 'this lap');
+  const fixed = (x: BestSource) => (x.put_right?.length
+    ? `, ${x.put_right.map((k) => PUT_RIGHT[k] ?? k).join(' and ')} put right` : '');
+  const from = (x: BestSource) => (x.kind === 'pass' ? `${x.run} L${x.number}${fixed(x)}`
+    : x.kind === 'built' ? `this lap${fixed(x) || ', mistakes taken out'}` : 'this lap');
   return (
     <View style={{ gap: 4 }}>
       <Text style={t.note}>
         The dashed line through each corner is the driver&apos;s own quickest clean pass of the event (no obvious
         mistake in it) where it beats this lap&apos;s; where none does, this lap&apos;s own pass with its obvious
-        mistakes taken out (built). Joined smoothly: {formatLap(best.time)}, {s2(lapTime - best.time)} quicker.
+        mistakes taken out (built). Every upshift is at the ideal revs, so an early or late one is put right and its
+        time counted; the gear and revs show the ideal shift points. Joined smoothly: {formatLap(best.time)},{' '}
+        {s2(lapTime - best.time)} quicker.
       </Text>
       {best.sources.map((x) => (
         <Text key={`${x.code}${x.start_m}`} style={t.small}>
