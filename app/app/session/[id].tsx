@@ -142,14 +142,20 @@ export default function SessionScreen() {
   current.current = sessionId;
 
   const load = useCallback(async () => {
+    // the run, its debriefs and its lap analysis asked for at once, not one after the other
+    const asked = {
+      session: api.session(sessionId), debriefs: api.debriefs(sessionId), analysis: api.analysis(sessionId),
+    };
+    asked.debriefs.catch(() => undefined); // (each failure is shown below, in the order they were waited for)
+    asked.analysis.catch(() => undefined);
     try {
-      const s = await api.session(sessionId);
+      const s = await asked.session;
       if (current.current !== sessionId) return; // switched again meanwhile
       setSession(s);
-      const d = await api.debriefs(sessionId);
+      const d = await asked.debriefs;
       if (current.current !== sessionId) return;
       setDebriefs(d);
-      const a = s.files.length ? await api.analysis(sessionId) : null;
+      const a = s.files.length ? await asked.analysis : null; // a run without a log has no analysis
       if (current.current !== sessionId) return;
       setAnalysis(a);
       setAnalysisFor(sessionId);
