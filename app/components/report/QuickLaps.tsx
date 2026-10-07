@@ -13,13 +13,15 @@ import { BalancePhase, fetchStintLogs, fetchStintView, GRIP_PHASES, GripPhase, s
 import { Fonts, phaseColor, themed, Type, useTheme } from '@/constants/Theme';
 import { Palette } from '@/constants/Colors';
 
-export type LapsScope = { event: number } | { session: number };
+// an event, one run, or some runs (an official session's: FP1 stint 1 and 2)
+export type LapsScope = { event: number } | { session: number } | { sessions: number[] };
 
 const QUICK = 1.01; // within 1 % of the quickest flying lap
 
-/** The quick laps of an event or a session, from the stint analysis of its main logs. */
+/** The quick laps of an event, a session or some sessions, from the stint analysis of their main logs. */
 export function useQuickLaps(scope: LapsScope | null) {
-  const key = !scope ? '' : 'event' in scope ? `e${scope.event}` : `s${scope.session}`;
+  const key = !scope ? '' : 'event' in scope ? `e${scope.event}` : 'session' in scope ? `s${scope.session}`
+    : `r${scope.sessions.join(',')}`;
   const [state, setState] = useState<{ laps: StintLap[] | null; error: string | null }>({ laps: null, error: null });
   useEffect(() => {
     let live = true;
@@ -28,7 +30,8 @@ export function useQuickLaps(scope: LapsScope | null) {
     (async () => {
       const events = await fetchStintLogs();
       const sessions = events.flatMap((e) => ('event' in scope ? (e.id === scope.event ? e.sessions : [])
-        : e.sessions.filter((s) => s.id === scope.session)));
+        : 'session' in scope ? e.sessions.filter((s) => s.id === scope.session)
+          : e.sessions.filter((s) => scope.sessions.includes(s.id))));
       const files = sessions.flatMap((s) => s.files.filter((f) => f.main && f.laps > 0).map((f) => f.id));
       if (files.length === 0) return [];
       const view = await fetchStintView(files);
