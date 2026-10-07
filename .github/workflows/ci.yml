@@ -43,7 +43,7 @@ jobs:
       - if: matrix.shard == 1
         run: ruff check .
       # a test still running after 2 minutes prints where every thread is
-      - run: pytest -q -n auto --shard ${{ matrix.shard }}/${{ strategy.job-total }} -o faulthandler_timeout=120 --store-durations && cat tests/durations.json
+      - run: pytest -q -n auto --shard ${{ matrix.shard }}/${{ strategy.job-total }} -o faulthandler_timeout=120
 
   app:
     runs-on: ubuntu-latest
