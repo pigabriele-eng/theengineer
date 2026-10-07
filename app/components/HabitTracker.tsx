@@ -102,8 +102,13 @@ export default function HabitTracker({ driverId }: { driverId: number }) {
 
   const mateId = keepMate(data.drivers, data.events, driverId, chosen);
   const mate = data.drivers.find((d) => d.id === mateId) ?? null;
-  const cols: Col[] = [{ id: me.id, code: me.code, name: me.name, color: series.reference }];
-  if (mate) cols.push({ id: mate.id, code: mate.code, name: mate.name, color: series.compare });
+  // each driver keeps a colour whoever is shown first (by their place in the list), and two shown never share one
+  const own = (id: number) => (data.drivers.findIndex((d) => d.id === id) % 2 === 0 ? series.reference : series.compare);
+  const myColor = own(me.id);
+  const mateColor = mate && own(mate.id) !== myColor ? own(mate.id) : myColor === series.reference
+    ? series.compare : series.reference;
+  const cols: Col[] = [{ id: me.id, code: me.code, name: me.name, color: myColor }];
+  if (mate) cols.push({ id: mate.id, code: mate.code, name: mate.name, color: mateColor });
   const others = data.drivers.filter((d) => d.id !== driverId);
   const diffs = mate ? styleDifferences(data.pairs, data.groups, cols[0], cols[1]) : null;
 
@@ -119,7 +124,7 @@ export default function HabitTracker({ driverId }: { driverId: number }) {
           items={[
             ...others.map((d) => {
               const n = sharedEvents(data.events, driverId, d.id);
-              return { key: d.id as number | null, label: d.name, swatch: d.id === mateId ? series.compare : undefined,
+              return { key: d.id as number | null, label: d.name, swatch: d.id === mateId ? mateColor : undefined,
                 sub: n > 0 ? `${n} event${n === 1 ? '' : 's'} together` : undefined };
             }),
             { key: null, label: 'Nobody' },
@@ -328,11 +333,12 @@ function HabitSide({ habit, col, events }: { habit: HabitRow; col: Col; events: 
   const styles = useStyles();
   const t = useText();
   const theme = useTheme();
+  const wide = useWide();
   const s = habit.drivers[String(col.id)];
   const seen = s != null && s.rate > 0;
   const where = seen ? cornerWords(s.corners, events) : null;
   return (
-    <View style={styles.side}>
+    <View style={wide ? styles.side : styles.sidePhone}>
       <View style={styles.who}>
         <Dot color={col.color} />
         <Text style={styles.th}>{col.code}</Text>
@@ -418,6 +424,7 @@ const useStyles = themed((c) => ({
   sides: { flexDirection: 'row', alignItems: 'flex-start', gap: 24, marginTop: 4 },
   sidesPhone: { gap: 10, marginTop: 4 },
   side: { flex: 1, minWidth: 0, gap: 2 },
+  sidePhone: { minWidth: 0, gap: 2 }, // stacked: each driver's block as tall as its own lines
   figs: { ...Type.number, fontSize: 14, color: c.text, flexShrink: 1 },
 
   history: { gap: 8, marginTop: 6, paddingTop: 8, borderTopWidth: 1, borderColor: c.separator },
