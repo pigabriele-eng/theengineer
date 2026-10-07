@@ -88,8 +88,9 @@ def _pk(t: Table) -> Column | None:
 
 
 def target_of(col: Column) -> str | None:
-    """The table whose ids the column holds: its foreign key's, else by its name (BY_NAME). None for the others."""
-    if col.primary_key:
+    """The table whose ids the column holds: its foreign key's, else by its name (BY_NAME). None for the others and
+    for a primary key that is no foreign key (an event's mode is keyed by its event: event_modes.py)."""
+    if col.primary_key and not col.foreign_keys:
         return None
     for fk in col.foreign_keys:
         return fk.column.table.name

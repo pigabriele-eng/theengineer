@@ -139,6 +139,8 @@ def client(tmp_path, monkeypatch):
     importlib.reload(app.page_cache)  # its table on the fresh database's metadata
     import app.garage
     importlib.reload(app.garage)
+    import app.event_modes
+    importlib.reload(app.event_modes)  # its table on the fresh database's metadata
     importlib.reload(app.timing)
     importlib.reload(app.routers.catalog)
     importlib.reload(app.routers.sessions)
