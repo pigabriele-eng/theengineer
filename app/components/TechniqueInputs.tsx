@@ -273,7 +273,7 @@ function Channel({ geo, title, unit, digits, role, values, under, over, bands, s
     if (k.at_m < geo.view[0] || k.at_m > geo.view[1]) continue;
     const kx = px(k.at_m);
     const prev = ticksX[ticksX.length - 1];
-    if (prev && kx - prev.x < (prev.label.length + k.code.length) * 3.6 + 6) continue;
+    if (prev && kx - prev.x < (prev.label.length + k.code.length) * 3.9 + 6) continue;
     ticksX.push({ label: k.code, x: kx });
   }
   const top = PAD.top, bottom = PAD.top + h;
@@ -331,7 +331,7 @@ function Channel({ geo, title, unit, digits, role, values, under, over, bands, s
             <Line x1={PAD.left} x2={width - PAD.right} y1={py(0)} y2={py(0)} stroke={c.muted} strokeWidth={1} />
           )}
           {ticks.map((t) => (
-            <SvgText key={`t${t}`} x={PAD.left - 6} y={py(t) + 4} fontSize={10} fill={c.axis} textAnchor="end"
+            <SvgText key={`t${t}`} x={PAD.left - 6} y={py(t) + 4} fontSize={12} fill={c.axis} textAnchor="end"
               fontFamily={SANS}>
               {String(Math.round(t))}
             </SvgText>
@@ -352,7 +352,7 @@ function Channel({ geo, title, unit, digits, role, values, under, over, bands, s
               strokeWidth={1} strokeDasharray="2,3" />
           ))}
           {markLabels && marks.map((m, j) => (
-            <SvgText key={`l${j}`} x={px(m.at_m) + 3} y={top + 10} fontSize={11} fontWeight="700"
+            <SvgText key={`l${j}`} x={px(m.at_m) + 3} y={top + 10} fontSize={12} fontWeight="700"
               fill={c.text} fontFamily={SANS}>
               !
             </SvgText>
@@ -374,7 +374,7 @@ function Channel({ geo, title, unit, digits, role, values, under, over, bands, s
               strokeWidth={2} />
           )}
           {ticksX.map((m) => (
-            <SvgText key={`m${m.label}`} x={m.x} y={height + 12} fontSize={11} fill={c.secondary}
+            <SvgText key={`m${m.label}`} x={m.x} y={height + 12} fontSize={12} fill={c.secondary}
               textAnchor="middle" fontFamily={SANS}>
               {m.label}
             </SvgText>
