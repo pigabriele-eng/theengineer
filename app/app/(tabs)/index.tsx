@@ -14,7 +14,10 @@ import {
 import { RenameEvent } from '@/components/RenameEvent';
 import { DriverTag } from '@/components/DriverTag';
 import { RunDriverLine } from '@/components/RunDriverLine';
-import { filledNote, localPick, RunPicker, useEventDrivers, useGarage } from '@/components/RunChips';
+import { closesRows, RunPanel, SwipeRow, useRunActions } from '@/components/RunActions';
+import { filledNote, localPick, RunNameEditor, RunPicker, useEventDrivers, useGarage } from '@/components/RunChips';
+import { deletedLine } from '@/components/DeleteRuns';
+import { Said } from '@/components/Controls';
 import { SeasonMatchCount } from '@/components/SeasonMatch';
 import { Text, View } from '@/components/Themed';
 import { api, formatLap } from '@/lib/api';
@@ -24,6 +27,7 @@ import {
 import { Country, countryOfAny } from '@/lib/countries';
 import { DAY_GAP, dayColumns } from '@/lib/dayColumns';
 import { Garage, garageApi, RunFields } from '@/lib/garage';
+import { RunsDeleted } from '@/lib/deleteRuns';
 import {
   dayLabel, eventsApi, Folder, FolderSession, FolderSummary, NO_EVENT,
 } from '@/lib/events';
@@ -171,7 +175,7 @@ export default function SessionsScreen() {
 
   // no big block for the latest event on top (Gabriele, 2026-10-07: "i don't need this information"): the list starts the page
   return (
-    <Page>
+    <Page {...closesRows}>
       <View style={wide ? styles.indexBar : styles.indexBarPhone}>
         <FilterBar filter={active} counts={counts} onPick={setFilter} />
         {/* uploads have a page of their own: one big drop box */}
@@ -453,6 +457,7 @@ function Feature({ f, detail, garage, onGarage, onChanged }: {
   const saving = useRef(new Set<number>()); // the runs whose pick the server hasn't answered yet
   const [picking, setPicking] = useState<number | null>(null); // the run whose driver list is open under it
   const [said, setSaid] = useState<{ id: number; text: string } | null>(null); // what a pick did, or why it failed
+  const [deleted, setDeleted] = useState<string | null>(null); // a run deleted from its row (swiped, or held)
   // who drove each run by driving style (read once the runs are in, again whenever they are read again), and the
   // event's drivers 1 to 4, offered first in a run's list: only for an open event, as this is drawn only then
   const guess = useDriverGuess(folder ? id : null, folder);
@@ -501,6 +506,7 @@ function Feature({ f, detail, garage, onGarage, onChanged }: {
       <View style={styles.featureMain}>
         {/* no row of links first (Gabriele, 2026-10-07: "too many clicks to get to the information"): the event's
             line opens its weekend page, where every analysis sits with what it answers */}
+        {deleted && <View style={styles.deleted}><Said text={deleted} onPress={() => setDeleted(null)} /></View>}
         {!folder ? <ActivityIndicator style={styles.loading} /> : (
           <View style={full ? (oneRow ? styles.daysAcross : styles.daysHalf) : wide ? styles.days : styles.daysPhone}>
             {folder.days.map((day) => {
@@ -517,6 +523,11 @@ function Feature({ f, detail, garage, onGarage, onChanged }: {
                     const g = guess?.sessions.find((x) => x.session_id === s.id);
                     return (
                       <RunRow key={s.id} s={s} no={no} best={best} maxGap={maxGap}
+                        onDriver={() => garage && setPicking(s.id)} onChanged={onChanged}
+                        onDeleted={(d) => {
+                          setDeleted(deletedLine(d));
+                          onChanged();
+                        }}
                         tag={driverTag(driverState(s, g, garage))} driver={(
                         <RunDriverLine run={s} guess={guess?.sessions.find((g) => g.session_id === s.id)} garage={garage}
                           open={picking === s.id} onOpen={(o) => setPicking(o ? s.id : null)}
@@ -576,56 +587,75 @@ function Feature({ f, detail, garage, onGarage, onChanged }: {
 }
 
 /** One run: its line opens it (number, name, time, laps, best lap and the gap to the event's best); under it, outside
- * the link, its driver line under its name, then (children) its driver list when open, the row's width. */
-function RunRow({ s, no, best, maxGap, tag, driver, children }: {
+ * the link, its driver line under its name, then (children) its driver list when open, the row's width. Swiped left
+ * it shows Delete; held, a menu of Delete, Change driver and Rename (components/RunActions.tsx). */
+function RunRow({ s, no, best, maxGap, tag, driver, onDriver, onChanged, onDeleted, children }: {
   s: FolderSession;
   no: number;
   best: number | null;
   maxGap: number;
   tag: Tag; // the driver on the name line, first thing the eye meets
   driver: ReactNode;
+  onDriver: () => void; // open its driver list
+  onChanged: () => void; // renamed: read the event's runs again
+  onDeleted: (d: RunsDeleted) => void;
   children?: ReactNode;
 }) {
   const styles = useStyles();
   const c = useTheme();
+  const [renaming, setRenaming] = useState(false);
+  const run = useRunActions({ onDriver, onRename: () => setRenaming(true) });
   const gap = s.best_lap_s != null && best != null ? s.best_lap_s - best : null;
   const isBest = gap != null && gap < 0.0005;
   return (
     <View style={styles.run}>
-      {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
-      <Link href={{ pathname: '/session/[id]', params: { id: s.id } }} asChild>
-        <Pressable style={styles.runLine} accessibilityRole="link">
-          <Text style={styles.runNo}>{pad2(no)}</Text>
-          <View style={styles.runId}>
-            <View style={styles.runNameLine}>
-              <DriverTag tag={tag} run={s.name} size={15} />
-              <Text style={StyleSheet.flatten([styles.runCode, styles.runCodeShrink])} numberOfLines={1}>{s.name}</Text>
+      <SwipeRow run={run} name={s.name} disabled={renaming} bleed={RUN_PAD}>
+        {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
+        <Link href={{ pathname: '/session/[id]', params: { id: s.id } }} asChild>
+          <Pressable style={styles.runLine} accessibilityRole="link" {...run.hold} {...run.a11y}>
+            <Text style={styles.runNo}>{pad2(no)}</Text>
+            <View style={styles.runId}>
+              <View style={styles.runNameLine}>
+                <DriverTag tag={tag} run={s.name} size={15} />
+                <Text style={StyleSheet.flatten([styles.runCode, styles.runCodeShrink])} numberOfLines={1}>{s.name}</Text>
+              </View>
+              <Text style={styles.runSub} numberOfLines={1}>
+                {[s.time, `${plural(s.laps, 'lap')} (${s.clean_laps} clean)`].filter(Boolean).join(' · ')}
+              </Text>
             </View>
-            <Text style={styles.runSub} numberOfLines={1}>
-              {[s.time, `${plural(s.laps, 'lap')} (${s.clean_laps} clean)`].filter(Boolean).join(' · ')}
-            </Text>
-          </View>
-          <View style={styles.runBest}>
-            {s.best_lap_s == null ? <Text style={styles.runSub}>no lap</Text> : (
-              <>
-                <View style={isBest ? { backgroundColor: c.timing.best } : undefined}>
-                  <Text style={StyleSheet.flatten([styles.runTime, isBest && { color: c.timing.onBest }])}>
-                    {formatLap(s.best_lap_s)}
-                  </Text>
-                </View>
-                {isBest ? <Text style={StyleSheet.flatten([styles.gap, { color: c.timing.bestInk }])}>Event best</Text> : gap != null && (
-                  <>
-                    <View style={{ height: 5, marginTop: 3, backgroundColor: c.timing.loss[2],
-                      width: Math.max(3, Math.round((gap / maxGap) * 86)) }} />
-                    <Text style={styles.gap}>+{gap.toFixed(2)}</Text>
-                  </>
-                )}
-              </>
-            )}
-          </View>
-        </Pressable>
-      </Link>
-      <View style={styles.runMore}>{driver}</View>
+            <View style={styles.runBest}>
+              {s.best_lap_s == null ? <Text style={styles.runSub}>no lap</Text> : (
+                <>
+                  <View style={isBest ? { backgroundColor: c.timing.best } : undefined}>
+                    <Text style={StyleSheet.flatten([styles.runTime, isBest && { color: c.timing.onBest }])}>
+                      {formatLap(s.best_lap_s)}
+                    </Text>
+                  </View>
+                  {isBest ? <Text style={StyleSheet.flatten([styles.gap, { color: c.timing.bestInk }])}>Event best</Text> : gap != null && (
+                    <>
+                      <View style={{ height: 5, marginTop: 3, backgroundColor: c.timing.loss[2],
+                        width: Math.max(3, Math.round((gap / maxGap) * 86)) }} />
+                      <Text style={styles.gap}>+{gap.toFixed(2)}</Text>
+                    </>
+                  )}
+                </>
+              )}
+            </View>
+          </Pressable>
+        </Link>
+        <View style={styles.runMore}>{driver}</View>
+      </SwipeRow>
+      {renaming && (
+        <View style={styles.runPicker}>
+          <RunNameEditor id={s.id} name={s.name} kind={s.kind} logSession={s.log_session}
+            onCancel={() => setRenaming(false)} save={(id, body) => eventsApi.updateSession(id, body)}
+            onSaved={() => {
+              setRenaming(false);
+              onChanged();
+            }} />
+        </View>
+      )}
+      <RunPanel run={run} id={s.id} name={s.name} inEvent onDeleted={onDeleted} style={styles.runPicker} />
       {children}
     </View>
   );
@@ -633,6 +663,7 @@ function RunRow({ s, no, best, maxGap, tag, driver, children }: {
 
 const DATE_W = 170;
 const RUN_NO_W = 30; // a run's number, before its name
+const RUN_PAD = { top: 9, bottom: 8 }; // a run row's padding above and below its line: its swipe fills it
 
 const useStyles = themed((c) => ({
   // the index: the filter's words and the upload block
@@ -711,12 +742,13 @@ const useStyles = themed((c) => ({
   dayHalf: { flexBasis: '47%', flexGrow: 1, minWidth: 0 },
   dayHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', borderTopWidth: 3,
     borderBottomWidth: 1, borderColor: c.rule, paddingTop: 7, paddingBottom: 6 },
-  run: { borderBottomWidth: 1, borderColor: c.separator, paddingTop: 9, paddingBottom: 8 },
+  run: { borderBottomWidth: 1, borderColor: c.separator, paddingTop: RUN_PAD.top, paddingBottom: RUN_PAD.bottom },
   // the run's link: at least a 44 px tap target, a run without a lap too
   runLine: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: TAP },
   // the driver line, under the run's name (past its number)
   runMore: { marginLeft: RUN_NO_W + 10 },
   runPicker: { marginTop: 10 },
+  deleted: { marginBottom: 14, maxWidth: 640 },
   runSaid: { fontFamily: Fonts.body, fontSize: 14, lineHeight: 19, color: c.textSecondary, borderLeftWidth: 3,
     borderColor: c.rule, paddingLeft: 8, marginTop: 6 },
   runNo: { fontFamily: Fonts.display, fontSize: 24, lineHeight: 26, width: RUN_NO_W, color: c.text },

@@ -14,12 +14,13 @@ import { face, Fonts, themed } from '@/constants/Theme';
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** The confirm: delete the ticked runs with their logs (danger), or cancel. */
-export function DeleteRuns({ ids, names, inEvent, onDeleted, onCancel }: {
+export function DeleteRuns({ ids, names, inEvent, onDeleted, onCancel, title = 'Delete the ticked runs' }: {
   ids: number[];
   names: string[]; // the runs' names, in the order ticked
   inEvent: boolean; // false: runs in no event
   onDeleted: (d: RunsDeleted) => void;
   onCancel: () => void;
+  title?: string; // its label: one run swiped or held on its row (components/RunActions.tsx) says so
 }) {
   const styles = useStyles();
   const wide = useWide();
@@ -56,7 +57,7 @@ export function DeleteRuns({ ids, names, inEvent, onDeleted, onCancel }: {
   const one = ids.length === 1;
   return (
     <View style={styles.box}>
-      <Label>Delete the ticked runs</Label>
+      <Label>{title}</Label>
       <Text style={wide ? styles.title : styles.titlePhone}>Delete {one ? 'this run' : `these ${ids.length} runs`}?</Text>
       <Text style={styles.names}>{names.join(' · ')}</Text>
       {!size && !error && <ActivityIndicator style={styles.spinner} />}

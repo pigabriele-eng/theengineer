@@ -21,6 +21,7 @@ import PrintButton from '@/components/PrintButton';
 import { RenameEvent } from '@/components/RenameEvent';
 import { ResultsPanel } from '@/components/ResultsPanel';
 import { RunNameQuestions } from '@/components/RunNames';
+import { byTouch, closesRows, RunPanel, SwipeRow, useRunActions } from '@/components/RunActions';
 import { SeasonMatch } from '@/components/SeasonMatch';
 import { filledNote, localPick, PickerKind, RunChips, RunNameEditor, RunPicker, useGarage } from '@/components/RunChips';
 import { Text, View } from '@/components/Themed';
@@ -201,6 +202,12 @@ export default function EventScreen() {
     setNotice(deletedLine(d));
     load();
   };
+  // one run deleted from its row (swiped, or held): the other ticks stay
+  const runDeleted = (d: RunsDeleted) => {
+    setPicks((ps) => ps.filter((p) => !d.deleted.includes(p.id)));
+    setNotice(deletedLine(d));
+    load();
+  };
 
   const isEvent = key !== NO_EVENT;
   const eventId = isEvent ? Number(key) : null;
@@ -374,9 +381,10 @@ export default function EventScreen() {
     </Section>
   );
   const runs = folder && showRuns && (
-    <Section no={++no} title="Runs" dek={isEvent
+    <Section no={++no} title="Runs" dek={(isEvent
       ? 'Day by day, each with its driver and best lap. Tick two to six, then Compare laps at the foot of the screen; tap a name to rename it, a best lap to open the run.'
-      : 'Runs filed in no event. Tick them, then Move to put them into one, or Delete to remove them for good.'}>
+      : 'Runs filed in no event. Tick them, then Move to put them into one, or Delete to remove them for good.')
+      + (byTouch ? ' Swipe a run left to delete it, or hold it for more.' : '')}>
       {sessions.length > 0 && isEvent && <Figures folder={folder} />}
       <View style={daysStyle}>
         {folder.days.map((d) => {
@@ -396,7 +404,8 @@ export default function EventScreen() {
                   garage={garage} eventDrivers={eventDrivers} open={open?.id === s.id ? open.what : null}
                   onOpen={(what) => setOpen(what ? { id: s.id, what } : null)} onPick={(fields) => pickFor(s, fields)}
                   note={runNote?.id === s.id ? runNote.text : null} onNoteClose={() => setRunNote(null)}
-                  guess={guess?.sessions.find((g) => g.session_id === s.id)} guessMode={guess?.mode} />
+                  guess={guess?.sessions.find((g) => g.session_id === s.id)} guessMode={guess?.mode}
+                  inEvent={isEvent} onDeleted={runDeleted} />
               ))}
             </View>
           );
@@ -469,7 +478,7 @@ export default function EventScreen() {
   const compareHref = tickedLaps.length >= 2 ? { pathname: '/compare' as const, params: { laps: encodePicks(tickedLaps) } } : null;
 
   return (
-    <View style={styles.screen}>
+    <View style={styles.screen} {...closesRows}>
       <Stack.Screen options={{ title, headerShown: false }} />
       <Page top={top} scrollRef={scroll}>
         {!folder && !error && <ActivityIndicator style={styles.loading} />}
@@ -683,9 +692,10 @@ function DayHead({ days, date }: { days: Folder['days']; date: string | null }) 
 // ---------- one run ----------
 
 /** One run: tick it for side by side, tap its name to rename it in place, its driver or car to set them, its best lap
- * (a purple block for the event's best, else a red bar for the gap to it) or its laps to open it. */
+ * (a purple block for the event's best, else a red bar for the gap to it) or its laps to open it. Swiped left it shows
+ * Delete; held, a menu of Delete, Change driver and Rename (components/RunActions.tsx). */
 function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, editing, onEdit, onSaved, garage,
-  eventDrivers, open, onOpen, onPick, note, onNoteClose, guess, guessMode }: {
+  eventDrivers, open, onOpen, onPick, note, onNoteClose, guess, guessMode, inEvent, onDeleted }: {
   s: Run;
   no: number;
   color: string | null; // its colour in side by side, when ticked
@@ -706,10 +716,13 @@ function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, e
   onNoteClose: () => void;
   guess?: EventGuess['sessions'][number]; // who the driving style says drove it
   guessMode?: EventGuess['mode'];
+  inEvent: boolean;
+  onDeleted: (d: RunsDeleted) => void;
 }) {
   const styles = useStyles();
   const wide = useWide();
   const c = useTheme();
+  const run = useRunActions({ onDriver: () => onOpen('driver'), onRename: () => !editing && onEdit() });
   const detail = [
     KIND_NAMES[s.kind],
     s.log_session && !s.name.includes(s.log_session) ? s.log_session : null,
@@ -721,58 +734,63 @@ function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, e
   const isBest = gap != null && gap < 0.0005;
   return (
     <View style={styles.run}>
-      <View style={StyleSheet.flatten([styles.runLine, editing && styles.runLineEditing])}>
-        <View style={styles.runTick}>
-          <Tick on={picked} onPress={onToggle} disabled={full && !picked} label={`Side by side: ${s.name}`} />
-        </View>
-        <Text style={styles.runNo}>{pad2(no)}</Text>
-        <View style={styles.runId}>
-          {editing ? (
-            <RunNameEditor id={s.id} name={s.name} kind={s.kind} logSession={s.log_session} onSaved={onSaved}
-              onCancel={onEdit} save={(id, body) => eventsApi.updateSession(id, body)} />
-          ) : (
-            <View style={styles.nameLine}>
-              {color && <RunKey color={color} />}
-              <DriverTag tag={driverTag(driverState(s, guess, garage))} run={s.name} onPress={() => onOpen('driver')} />
-              <Pressable onPress={onEdit} accessibilityRole="button" accessibilityLabel={`Rename ${s.name}`}
-                style={styles.namePress}>
-                <Text style={styles.runName} numberOfLines={1}>{s.name}</Text>
-                <Text style={styles.pencil}>✎</Text>
+      <SwipeRow run={run} name={s.name} disabled={editing} bleed={RUN_PAD}>
+        <View style={StyleSheet.flatten([styles.runLine, editing && styles.runLineEditing])}>
+          <View style={styles.runTick}>
+            <Tick on={picked} onPress={onToggle} disabled={full && !picked} label={`Side by side: ${s.name}`} />
+          </View>
+          <Text style={styles.runNo}>{pad2(no)}</Text>
+          <View style={styles.runId}>
+            {editing ? (
+              <RunNameEditor id={s.id} name={s.name} kind={s.kind} logSession={s.log_session} onSaved={onSaved}
+                onCancel={onEdit} save={(id, body) => eventsApi.updateSession(id, body)} />
+            ) : (
+              <View style={styles.nameLine}>
+                {color && <RunKey color={color} />}
+                <DriverTag tag={driverTag(driverState(s, guess, garage))} run={s.name} onPress={() => onOpen('driver')} />
+                <Pressable onPress={onEdit} accessibilityRole="button" accessibilityLabel={`Rename ${s.name}`}
+                  style={styles.namePress} {...run.hold}>
+                  <Text style={styles.runName} numberOfLines={1}>{s.name}</Text>
+                  <Text style={styles.pencil}>✎</Text>
+                </Pressable>
+              </View>
+            )}
+            {/* words only: the run opens from its best lap, a target the row's height (a second, 17 px link to the
+                same run was too small to tap) */}
+            <Text style={styles.runSub} numberOfLines={2}>{detail}</Text>
+            <RunChips run={s} garage={garage} open={open} onOpen={onOpen} />
+            <DriverGuessLine guess={guess} mode={guessMode} onPick={onPick} onName={() => onOpen('driver')} />
+          </View>
+          {/* while the name is edited, the editor takes the row's width. Link asChild hands its child's style to a web
+              anchor, which can't take a style array: one object */}
+          {!editing && (
+            <Link href={href} asChild>
+              <Pressable style={styles.runBest} accessibilityRole="link" accessibilityLabel={`Open ${s.name}`}
+                {...run.hold} {...run.a11y}>
+                {s.best_lap_s == null ? <Text style={styles.noLap}>no lap</Text> : (
+                  <>
+                    <View style={isBest ? { backgroundColor: c.timing.best } : undefined}>
+                      <Text style={StyleSheet.flatten([styles.runTime, isBest && { color: c.timing.onBest }])}>
+                        {formatLap(s.best_lap_s)}
+                      </Text>
+                    </View>
+                    {isBest ? <Text style={StyleSheet.flatten([styles.gap, { color: c.timing.bestInk }])}>Event best</Text>
+                      : gap != null && (
+                        <>
+                          <View style={{ height: 5, marginTop: 3, backgroundColor: c.timing.loss[2],
+                            width: Math.max(3, Math.round((gap / maxGap) * 86)) }} />
+                          <Text style={styles.gap}>+{gap.toFixed(2)}</Text>
+                        </>
+                      )}
+                  </>
+                )}
               </Pressable>
-            </View>
+            </Link>
           )}
-          {/* words only: the run opens from its best lap, a target the row's height (a second, 17 px link to the
-              same run was too small to tap) */}
-          <Text style={styles.runSub} numberOfLines={2}>{detail}</Text>
-          <RunChips run={s} garage={garage} open={open} onOpen={onOpen} />
-          <DriverGuessLine guess={guess} mode={guessMode} onPick={onPick} onName={() => onOpen('driver')} />
         </View>
-        {/* while the name is edited, the editor takes the row's width. Link asChild hands its child's style to a web
-            anchor, which can't take a style array: one object */}
-        {!editing && (
-          <Link href={href} asChild>
-            <Pressable style={styles.runBest} accessibilityRole="link" accessibilityLabel={`Open ${s.name}`}>
-              {s.best_lap_s == null ? <Text style={styles.noLap}>no lap</Text> : (
-                <>
-                  <View style={isBest ? { backgroundColor: c.timing.best } : undefined}>
-                    <Text style={StyleSheet.flatten([styles.runTime, isBest && { color: c.timing.onBest }])}>
-                      {formatLap(s.best_lap_s)}
-                    </Text>
-                  </View>
-                  {isBest ? <Text style={StyleSheet.flatten([styles.gap, { color: c.timing.bestInk }])}>Event best</Text>
-                    : gap != null && (
-                      <>
-                        <View style={{ height: 5, marginTop: 3, backgroundColor: c.timing.loss[2],
-                          width: Math.max(3, Math.round((gap / maxGap) * 86)) }} />
-                        <Text style={styles.gap}>+{gap.toFixed(2)}</Text>
-                      </>
-                    )}
-                </>
-              )}
-            </Pressable>
-          </Link>
-        )}
-      </View>
+      </SwipeRow>
+      <RunPanel run={run} id={s.id} name={s.name} inEvent={inEvent} onDeleted={onDeleted}
+        style={wide ? styles.under : styles.underPhone} />
       {open && garage && (
         <View style={wide ? styles.under : styles.underPhone}>
           <RunPicker what={open} run={s} garage={garage} onPick={onPick} onClose={() => onOpen(null)}
@@ -830,6 +848,9 @@ function AddSession({ eventId, onAdded }: { eventId: number | null; onAdded: () 
   );
 }
 
+// a run row's padding above and below its line (styles.run): its swipe fills it
+const RUN_PAD = { top: 10, bottom: 9 };
+
 const useStyles = themed((c) => ({
   screen: { flex: 1, backgroundColor: c.background },
   loading: { marginTop: 32, alignSelf: 'flex-start' },
@@ -876,7 +897,7 @@ const useStyles = themed((c) => ({
     borderBottomWidth: 1, borderColor: c.rule, paddingTop: 7, paddingBottom: 6 },
   legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 22, rowGap: 8, alignItems: 'center', marginTop: 14 },
 
-  run: { borderBottomWidth: 1, borderColor: c.separator, paddingTop: 10, paddingBottom: 9 },
+  run: { borderBottomWidth: 1, borderColor: c.separator, paddingTop: RUN_PAD.top, paddingBottom: RUN_PAD.bottom },
   runLine: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
   runLineEditing: { alignItems: 'flex-start' },
   runTick: { paddingTop: 3 },
