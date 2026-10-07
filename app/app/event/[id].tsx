@@ -74,18 +74,26 @@ export default function EventScreen() {
   const topH = useRef(0); // the photo and its folio, above the page's body
   const compareY = useRef(0); // where Side by side starts in the body
   const prep = usePrepAvailability(); // events whose track has past data: the Prep report button
+  // how many times the event came from the server (not counting the chips' changes made here at once): what's
+  // worked out from its runs is asked for again with it; null until the event is read
+  const [reads, setReads] = useState(0);
+  const version = folder ? reads : null;
   // who drove each run by driving style, asked again whenever the runs change (a driver set, a run added)
-  const guess = useDriverGuess(key === NO_EVENT ? null : Number(key), folder);
+  const guess = useDriverGuess(key === NO_EVENT ? null : Number(key), version);
 
+  const loadNo = useRef(0); // the latest load: an older one's answer, coming in late, is dropped
   const load = useCallback(() => {
+    const no = ++loadNo.current;
     eventsApi.folder(key).then(
       (f) => {
+        if (no !== loadNo.current) return;
         setFolder(f);
+        setReads((n) => n + 1);
         setError(null);
         const ids = new Set(f.days.flatMap((d) => d.sessions.map((s) => s.id)));
         setPicks((ps) => (ps.every((p) => ids.has(p.id)) ? ps : ps.filter((p) => ids.has(p.id))));
       },
-      (e) => setError((e as Error).message),
+      (e) => no === loadNo.current && setError((e as Error).message),
     );
   }, [key]);
   useFocusEffect(load);
@@ -139,6 +147,7 @@ export default function EventScreen() {
       const filled = new Set(r.filled);
       patchRuns((x) => (x.id === s.id ? { ...x, driver_id: r.driver_id, driver: r.driver, car_id: r.car_id }
         : filled.has(x.id) ? { ...x, car_id: r.car_id } : x));
+      setReads((n) => n + 1); // the server has the run's driver and car: ask again for what follows from them
       const note = filledNote(r);
       setRunNote(note ? { id: s.id, text: note } : null);
       reloadGarage();
@@ -222,6 +231,7 @@ export default function EventScreen() {
           <RenameEvent id={eventId} initial={folder.name} large onCancel={() => setPanel(null)}
             onSaved={(f) => {
               setFolder(f);
+              setReads((n) => n + 1);
               setPanel(null);
             }} />
         </>
@@ -239,6 +249,7 @@ export default function EventScreen() {
             onCancel={() => setPanel(null)}
             onSubmit={async (v) => {
               setFolder(await eventsApi.update(eventId, v));
+              setReads((n) => n + 1);
               setPanel(null);
             }}
           />
@@ -263,7 +274,7 @@ export default function EventScreen() {
   // runs. Nothing when there are none.
   const seasonQuestion = eventId != null && <SeasonMatch eventId={eventId} onChanged={load} style={styles.season} />;
   // runs the official timetable can't place by itself: "Which session was 03_Q?"
-  const runNameQuestion = eventId != null && <RunNameQuestions eventId={eventId} folder={folder} onChanged={load} style={styles.season} />;
+  const runNameQuestion = eventId != null && <RunNameQuestions eventId={eventId} folder={version} onChanged={load} style={styles.season} />;
 
   // ---------- the sections ----------
 
@@ -337,7 +348,7 @@ export default function EventScreen() {
   );
 
   const info = eventId != null && hasInfo && (
-    <EventInfoCard no={++no} eventId={eventId} version={folder}
+    <EventInfoCard no={++no} eventId={eventId} version={version}
       onInfo={(i) => {
         setHasInfo(i != null);
         setEventDrivers(i?.resolved.drivers.map((d) => d.id) ?? []);

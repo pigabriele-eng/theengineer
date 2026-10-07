@@ -67,25 +67,36 @@ export default function SessionsScreen() {
   const prep = usePrepAvailability(); // events whose track has past data: the Prep report button
   const { garage, reload: reloadGarage } = useGarage(); // the drivers a run's driver list offers
 
+  const loadNo = useRef(0); // the latest load: an older one's answers, coming in late, are dropped
   const load = useCallback(() => {
+    const no = ++loadNo.current;
+    const latest = () => no === loadNo.current;
     eventsApi.folders().then(
       (f) => {
+        if (!latest()) return;
         setFolders(f);
         setError(null);
         setLoads((n) => n + 1);
       },
-      (e) => setError((e as Error).message),
+      (e) => latest() && setError((e as Error).message),
     );
-    calendarApi.state().then(setCalendar, () => {}); // the list works without it
-    fetchFinishes().then(setFinishes); // one call for the whole list; without it the rows simply have none
+    calendarApi.state().then((c) => latest() && setCalendar(c), () => {}); // the list works without it
+    // one call for the whole list; without it the rows simply have none
+    fetchFinishes().then((f) => latest() && setFinishes(f));
   }, []);
   useFocusEffect(load);
-  // the calendar is being read in the background: look again shortly
+  // the calendar is being read in the background: look at it again shortly (only it), and read the list once it's done
+  const syncing = !!calendar?.feed?.syncing;
   useEffect(() => {
     if (!calendar?.feed?.syncing) return;
-    const t = setTimeout(load, 3000);
+    const t = setTimeout(() => calendarApi.state().then(setCalendar, () => {}), 3000);
     return () => clearTimeout(t);
-  }, [calendar, load]);
+  }, [calendar]);
+  const wasSyncing = useRef(false);
+  useEffect(() => {
+    if (wasSyncing.current && !syncing) load();
+    wasSyncing.current = syncing;
+  }, [syncing, load]);
 
   // Opened on this list while an event is on: on to its page, once per launch (Back comes back here). Not when they've
   // gone elsewhere or started making an event while the list was loading.
@@ -133,7 +144,7 @@ export default function SessionsScreen() {
       eventsApi.folder(key).then((folder) => setDetails((d) => ({ ...d, [key]: { ...d[key], folder } })), () => {});
     }
   }, [wanted, loads]);
-  // the lead event's report and logger, read again with the list
+  // the lead event's report and logger, read once per lead event
   const leadBestSession = lead?.best_session_id ?? null;
   useEffect(() => {
     if (!leadKey) return;
@@ -147,7 +158,7 @@ export default function SessionsScreen() {
         if (logger) put({ logger });
       }, () => {});
     }
-  }, [leadKey, leadBestSession, loads]);
+  }, [leadKey, leadBestSession]);
 
   const renamed = (key: string) => (name: string) => {
     setFolders((list) => list?.map((x) => (x.key === key ? { ...x, name } : x)) ?? list);
