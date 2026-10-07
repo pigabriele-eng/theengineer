@@ -3,7 +3,10 @@
 // without it answers 404: then nothing is shown.
 import { apiFetch } from '@/lib/api';
 
-export type MatchOption = { key: string; label: string | null; why: string | null };
+/** A car our drivers are on in a series round's entry list, the likeliest first: one tap answers with its number. */
+export type CarChoice = { car_number: string; label: string; why: string | null };
+
+export type MatchOption = { key: string; label: string | null; why: string | null; numbers?: CarChoice[] };
 
 export type SeasonQuestion = {
   id: number;
