@@ -28,7 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import heavy, models, storage
+from app import heavy, models, run_labels, storage
 from app.analysis import compact
 from app.analysis.advice import build_report
 from app.db import SessionLocal, get_db
@@ -37,7 +37,7 @@ from app.routers.sessions import _channel_map, _line, official_corners, read_fil
 router = APIRouter(prefix="/reports")
 log = logging.getLogger(__name__)
 
-REPORT_VERSION = 5  # raise when the advice or the sections change, so every kept report is worked out again
+REPORT_VERSION = 6  # raise when the advice or the sections change, so every kept report is worked out again
 TRACES_VERSION = compact.FORMAT  # raise (in compact.py) when the reduction changes
 IMPORT_WAIT_S = 1800  # longest the report waits for an import that is reading logs
 MAX_LAPS = 250  # the quickest laps of an event the report works from, to keep within the server's memory
@@ -53,7 +53,7 @@ _worker: threading.Thread | None = None
 @dataclass
 class Item:
     session: models.RunSession
-    name: str  # unique within the report
+    name: str  # the run's label (run_labels.py): its own name, unique within the report, never a position
     file: models.LoggerFile | None
     signature: str | None  # of the session's compact traces
 
@@ -68,6 +68,7 @@ class Plan:
     items: list[Item] = field(default_factory=list)
     error: str | None = None
     signature: str = ""
+    labels: list[run_labels.RunLabel] = field(default_factory=list)  # the event's runs, in the event page's order
 
 
 def _hash(payload) -> str:
@@ -98,23 +99,24 @@ def plan_for(db: Session, kind: str, id_: int) -> Plan:
         ev = db.get(models.Event, id_)
         if ev is None:
             raise HTTPException(404, "Event not found")
-        sessions = db.scalars(select(models.RunSession).where(models.RunSession.event_id == id_)
-                              .order_by(models.RunSession.name, models.RunSession.id)).all()
-        plan = Plan(f"event:{id_}", kind, id_, ev.name, ev.track)
+        sessions = db.scalars(select(models.RunSession).where(models.RunSession.event_id == id_)).all()
+        labels = run_labels.label_runs(sessions)
+        plan = Plan(f"event:{id_}", kind, id_, ev.name, ev.track, labels=labels)
     else:
         s = db.get(models.RunSession, id_)
         if s is None:
             raise HTTPException(404, "Session not found")
+        # called as in its event's report, so its label is worked out among the event's runs
+        labels = run_labels.label_runs(run_labels.event_runs(db, s))
         sessions = [s]
-        plan = Plan(f"session:{id_}", kind, id_, s.name or f"Session {s.id}", None)
+        plan = Plan(f"session:{id_}", kind, id_, next(lab.name for lab in labels if lab.id == s.id), None,
+                    labels=labels)
+    # the runs in the event page's order (by day, then the time of day), each called by its label
+    label_of = {lab.id: (k, lab) for k, lab in enumerate(labels)}
     tracks: dict[int | None, models.Track | None] = {}
-    names: set[str] = set()
-    for s in sessions:
+    for s in sorted(sessions, key=lambda s: label_of[s.id][0]):
         f = _main_file(s)
-        name = s.name or f"Session {s.id}"
-        if name in names:
-            name = f"{name} #{s.id}"
-        names.add(name)
+        name = label_of[s.id][1].name
         if f is None or not any(l.clean and l.file_id == f.id for l in s.laps):
             plan.items.append(Item(s, name, f, None))  # nothing to analyse: listed, not used
             continue
@@ -147,6 +149,7 @@ def traces_of(db: Session, session_ids: list[int]) -> dict[int, models.SessionTr
 
 def _sessions_out(db: Session, plan: Plan) -> list[dict]:
     out = []
+    label_of = {lab.id: lab for lab in plan.labels}
     traces = traces_of(db, [i.session.id for i in plan.items])
     for i in plan.items:
         s = i.session
@@ -159,7 +162,9 @@ def _sessions_out(db: Session, plan: Plan) -> list[dict]:
             note = "No clean lap"
         elif rec is not None and rec.signature == i.signature and rec.error:
             note = rec.error
-        out.append({"id": s.id, "name": i.name, "driver": s.driver.name if s.driver else None,
+        lab = label_of.get(s.id)
+        out.append({"id": s.id, "name": i.name, "short": lab.short if lab else i.name,
+                    "day": lab.day if lab else None, "driver": s.driver.name if s.driver else None,
                     "clean_laps": len(clean), "best": min(clean) if clean else None,
                     "included": i.signature is not None and note is None, "note": note})
     return out
@@ -177,6 +182,10 @@ def _answer(db: Session, plan: Plan, row: models.ReportCache | None, status: str
         "stale": row is not None and row.result is not None and not fresh,
         "report": row.result if row is not None else None,
         "sessions": _sessions_out(db, plan),
+        # every run of the event (for one run's report too) by its label, in the event page's order: what the
+        # report calls its runs, and what a report kept from before a run was renamed is called by, through the
+        # session ids it holds
+        "runs": [lab.out() for lab in plan.labels],
     }
 
 

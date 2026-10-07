@@ -16,12 +16,12 @@ import { Text, View } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
 import { formatLap } from '@/lib/api';
 import { noPrint } from '@/lib/print';
-import { dateRange, sessionsInOrder } from '@/lib/events';
+import { dateRange } from '@/lib/events';
+import { RunNamer, runNamer } from '@/lib/runLabels';
 import { TrackShapeData } from '@/lib/trackshape';
 import {
   fetchReport,
   Habit,
-  lapName,
   LapRow,
   PHASES,
   refreshReport,
@@ -55,7 +55,6 @@ const PHASE_WORDS: Record<string, { most: string; where: string; title: string }
 const SCORE_FLOOR = 95; // the sub-score bars run from 95 % to 100 %
 
 const s2 = (v: number) => `${v.toFixed(2)} s`;
-const pad2 = (n: number) => String(n).padStart(2, '0');
 const metres = (m: number) => `${Math.round(m).toLocaleString('en-GB')} m`;
 const MAX_EVIDENCE = 5; // measures shown under a section before "Show all"
 // lap time axis ticks as m:ss, with tenths only when the ticks are closer than a second
@@ -140,6 +139,8 @@ export default function ReportScreen() {
   }, [key]);
 
   const report = answer?.report ?? null;
+  // every run by its own name ("FP1 stint 1", "Q1 · Gabriele Piana"), never a number
+  const names = useMemo(() => runNamer(answer), [answer]);
   const showOnMap = (code: string) => {
     setFocus(code);
     scroll.current?.scrollTo({ y: Math.max(topH + mapY - 12, 0), animated: true });
@@ -191,7 +192,7 @@ export default function ReportScreen() {
   if (report) {
     const h = report.headline;
     sections.push({ title: 'The lap', dek: 'What the car and the quickest passes say is there.',
-      body: <TheLap report={report} width={Math.min(width, 1240) - 2 * gutter} /> });
+      body: <TheLap report={report} names={names} width={Math.min(width, 1240) - 2 * gutter} /> });
     sections.push({ title: report.gains.length === 3 ? 'Top three gains' : 'Where to gain',
       dek: `Where a typical lap (${formatLap(h.typical)}) gives the most away to the quick passes.`,
       body: <Gains report={report} onPick={showOnMap} /> });
@@ -252,26 +253,32 @@ export default function ReportScreen() {
       dek: 'Each section in lap order: what to change, where its time goes, and the evidence. Tap a section’s name to see ' +
         'it on the map.',
       body: report.sections.map((s) => (
-        <DrivingCard key={s.code} section={s} report={report} tone={tones![s.code]} onMap={() => showOnMap(s.code)} />
+        <DrivingCard key={s.code} section={s} report={report} names={names} tone={tones![s.code]}
+          onMap={() => showOnMap(s.code)} />
       )) });
-    sections.push({ title: 'Trends & consistency', body: <Trends report={report} /> });
+    sections.push({ title: 'Trends & consistency', body: <Trends report={report} names={names} /> });
     sections.push({ title: 'What goes with lap time',
       body: <Relations relations={report.lap_time_relations} laps={report.laps_analysed} /> });
     sections.push({ title: isEvent ? 'Sessions in this report' : 'This session', body: (
       <View style={styles.rows}>
-        {answer!.sessions.map((s) => (
+        {answer!.sessions.map((s) => {
+          const run = names.byId(s.id);
+          return (
           <Link key={s.id} href={{ pathname: '/session/[id]', params: { id: s.id } }} asChild>
             <Pressable style={styles.sessionRow} accessibilityRole="link">
               <Text style={StyleSheet.flatten([styles.sessionName, !s.included && styles.dim])}>
                 {s.name}
-                {s.driver ? ` · ${s.driver}` : ''}
+                {withDriver(s.name, s.driver)}
               </Text>
               <Text style={StyleSheet.flatten([styles.sessionMeta, !s.included && styles.dim])}>
-                {s.included ? `${s.clean_laps} clean laps · best ${formatLap(s.best)}` : s.note ?? 'Left out'}
+                {[run?.day && !s.name.startsWith('Day ') ? `Day ${run.day}` : null, run?.time,
+                  s.included ? `${s.clean_laps} clean laps · best ${formatLap(s.best)}` : s.note ?? 'Left out']
+                  .filter(Boolean).join(' · ')}
               </Text>
             </Pressable>
           </Link>
-        ))}
+          );
+        })}
       </View>
     ) });
     sections.push({ title: 'How this is worked out', body: (
@@ -292,6 +299,7 @@ export default function ReportScreen() {
       <Stack.Screen options={{ title: answer ? `Report · ${answer.title}` : 'Report' }} />
       {folder && folder.id != null && (
         <ScopeBar folder={folder} current={'session' in scope ? scope.session : null} scope={scope} pdfName={pdfName}
+          names={names}
           onWhole={() => router.setParams({ event: String(folder.id), session: undefined })}
           onPick={(id) => router.setParams({ session: String(id), event: undefined })} />
       )}
@@ -353,17 +361,17 @@ function sectionTones(theme: Palette, report: Report): Record<string, string> {
 
 // ---------- the scope: whole event or one session ----------
 
-function ScopeBar({ folder, current, scope, pdfName, onWhole, onPick }: {
+function ScopeBar({ folder, current, scope, pdfName, names, onWhole, onPick }: {
   folder: NonNullable<ReturnType<typeof useEventFolder>>;
   current: number | null; // the session shown, or null for the whole event
   scope: ReportScope;
   pdfName: string;
+  names: RunNamer;
   onWhole: () => void;
   onPick: (id: number) => void;
 }) {
   const styles = useStyles();
   const wide = useWide();
-  const order = sessionsInOrder(folder);
   return (
     // the whole bar stays off the printed page: the headline says what the report is for
     <View style={styles.scope} {...noPrint}>
@@ -374,14 +382,16 @@ function ScopeBar({ folder, current, scope, pdfName, onWhole, onPick }: {
         {folder.days.map((d, di) => (
           <Fragment key={d.date ?? `day${di}`}>
             {di > 0 && <View style={styles.daySplit} />}
+            {/* each run by its own name in short ("FP1 S1", "Q1"), in the event page's order, the days apart */}
             {d.sessions.filter((s) => s.best_lap_s != null).map((s) => {
               const on = s.id === current;
+              const run = names.byId(s.id);
               return (
                 <Pressable key={s.id} onPress={() => onPick(s.id)} accessibilityRole="button" hitSlop={4}
-                  accessibilityLabel={`Report for ${s.name}`} accessibilityState={{ selected: on }}
+                  accessibilityLabel={`Report for ${run?.name ?? s.name}`} accessibilityState={{ selected: on }}
                   style={StyleSheet.flatten([styles.run, on && styles.runOn])}>
                   <Text style={StyleSheet.flatten([styles.runText, on && styles.runTextOn])}>
-                    {pad2(order.indexOf(s) + 1)}
+                    {run?.short ?? s.name}
                   </Text>
                 </Pressable>
               );
@@ -419,7 +429,7 @@ function Progress({ answer }: { answer: ReportAnswer }) {
 
 // ---------- 01 the lap ----------
 
-function TheLap({ report, width }: { report: Report; width: number }) {
+function TheLap({ report, names, width }: { report: Report; names: RunNamer; width: number }) {
   const styles = useStyles();
   const wide = useWide();
   const c = useTheme();
@@ -429,7 +439,7 @@ function TheLap({ report, width }: { report: Report; width: number }) {
   const left = wide ? (width * 1.55) / 2.55 - 32 : width;
   const ideal = Math.floor(Math.min(wide ? 188 : 104, left / (formatLap(h.ideal).length * 0.47)));
   const trio: [string, number, string][] = [
-    ['Fastest lap', h.fastest.time, `${h.fastest.run}, lap ${h.fastest.lap}`],
+    ['Fastest lap', h.fastest.time, `${names.name(h.fastest.run, h.fastest.session_id)}, lap ${h.fastest.lap}`],
     ['Realistic target', h.realistic, 'a quick lap’s usual grip at each place'],
     ['Theoretical', h.theoretical, 'the car’s best at every place'],
   ];
@@ -646,8 +656,8 @@ const fmtHabit = (v: number | null, unit: string) => {
   return `${v.toFixed(digits)}${unit === '%' ? '%' : unit ? ` ${unit}` : ''}`;
 };
 
-function DrivingCard({ section: s, report, tone, onMap }: {
-  section: SectionReport; report: Report; tone: string | undefined; onMap: () => void;
+function DrivingCard({ section: s, report, names, tone, onMap }: {
+  section: SectionReport; report: Report; names: RunNamer; tone: string | undefined; onMap: () => void;
 }) {
   const styles = useStyles();
   const wide = useWide();
@@ -699,7 +709,7 @@ function DrivingCard({ section: s, report, tone, onMap }: {
           <View style={styles.block}>
             <Text style={styles.h4}>Section times</Text>
             <Text style={styles.times}>
-              Fastest lap {t.fastest_lap.toFixed(2)} · best {t.best.toFixed(2)} ({lapName(t.best_lap)}) · typical{' '}
+              Fastest lap {t.fastest_lap.toFixed(2)} · best {t.best.toFixed(2)} ({names.lap(t.best_lap)}) · typical{' '}
               {t.typical.toFixed(2)} · quick passes {t.quick.toFixed(2)} · realistic {t.realistic.toFixed(2)} ·
               theoretical {t.theoretical.toFixed(2)}
             </Text>
@@ -726,6 +736,10 @@ function DrivingCard({ section: s, report, tone, onMap }: {
 }
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** " · Gabriele Piana" after a run's name, unless the name already says who drove it ("Q1 · Gabriele Piana"). */
+const withDriver = (name: string, driver: string | null | undefined) =>
+  driver && !name.includes(` · ${driver}`) ? ` · ${driver}` : '';
 
 function HabitRow({ habit: h }: { habit: Habit }) {
   const styles = useStyles();
@@ -783,7 +797,7 @@ function SectionSpeed({ section: s, report }: { section: SectionReport; report: 
 
 // ---------- trends and consistency ----------
 
-function Trends({ report }: { report: Report }) {
+function Trends({ report, names }: { report: Report; names: RunNamer }) {
   const styles = useStyles();
   const c = useChartColors();
   const tr = report.trends;
@@ -795,7 +809,7 @@ function Trends({ report }: { report: Report }) {
   const longest = Math.max(...[...byRun.values()].map((ls) => ls.length), 0);
   const x = Array.from({ length: longest }, (_, i) => i + 1);
   const runs: LineSeries[] = [...byRun.entries()].map(([run, ls]) => ({
-    key: run, label: run, muted: true, width: 1, color: c.muted,
+    key: run, label: names.name(run), muted: true, width: 1, color: c.muted,
     values: x.map((_, i) => ls.find((l) => l.index_in_run === i)?.time ?? null),
   }));
   const median = x.map((_, i) => {
@@ -819,8 +833,8 @@ function Trends({ report }: { report: Report }) {
           {tr.runs.map((r) => (
             <View key={r.run} style={styles.tr}>
               <Text style={StyleSheet.flatten([styles.td, styles.runCol])} numberOfLines={1}>
-                {r.run}
-                {r.driver ? ` · ${r.driver}` : ''}
+                {names.name(r.run, r.session_id)}
+                {withDriver(names.name(r.run, r.session_id), r.driver)}
               </Text>
               <Text style={styles.td}>{r.clean_laps}</Text>
               <Text style={styles.td}>{formatLap(r.best)}</Text>
@@ -847,12 +861,17 @@ function Trends({ report }: { report: Report }) {
           formatY={lapTick}
           title="Lap times through a session"
           readout={(i) => {
-            const vs = runs.map((r) => r.values[i]).filter((v): v is number => v != null);
+            const vs = runs.filter((r) => r.values[i] != null).map((r) => ({ run: r.key, v: r.values[i] as number }));
             const rows = [];
             if (median[i] != null) rows.push({ label: 'median', value: formatLap(median[i]), color: c.s1 });
             if (vs.length) {
-              rows.push({ label: 'quickest', value: formatLap(Math.min(...vs)), color: c.muted });
-              rows.push({ label: 'slowest', value: formatLap(Math.max(...vs)), color: c.muted });
+              // which run: by its name in short ("FP1 S1"), never a number
+              const quickest = vs.reduce((a, b) => (b.v < a.v ? b : a));
+              const slowest = vs.reduce((a, b) => (b.v > a.v ? b : a));
+              rows.push({ label: `quickest · ${names.short(quickest.run)}`, value: formatLap(quickest.v), color: c.muted });
+              if (vs.length > 1) {
+                rows.push({ label: `slowest · ${names.short(slowest.run)}`, value: formatLap(slowest.v), color: c.muted });
+              }
             }
             rows.push({ label: vs.length === 1 ? 'session' : 'sessions', value: String(vs.length), color: c.muted });
             return rows;
@@ -935,7 +954,8 @@ const useStyles = themed((c) => ({
   // the scope bar
   scope: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 16, rowGap: 8, paddingTop: 12,
     paddingBottom: 11, borderBottomWidth: 1, borderColor: c.rule },
-  runs: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 12, rowGap: 4 },
+  // the runs by name wrap within the page's width
+  runs: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 12, rowGap: 4, maxWidth: '100%' },
   daySplit: { width: 1, height: 16, backgroundColor: c.rule },
   run: { borderBottomWidth: 3, borderColor: 'transparent', paddingBottom: 1 },
   runOn: { borderColor: c.mark },
