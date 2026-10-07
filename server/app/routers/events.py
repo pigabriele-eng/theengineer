@@ -35,6 +35,7 @@ from app.analysis.insights import consistency
 from app.analysis.side_by_side import Reference, best_index, reference_of, summarise
 from app.db import get_db
 from app.routers import reports, technique
+from app.results import run_names
 from app.routers.imports import _date
 from app.routers.sessions import official_corners
 
@@ -323,6 +324,7 @@ def update_session(session_id: int, body: SessionPatch, db: Session = Depends(ge
     renamed = "name" in sent and body.name is not None and _text(body.name, "session") != s.name
     if renamed:
         s.name = _text(body.name, "session")
+        run_names.typed_by_hand(db, s.id)  # never renamed from the official timetable again
     if "kind" in sent and body.kind is not None:
         s.kind = body.kind
     db.commit()
