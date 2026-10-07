@@ -81,16 +81,19 @@ export default function EventScreen() {
   // who drove each run by driving style, asked again whenever the runs change (a driver set, a run added)
   const guess = useDriverGuess(key === NO_EVENT ? null : Number(key), version);
 
+  const loadNo = useRef(0); // the latest load: an older one's answer, coming in late, is dropped
   const load = useCallback(() => {
+    const no = ++loadNo.current;
     eventsApi.folder(key).then(
       (f) => {
+        if (no !== loadNo.current) return;
         setFolder(f);
         setReads((n) => n + 1);
         setError(null);
         const ids = new Set(f.days.flatMap((d) => d.sessions.map((s) => s.id)));
         setPicks((ps) => (ps.every((p) => ids.has(p.id)) ? ps : ps.filter((p) => ids.has(p.id))));
       },
-      (e) => setError((e as Error).message),
+      (e) => no === loadNo.current && setError((e as Error).message),
     );
   }, [key]);
   useFocusEffect(load);
