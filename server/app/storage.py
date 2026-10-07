@@ -28,6 +28,8 @@ COMPRESSED_SUFFIXES = (".ld", ".ldx", ".csv", ".txt")  # logs compress well; aud
 COMPRESS_LEVEL = 4  # close to the smallest size for a fraction of the time of level 9
 CACHE_LIMIT_BYTES = 2 * 1024**3  # downloaded copies kept on the server's disk
 CHUNK_BYTES = 1024**2
+LIST_PAGE = 1000  # files per page of a Supabase bucket listing
+LIST_LIMIT = 100_000  # files looked through at most when finding stored sizes
 
 
 class StorageError(OSError):
@@ -49,6 +51,9 @@ class Storage(Protocol):
 
     def delete(self, key: str) -> None:
         """Remove the file stored under the key; nothing happens when there is none."""
+
+    def sizes(self, keys: list[str]) -> dict[str, int]:
+        """The bytes each key takes in storage (logs compressed, on Supabase); a key with no file is left out."""
 
 
 def _new_key(suffix: str) -> str:
@@ -94,6 +99,15 @@ class LocalStorage:
             if p.is_file() and p.resolve().is_relative_to(root):
                 p.unlink(missing_ok=True)
                 return
+
+    def sizes(self, keys: list[str]) -> dict[str, int]:
+        out = {}
+        for key in keys:
+            try:
+                out[key] = self.local_path(key).stat().st_size
+            except OSError:  # FileNotFoundError included: no file
+                pass
+        return out
 
 
 class SupabaseStorage:
@@ -182,6 +196,27 @@ class SupabaseStorage:
             raise self._fail("delete the file", r)
         (self.cache_dir / key).unlink(missing_ok=True)
 
+    def sizes(self, keys: list[str]) -> dict[str, int]:
+        """From the bucket's listing (keys are at its top level), a page of LIST_PAGE files per request."""
+        wanted = {self._object(k): k for k in keys}
+        out: dict[str, int] = {}
+        for offset in range(0, LIST_LIMIT, LIST_PAGE):
+            if not wanted:
+                break
+            r = self.client.post(f"{self.api}/object/list/{self.bucket}", json={
+                "prefix": "", "limit": LIST_PAGE, "offset": offset, "sortBy": {"column": "name", "order": "asc"}})
+            if r.status_code >= 400:
+                raise self._fail("list the files", r)
+            page = r.json()
+            for o in page:
+                key = wanted.pop(o.get("name"), None)
+                size = (o.get("metadata") or {}).get("size")
+                if key is not None and isinstance(size, int):
+                    out[key] = size
+            if len(page) < LIST_PAGE:
+                break
+        return out
+
     def _write_cache(self, key: str, chunks, decompressor=None) -> Path:
         """Write to a temporary name and rename, so a reader never sees half a file."""
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -248,3 +283,7 @@ def local_path(key: str) -> Path:
 
 def delete(key: str) -> None:
     backend().delete(key)
+
+
+def sizes(keys: list[str]) -> dict[str, int]:
+    return backend().sizes(keys)

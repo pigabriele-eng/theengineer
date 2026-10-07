@@ -112,7 +112,8 @@ def tyre_prep(db: Session, pe: PastEvent) -> tuple[dict | None, str | None]:
     for s in pe.sessions:
         out, _why = tyreprep_router._reduce(db, s)
         if out is not None:
-            reduced.append({**out, "session_id": s.id, "name": s.name or f"Session {s.id}"})
+            reduced.append({**out, "session_id": s.id, "name": s.name or f"Session {s.id}",
+                            "kind": s.kind.value if s.kind else None})
     if not reduced:
         return None, "No log with tyre sensors could be read"
     reduced.sort(key=tyreprep_router._when)

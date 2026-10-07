@@ -5,7 +5,7 @@ import { StyleSheet } from 'react-native';
 import { Text, View } from '@/components/Themed';
 import type { SessionDetail } from '@/lib/api';
 import { untimedLogs } from '@/lib/emptyRuns';
-import { inkOn, themed } from '@/constants/Theme';
+import { Fonts, inkOn, themed, Type } from '@/constants/Theme';
 
 export function UntimedNote({ session }: { session: SessionDetail }) {
   const styles = useStyles();
@@ -30,20 +30,14 @@ export function UntimedNote({ session }: { session: SessionDetail }) {
   );
 }
 
+// A ruled flag in the programme: the warning colour as a square block and a thick bar down the left, the words in ink.
 const useStyles = themed((c) => ({
-  box: { gap: 12, borderLeftWidth: 4, borderColor: c.status.warning, paddingLeft: 12, paddingVertical: 4 },
+  box: { gap: 12, borderLeftWidth: 6, borderColor: c.status.warning, paddingLeft: 12, paddingVertical: 4 },
   item: { gap: 6, backgroundColor: 'transparent' },
   head: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'transparent' },
-  badge: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: c.status.warning,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  glyph: { color: inkOn(c.status.warning), fontWeight: '700', fontSize: 13, lineHeight: 16 },
-  title: { fontWeight: '700', fontSize: 16, flexShrink: 1 },
-  body: { lineHeight: 20 },
-  file: { fontSize: 12, opacity: 0.6 },
+  badge: { width: 20, height: 20, backgroundColor: c.status.warning, alignItems: 'center', justifyContent: 'center' },
+  glyph: { fontFamily: Fonts.display, color: inkOn(c.status.warning), fontSize: 13, lineHeight: 16 },
+  title: { ...Type.label, fontSize: 14, flexShrink: 1, color: c.text },
+  body: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 22, color: c.text },
+  file: { fontFamily: Fonts.label, fontSize: 12, color: c.textMuted },
 }));

@@ -342,10 +342,13 @@ def run_job(scope: str) -> None:
             # every clean lap of the event on one line takes about 0.7 MB while it is checked: one job at a time
             with heavy.lock:
                 result, blob = compute(db, plan, row)
+            old = row.details
             row.details = storage.save(blob, ".npz")
             del blob
             row.result, row.result_signature = result, sig
             row.status, row.current, row.done = "done", None, row.total
+            db.commit()
+            reports.forget_file(old, row.details)
         except Exception as e:
             log.exception("Technique check %s failed", scope)
             db.rollback()

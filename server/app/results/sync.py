@@ -5,10 +5,10 @@ each round, its list of session PDFs; a PDF is downloaded and read only when its
 corrected classification a new file name, "..._ResultList_2.0.PDF"), unless the sync is forced. Reading a PDF
 takes the heavy lock so it never runs beside a log being analysed.
 
-On the live server, start() at startup loads every season from FIRST_YEAR that isn't loaded yet and checks the
-current season, this year's and next year's calendars and the entry lists once a day; while one of our events
-linked to a round is on (from the day before it to two days after), that round is fetched again every
-REFRESH_MINUTES.
+On the live server, start() at startup loads, for every series, each season from the series' first year that isn't
+loaded yet, and checks the current season, this year's and next year's calendars and the entry lists once a day;
+while one of our events linked to a round is on (from the day before it to two days after), that round is fetched
+again every REFRESH_MINUTES.
 """
 from __future__ import annotations
 
@@ -24,16 +24,16 @@ from sqlalchemy.orm import Session
 
 from app import db as app_db  # SessionLocal is looked up when used: the tests swap the database
 from app import heavy, models
-from app.results import gt4europe
+from app.results import adac, gt4europe
 from app.results import models as rm
-from app.results.resultlist import brand_of, class_name, parse_pdf
+from app.results.resultlist import ResultList, brand_of, class_name, parse_pdf
 from app.results.venues import venue_key
 
 log = logging.getLogger(__name__)
 
-ADAPTERS = {gt4europe.SERIES: gt4europe}
+ADAPTERS = {gt4europe.SERIES: gt4europe, adac.SERIES: adac}
 DEFAULT_SERIES = gt4europe.SERIES
-FIRST_YEAR = 2021  # two seasons before the first one predictions are tested on
+FIRST_YEAR = 2021  # two seasons before the first one predictions are tested on (a series can start later)
 REFRESH_MINUTES = 10
 PAUSE_S = 0.5  # between downloads, to go easy on the series' site
 
@@ -58,6 +58,16 @@ class _State:
 state = _State()
 
 
+def first_year(series: str) -> int:
+    return getattr(ADAPTERS[series], "FIRST_YEAR", FIRST_YEAR)
+
+
+def _client(series: str) -> httpx.Client:
+    """A connection to the series' site (some need a certificate the site itself leaves out)."""
+    make = getattr(ADAPTERS[series], "client", None)
+    return make() if make else httpx.Client()
+
+
 def _round_row(db: Session, series: str, year: int, round_id: str, name: str, order: int) -> rm.ResultRound:
     r = db.scalar(select(rm.ResultRound).where(rm.ResultRound.series == series, rm.ResultRound.year == year,
                                                rm.ResultRound.round_id == round_id))
@@ -74,6 +84,28 @@ def store_session(db: Session, rnd: rm.ResultRound, code: str, title: str, url: 
     """Read one result PDF into the round, replacing what was there for that session."""
     with heavy.lock:
         parsed = parse_pdf(data)
+    return store_parsed(db, rnd, code, title, url, parsed)
+
+
+def _with_weather(client: httpx.Client, adapter, link, parsed: ResultList) -> ResultList:
+    """A classification read from the site's table, with the weather and track of its PDF when that can be read
+    (the table has neither). Best effort: the table alone is kept when the PDF can't be fetched or read."""
+    if not getattr(link, "pdf_url", None):
+        return parsed
+    try:
+        with heavy.lock:
+            sheet = parse_pdf(adapter.fetch(client, link.pdf_url))
+    except Exception as e:
+        log.info("results: no weather from %s: %s", link.pdf_url, e)
+        return parsed
+    parsed.weather = sheet.weather or parsed.weather
+    parsed.track, parsed.length_m = sheet.track or parsed.track, sheet.length_m or parsed.length_m
+    return parsed
+
+
+def store_parsed(db: Session, rnd: rm.ResultRound, code: str, title: str, url: str,
+                 parsed: ResultList) -> rm.ResultSession:
+    """One classification into the round, replacing what was there for that session."""
     s = next((x for x in rnd.sessions if x.code == code), None)
     if s is None:
         s = rm.ResultSession(code=code, title=title, kind="qualifying" if code.startswith("Q") else "race",
@@ -98,7 +130,11 @@ def sync_round(db: Session, client: httpx.Client, series: str, year: int, season
         if have is not None and have.source_url == link.url and not force:
             continue
         try:
-            store_session(db, rnd, link.code, link.title, link.url, adapter.fetch(client, link.url))
+            result = getattr(link, "result", None)
+            if result is not None:  # already read from the site's own table
+                store_parsed(db, rnd, link.code, link.title, link.url, _with_weather(client, adapter, link, result))
+            else:
+                store_session(db, rnd, link.code, link.title, link.url, adapter.fetch(client, link.url))
             read += 1
         except Exception as e:  # one unreadable sheet (a scan, a broken file) shouldn't stop the season
             log.warning("results: %s %s %s: %s", series, year, link.code, e)
@@ -111,14 +147,14 @@ def sync_round(db: Session, client: httpx.Client, series: str, year: int, season
 
 def sync(series: str = DEFAULT_SERIES, years: list[int] | None = None, round_id: str | None = None,
          force: bool = False, client: httpx.Client | None = None) -> None:
-    """Load seasons (all from FIRST_YEAR when years is None), or one round of one season."""
+    """Load seasons (all from the series' first year when years is None), or one round of one season."""
     adapter = ADAPTERS[series]
     own = client is None
-    client = client or httpx.Client()
+    client = client or _client(series)
     try:
         with app_db.SessionLocal() as db:
             ids = adapter.seasons(client)
-            todo = sorted(y for y in ids if (years is None and FIRST_YEAR <= y <= date.today().year)
+            todo = sorted(y for y in ids if (years is None and first_year(series) <= y <= date.today().year)
                           or (years is not None and y in years))
             plan = []
             for y in todo:
@@ -167,7 +203,7 @@ def sync_calendar(series: str, year: int, client: httpx.Client | None = None) ->
     far. A round's entries are replaced each time its list is read, so late changes come through."""
     adapter = ADAPTERS[series]
     own = client is None
-    client = client or httpx.Client()
+    client = client or _client(series)
     try:
         ids = adapter.seasons(client)
         if year not in ids:
@@ -251,11 +287,12 @@ def _loop() -> None:
                 wait_idle(600)
             if time.monotonic() - last_season_check > 24 * 3600:
                 last_season_check = time.monotonic()
-                start()  # seasons not loaded yet, and new sheets of the current one
-                wait_idle(3600)
-                for year in (date.today().year, date.today().year + 1):  # calendars and new entry lists
-                    run_job(lambda y=year: sync_calendar(DEFAULT_SERIES, y))
-                    wait_idle(600)
+                for series in ADAPTERS:
+                    start(series)  # seasons not loaded yet, and new sheets of the current one
+                    wait_idle(3600)
+                    for year in (date.today().year, date.today().year + 1):  # calendars and new entry lists
+                        run_job(lambda s=series, y=year: sync_calendar(s, y))
+                        wait_idle(600)
         except Exception:
             log.exception("results refresh failed")
         time.sleep(REFRESH_MINUTES * 60)
@@ -271,3 +308,36 @@ def start_background() -> None:
         return
     _loop_thread = threading.Thread(target=_loop, name="results-refresh", daemon=True)
     _loop_thread.start()
+
+
+def series_key(text: str | None) -> str | None:
+    """The results source a series name means: 'ADAC GT4 Germany 2026' -> 'adac-gt4-germany'."""
+    low = (text or "").lower()
+    if not low:
+        return None
+    for key, adapter in ADAPTERS.items():
+        if key in low or adapter.NAME.lower() in low:
+            return key
+    if "adac" in low or "germany" in low:
+        return adac.SERIES
+    if "europe" in low or "gt4 european" in low:
+        return gt4europe.SERIES
+    return None
+
+
+def series_of_event(db: Session, event_id: int) -> str:
+    """Which series' results an event belongs to: its season's series, else what its series name says, else the
+    default one."""
+    from app import seasons  # seasons builds on the results module, not the other way round
+
+    season = db.scalar(select(seasons.Season)
+                       .join(seasons.SeasonRound, seasons.SeasonRound.season_id == seasons.Season.id)
+                       .where(seasons.SeasonRound.event_id == event_id, seasons.Season.series.is_not(None)))
+    if season is None:
+        info = db.scalar(select(seasons.EventInfo).where(seasons.EventInfo.event_id == event_id))
+        if info is not None and info.season_id:
+            season = db.get(seasons.Season, info.season_id)
+    if season is not None and season.series in ADAPTERS:
+        return season.series
+    ev = db.get(models.Event, event_id)
+    return series_key(ev.series if ev else None) or DEFAULT_SERIES

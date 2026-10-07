@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.results import models as rm
+from app.results import predict
 from app.results.venues import plain
 
 MATCH_S = 0.10  # a logged best lap within this of an official best lap is the same lap
@@ -315,4 +316,4 @@ def model_sessions(db: Session, series: str = "gt4-europe") -> list[dict]:
                         "number": int(s.code[1:]) if s.code[1:].isdigit() else None, "date": s.starts_at,
                         "track": s.track, "length_m": s.length_m, "weather": s.weather or {},
                         "fastest": s.fastest, "rows": [row_dict(r) for r in s.rows]})
-    return out
+    return predict.mark_wet(out)

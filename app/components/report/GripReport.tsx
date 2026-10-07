@@ -19,11 +19,12 @@ import {
 } from '@/lib/grip';
 
 import { ChartColors, Dumbbell, GgDiagram, GripMap, inkOn, LegendItem, ramp, Scatter, useChartColors } from './GripCharts';
-import { Radius, themed } from '@/constants/Theme';
+import { Fonts, themed, Type } from '@/constants/Theme';
 
-type Props = { session?: number; event?: number };
+// bare: inside a report section that already names it, so without its own heading
+type Props = { session?: number; event?: number; bare?: boolean };
 
-export function GripReport({ session, event }: Props) {
+export function GripReport({ session, event, bare }: Props) {
   const styles = useStyles();
   const [data, setData] = useState<GripResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -56,7 +57,7 @@ export function GripReport({ session, event }: Props) {
   if (!data.available) {
     return (
       <View style={styles.wrap}>
-        <Text style={styles.h2}>Grip use and traction control</Text>
+        {!bare && <Text style={styles.h2}>Grip use and traction control</Text>}
         {data.notes.map((n) => (
           <Text key={n} style={styles.dim}>
             {n}
@@ -65,12 +66,12 @@ export function GripReport({ session, event }: Props) {
       </View>
     );
   }
-  return <Report data={data} />;
+  return <Report data={data} bare={bare} />;
 }
 
 export default GripReport;
 
-function Report({ data }: { data: GripResult }) {
+function Report({ data, bare }: { data: GripResult; bare?: boolean }) {
   const styles = useStyles();
   const c = useChartColors();
   const sections = data.sections ?? [];
@@ -80,7 +81,7 @@ function Report({ data }: { data: GripResult }) {
   return (
     <View style={styles.wrap}>
       <View style={styles.block}>
-        <Text style={styles.h2}>Grip use and traction control</Text>
+        {!bare && <Text style={styles.h2}>Grip use and traction control</Text>}
         <Text style={styles.dim}>
           {data.clean_laps} clean laps from {runs} {runs === 1 ? 'run' : 'runs'}. The quick laps are the{' '}
           {data.quick_laps} within 1 % of the best ({formatLap(fastest.time)}, {fastest.run} lap {fastest.lap}). Grip use
@@ -570,53 +571,45 @@ const useStyles = themed((c) => ({
   block: { gap: 8 },
   loading: { gap: 8, paddingVertical: 16 },
   h2: { fontSize: 20, fontWeight: '700' },
-  h3: { fontSize: 16, fontWeight: '700', marginTop: 4 },
-  dim: { opacity: 0.65, lineHeight: 20 },
+  h3: { ...Type.label, fontSize: 13, color: c.text, borderTopWidth: 3, borderColor: c.rule, paddingTop: 6, marginTop: 8 },
+  dim: { ...Type.dek, fontSize: 16, lineHeight: 22, color: c.textSecondary },
   error: { color: c.error },
   bold: { fontWeight: '700' },
-  caption: { fontSize: 12, opacity: 0.7, lineHeight: 17 },
+  caption: { fontFamily: Fonts.label, fontSize: 12, lineHeight: 16, color: c.textMuted },
   note: { lineHeight: 20 },
   tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  tile: {
-    flexGrow: 1,
-    flexBasis: 260,
-    borderWidth: 1,
-    borderColor: c.border,
-    borderRadius: Radius.card,
-    padding: 12,
-    gap: 4, backgroundColor: c.surface,
-  },
-  tileLabel: { fontSize: 12, opacity: 0.65, textTransform: 'uppercase', letterSpacing: 0.5 },
-  tileValue: { fontSize: 28, fontWeight: '600' },
+  tile: { flexGrow: 1, flexBasis: 260, gap: 4, borderTopWidth: 3, borderColor: c.rule, paddingTop: 10 },
+  tileLabel: { ...Type.label, color: c.text },
+  tileValue: { fontFamily: Fonts.display, fontSize: 46, lineHeight: 50, color: c.text },
   tileDetail: { fontSize: 13, opacity: 0.8, lineHeight: 18 },
   tileAction: { fontSize: 14, lineHeight: 20, marginTop: 4 },
   legendRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 12 },
   legendText: { fontSize: 12, opacity: 0.75 },
-  legendDot: { width: 9, height: 9, borderRadius: 5 },
+  legendDot: { width: 18, height: 12 },
   tabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  tab: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: c.surface },
-  tabText: { fontSize: 13, opacity: 0.7 },
-  tabOn: { fontSize: 13, fontWeight: '600' },
+  tab: { borderBottomWidth: 3, borderColor: 'transparent', paddingBottom: 2, marginRight: 8 },
+  tabText: { ...Type.label, fontSize: 13, color: c.textMuted },
+  tabOn: { ...Type.label, fontSize: 13, color: c.text },
   trow: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderColor: c.separator, paddingVertical: 3 },
-  th: { fontSize: 11, fontWeight: '600', opacity: 0.65 },
+  th: { ...Type.label, fontSize: 11, color: c.textSecondary },
   td: { fontSize: 13, fontVariant: ['tabular-nums'] },
   num: { textAlign: 'right', paddingRight: 6 },
   center: { textAlign: 'center' },
   tcode: { width: 64 },
   tcell: { flex: 1, marginHorizontal: 1 },
   tworth: { width: 52, textAlign: 'right', fontSize: 12, fontVariant: ['tabular-nums'] },
-  cell: { height: 38, alignItems: 'center', justifyContent: 'center', borderRadius: 4 },
+  cell: { height: 38, alignItems: 'center', justifyContent: 'center' },
   cellValue: { fontSize: 12, fontWeight: '600', fontVariant: ['tabular-nums'] },
   cellGap: { fontSize: 10, fontVariant: ['tabular-nums'] },
   noteRow: { gap: 2, paddingVertical: 6, borderBottomWidth: 1, borderColor: c.separator },
   noteHead: { fontSize: 14 },
   facts: { flexDirection: 'row', flexWrap: 'wrap', gap: 24 },
   fact: { gap: 2 },
-  factValue: { fontSize: 20, fontWeight: '600' },
+  factValue: { fontFamily: Fonts.display, fontSize: 30, lineHeight: 34, color: c.text },
   badge: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   verdictCol: { flexGrow: 1, flexShrink: 1, minWidth: 100, maxWidth: 140, paddingLeft: 10 },
   subtle: { fontSize: 11, opacity: 0.6, fontVariant: ['tabular-nums'] },
   badgeText: { fontSize: 12 },
-  zoneCard: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.card, padding: 12, gap: 6, backgroundColor: c.surface },
+  zoneCard: { gap: 6, borderTopWidth: 3, borderColor: c.rule, paddingTop: 10 },
   zoneHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
 }));

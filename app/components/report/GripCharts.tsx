@@ -7,7 +7,7 @@ import Svg, { Circle, G, Line, Path, Rect, Text as SvgText } from 'react-native-
 
 import { Text, View } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
-import { byScheme, chartPlate, Fonts, inkOn, Radius, ramp, themed } from '@/constants/Theme';
+import { byScheme, chartPlate, Fonts, inkOn, ramp, themed, Type } from '@/constants/Theme';
 
 // Slots 1 and 2 of the validated chart palette, a grey for context, ink, and two one-hue ramps (grip in blue,
 // traction control in orange), each stepped for its own mode; status colours for the verdicts.
@@ -430,10 +430,10 @@ const useStyles = themed((c) => ({
   hint: { opacity: 0.55 },
   legendRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  legendDot: { width: 9, height: 9, borderRadius: 5 },
+  legendDot: { width: 18, height: 12 },
   legendText: { fontSize: 12, opacity: 0.75 },
   tabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  tab: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: c.surface },
-  tabText: { fontSize: 13, opacity: 0.7 },
-  tabOn: { fontSize: 13, fontWeight: '600' },
+  tab: { borderBottomWidth: 3, borderColor: 'transparent', paddingBottom: 2, marginRight: 8 },
+  tabText: { ...Type.label, fontSize: 13, color: c.textMuted },
+  tabOn: { ...Type.label, fontSize: 13, color: c.text },
 }));

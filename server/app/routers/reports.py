@@ -360,6 +360,7 @@ def ensure_traces(db: Session, item: Item, track: models.Track | None) -> models
     if rec is None:
         rec = models.SessionTraces(session_id=item.session.id)
         db.add(rec)
+    old = rec.path
     rec.signature, rec.error, rec.path, rec.laps = item.signature, None, None, 0
     with heavy.lock:
         try:
@@ -379,7 +380,18 @@ def ensure_traces(db: Session, item: Item, track: models.Track | None) -> models
         finally:
             heavy.release_memory()
     db.commit()
+    forget_file(old, rec.path)
     return rec
+
+
+def forget_file(old: str | None, new: str | None) -> None:
+    """Delete a stored file that a row no longer names (its traces or details were made again), so it stops taking
+    storage. After the commit; a reader that still had the old name finds it gone and makes or skips it again."""
+    if old and old != new:
+        try:
+            storage.delete(old)
+        except Exception as e:  # a file left behind only takes space
+            log.warning("Couldn't delete the replaced stored file %s: %s", old, e)
 
 
 def _load(db: Session, item: Item, track: models.Track | None) -> compact.CompactSession | None:
