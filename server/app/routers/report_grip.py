@@ -18,7 +18,7 @@ from app.routers.sessions import _channel_map, _get, _line, _track_for, official
 router = APIRouter(prefix="/report")
 
 CACHE_SIZE = 8
-_cache: OrderedDict[tuple, tuple[tuple, dict]] = OrderedDict()
+_cache: OrderedDict[tuple, tuple[tuple, bytes]] = OrderedDict()  # its JSON text, as sent
 _cache_lock = threading.Lock()
 
 
@@ -70,20 +70,20 @@ def grip_report(session: int | None = None, event: int | None = None, db: Sessio
         hit = _cache.get(key)
         if hit is not None and hit[0] == fp:
             _cache.move_to_end(key)
-            return hit[1]
+            return page_cache.RawJSON(hit[1])
     # kept in the database too (app/page_cache.py); else built under heavy.lock, one log-reading job at a time (each
     # holds a whole log in memory while it reads it): a request that waited on the lock may find it built meanwhile
     result = page_cache.cached(
         db, f"{key[0]}:{key[1]}|grip",
         lambda: page_cache.signature("grip", page_cache.sessions_part(db, sessions), page_cache.track_part(track),
                                      *run_labels.renamed(labels[s.id] for s in sessions)),
-        lambda: _build(db, sessions, track, names))
+        lambda: _build(db, sessions, track, names), raw=True)
     with _cache_lock:
         _cache[key] = (fp, result)
         _cache.move_to_end(key)
         while len(_cache) > CACHE_SIZE:
             _cache.popitem(last=False)
-    return result
+    return page_cache.RawJSON(result)
 
 
 def _build(db: Session, sessions: list[models.RunSession], track: models.Track | None,
