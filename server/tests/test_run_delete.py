@@ -130,3 +130,13 @@ def test_runs_asked_for_must_exist(client):
         assert client.delete("/runs", params={"ids": bad}).status_code == 422, bad
     assert client.delete("/runs").status_code == 422
     assert _runs_of(client, a["event"]) == sorted(a["sessions"])  # nothing went
+
+
+def test_a_run_made_without_a_name_can_be_deleted(client):
+    sid = client.post("/sessions", json={}).json()["id"]
+    size = client.get("/runs/size", params={"ids": str(sid)})
+    assert size.status_code == 200, size.text
+    assert size.json()["name"] == f"run {sid}"
+    out = client.delete("/runs", params={"ids": str(sid)})
+    assert out.status_code == 200, out.text
+    assert out.json()["deleted"] == [sid]
