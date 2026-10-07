@@ -259,7 +259,7 @@ const useStyles = themed((c) => ({
   changeBar: { flex: 1, minWidth: 40, backgroundColor: 'transparent' },
   dumbHead: { flexDirection: 'row', justifyContent: 'space-between', marginLeft: 76, marginRight: 58,
     backgroundColor: 'transparent' },
-  axisText: { ...Type.label, fontSize: 10, color: c.textMuted },
+  axisText: { ...Type.label, fontSize: 13, color: c.textMuted },
   dumbRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 30, borderBottomWidth: 1,
     borderColor: c.separator },
   dumbRowOn: { backgroundColor: c.surfaceRaised },
