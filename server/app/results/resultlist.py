@@ -99,18 +99,22 @@ def pdf_text(data: bytes) -> list[str]:
     return [p.extract_text(extraction_mode="layout") or "" for p in PdfReader(io.BytesIO(data)).pages]
 
 
-def parse_pdf(data: bytes) -> ResultList:
-    return parse_pages(pdf_text(data))
+def parse_pdf(data: bytes, kind: str | None = None) -> ResultList:
+    """kind (qualifying, race, practice, test): what the session is known to be, for a sheet whose heading doesn't
+    say it."""
+    return parse_pages(pdf_text(data), kind)
 
 
 def _header(lines: list[str], out: ResultList) -> None:
     text = "\n".join(lines)
     for line in lines[:6]:
-        m = re.match(r"\s*(Qualifying|Race|Free Practice|Pre-?\s?Qualifying|Practice)\s*(\d*)\s*$", line, re.I)
+        m = re.match(r"\s*(Qualifying|Race|Free Practice|Pre-?\s?Qualifying|Practice|(?:Official\s+)?(?:Paid\s+)?Test"
+                     r"\s*Sessions?)\s*(?:-\s*Part)?\s*(\d*)\s*$", line, re.I)
         if m and out.title is None:
             out.title = f"{m.group(1).strip()} {m.group(2)}".strip()
             word = m.group(1).lower()
-            out.kind = "race" if word == "race" else "qualifying" if word.startswith("qual") else "practice"
+            out.kind = ("race" if word == "race" else "qualifying" if word.startswith("qual") else
+                        "test" if "test" in word else "practice")
             out.number = int(m.group(2)) if m.group(2) else None
     m = re.search(r"^(.+?),\s*Length:\s*(\d+)\s*m", text, re.M)
     if m:
@@ -252,13 +256,14 @@ def _split_tail(rest: str) -> tuple[str, list[str]]:
     return "  ".join(words).strip(), tail
 
 
-def parse_pages(pages: list[str]) -> ResultList:
+def parse_pages(pages: list[str], kind: str | None = None) -> ResultList:
     out = ResultList()
     seen: set[str] = set()
     for page in pages:
         lines = page.splitlines()
         if out.title is None or out.track is None:
             _header(lines, out)
+            out.kind = out.kind or kind
         cols = None
         status = "classified"
         last: Row | None = None

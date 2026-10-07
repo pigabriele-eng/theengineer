@@ -140,14 +140,23 @@ def infer_car(rnd: rm.ResultRound, logged_bests: list[float]) -> tuple[str | Non
     return number, n
 
 
+def is_classification(code: str) -> bool:
+    """A qualifying or race result (Q1, R2): what the history, the circuits and the predictions read. Practice
+    (FP1, PQ) and official test sessions (T1) are shown with the round only."""
+    return code[:1] in ("Q", "R") and code[1:].isdigit()
+
+
 def _hint(text: str | None) -> tuple[str | None, str | None]:
-    """'Q', 'Qualifying 2', 'R1', 'Race' -> (kind, code or None)."""
+    """'Q', 'Qualifying 2', 'R1', 'Race', 'FP2', 'Practice', 'Test 1' -> (kind, code or None)."""
     t = plain(text or "")
-    m = re.search(r"\b(q|quali\w*|r|race)\s*(\d)?\b", t)
+    m = re.search(r"\b(fp|free practice|practice|test\w*|q|quali\w*|r|race)\s*(\d)?\b", t)
     if not m:
         return None, None
-    kind = "qualifying" if m.group(1).startswith("q") else "race"
-    return kind, (("Q" if kind == "qualifying" else "R") + m.group(2)) if m.group(2) else None
+    word = m.group(1)
+    kind, prefix = (("practice", "FP") if word in ("fp", "free practice", "practice") else
+                    ("test", "T") if word.startswith("test") else
+                    ("qualifying", "Q") if word.startswith("q") else ("race", "R"))
+    return kind, (prefix + m.group(2)) if m.group(2) else None
 
 
 def match_session(rnd: rm.ResultRound, car_number: str | None, names: list[str | None], kind: str | None,
@@ -159,7 +168,7 @@ def match_session(rnd: rm.ResultRound, car_number: str | None, names: list[str |
         exact = next((s for s in rnd.sessions if s.code == code), None)
         if exact:
             return exact
-    want = hk or (kind if kind in ("qualifying", "race") else None)
+    want = hk or (kind if kind in ("qualifying", "race", "practice", "test") else None)
     cands = [s for s in rnd.sessions if want is None or s.kind == want]
     if not cands:
         return None
@@ -235,7 +244,7 @@ def history(db: Session, venue: str | None = None, series: str = "gt4-europe", c
     for rnd in sorted(rounds, key=lambda r: (r.year, r.order)):
         same = found_year is None or rnd.year == found_year
         sessions = []
-        for s in sorted(rnd.sessions, key=lambda x: x.code):
+        for s in sorted((x for x in rnd.sessions if is_classification(x.code)), key=lambda x: x.code):
             car = our_row(s, team, car_number, same_number=True) if team or car_number else None
             if car is None and not same:
                 car = our_row(s, team, None, same_number=False)
@@ -311,6 +320,8 @@ def model_sessions(db: Session, series: str = "gt4-europe") -> list[dict]:
     out = []
     for rnd in _rounds(db, series):
         for s in rnd.sessions:
+            if not is_classification(s.code):
+                continue
             out.append({"year": rnd.year, "round_id": rnd.round_id, "round_name": rnd.name, "venue": rnd.venue,
                         "order": rnd.order, "code": s.code, "title": s.title, "kind": s.kind,
                         "number": int(s.code[1:]) if s.code[1:].isdigit() else None, "date": s.starts_at,

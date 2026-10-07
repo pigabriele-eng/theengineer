@@ -3,9 +3,9 @@
 The site is built ahead of time from a content store: every page has its data as JSON at
 /page-data/<page path>/page-data.json, which is what is read here (the pages themselves fill their links in with
 JavaScript). A season's calendar page lists its events; an event's page holds each session's classification as a
-small semicolon table, the link to the session's "ResultList" PDF and the published entry list. Only qualifying and
-race classifications are kept (Qualifying 1 and 2 set the grids of Race 1 and 2), read from the tables; the PDF is
-read too, for the weather, when the sync can reach it.
+small semicolon table, the link to the session's "ResultList" PDF and the published entry list. Free practice,
+qualifying and race classifications are kept (Qualifying 1 and 2 set the grids of Race 1 and 2), read from the
+tables; the PDF is read too, for the weather, when the sync can reach it.
 
 The site sends an incomplete certificate chain, so connections add the missing intermediate (see tls.py).
 """
@@ -127,12 +127,24 @@ def _event_page(client: httpx.Client, season_id: str, round_id: str) -> dict:
 
 
 def session_code(title: str) -> str | None:
-    """'1. Qualifying' / '2. Zeittraining' -> 'Q1' / 'Q2', '1. Rennen' / 'Rennen 2' -> 'R1' / 'R2'; practice is
-    not read."""
+    """'1. Qualifying' / '2. Zeittraining' -> 'Q1' / 'Q2', '1. Rennen' / 'Rennen 2' -> 'R1' / 'R2',
+    '1. Freies Training' -> 'FP1', an official test ('Test', 'Testfahrten') -> 'T1'."""
     t = title.lower()
-    kind = "Q" if ("qualifying" in t or "zeittraining" in t) else "R" if ("rennen" in t or "race" in t) else None
+    kind = ("Q" if ("qualifying" in t or "zeittraining" in t) else "R" if ("rennen" in t or "race" in t)
+            else "FP" if ("freies training" in t or "free practice" in t or "training" in t) else
+            "T" if "test" in t else None)
     m = re.search(r"\d+", t)
     return kind + (m.group(0) if m else "1") if kind else None
+
+
+KINDS = {"Q": "qualifying", "R": "race", "FP": "practice", "T": "test"}
+
+
+def _kind(code: str) -> str:
+    return KINDS[re.match(r"[A-Z]+", code).group(0)]
+
+
+_TITLES = {"Q": "Qualifying", "R": "Race", "FP": "Free Practice", "T": "Test"}
 
 
 def _local(when: str | None) -> str | None:
@@ -149,11 +161,12 @@ def _table(text: str) -> list[list[str]]:
 
 
 def parse_table(text: str, code: str, when: str | None = None) -> ResultList:
-    """One session's classification from the site's table. A qualifying row is position; number; driver 1;
+    """One session's classification from the site's table. A practice or qualifying row is position; number; driver 1;
     driver 2; team; car; best lap; gap. A race row has total time; gap; laps; best lap after the car."""
     race = code.startswith("R")
-    out = ResultList(title=("Race " if race else "Qualifying ") + code[1:], kind="race" if race else "qualifying",
-                     number=int(code[1:]), date=_local(when))
+    prefix = re.match(r"[A-Z]+", code).group(0)
+    number = int(code[len(prefix):] or 1)
+    out = ResultList(title=f"{_TITLES[prefix]} {number}", kind=_kind(code), number=number, date=_local(when))
     for c in _table(text):
         if len(c) < 6 or not c[1].strip():
             continue

@@ -142,7 +142,7 @@ class FakeSite:
 def fake_site(client, monkeypatch):
     from app.results import resultlist, sync
     monkeypatch.setitem(sync.ADAPTERS, "gt4-europe", FakeSite)
-    monkeypatch.setattr(sync, "parse_pdf", lambda data: resultlist.parse_pages([data.decode()]))
+    monkeypatch.setattr(sync, "parse_pdf", lambda data, kind=None: resultlist.parse_pages([data.decode()], kind))
     monkeypatch.setattr(sync, "PAUSE_S", 0)
     FakeSite.calls = []
     return sync

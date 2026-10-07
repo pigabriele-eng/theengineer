@@ -88,8 +88,11 @@ def test_the_calendar_is_read_one_event_a_weekend():
 
 def test_a_classification_table_is_read():
     links = adac.parse_sessions(_event("2025-04-25"))
-    assert [(x.code, x.title) for x in links] == [("Q1", "1. Zeittraining"), ("Q2", "2. Qualifying"),
-                                                   ("R1", "Rennen 1"), ("R2", "2. Rennen")]
+    assert [(x.code, x.title) for x in links] == [("FP1", "1. Freies Training"), ("Q1", "1. Zeittraining"),
+                                                   ("Q2", "2. Qualifying"), ("R1", "Rennen 1"), ("R2", "2. Rennen")]
+    fp = links[0].result
+    assert (fp.title, fp.kind, fp.rows[0].best_lap_s) == ("Free Practice 1", "practice", 88.82)
+    links = links[1:]
     q1 = links[0]
     assert q1.pdf_url == PDF and q1.url.startswith(PDF + "#t")  # a corrected table gets a new address
     q = q1.result
@@ -128,10 +131,10 @@ def test_the_sync_loads_adac_seasons(client, monkeypatch):
         assert sum("cloudinary" in c for c in calls[n:]) == 0
         sync.sync_calendar("adac-gt4-germany", 2025, client=site)
     status = client.get("/results/status").json()
-    assert {"series": "adac-gt4-germany", "year": 2025, "sessions": 8} in status["loaded"]
+    assert {"series": "adac-gt4-germany", "year": 2025, "sessions": 10} in status["loaded"]
     rounds = client.get("/results/rounds", params={"year": 2025, "series": "adac-gt4-germany"}).json()
     assert [(r["venue"], [s["code"] for s in r["sessions"]]) for r in rounds] == [
-        ("oschersleben", ["Q1", "Q2", "R1", "R2"]), ("hockenheim", ["Q1", "Q2", "R1", "R2"])]
+        ("oschersleben", ["FP1", "Q1", "Q2", "R1", "R2"]), ("hockenheim", ["FP1", "Q1", "Q2", "R1", "R2"])]
     cal = client.get("/results/calendar", params={"year": 2025, "series": "adac-gt4-germany"}).json()
     assert [(r["round_id"], r["venue"], r["entries"]) for r in cal["rounds"]] == [
         ("2025-04-25", "oschersleben", 2), ("2025-10-03", "hockenheim", 2), ("2025-11-07", "red-bull-ring", 0)]
@@ -163,7 +166,7 @@ def _sessions(start_year: int = 2024) -> list[dict]:
     out = []
     for y, team, number in ((2024, "Old Team", "2"), (2025, "FK Performance Motorsport", "21")):
         for order, (venue, quali) in enumerate((("oschersleben", QUALI), ("hockenheim", WET_QUALI)), 1):
-            for link in adac.parse_sessions(_event(f"{y}-0{order + 3}-01", quali)):
+            for link in adac.parse_sessions(_event(f"{y}-0{order + 3}-01", quali))[1:]:  # not the practice
                 rows = [dict(vars(r)) for r in link.result.rows]
                 for r in rows:
                     if r["car_number"] == "51":
@@ -177,7 +180,7 @@ def test_wet_sessions_are_spotted_without_a_weather_line():
     sessions = predict.mark_wet(_sessions())
     wet = sorted({(s["venue"], s["code"]) for s in sessions if predict.is_wet(s)})
     assert wet == [("hockenheim", "Q1"), ("hockenheim", "Q2")]  # 10 s off the weekend's race laps
-    assert next(s for s in sessions if s["venue"] == "hockenheim")["weather"]["inferred"] is True
+    assert next(s for s in sessions if s["venue"] == "hockenheim" and s["code"] == "Q1")["weather"]["inferred"]
     dry = {"year": 2025, "round_id": "z", "code": "Q1", "weather": {"conditions_start": "Dry"},
            "rows": [{"best_lap_s": 120.0, "status": "classified"}]}
     assert not predict.is_wet(predict.mark_wet([dry, {**dry, "code": "R1", "rows": [{"best_lap_s": 100.0}]}])[0])
@@ -250,3 +253,38 @@ def test_past_calendars_are_read_once(client, monkeypatch):
     with _site([]) as site:
         sync.sync_calendar("adac-gt4-germany", 2025, client=site)
     assert 2025 not in sync.calendar_years("adac-gt4-germany")
+
+
+def test_test_and_practice_sessions_are_named():
+    from app.results import gt4europe, sync
+    names = ["Official Paid Test sessions", "Official Paid test session 2", "Free Practice", "Free Practice 2",
+             "Pre-Qualifying", "Qualifying 1", "Race 2", "Bronze Test"]
+    assert [gt4europe.session_code(n) for n in names] == ["T1", "T2", "FP1", "FP2", "PQ", "Q1", "R2", None]
+    assert [adac.session_code(n) for n in ("2. Freies Training", "Testfahrten", "1. Zeittraining")] == [
+        "FP2", "T1", "Q1"]
+    assert [sync.kind_of(c) for c in ("T1", "FP2", "PQ", "Q1", "R2")] == [
+        "test", "practice", "practice", "qualifying", "race"]
+
+
+def test_a_test_session_sheet_is_read():
+    from app.results.resultlist import parse_pages
+    sheet = """\
+                                               GT4 European Series
+                                               Official Paid Test Session - Part 1
+
+Circuit Paul Ricard, Length: 5822m
+                                                                                          24 June 2025 09:00:00
+                                                                                         CONDITIONS            Dry
+         Nr.   Drivers                                                     Team                                                           Lap     Best Time          Gap        Diff    Kph       Day Time
+      Cl.      Car                                                         Entrant
+    1      98  V.Bouveng(Silver)/J.Walde(Bronze)                           Schubert Motorsport                                              30        2:27.775                         170.6          11:00:07
+      PAM      BMW M4 GT4 G82 EVO                                          Schubert Motorsport
+    2        3 B.Lariche(Silver)/R.Consani(Silver)                         Team Speedcar                                                    20        2:27.827      0.052      0.052   170.5          10:35:11
+      Silver   Audi R8 LMS GT4                                             Robert Consani
+"""
+    r = parse_pages([sheet])
+    assert (r.title, r.kind, r.number) == ("Official Paid Test Session 1", "test", 1)
+    assert [(x.car_number, x.best_lap_s, x.gap_s) for x in r.rows] == [("98", 147.775, None), ("3", 147.827, 0.052)]
+    # a heading the parser doesn't know: the session's kind from the site's list still reads it as timed laps
+    plain = sheet.replace("Official Paid Test Session - Part 1", "Something Else")
+    assert parse_pages([plain], "test").rows[1].best_lap_s == 147.827
