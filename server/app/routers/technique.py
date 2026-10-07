@@ -418,7 +418,8 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
         laps.append({"key": x.key, "session_id": extras.session_of[x.key], "run": x.run, "number": x.number,
                      "time": x.time, "driver": x.driver, "perfect": out["perfect"], "realistic": out["realistic"],
                      "gap": out["gap"], "pit_from_m": out["pit_from_m"], "budget": out["budget"],
-                     "mistakes": [{k: m[k] for k in SUMMARY_KEYS} for m in out["mistakes"]], "detail": member})
+                     "mistakes": [{k: m[k] for k in SUMMARY_KEYS} for m in out["mistakes"]],
+                     "obvious": out["obvious"], "detail": member})
         blobs[member] = np.frombuffer(json.dumps({"mistakes": out["mistakes"], "trace": out["trace"]}).encode(),
                                       np.uint8)
     by_session: dict[int, list[list[dict]]] = {}

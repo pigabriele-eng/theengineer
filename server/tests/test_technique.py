@@ -266,6 +266,9 @@ def test_technique_check_api(client):
     for x in lap_["mistakes"]:
         assert x["code"] in {"T1", "T2"} and x["phase"] in {"braking", "entry", "mid-corner", "exit", "full throttle"}
         assert x["what"] and x["do"] and x["cost_s"] >= 0.02
+    assert isinstance(lap_["obvious"], list)  # the obvious mistakes reach the page with each lap
+    for x in lap_["obvious"]:
+        assert x["code"] in {"T1", "T2"} and x["what"] and x["do"] and x["cost_s"] >= 0.01
     assert [s["code"] for s in body["sections"]] == ["T1", "T2"]
     assert body["habits"]["session_laps"] == 3 and body["habits"]["event_laps"] == 6
     for h in body["habits"]["session"] + body["habits"]["event"]:
