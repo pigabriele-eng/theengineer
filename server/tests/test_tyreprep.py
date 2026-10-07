@@ -324,3 +324,26 @@ def test_report_endpoint(client, monkeypatch):
     r = client.get(f"/report/tyre-prep?event={ev['id']}")
     assert r.status_code == 200
     assert [x["session"] for x in r.json()["skipped"]] == ["Q3"]
+
+
+def test_a_qualifying_session_named_q_peaks_on_its_first_flying_lap():
+    # a real qualifying run: out-lap, the best on the first flying lap, two slower laps, then the pits
+    quali = [stand(60), lap(0.6, 30, 20, clean=False), lap(1.0, 1, 1), lap(0.98, 1, 1), lap(0.985, 1, 1),
+             lap(0.6, clean=False), stand(20)]
+    s, *_ = _reduced(quali, "03_Q")
+    r = tp.aggregate([s])
+    assert [x["label"] for x in r["sims"]] == ["03_Q"]
+    assert r["sims"][0]["peak_flying"] == 1 and r["sims"][0]["kind"] == "quali"
+    # a long run whose first lap is equal-best isn't one
+    long_only = [stand(60), lap(0.6, 30, 20, clean=False), *[lap(0.99, 1, 1) for _ in range(7)],
+                 lap(0.6, clean=False), stand(20)]
+    s, *_ = _reduced(long_only, "L1")
+    assert tp.aggregate([s])["sims"] == []
+
+
+def test_quali_session_names():
+    for name in ("Q", "Q2", "03_Q", "03_Q (2)", "Quali", "Qualifying 1", "QP"):
+        assert tp.is_quali_session({"name": name}), name
+    for name in ("R1", "04_R1", "FP1", "Long run", "L1", "Equal", "Torque"):
+        assert not tp.is_quali_session({"name": name}), name
+    assert tp.is_quali_session({"name": "Run 3", "kind": "qualifying"})
