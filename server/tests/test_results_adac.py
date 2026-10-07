@@ -199,3 +199,43 @@ def test_the_missing_certificate_is_kept_with_the_code():
     assert isinstance(ctx, ssl.SSLContext) and ctx.verify_mode == ssl.CERT_REQUIRED
     subjects = [dict(x[0] for x in c["subject"]).get("commonName") for c in ctx.get_ca_certs()]
     assert "GlobalSign GCC R46 OV TLS CA 2025" in subjects
+
+
+def test_jobs_asked_for_while_one_runs_are_queued_not_dropped():
+    import threading
+
+    from app.results import sync
+    gate, ran = threading.Event(), []
+    assert sync.run_job(lambda: (gate.wait(5), ran.append("long")), ("long",))
+    assert sync.run_job(lambda: ran.append("next"), ("next",))  # waits its turn behind the long one
+    assert not sync.run_job(lambda: ran.append("twice"), ("next",))  # the same job is queued once
+    cal_done = threading.Event()
+    assert sync.cal_state.add(cal_done.set, ("calendar", "x", 2025))
+    assert cal_done.wait(5) and ran == []  # a calendar never waits behind a results sync
+    assert sync.state.pending(("next",))
+    gate.set()
+    sync.wait_idle(5)
+    assert ran == ["long", "next"] and not sync.state.pending(("next",)) and not sync.state.running
+
+
+def test_a_season_round_event_finds_its_official_round(client, monkeypatch):
+    from app import db as app_db
+    from app import seasons
+    from app.results import sync
+    monkeypatch.setattr(sync, "PAUSE_S", 0)
+    with _site([]) as site:
+        sync.sync("adac-gt4-germany", years=[2025], client=site)
+    ev = client.post("/events/folders", json={"name": "Hockenheim round"}).json()  # planned: no logs, no track
+    assert "no circuit or date" in client.get(f"/results/events/{ev['id']}").json()["note"]
+    with app_db.SessionLocal() as db:
+        season = seasons.Season(name="ADAC GT4 Germany 2025", series="adac-gt4-germany", year=2025, car_number="51",
+                                entry={})
+        db.add(season)
+        db.flush()
+        db.add(seasons.SeasonRound(season_id=season.id, order=2, name="Hockenheimring", venue="Hockenheimring",
+                                   round_id="2025-10-03", event_id=ev["id"]))
+        db.commit()
+    body = client.get(f"/results/events/{ev['id']}").json()
+    assert (body["series"], body["year"], body["round"]["round_id"]) == ("adac-gt4-germany", 2025, "2025-10-03")
+    assert (body["car_number"], body["car_number_from"]) == ("51", "the season")
+    assert body["sessions"][0]["us"]["position"] == 2

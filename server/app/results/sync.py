@@ -16,6 +16,7 @@ import logging
 import sys
 import threading
 import time
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 
 import httpx
@@ -39,9 +40,16 @@ PAUSE_S = 0.5  # between downloads, to go easy on the series' site
 
 
 class _State:
-    def __init__(self) -> None:
+    """A lane of background jobs: one runs at a time, the others wait their turn in order (a job asked for while
+    another runs is queued, never dropped; the same job asked for twice is queued once). Results and calendars have
+    a lane each, so reading a calendar never waits behind a whole season's results."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
         self.lock = threading.Lock()
         self.thread: threading.Thread | None = None
+        self.queue: list[tuple[tuple, Callable[[], None]]] = []
+        self.current: tuple | None = None  # the key of the job running
         self.running = False
         self.what: str | None = None
         self.done = 0
@@ -49,13 +57,52 @@ class _State:
         self.errors: list[str] = []
         self.finished_at: datetime | None = None
 
+    def pending(self, key: tuple) -> bool:
+        """Whether this job is running or waiting its turn."""
+        with self.lock:
+            return self.current == key or any(k == key for k, _ in self.queue)
+
+    def add(self, job: Callable[[], None], key: tuple) -> bool:
+        """Queue a job; False when the same job is already running or waiting."""
+        with self.lock:
+            if self.current == key or any(k == key for k, _ in self.queue):
+                return False
+            self.queue.append((key, job))
+            if self.thread is None:  # the worker clears it, under the lock, only once the queue is empty
+                self.running = True
+                self.thread = threading.Thread(target=self._work, name=f"results-{self.name}", daemon=True)
+                self.thread.start()
+        return True
+
+    def _work(self) -> None:
+        while True:
+            with self.lock:
+                if not self.queue:
+                    self.running, self.current, self.what, self.thread = False, None, None, None
+                    self.finished_at = datetime.now(UTC)
+                    return
+                key, job = self.queue.pop(0)
+                self.current, self.running = key, True
+                self.done, self.total, self.errors, self.what = 0, 0, [], "starting"
+            try:
+                job()
+            except Exception as e:
+                log.exception("results %s job failed", self.name)
+                self.errors.append(str(e))
+
+    def join(self, timeout: float) -> None:
+        t = self.thread
+        if t is not None:
+            t.join(timeout)
+
     def as_dict(self) -> dict:
         return {"running": self.running, "what": self.what, "done": self.done, "total": self.total,
-                "errors": self.errors[-10:],
+                "queued": len(self.queue), "errors": self.errors[-10:],
                 "finished_at": self.finished_at.isoformat() if self.finished_at else None}
 
 
-state = _State()
+state = _State("sync")  # seasons and rounds of results
+cal_state = _State("calendar")  # calendars and entry lists
 
 
 def first_year(series: str) -> int:
@@ -173,29 +220,23 @@ def sync(series: str = DEFAULT_SERIES, years: list[int] | None = None, round_id:
 
 def start(series: str = DEFAULT_SERIES, years: list[int] | None = None, round_id: str | None = None,
           force: bool = False) -> bool:
-    """Run a sync in the background; False when one is already running."""
-    return run_job(lambda: sync(series, years, round_id, force))
+    """Run a sync in the background, after the ones already asked for; False when the same one is already waiting."""
+    key = ("results", series, tuple(years) if years is not None else None, round_id, force)
+    return state.add(lambda: sync(series, years, round_id, force), key)
 
 
-def run_job(job) -> bool:
-    """Run one sync job (results or calendar) in the background; False when one is already running."""
-    with state.lock:
-        if state.running:
-            return False
-        state.running, state.done, state.total, state.errors, state.what = True, 0, 0, [], "starting"
+def calendar_key(series: str, year: int) -> tuple:
+    return ("calendar", series, year)
 
-    def run() -> None:
-        try:
-            job()
-        except Exception as e:
-            log.exception("results sync failed")
-            state.errors.append(str(e))
-        finally:
-            state.running, state.what, state.finished_at = False, None, datetime.now(UTC)
 
-    state.thread = threading.Thread(target=run, name="results-sync", daemon=True)
-    state.thread.start()
-    return True
+def start_calendar(series: str, year: int) -> bool:
+    """Read a season's calendar and entry lists in the background (its own lane: never behind a results sync)."""
+    return cal_state.add(lambda: sync_calendar(series, year), calendar_key(series, year))
+
+
+def run_job(job: Callable[[], None], key: tuple | None = None) -> bool:
+    """Queue any results job in the background."""
+    return state.add(job, key or ("job", id(job)))
 
 
 def sync_calendar(series: str, year: int, client: httpx.Client | None = None) -> None:
@@ -209,10 +250,10 @@ def sync_calendar(series: str, year: int, client: httpx.Client | None = None) ->
         if year not in ids:
             raise ValueError(f"{adapter.NAME} has no {year} season on its site yet")
         with app_db.SessionLocal() as db:
-            state.what = f"{year} calendar"
+            cal_state.what = f"{year} calendar"
             rounds = adapter.calendar(client, ids[year])
             urls = adapter.entry_list_urls(client, ids[year])
-            state.total = len(rounds) + len(urls)
+            cal_state.total = len(rounds) + len(urls)
             have = {r.round_id: r for r in db.scalars(select(rm.ResultCalendarRound).where(
                 rm.ResultCalendarRound.series == series, rm.ResultCalendarRound.year == year)).all()}
             now = datetime.now(UTC)
@@ -223,15 +264,15 @@ def sync_calendar(series: str, year: int, client: httpx.Client | None = None) ->
                 row.fetched_at = now
                 db.add(row)
                 have[r.round_id] = row
-                state.done += 1
+                cal_state.done += 1
             db.flush()
             for url in urls:
-                state.what = f"{year} entry list {url.rsplit('/', 1)[-1]}"
+                cal_state.what = f"{year} entry list {url.rsplit('/', 1)[-1]}"
                 try:
                     meeting, entries = adapter.entry_list(client, url)
                 except Exception as e:
                     log.warning("results: entry list %s: %s", url, e)
-                    state.errors.append(f"{url}: {e}")
+                    cal_state.errors.append(f"{url}: {e}")
                     continue
                 row = have.get(meeting or "")
                 if row is not None and entries:
@@ -240,7 +281,7 @@ def sync_calendar(series: str, year: int, client: httpx.Client | None = None) ->
                                                     car_model=e.car_model, brand=brand_of(e.car_model),
                                                     car_class=class_name(e.car_class) if e.car_class else None)
                                    for e in entries]
-                state.done += 1
+                cal_state.done += 1
                 time.sleep(PAUSE_S)
             db.commit()
     finally:
@@ -249,9 +290,9 @@ def sync_calendar(series: str, year: int, client: httpx.Client | None = None) ->
 
 
 def wait_idle(timeout: float = 120) -> None:
-    t = state.thread
-    if t is not None:
-        t.join(timeout)
+    """Until both lanes have run every job asked for so far (or the time is up)."""
+    state.join(timeout)
+    cal_state.join(timeout)
 
 
 def _event_days(db: Session, event_id: int) -> tuple[date | None, date | None]:
@@ -291,7 +332,7 @@ def _loop() -> None:
                     start(series)  # seasons not loaded yet, and new sheets of the current one
                     wait_idle(3600)
                     for year in (date.today().year, date.today().year + 1):  # calendars and new entry lists
-                        run_job(lambda s=series, y=year: sync_calendar(s, y))
+                        start_calendar(series, year)
                         wait_idle(600)
         except Exception:
             log.exception("results refresh failed")
@@ -325,14 +366,24 @@ def series_key(text: str | None) -> str | None:
     return None
 
 
+def season_round_of_event(db: Session, event_id: int):
+    """(season, its round) when the event is a round of one of our seasons of a series the app reads, else None."""
+    from app import seasons  # seasons builds on the results module, not the other way round
+
+    row = db.execute(select(seasons.Season, seasons.SeasonRound)
+                     .join(seasons.SeasonRound, seasons.SeasonRound.season_id == seasons.Season.id)
+                     .where(seasons.SeasonRound.event_id == event_id, seasons.Season.series.in_(list(ADAPTERS)))
+                     ).first()
+    return (row[0], row[1]) if row else None
+
+
 def series_of_event(db: Session, event_id: int) -> str:
     """Which series' results an event belongs to: its season's series, else what its series name says, else the
     default one."""
-    from app import seasons  # seasons builds on the results module, not the other way round
+    from app import seasons
 
-    season = db.scalar(select(seasons.Season)
-                       .join(seasons.SeasonRound, seasons.SeasonRound.season_id == seasons.Season.id)
-                       .where(seasons.SeasonRound.event_id == event_id, seasons.Season.series.is_not(None)))
+    found = season_round_of_event(db, event_id)
+    season = found[0] if found else None
     if season is None:
         info = db.scalar(select(seasons.EventInfo).where(seasons.EventInfo.event_id == event_id))
         if info is not None and info.season_id:
