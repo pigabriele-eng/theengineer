@@ -20,8 +20,8 @@ import {
   dateRange, dayLabel, eventsApi, Folder, FolderSession, FolderSummary, NO_EVENT,
 } from '@/lib/events';
 import {
-  byYear, Championship, champKey, eventKey, Folds, monthSpan, openByDefault, readFolds, saveFolds, shortName, Year,
-  yearKey, yearOf,
+  byYear, carLine, Championship, champKey, driversLine, eventKey, Folds, monthSpan, openByDefault, readFolds, saveFolds,
+  shortName, Year, yearKey, yearOf,
 } from '@/lib/homeFolds';
 import { launchEvent } from '@/lib/openCurrent';
 import { PrepAvailability } from '@/lib/prep';
@@ -150,6 +150,7 @@ export default function SessionsScreen() {
         lead.track ? (
           <>{lead.track}{leadDetail?.report ? <> <B>{metres(leadDetail.report.length_m)}</B></> : null}</>
         ) : null,
+        crewOf(lead),
         dateRange(lead.start, lead.end),
         lead.sessions > 0 ? <><B>{lead.sessions}</B> runs · <B>{lead.clean_laps}</B> clean laps</> : 'No data yet',
         lead.best_lap_s != null ? <>Best <B>{formatLap(lead.best_lap_s)}</B></> : null,
@@ -317,6 +318,12 @@ function headlineOf(f: FolderSummary, folder?: Folder) {
   return short ? `${short} ${kindOf(folder, f)}` : f.name;
 }
 
+/** Who drove the event and in what, for the facts under the photo: "Piana, Rackl · BMW M4 GT4 Evo". */
+function crewOf(f: FolderSummary) {
+  const line = [driversLine(f), carLine(f)].filter(Boolean).join(' · ');
+  return line || null;
+}
+
 const dayCount = (start: string | null, end: string | null) => {
   if (!start || !end) return start || end ? 1 : 0;
   return Math.round((Date.parse(end) - Date.parse(start)) / 86_400_000) + 1;
@@ -365,7 +372,8 @@ function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged
   const past = whenOf(f, todayIso()) === 'past';
   const round = f.season?.round != null ? `Round ${f.season.round}` : null;
   const meta = planned ? [round, plannedLine(f, plan)].filter(Boolean).join(' · ')
-    : [round, f.track, plural(f.sessions, 'run'), f.clean_laps ? plural(f.clean_laps, 'clean lap') : null]
+    : [round, f.track, driversLine(f), carLine(f), plural(f.sessions, 'run'),
+      f.clean_laps ? plural(f.clean_laps, 'clean lap') : null]
       .filter(Boolean).join(' · ');
   const status = planned ? { text: past ? 'No data' : 'Planned', line: past ? c.textMuted : c.rule }
     : { text: `Best ${formatLap(f.best_lap_s)}`, line: c.rule };

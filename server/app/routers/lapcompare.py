@@ -1,10 +1,13 @@
 """The Compare screen: any laps from any sessions at one track (a driver's own runs, a teammate's, a client's)."""
+import threading
+from collections import OrderedDict
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app import heavy, models
+from app import heavy, lappacks, models
 from app.analysis.lapcompare import MAX_LAPS, MIN_LAPS, Pick, compare_picks
 from app.analysis.laps import SessionData, load_session
 from app.db import get_db
@@ -13,6 +16,10 @@ from app.routers.sessions import _channel_map, _get, official_corners
 from app.timing import read_file, track_line
 
 router = APIRouter(prefix="/compare")
+
+ANSWERS_KEPT = 8  # the latest comparisons, by what they were made from (each up to about 1 MB)
+_answers: OrderedDict[tuple, dict] = OrderedDict()
+_answers_lock = threading.Lock()
 
 
 def _main_file(s: models.RunSession) -> models.LoggerFile | None:
@@ -88,7 +95,9 @@ def compare_laps(body: CompareLapsIn, db: Session = Depends(get_db)):
     in each section and the ideal lap made of them, where each lap loses time (the phase, and the technique
     difference behind it in plain words), and the traces every step_m metres for charts.
 
-    The sessions' logs are read one at a time and let go once their picked laps are traced.
+    The laps are traced from the sessions' lap packs and compact traces (app/lappacks.py), without reading a log;
+    a session without them is read from its log, one at a time under the shared lock, and let go once its picked laps
+    are traced. The latest answers are kept, so picking a lap again answers at once.
     """
     if len({(p.session_id, p.lap) for p in body.laps}) < len(body.laps):
         raise HTTPException(422, "Each lap can only be picked once")
@@ -112,19 +121,40 @@ def compare_laps(body: CompareLapsIn, db: Session = Depends(get_db)):
     if len(tracks) > 1:
         raise HTTPException(422, "These laps are from different tracks; compare laps from one track")
     track = next(iter(tracks.values()))
+    corners = official_corners(track)
+    key = (track.id if track else None, track.name if track else None, tuple(corners or ()), body.step_m,
+           tuple((p.run, p.number, p.time, tuple(sorted(p.meta.items()))) for p in picks),
+           tuple(lappacks.signature(s, _main_file(s), track) for s in sessions.values()))
+    with _answers_lock:
+        if key in _answers:
+            _answers.move_to_end(key)
+            return _answers[key]
+    read: list[models.RunSession] = []
 
     def load(run: str) -> SessionData:
         s = sessions[int(run)]
         f = _main_file(s)
+        read.append(s)
         # timed with the same start/finish line as when its laps were stored, so lap numbers match
         return load_session(read_file(f), _channel_map(s), beacons=f.meta.get("beacons"), line=track_line(track))
+
+    def packed(run: str):
+        return lappacks.packed_run(db, sessions[int(run)], track, [p.number for p in picks if p.run == run])
 
     try:
         # each session's log is read and traced under the shared lock, one session at a time; letting go of the
         # lock between sessions hands the last one's memory back before the next is read
-        result = compare_picks(picks, load, official_corners(track), body.step_m, guard=heavy.lock)
+        result = compare_picks(picks, load, corners, body.step_m, guard=heavy.lock, packed=packed)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     finally:
-        heavy.release_memory()
-    return {"track": track.name if track else None, **result}
+        if read:
+            heavy.release_memory()
+    if read:
+        lappacks.missed(db, read)
+    out = {"track": track.name if track else None, **result}
+    with _answers_lock:
+        _answers[key] = out
+        while len(_answers) > ANSWERS_KEPT:
+            _answers.popitem(last=False)
+    return out

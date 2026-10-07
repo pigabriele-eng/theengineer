@@ -2,7 +2,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { byYear, champKey, eventKey, monthSpan, openByDefault, OTHER, shortName, yearKey } from './homeFolds.ts';
+import {
+  byYear, carLine, champKey, driversLine, eventKey, monthSpan, openByDefault, OTHER, shortName, surname, yearKey,
+} from './homeFolds.ts';
 
 const ev = (id, start, end, extra = {}) => ({
   id, key: String(id), name: `Event ${id}`, series: null, track: null, start, end, dates_by_hand: false,
@@ -64,4 +66,19 @@ test('the months a year spans', () => {
   assert.equal(monthSpan('2025-05-05', '2025-05-06'), 'May');
   assert.equal(monthSpan('2025-12-30', '2026-01-02'), 'Dec 2025–Jan 2026');
   assert.equal(monthSpan(null, null), null);
+});
+
+test("an event's drivers by surname and its main car", () => {
+  assert.equal(surname('Gabriele Piana'), 'Piana');
+  assert.equal(surname('Max van Splunteren'), 'van Splunteren');
+  assert.equal(surname('Gabriele'), 'Gabriele');
+  assert.equal(surname('  Michael   Rackl '), 'Rackl');
+  assert.equal(driversLine({ drivers: ['Gabriele Piana', 'Michael Rackl'] }), 'Piana, Rackl');
+  assert.equal(driversLine({ drivers: [] }), null);
+  assert.equal(driversLine({}), null);
+  assert.equal(carLine({ cars: ['BMW M4 GT4 Evo (G82)'] }), 'BMW M4 GT4 Evo');
+  assert.equal(carLine({ cars: ['BMW M4 GT4 Evo (G82)', 'Car #7'] }), 'BMW M4 GT4 Evo +1');
+  assert.equal(carLine({ cars: ['Car #7', 'Car #8', 'Car #9'] }), 'Car #7 +2');
+  assert.equal(carLine({ cars: [] }), null);
+  assert.equal(carLine({}), null);
 });

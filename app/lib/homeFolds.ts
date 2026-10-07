@@ -111,3 +111,32 @@ export function saveFolds(f: Folds) {
     // not remembered, but still folded or opened for this visit
   }
 }
+
+// ---------- who drove an event, in what ----------
+
+// the small words of a surname: "van Splunteren", "de Pasquale", "von Bayern"
+const PARTICLES = new Set(['van', 'von', 'de', 'der', 'den', 'di', 'da', 'del', 'della', 'dos', 'du', 'la', 'le',
+  'ter', 'ten']);
+
+/** A driver's surname: "Gabriele Piana" -> "Piana", "Max van Splunteren" -> "van Splunteren", "Gabriele" -> itself. */
+export function surname(name: string) {
+  const words = name.trim().split(/\s+/);
+  let i = words.length - 1;
+  while (i > 1 && PARTICLES.has(words[i - 1].toLowerCase())) i -= 1;
+  return words.slice(Math.max(i, 0)).join(' ');
+}
+
+/** The event's drivers by surname, the most laps first: "Piana, Rackl". Null when no run has a driver. */
+export function driversLine(f: Pick<FolderSummary, 'drivers'>) {
+  const names = [...new Set((f.drivers ?? []).map(surname).filter(Boolean))];
+  return names.length ? names.join(', ') : null;
+}
+
+/** The event's car: the one with the most laps, by its model without the chassis code ("BMW M4 GT4 Evo" for "BMW M4
+ * GT4 Evo (G82)"), and "+1" for each other car. Null when no run has a car. */
+export function carLine(f: Pick<FolderSummary, 'cars'>) {
+  const cars = f.cars ?? [];
+  if (!cars.length) return null;
+  const main = cars[0].replace(/\s*\([^)]*\)\s*$/, '').trim() || cars[0];
+  return cars.length > 1 ? `${main} +${cars.length - 1}` : main;
+}
