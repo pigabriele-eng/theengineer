@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app import models
+from app import models, plans
 from app.db import get_db
 from app.results import models as rm
 from app.results import predict, summary, sync
@@ -90,8 +90,29 @@ def _event_facts(db: Session, ev: models.Event) -> dict:
     rows = [events.session_row(s) for s in sessions]
     folder = events._folder(ev, sessions, events._dates_row(db, ev.id), rows)
     start = folder["start"]
-    return {"venue": venue_key(folder["track"]), "track": folder["track"],
-            "year": int(start[:4]) if start else (ev.date.year if ev.date else None), "rows": rows}
+    track = folder["track"]
+    if not track:  # a planned event (a season's round, before any log): the venue it was planned at
+        plan = plans.plan_of(db, ev.id)
+        track = plan.venue if plan is not None and plan.venue else None
+    year = int(start[:4]) if start else (ev.date.year if ev.date else None)
+    if year is None:
+        first, _ = plans.event_days(db, ev)
+        year = first.year if first else None
+    return {"venue": venue_key(track), "track": track, "year": year, "rows": rows}
+
+
+def _target(db: Session, ev: models.Event, facts: dict, link: rm.EventResultLink | None) -> tuple:
+    """(series, year, the round's id or None, our car number or None) the event's results come from: set by hand,
+    else the season round it is (the series' own round), else its series, circuit and year."""
+    if link is not None and link.by_hand:
+        return link.series, link.year or facts["year"], link.round_id, link.car_number
+    found = sync.season_round_of_event(db, ev.id)
+    if found is not None:
+        season, rnd = found
+        if not facts["venue"] and rnd.venue:  # the round's own venue when the event has none yet
+            facts["venue"], facts["track"] = venue_key(rnd.venue), facts["track"] or rnd.venue
+        return season.series, season.year, rnd.round_id, season.car_number
+    return sync.series_of_event(db, ev.id), facts["year"], None, None
 
 
 def _round(db: Session, series: str, year: int | None, venue: str | None,
@@ -111,14 +132,15 @@ def _link(db: Session, event_id: int) -> rm.EventResultLink | None:
 def event_overview(db: Session, ev: models.Event) -> dict:
     facts = _event_facts(db, ev)
     link = _link(db, ev.id)
-    series = link.series if link and link.by_hand else sync.series_of_event(db, ev.id)
-    year = (link.year if link and link.by_hand else None) or facts["year"]
-    rnd = _round(db, series, year, facts["venue"], link.round_id if link and link.by_hand else None)
+    series, year, round_id, season_number = _target(db, ev, facts, link)
+    rnd = _round(db, series, year, facts["venue"], round_id)
     out: dict = {"event_id": ev.id, "series": series, "year": year, "venue": facts["venue"], "track": facts["track"],
                  "round": None, "car_number": None, "car_number_from": None, "sessions": [],
                  "sync": sync.state.as_dict()}
     if link is not None and link.by_hand and link.car_number:  # known before any round is loaded
         out["car_number"], out["car_number_from"] = link.car_number, "set"
+    elif season_number:
+        out["car_number"], out["car_number_from"] = season_number, "the season"
     if rnd is None:
         out["note"] = ("No official results for this circuit and year yet" if year and facts["venue"]
                        else "This event has no circuit or date to match official results to")
@@ -129,6 +151,8 @@ def event_overview(db: Session, ev: models.Event) -> dict:
     number = link.car_number if link and link.car_number and link.series == series else None
     if number:
         out["car_number_from"] = "set" if link.by_hand else "logged laps"
+    elif season_number:
+        number, out["car_number_from"] = season_number, "the season"
     else:
         number, matches = summary.infer_car(rnd, bests)
         if matches < summary.MIN_MATCHES:  # one match can be another car on a busy day
@@ -174,11 +198,10 @@ def fetch_event(event_id: int, db: Session = Depends(get_db)):
     ev = _event(db, event_id)
     facts = _event_facts(db, ev)
     link = _link(db, ev.id)
-    series = link.series if link and link.by_hand else sync.series_of_event(db, ev.id)
-    year = (link.year if link and link.by_hand else None) or facts["year"]
+    series, year, round_id, _ = _target(db, ev, facts, link)
     if year is None:
         raise HTTPException(422, "This event has no date, so its season isn't known")
-    rnd = _round(db, series, year, facts["venue"], link.round_id if link and link.by_hand else None)
+    rnd = _round(db, series, year, facts["venue"], round_id)
     started = sync.start(series, [year], rnd.round_id if rnd else None, force=rnd is not None)
     return {"started": started, "sync": sync.state.as_dict()}
 
@@ -277,8 +300,8 @@ def calendar_sync(year: int, series: str = sync.DEFAULT_SERIES):
     """Read a season's calendar (dates of every round, including those still to come) and the entry lists
     published so far, in the background; follow it with GET /results/calendar or /results/status."""
     _series(series)
-    started = sync.run_job(lambda: sync.sync_calendar(series, year))
-    return {"started": started, "sync": sync.state.as_dict()}
+    started = sync.start_calendar(series, year)
+    return {"started": started, "sync": sync.cal_state.as_dict()}
 
 
 def _entry(e: rm.ResultEntry) -> dict:
@@ -294,8 +317,9 @@ def season_calendar(year: int, series: str = sync.DEFAULT_SERIES, db: Session = 
                                                      rm.ResultCalendarRound.year == year)
                       .options(selectinload(rm.ResultCalendarRound.entries)).order_by(rm.ResultCalendarRound.order)).all()
     fetched = max((r.fetched_at for r in rows if r.fetched_at), default=None)
-    status = "syncing" if sync.state.running else "loaded" if rows else "not loaded"
-    return {"series": series, "year": year, "status": status, "sync": sync.state.as_dict(),
+    status = ("syncing" if sync.cal_state.pending(sync.calendar_key(series, year)) else "loaded" if rows
+              else "not loaded")
+    return {"series": series, "year": year, "status": status, "sync": sync.cal_state.as_dict(),
             "fetched_at": fetched.isoformat() if fetched else None,
             "rounds": [{"round_id": r.round_id, "name": r.name, "venue": r.venue, "order": r.order,
                         "start": r.start.isoformat() if r.start else None,

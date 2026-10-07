@@ -15,7 +15,9 @@ import { api, formatLap } from '@/lib/api';
 import {
   CalendarState, calendarApi, countByWhen, defaultFilter, Filter, filtered, Plan, todayIso, When, whenOf,
 } from '@/lib/calendar';
-import { dateRange, dayLabel, eventsApi, Folder, FolderSession, FolderSummary, KIND_NAMES } from '@/lib/events';
+import {
+  dateRange, dayLabel, eventsApi, Folder, FolderSession, FolderSummary, KIND_NAMES, NO_EVENT,
+} from '@/lib/events';
 import { launchEvent } from '@/lib/openCurrent';
 import { PrepAvailability } from '@/lib/prep';
 import { fetchReport, Report } from '@/lib/report';
@@ -545,6 +547,11 @@ function ListItem({ f, when, first, plan, prep, onRenamed, onChanged }: {
   return (
     <View style={StyleSheet.flatten([styles.item, first && styles.itemFirst])}>
       {body}
+      {loose && (
+        <View style={wide ? styles.itemActions : styles.itemActionsPhone}>
+          <DeleteEventAction id={NO_EVENT} name={f.name} onDeleted={onChanged} />
+        </View>
+      )}
       {!loose && !renaming && (
         <View style={wide ? styles.itemActions : styles.itemActionsPhone}>
           <TextLink onPress={() => setRenaming(true)} label="Rename" small />
