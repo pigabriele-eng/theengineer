@@ -343,6 +343,20 @@ def test_every_pick_refines_the_fingerprint_and_a_correction_moves_it(client):
     assert client.put(f"/sessions/{ev['A2']}/driver", json={"driver_name": "Ben"}).status_code == 200
     assert laps() == {"Anna": one, "Ben": both - one}
 
+    # the event page's answer is kept until a driver changes: asked again, the style isn't worked out again
+    first = client.get(f"/events/{ev['event']}/driver-guess").json()
+    worked = []
+    guess_for = driver_prints.guess_for
+    driver_prints.guess_for = lambda *a, **k: worked.append(1) or guess_for(*a, **k)
+    try:
+        assert client.get(f"/events/{ev['event']}/driver-guess").json() == first and not worked
+        assert client.put(f"/sessions/{ev['B1']}/driver", json={"driver_name": "Ben"}).status_code == 200
+        driver_prints.wait_idle()
+        again = client.get(f"/events/{ev['event']}/driver-guess").json()
+        assert worked and {s["session_id"]: s["driver_id"] for s in again["sessions"]}[ev["B1"]] is not None
+    finally:
+        driver_prints.guess_for = guess_for
+
 
 def test_a_new_pair_is_asked_about_once_and_known_by_style_after(client):
     from app import driver_prints

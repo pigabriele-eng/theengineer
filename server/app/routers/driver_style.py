@@ -51,6 +51,20 @@ def event_guess(event_id: int, db: Session = Depends(get_db)):
     status = "working" if pending else "ready"
     if ep is None:
         return {"status": status, "mode": "too few laps", "separation": None, "groups": [], "sessions": []}
+    # kept (app/page_cache.py) until the fingerprints, the runs' drivers and names, or the drivers' lists change: the
+    # style groups take a second of the server's time to work out, and the event page asks on every visit
+    scope = f"event:{event_id}|driver-guess"
+    sig = page_cache.digest(["driver-guess", event_id, status, driver_prints.page_signature(db)])
+    hit = page_cache.lookup(db, scope, sig)
+    if hit is not None and hit[0] == 200:
+        return hit[1]
+    body = page_cache.plain(_event_guess(db, event_id, ep, status))
+    page_cache.store(db, scope, sig, body)
+    db.commit()
+    return body
+
+
+def _event_guess(db: Session, event_id: int, ep: ds.EventPrint, status: str) -> dict:
     names = _names(db)
     tags = driver_prints.tags_of(db, ep, people_only=False)
     by_style = driver_prints.set_by_style(db, list(tags))
