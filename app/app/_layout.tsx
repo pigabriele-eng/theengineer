@@ -12,7 +12,6 @@ import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useMemo } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
-import 'react-native-reanimated';
 
 import { Masthead } from '@/components/Programme';
 import { useColorScheme } from '@/components/useColorScheme';
@@ -38,7 +37,6 @@ SplashScreen.preventAutoHideAsync();
 export default function RootLayout() {
   // The programme's faces (constants/Theme.ts FACES), loaded before the first page is drawn
   const [loaded, error] = useFonts({
-    SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
     Anton_400Regular,
     Newsreader_400Regular,
     Newsreader_400Regular_Italic,
