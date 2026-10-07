@@ -182,9 +182,9 @@ const useStyles = themed((c) => ({
 }));
 
 /** On a session's page: the official session this run was part of, or nothing (the server's note, small, when
- * it has one). Its own heading, a sub-head under a thick rule, unless `heading` is false (inside a section of its
- * own). */
-export function SessionResults({ sessionId, heading = true }: { sessionId: number; heading?: boolean }) {
+ * it has one). Its own heading, a sub-head under a thick rule naming the official session; `bare` (inside a
+ * numbered section of the page's own) leaves out that heading and the outer frame and shows just the result. */
+export function SessionResults({ sessionId, bare = false }: { sessionId: number; bare?: boolean }) {
   const styles = useStyles();
   const type = usePrepType();
   const [run, setRun] = useState<RunResult | null>(null);
@@ -202,9 +202,9 @@ export function SessionResults({ sessionId, heading = true }: { sessionId: numbe
   if (!run) return null;
   if (!run.official) return run.note ? <Text style={type.small}>{run.note}</Text> : null;
   return (
-    <View style={styles.session}>
-      {heading && <SubHead kicker="Official result" title={run.official.title} />}
-      <OfficialSessionCard s={run.official} current={sessionId} bare={heading} />
+    <View style={bare ? undefined : styles.session}>
+      {!bare && <SubHead kicker="Official result" title={run.official.title} />}
+      <OfficialSessionCard s={run.official} current={sessionId} bare />
     </View>
   );
 }
