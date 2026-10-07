@@ -27,7 +27,7 @@ import { Text, View } from '@/components/Themed';
 import CoachingDay from '@/components/coaching/CoachingDay';
 import WeekendBefore from '@/components/weekend/Before';
 import WeekendDuring from '@/components/weekend/During';
-import SessionReports from '@/components/weekend/SessionReports';
+import SessionReports, { useEventParts } from '@/components/weekend/SessionReports';
 import EventReport from '@/components/report/EventReport';
 import { formatLap, prefetch } from '@/lib/api';
 import { todayIso, When, whenOf } from '@/lib/calendar';
@@ -228,6 +228,8 @@ export default function EventScreen() {
   const after = isEvent && !coaching && stage === 'after';
   // the runs by day are part of During and After, and follow a coaching day's answers
   const showRuns = !isEvent || during || after || coaching;
+  // After's session reports and its report's switcher both list the official sessions: read once, here
+  const eventParts = useEventParts(after ? eventId : null);
 
   // ---------- the photo and the folio ----------
 
@@ -368,7 +370,7 @@ export default function EventScreen() {
   const sessionReports = after && eventId != null && (
     <Section no={++no} title="Session reports"
       dek="One report per session of the weekend (FP1, Q1, the races), from every run of it; the whole weekend’s is below the runs.">
-      <SessionReports eventId={eventId} />
+      <SessionReports eventId={eventId} parts={eventParts} />
     </Section>
   );
   const runs = folder && showRuns && (
@@ -432,7 +434,7 @@ export default function EventScreen() {
   const reportNo = no + 1;
   const report = after && eventId != null && stageKnown && (
     <View onLayout={(e) => (reportY.current = e.nativeEvent.layout.y)}>
-      <EventReport eventId={eventId} embedded firstNo={reportNo} onSections={setReportSections}
+      <EventReport eventId={eventId} embedded firstNo={reportNo} onSections={setReportSections} parts={eventParts}
         folder={folder} // the page's own read of the event: the report doesn't read it again
         onShowMap={(y) => scroll.current?.scrollTo({ y: Math.max(topH.current + reportY.current + y - 12, 0),
           animated: true })} />
