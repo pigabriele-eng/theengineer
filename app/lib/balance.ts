@@ -1,7 +1,7 @@
 // Client for the report's car balance and setup direction section (GET /report/balance?session=<id> or ?event=<id>).
 // Balance values are degrees of steering against the car's own normal at the same cornering g: + more understeer
 // (the front pushes), − more oversteer (the rear slides). Corners are official numbers only (T1, T2-T5, T8/T9...).
-import { apiFetch } from '@/lib/api';
+import { apiFetchAgain } from '@/lib/retry';
 import type { QuickestLaps } from '@/lib/grip';
 
 export type BalanceKind = 'understeer' | 'oversteer' | 'normal';
@@ -150,7 +150,7 @@ export type BalanceReport = {
 
 export async function fetchBalance({ session, event }: { session?: number; event?: number }): Promise<BalanceReport> {
   const query = event != null ? `event=${event}` : `session=${session}`;
-  const res = await apiFetch(`/report/balance?${query}`);
+  const res = await apiFetchAgain(`/report/balance?${query}`);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(typeof body.detail === 'string' ? body.detail : `Request failed (${res.status})`);
