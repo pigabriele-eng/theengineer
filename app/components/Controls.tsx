@@ -3,7 +3,7 @@
 // words (the picked one underlined in red, as the masthead's), a square tick box, the main action as a solid ink block,
 // and the line said after an action. Square edges, ink rules, colours from constants/Colors.ts. The page pieces
 // (sections, figures, text links) are in components/Programme.tsx.
-import { forwardRef, ReactNode, useState } from 'react';
+import { Children, forwardRef, ReactNode, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, TextInput, TextInputProps, TextStyle, ViewStyle } from 'react-native';
 
 import { useWide } from '@/components/Programme';
@@ -147,10 +147,15 @@ export function MainButton({ label, sub, onPress, busy, disabled, danger, style 
   );
 }
 
-/** The buttons under a form: the main action, then the quieter ones as text links. */
+/** The buttons under a form: the main action, then the quieter ones as text links, all on the row's middle line
+ * (each in a cell as tall as the row: a text link keeps to the top of whatever holds it). */
 export function FormActions({ children, style }: { children: ReactNode; style?: ViewStyle }) {
   const styles = useStyles();
-  return <View style={StyleSheet.flatten([styles.actions, style])}>{children}</View>;
+  return (
+    <View style={StyleSheet.flatten([styles.actions, style])}>
+      {Children.toArray(children).map((child, i) => <View key={i} style={styles.actionCell}>{child}</View>)}
+    </View>
+  );
 }
 
 /** What an action did, in a line with an ink rule down its left (tap it to put it away); `error` in red. */
@@ -230,7 +235,8 @@ const useStyles = themed((c) => ({
   mainText: { ...Type.link, color: c.background, textAlign: 'center' },
   mainSub: { fontFamily: Fonts.label, fontSize: 12, letterSpacing: 0.3, lineHeight: 16, color: c.background,
     textAlign: 'center', marginTop: 2, opacity: 0.85 },
-  actions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 22, rowGap: 12, marginTop: 4 },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'stretch', columnGap: 22, rowGap: 12, marginTop: 4 },
+  actionCell: { justifyContent: 'center', maxWidth: '100%' },
 
   said: { borderLeftWidth: 3, borderColor: c.rule, paddingLeft: 10, paddingVertical: 2 },
   saidError: { borderColor: c.error },

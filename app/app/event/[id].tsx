@@ -628,7 +628,7 @@ const useStyles = themed((c) => ({
   band: { marginTop: 20, borderTopWidth: 3, borderColor: c.rule, paddingTop: 10, gap: 12, maxWidth: 680 },
   confirm: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 24, color: c.text },
   notice: { marginTop: 18, maxWidth: 720 },
-  season: { marginTop: 22, maxWidth: 760 },
+  season: { marginTop: 22, maxWidth: 680 },
 
   // runs
   empty: { marginTop: 8 },

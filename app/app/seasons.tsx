@@ -72,7 +72,7 @@ export default function SeasonsScreen() {
         {!making && <MainButton label="+ New season" onPress={() => setMaking(true)} disabled={!lists} />}
       </View>
       {making && lists && (
-        <Section no="+" title="New season" dek="A series and a year, our car number and what we run.">
+        <Section no="New" title="New season" dek="A series and a year, our car number and what we run.">
           <NewSeason lists={lists} series={series} onListsChanged={reloadLists} onCancel={() => setMaking(false)}
             onMade={(text) => {
               setMaking(false);
