@@ -250,19 +250,22 @@ def _round_cands(db: Session, f: _Facts) -> list[_Cand]:
     return out
 
 
-def _known_number(db: Session, series: str, event_id: int) -> str | None:
-    """Our car's number in a series: as the results module has it for this event (or as set by hand on it), else in
-    a season of ours of the same series, else as set by hand on another event's results."""
+def _known_number(db: Session, series: str, year: int, event_id: int) -> str | None:
+    """Our car's number in a series' season: as the results module has it for this event (or as set by hand on it),
+    else in our season of the same series and year, else as set by hand on another event's results of that year. Never
+    from another year: numbers change from season to season (Gabriele, 2026-10-07), so then our car is looked for on
+    the round's entry list by our drivers (_numbers_of)."""
     link = db.scalar(select(rm.EventResultLink).where(rm.EventResultLink.event_id == event_id))
     if link is not None and link.car_number and (link.series == series or link.by_hand):
         return link.car_number
     number = db.scalar(select(seasons.Season.car_number).where(seasons.Season.series == series,
+                                                               seasons.Season.year == year,
                                                                seasons.Season.car_number.is_not(None))
-                       .order_by(seasons.Season.year.desc(), seasons.Season.id.desc()).limit(1))
+                       .order_by(seasons.Season.id.desc()).limit(1))
     if number:
         return number
     return db.scalar(select(rm.EventResultLink.car_number).where(
-        rm.EventResultLink.series == series, rm.EventResultLink.by_hand == 1,
+        rm.EventResultLink.series == series, rm.EventResultLink.year == year, rm.EventResultLink.by_hand == 1,
         rm.EventResultLink.car_number.is_not(None)).order_by(rm.EventResultLink.updated_at.desc()).limit(1))
 
 
@@ -386,7 +389,7 @@ def _official_cands(db: Session, f: _Facts) -> list[_Cand]:
         opt = {"key": key, "label": f"{name} {r.year}, round {r.order} {r.name} ({days_text(r.start, r.end)})",
                "why": f"Same track, {_when_words(f, r.start, r.end)}.", "series": r.series, "series_name": name,
                "year": r.year, "round_id": r.round_id, "order": r.order, "name": r.name,
-               "car_number": _known_number(db, r.series, f.ev.id)}
+               "car_number": _known_number(db, r.series, r.year, f.ev.id)}
         if not opt["car_number"]:  # our drivers on the round's entry list: one car is ours, several are asked
             found, sure = _numbers_of(db, f.ev, r.series, r.year, r.round_id)
             if len(found) == 1 and sure:
