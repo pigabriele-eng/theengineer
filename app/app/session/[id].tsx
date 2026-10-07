@@ -280,7 +280,7 @@ export default function SessionScreen() {
       dek: `Each section on the best lap (L${analysis.reference_lap}) against its quickest pass in this run.`,
       body: <Corners analysis={analysis} /> });
     sections.push({ title: 'Lap against lap', dek: 'Any two laps of the run, trace on trace.',
-      body: <LapCompare key={`${session.id}-${analysis.file_id}`} sessionId={session.id} analysis={analysis} laps={session.laps} /> });
+      body: <LapCompare key={`${session.id}-${analysis.file_id}`} sessionId={session.id} analysis={analysis} laps={session.laps} bare /> });
   }
   sections.push({ title: debriefs.length ? 'The car & debriefs' : 'The car',
     dek: debriefs.length ? 'Its setup sheet for this run, and what the driver said.' : 'Its setup sheet for this run.',
