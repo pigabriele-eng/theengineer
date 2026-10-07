@@ -57,7 +57,8 @@ export function Text(props: TextProps) {
   const font = resolveFont(flat);
   // a paragraph on a phone: 16 px at least, and so is everything nested in it
   const reading = phone && floor === 0 && charsOf(props.children, MIN_TEXT.bodyChars) > MIN_TEXT.bodyChars;
-  const size = readableSize(flat, floor, reading);
+  // a paragraph that names no size is drawn at React Native's 14 px
+  const size = readableSize(reading && flat.fontSize == null ? { ...flat, fontSize: 14 } : flat, floor, reading);
 
   const text = <DefaultText style={[{ color }, flat, font, size]} {...otherProps} />;
   return reading ? <ReadingFloor.Provider value={MIN_TEXT.phoneBody}>{text}</ReadingFloor.Provider> : text;

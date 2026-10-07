@@ -685,7 +685,7 @@ function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, e
                       {formatLap(s.best_lap_s)}
                     </Text>
                   </View>
-                  {isBest ? <Text style={StyleSheet.flatten([styles.gap, { color: c.timing.best }])}>Event best</Text>
+                  {isBest ? <Text style={StyleSheet.flatten([styles.gap, { color: c.timing.bestInk }])}>Event best</Text>
                     : gap != null && (
                       <>
                         <View style={{ height: 5, marginTop: 3, backgroundColor: c.timing.loss[2],

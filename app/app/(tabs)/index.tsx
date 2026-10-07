@@ -604,7 +604,7 @@ function RunRow({ s, no, best, maxGap, driver, children }: {
                     {formatLap(s.best_lap_s)}
                   </Text>
                 </View>
-                {isBest ? <Text style={StyleSheet.flatten([styles.gap, { color: c.timing.best }])}>Event best</Text> : gap != null && (
+                {isBest ? <Text style={StyleSheet.flatten([styles.gap, { color: c.timing.bestInk }])}>Event best</Text> : gap != null && (
                   <>
                     <View style={{ height: 5, marginTop: 3, backgroundColor: c.timing.loss[2],
                       width: Math.max(3, Math.round((gap / maxGap) * 86)) }} />
