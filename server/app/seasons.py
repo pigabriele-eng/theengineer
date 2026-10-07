@@ -108,6 +108,33 @@ def season_of_event(db: Session, event_id: int, own: EventInfo | None = None) ->
     return db.get(Season, rnd.season_id), rnd
 
 
+def seasons_of_events(db: Session) -> dict[int, dict]:
+    """Every event's season at once, found as season_of_event() finds one event's (the season its info names, else
+    the newest season with a round linked to it): {event id: {"id", "name", "year", "round"}}, round being the place
+    of the event's round in that season (null when none of its rounds is linked to the event). Three small reads."""
+    seasons = {s.id: s for s in db.scalars(select(Season)).all()}
+    if not seasons:
+        return {}
+    rounds: dict[int, list[SeasonRound]] = {}
+    for r in db.scalars(select(SeasonRound).where(SeasonRound.event_id.is_not(None))
+                        .order_by(SeasonRound.season_id.desc(), SeasonRound.id)).all():
+        rounds.setdefault(r.event_id, []).append(r)
+    named = dict(db.execute(select(EventInfo.event_id, EventInfo.season_id)
+                            .where(EventInfo.season_id.is_not(None))).all())
+    out: dict[int, dict] = {}
+    for event_id in set(rounds) | set(named):
+        linked = rounds.get(event_id, [])
+        season = seasons.get(named.get(event_id))
+        if season is None:  # no season named, or a season gone: the newest one with a round linked
+            season = next((seasons[r.season_id] for r in linked if r.season_id in seasons), None)
+        if season is None:
+            continue
+        rnd = next((r for r in linked if r.season_id == season.id), None)
+        out[event_id] = {"id": season.id, "name": season.name, "year": season.year,
+                         "round": rnd.order if rnd is not None else None}
+    return out
+
+
 def _exists(db: Session, model, ident: int | None) -> int | None:
     return ident if ident is not None and db.get(model, ident) is not None else None
 

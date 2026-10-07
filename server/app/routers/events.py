@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, selectinload
 
-from app import event_delete, models, storage
+from app import event_delete, models, seasons, storage
 from app.analysis import compact
 from app.analysis.insights import consistency
 from app.analysis.side_by_side import Reference, best_index, reference_of, summarise
@@ -183,7 +183,8 @@ def _key_event(db: Session, key: str) -> models.Event | None:
 @router.get("/events/folders")
 def list_folders(db: Session = Depends(get_db)):
     """Every event as a folder (newest first), and the sessions in no event as one more folder when there are
-    any (first, so they are filed)."""
+    any (first, so they are filed). Each event also says the season it is in ({"id", "name", "year", "round"}, null
+    when none), so the list can be grouped by championship."""
     sessions = db.scalars(select(models.RunSession).options(
         selectinload(models.RunSession.laps), selectinload(models.RunSession.files),
         selectinload(models.RunSession.driver))).all()
@@ -192,10 +193,12 @@ def list_folders(db: Session = Depends(get_db)):
         by_event.setdefault(s.event_id, []).append(s)
     dates = {d.event_id: d for d in db.scalars(select(models.EventDates)).all()}
     events = db.scalars(select(models.Event).options(selectinload(models.Event.track))).all()
-    out = [_folder(ev, by_event.get(ev.id, []), dates.get(ev.id)) for ev in events]
+    in_season = seasons.seasons_of_events(db)
+    out = [{**_folder(ev, by_event.get(ev.id, []), dates.get(ev.id)), "season": in_season.get(ev.id)}
+           for ev in events]
     out.sort(key=lambda f: (f["end"] or f["start"] or "", f["id"]), reverse=True)
     if by_event.get(None):
-        out.insert(0, _folder(None, by_event[None], None))
+        out.insert(0, {**_folder(None, by_event[None], None), "season": None})
     return out
 
 

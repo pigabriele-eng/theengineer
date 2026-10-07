@@ -20,7 +20,11 @@ export type FolderSummary = {
   best_lap_s: number | null;
   best_session_id: number | null;
   best_session: string | null;
+  // the season (championship) it is in, as a round of it or put in it by hand; null: none (in the list only)
+  season?: FolderSeason | null;
 };
+
+export type FolderSeason = { id: number; name: string; year: number; round: number | null };
 
 export type FolderSession = {
   id: number;
