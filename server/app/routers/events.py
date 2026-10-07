@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, selectinload
 
-from app import event_delete, garage, models, seasons, storage
+from app import event_delete, event_modes, garage, models, seasons, storage
 from app.analysis import compact
 from app.analysis.insights import consistency
 from app.analysis.side_by_side import Reference, best_index, reference_of, summarise
@@ -264,13 +264,14 @@ def list_folders(db: Session = Depends(get_db)):
     """Every event as a folder (newest first), and the sessions in no event as one more folder when there are
     any (first, so they are filed). Each event also says the season it is in ({"id", "name", "year", "round"}, null
     when none), so the list can be grouped by championship, and who drove it in what (drivers and cars, the most
-    laps first)."""
+    laps first), and its mode ("weekend" or "coaching": event_modes.py; null for the runs in no event)."""
     by_event: dict[int | None, list[_Run]] = {}
     for s in _runs(db):
         by_event.setdefault(s.event_id, []).append(s)
     dates = {d.event_id: d for d in db.scalars(select(models.EventDates)).all()}
     events = db.scalars(select(models.Event).options(selectinload(models.Event.track))).all()
     in_season = seasons.seasons_of_events(db)
+    modes = event_modes.modes_of_events(db)
     cars = {cid: model or name for cid, name, model in db.execute(
         select(models.Car.id, models.Car.name, garage.CarInfo.model)
         .outerjoin(garage.CarInfo, garage.CarInfo.car_id == models.Car.id)).all()}
@@ -279,11 +280,11 @@ def list_folders(db: Session = Depends(get_db)):
         rows = [session_row(s) for s in sessions]
         return {**_folder(ev, sessions, d, rows), **_crew(rows, cars)}
 
-    out = [{**summary(ev, by_event.get(ev.id, []), dates.get(ev.id)), "season": in_season.get(ev.id)}
-           for ev in events]
+    out = [{**summary(ev, by_event.get(ev.id, []), dates.get(ev.id)), "season": in_season.get(ev.id),
+            "mode": modes.get(ev.id, event_modes.DEFAULT)} for ev in events]
     out.sort(key=lambda f: (f["end"] or f["start"] or "", f["id"]), reverse=True)
     if by_event.get(None):
-        out.insert(0, {**summary(None, by_event[None], None), "season": None})
+        out.insert(0, {**summary(None, by_event[None], None), "season": None, "mode": None})
     return out
 
 
@@ -353,6 +354,7 @@ def delete_folder(event_id: int, db: Session = Depends(get_db),
         s.event_id = None
     db.flush()  # the sessions let go of the event before it goes (a foreign key)
     db.execute(delete(models.EventDates).where(models.EventDates.event_id == event_id))
+    event_modes.forget(db, event_id)
     scope = f"event:{event_id}"
     db.execute(delete(models.ReportCache).where(models.ReportCache.scope == scope))
     db.execute(delete(models.TechniqueCache).where(models.TechniqueCache.scope == scope))

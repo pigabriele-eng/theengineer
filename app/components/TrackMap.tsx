@@ -31,6 +31,7 @@ type Props = {
   marks?: MapMark[]; // numbered points on the lap, such as a lap's mistakes
   selectedMark?: number | null; // its stretch of the lap drawn over the track
   marksLengthM?: number; // the lap length the marks' metres are measured on, when it isn't the map's own
+  cursorM?: number | null; // a dot where a chart's cursor is, in the marks' metres
   withShape?: boolean; // also the track's shape: banking, crests and compressions on the map, the height below it
   onShape?: (shape: TrackShapeData | null) => void; // the shape once it has loaded (null until then, or when none)
   maxHeight?: number; // the most the drawing may take, px (it never grows past its usual size)
@@ -142,8 +143,8 @@ function moveLabel(l: Placed, at: (p: Point) => Point): Placed {
 /** The track drawn from a session's or an event's reference lap, with its corners and sections numbered as
  * the analysis numbers them, the start/finish line and the direction of travel. Tap or hover a section for
  * its distances; switch to speed to colour the lap by speed. */
-export function TrackMap({ session, event, highlight, marks, selectedMark, marksLengthM, withShape, onShape, maxHeight,
-  compact, onNone, sectionColors, sectionKey }: Props) {
+export function TrackMap({ session, event, highlight, marks, selectedMark, marksLengthM, cursorM, withShape, onShape,
+  maxHeight, compact, onNone, sectionColors, sectionKey }: Props) {
   const styles = useStyles();
   const shape = useTrackShape(withShape ? { session, event } : {});
   const [map, setMap] = useState<TrackMapData | null>(null);
@@ -201,6 +202,12 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
       return { ...k, p: pt(at(k.at_m)), d: line(run) };
     }).sort((a, b) => b.n - a.n); // the costliest drawn last, on top
   }, [g, map, marks, marksLengthM]);
+  const cursorPt = useMemo(() => {
+    if (!g || !map || cursorM == null) return null;
+    const n = g.pts.length;
+    const i = Math.round((cursorM * (marksLengthM ? map.length_m / marksLengthM : 1)) / map.step_m);
+    return g.pts[((i % n) + n) % n];
+  }, [g, map, cursorM, marksLengthM]);
   // the shape on the map: banked stretches as a band under the track, crests and compressions as ▲ and ▼
   const shapeData = shape.status === 'ready' ? shape.data : null;
   useEffect(() => {
@@ -369,6 +376,9 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
                   </SvgText>
                 </G>
               ))}
+              {cursorPt && (
+                <Circle cx={cursorPt.x} cy={cursorPt.y} r={6} fill={tint} stroke={surface} strokeWidth={2} />
+              )}
               {g.labels.map((l) => {
                 const strong = focus.includes(l.code) || emphasis.length === 0;
                 return (
