@@ -253,9 +253,9 @@ class SessionTraces(Base):
 
 
 class LapPackFile(Base):
-    """A session's lap pack (analysis/lappack.py) in file storage: its clean laps' speed and GPS, so laps are compared
-    without reading the log (app/lappacks.py). signature says what it was made from; when it no longer matches, it is
-    made again."""
+    """A session's lap pack (analysis/lappack.py) in file storage: its clean laps' samples the comparisons read, so laps
+    are compared without reading the log (app/lappacks.py). signature says what it was made from; when it no longer
+    matches, it is made again."""
     __tablename__ = "lap_packs"
     id: Mapped[int] = mapped_column(primary_key=True)
     session_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)  # no foreign key, as session_traces

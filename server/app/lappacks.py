@@ -3,14 +3,14 @@ trace from them instead of reading the logs.
 
 Comparing laps (POST /compare/laps) or drivers (POST /compare/drivers/jobs) used to read the log of every session in
 it, each time: a few seconds a session on the hosted server, plus downloading the log. Now each session's log is read
-once into its lap pack (about 0.2 MB), and a comparison traces the laps from the pack and the session's compact traces
-(the report's, routers/reports.py, made after every upload), without opening a log or waiting for heavy.lock. A
-session whose pack or compact traces are missing or out of date is read from its log as before; its pack is then made
-in the background for next time, and the report's work (which makes the compact traces) is started.
+once into its lap pack (0.1 to 0.8 MB), and a comparison traces the laps from the pack and the session's compact
+traces (the report's, routers/reports.py), without opening a log or waiting for heavy.lock. A session whose pack or
+compact traces are missing or out of date is read from its log as before; its pack is then made in the background for
+next time, and the report's work (which makes the compact traces) is started.
 
 warm_sessions(ids) makes the packs of the sessions given that are missing or out of date: one log at a time, each
-under heavy.lock, skipping (without taking the lock) those already made. It is meant for a background thread, such
-as the work that follows an upload.
+under heavy.lock, skipping (without taking the lock) those already made. The prebuild (app/prebuild.py) calls it
+after an upload, once it has made the runs' compact traces, and on server start for every run.
 """
 from __future__ import annotations
 
@@ -37,8 +37,8 @@ from app.routers.sessions import _channel_map, _line, read_file
 log = logging.getLogger(__name__)
 
 READ_ROLES = (*COMPARE_ROLES, "gear")  # what a pack is made from: what its math channels need, and the gear
-PACKS_KEPT = 32  # packs held in memory (a few hundred kB each, packed)
-TRACES_KEPT_BYTES = 24 * 1024**2  # compact traces held in memory (about 3 MB a session)
+PACKS_KEPT_BYTES = 24 * 1024**2  # packs held in memory (up to about 4 MB a session, as whole numbers)
+TRACES_KEPT_BYTES = 16 * 1024**2  # compact traces held in memory, the roles read from them (about 1.5 MB a session)
 
 _cache_lock = threading.Lock()
 _packs: OrderedDict[str, lappack.LapPack] = OrderedDict()  # by storage key: a stored file never changes
@@ -72,7 +72,7 @@ def _pack(key: str) -> lappack.LapPack:
     pack = lappack.from_bytes(storage.local_path(key).read_bytes())
     with _cache_lock:
         _packs[key] = pack
-        while len(_packs) > PACKS_KEPT:
+        while len(_packs) > 1 and sum(p.nbytes for p in _packs.values()) > PACKS_KEPT_BYTES:
             _packs.popitem(last=False)
     return pack
 
@@ -218,7 +218,8 @@ def _work() -> None:
     while True:
         sid = jobs.get()
         try:
-            warm_sessions([sid])
+            with heavy.background():  # requests and other jobs waiting for heavy.lock go first
+                warm_sessions([sid])
         finally:
             with _lock:
                 _pending.discard(sid)

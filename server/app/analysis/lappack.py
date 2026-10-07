@@ -1,23 +1,22 @@
-"""Lap packs: a session's clean laps as the comparisons read them from its log, in about 0.2 MB.
+"""Lap packs: a session's clean laps as the comparisons read them from its log, in about 0.1 to 0.8 MB.
 
 Comparing laps places each one on the quickest lap's GPS line (align.py). Of the whole log, that reads each lap's
 speed (its distance driven) and GPS position sample by sample, from just before the lap to just after it, and the
 channels the comparison measures. A pack keeps, for every clean lap, the samples of those that decide what the
-comparison says: speed, GPS, throttle and the states worked out from the log (laps.load_session, channels.py:
-phase, braking, coasting, overlap, gear, traction control and ABS working), and where each sample sits on the
-session's own line, the line its compact traces (compact.py) are resampled on every metre.
+comparison says: speed, GPS, the pedals, steering, the accelerations and the states worked out from the log
+(laps.load_session, channels.py: phase, braking, coasting, overlap, gear, traction control and ABS working), and where
+each sample sits on the session's own line, the line its compact traces (compact.py) are resampled on every metre.
 
-A lap is then traced without its log (PackedRun.trace): its time to every metre, speed, throttle and states come from
-its own samples, as from the log, and its other channels (brake pressure, steering, accelerations, ...) from its
-compact trace, at the metre its samples put it on. So the lap's section times and the sections themselves are the
-log's, where it brakes, coasts and picks up the throttle too, and the other channels differ only by being read from a
-1 m grid instead of from the 100 Hz samples.
+A lap is then traced without its log (PackedRun.trace): its time to every metre and the channels above come from its
+own samples, as from the log, and the slower ones worked out from them (the road's shape, curvature, understeer,
+rear wheelspin) from its compact trace, at the metre its samples put it on. So the lap's section times, the sections
+themselves, where it brakes, coasts and picks up the throttle, its grip and its steering are the log's; those few
+others differ only by being read from a 1 m grid instead of from the 100 Hz samples.
 
-Stored as whole numbers (speed and throttle in the steps the log has them in, 0.1 km/h and 0.01 % from a MoTeC log,
-GPS to 1e-8 degree, about a millimetre, positions to a millimetre, as their difference from where wheel speed alone
-puts each sample), each as its change from the sample before, so a 47-minute session with 16 clean laps takes about
-0.2 MB. A lap's samples are only unpacked when it
-is traced.
+Stored as whole numbers (speed, pedals and steering in the steps the log has them in, 0.1 km/h, 0.01 % and 0.001 bar
+or degree at the finest, accelerations to 0.0001 g, GPS to 1e-8 degree, about a millimetre, positions to a millimetre,
+as their difference from where wheel speed alone puts each sample), each as its change from the sample before, so a
+47-minute session with 16 clean laps takes about 0.75 MB. A lap's samples are only unpacked when it is traced.
 """
 from __future__ import annotations
 
@@ -37,11 +36,12 @@ STATES = ("phase", "braking", "coasting", "overlap", "gear", "tc_on", "abs_on")
 # step that keeps every value as logged is used (a MoTeC log stores speed in steps of 0.1 km/h), else the finest.
 FINE = (0.1, 0.01, 0.001, 1e-6)
 ENCODING = {"speed": (FINE, 1), "lat": ((1e-8,), 1), "lon": ((1e-8,), 1), "throttle": (FINE, 1),
+            "brake": (FINE[:3], 1), "steer": (FINE[:3], 1), "ax": ((1e-4,), 1), "ay": ((1e-4,), 1),
             **{r: ((1.0, 1e-6), 1) for r in STATES}}
 OWN = ((1e-3,), 1)  # positions on the session's own line, less where wheel speed alone puts each sample
 MIN_LINE_M = 100  # as compact.reduce_session: a shorter "lap" makes no line
 # what the comparisons read from the compact traces: every other channel they measure comes from the pack
-FROM_COMPACT = ("brake", "steer", "ax", "ay", "turn_g", "az", "altitude", "curvature", "understeer", "rear_slip")
+FROM_COMPACT = ("turn_g", "az", "altitude", "curvature", "understeer", "rear_slip")
 
 
 class NotCovered(LookupError):
@@ -64,6 +64,7 @@ class LapPack:
     length: int = 0  # metres of the session's own line (0: no clean lap)
     line: tuple[float, float] | None = None  # that line's origin (lat0, lon0); None without GPS
     meta: dict = field(default_factory=dict)
+    nbytes: int = 0  # memory its packed samples take (from_bytes)
 
     def lap(self, number: int) -> PackLap:
         if number not in self.laps:
@@ -195,7 +196,8 @@ def from_bytes(blob: bytes) -> LapPack:
         return PackLap(laps[number], start, got, own)
 
     line = tuple(meta["line"]) if meta["line"] is not None else None
-    return LapPack(int(meta["samples"]), laps, unpack, int(meta["length"]), line, meta)
+    held = sum(h.nbytes + d.nbytes for h, d in enc.values())
+    return LapPack(int(meta["samples"]), laps, unpack, int(meta["length"]), line, meta, held)
 
 
 # ---------- tracing a lap without its log ----------

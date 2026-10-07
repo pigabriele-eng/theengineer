@@ -75,8 +75,9 @@ def test_a_pack_keeps_the_laps_samples(runs):
         a, b = pack.lap(n), back.lap(n)
         assert (a.start, a.lap) == (b.start, b.lap)
         assert set(a.channels) == set(b.channels) >= {"speed", "lat", "lon", "throttle", "phase", "braking"}
-        for role in a.channels:  # as logged: in the steps the log has them in
-            np.testing.assert_allclose(b.channels[role], a.channels[role], atol=1e-4, rtol=1e-6, err_msg=role)
+        for role in a.channels:  # in the steps the log has them in, or to the step given
+            step = back.meta["code"][role][0]
+            assert np.abs(b.channels[role] - a.channels[role]).max() <= step / 2 + 1e-6 * np.abs(a.channels[role]).max()
         assert np.abs(a.own - b.own).max() <= 0.0005  # metres
     assert back.meta["code"]["speed"][0] == 0.1  # whole steps of 0.1 km/h
     assert len(lappack.to_bytes(pack)) < 60_000  # three laps of a 1 km track
@@ -90,15 +91,18 @@ def test_a_packed_lap_is_traced_as_from_the_log(runs):
     lap = next(l for l in data.laps if l.number == 2)
     line = track_line(data, next(l for l in data.laps if l.number == 1))
     old = aligned_trace(data, lap, line, line.length)
-    new = run.trace(2, line, line.length, KEEP)
-    assert set(new) == {k for k in KEEP if k in old}
+    roles = (*KEEP, *lappack.FROM_COMPACT)
+    new = run.trace(2, line, line.length, roles)
+    assert set(new) == {k for k in ("distance", "t", *roles) if k in old}
     np.testing.assert_allclose(new["t"], old["t"], atol=1e-6)  # its time to every metre
     np.testing.assert_allclose(new["speed"], old["speed"], atol=1e-3)
-    for role in ("throttle", "phase", "braking", "coasting", "overlap"):  # its own samples
-        np.testing.assert_allclose(new[role], old[role], atol=0.01, err_msg=role)
-    for role in ("brake", "steer", "ax", "ay"):  # from its compact trace: read from a 1 m grid
+    for role in ("throttle", "brake", "steer", "ax", "ay", "phase", "braking", "coasting", "overlap"):  # its samples
+        np.testing.assert_allclose(new[role], old[role], atol=0.001, err_msg=role)
+    compacted = [r for r in lappack.FROM_COMPACT if r in old]
+    assert "curvature" in compacted
+    for role in compacted:  # from its compact trace: read from a 1 m grid
         scale = np.abs(old[role]).max()
-        assert np.abs(new[role] - old[role]).mean() < 0.01 * scale, role
+        assert np.abs(new[role] - old[role]).mean() <= 0.01 * scale, role
     # the pack's own line, as the log's
     w = run.window(1)
     assert track_line(w, w.laps[0]).length == line.length
@@ -197,7 +201,7 @@ def test_compared_drivers_from_packs_are_the_logs(runs):
     assert new["median_gap_s"] == pytest.approx(old["median_gap_s"], abs=0.0011)
     assert new["typical_gap_s"] == pytest.approx(old["typical_gap_s"], abs=0.0011)
     assert new["laps"] == old["laps"] and new["reference"] == old["reference"]
-    assert new["theoretical_lap"] == pytest.approx(old["theoretical_lap"], abs=0.02)
+    assert new["theoretical_lap"] == pytest.approx(old["theoretical_lap"], abs=0.0011)
 
 
 def _upload(client, session_id: int, paces) -> None:
