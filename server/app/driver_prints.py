@@ -598,6 +598,8 @@ def settle(db: Session, event_id: int, ep: ds.EventPrint | None, learned: dict) 
         if grp.driver_id is None or grp.driver_id == current or db.get(models.Driver, grp.driver_id) is None:
             continue
         run = db.get(models.RunSession, s.session_id)
+        if run is None:  # deleted since the fingerprints were worked out
+            continue
         run.driver_id = now[run.id] = grp.driver_id
         if run.car_id is not None:
             garage.link_driver(db, grp.driver_id, run.car_id)
@@ -632,5 +634,9 @@ def settle_all(db: Session, state: dict | None = None) -> int:
         signature, pending = state[r.event_id] if state and r.event_id in state else _ready(db, r.event_id)[1:]
         if pending or signature != r.signature:
             continue  # still being read: settled when it is done
-        n += settle(db, r.event_id, prints.get(r.event_id), knows)
+        try:  # one event that fails doesn't stop the others
+            n += settle(db, r.event_id, prints.get(r.event_id), knows)
+        except Exception:
+            db.rollback()
+            log.exception("Setting the drivers of event %s from the driving style failed", r.event_id)
     return n
