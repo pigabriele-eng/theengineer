@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app import models, page_cache
+from app import lappacks, models, page_cache
 from app.analysis.balance import car_geometry
 from app.analysis.compare import ROLES as COMPARE_ROLES
 from app.analysis.compare import RunSource, compare_groups
@@ -103,6 +103,7 @@ def _picked_run(db: Session, session_id: int, name: str, picks: set[int] | None)
                         roles=COMPARE_ROLES)
     if picks is not None:
         data.laps = [replace(l, clean=l.clean and l.number in picks) for l in data.laps]
+    lappacks.missed(db, [s])  # read from its log this time: from its lap pack next time
     return RunInput(name, data, s.driver.name if s.driver else None, {"session_id": s.id, "file_id": f.id})
 
 
@@ -132,7 +133,8 @@ def compare_sources(db: Session, a: Side, b: Side) -> tuple[list[RunSource], mod
             clean = [l.time_s for l in s.laps if l.file_id == f.id and l.clean and (picks is None or l.number in picks)]
             name = f"{side.label}: {s.name or 'Session'} #{sid}"
             sources.append(RunSource(name, key, partial(_picked_run, db, sid, name, picks), min(clean, default=None),
-                                     {"session_id": sid, "session": s.name or f"Session {sid}"}))
+                                     {"session_id": sid, "session": s.name or f"Session {sid}"},
+                                     partial(lappacks.packed_run, db, s, track, None, picks)))
     if not ids["a"] or not ids["b"]:
         raise HTTPException(422, "Pick at least one session or lap for each side")
     if len(tracks) > 1:

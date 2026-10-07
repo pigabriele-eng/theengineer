@@ -18,6 +18,7 @@ import numpy as np
 from app.analysis.align import aligned_trace, track_line
 from app.analysis.channels import BRAKE, EXIT, MID, PHASES, POWER, TRAIL, math_channels
 from app.analysis.insights import LapRecord, _dt, section_metrics
+from app.analysis.lappack import NotCovered, PackedRun
 from app.analysis.laps import CornerSpec, Lap, Section, SessionData, corner_sections, lap_length, make_sections
 from app.analysis.lapsim import SimLap
 from app.analysis.limits import car_limits
@@ -78,12 +79,15 @@ class Traced:
 
 
 def compare_picks(picks: list[Pick], load: Callable[[str], SessionData], corners: list[CornerSpec] | None = None,
-                  step: float = 5.0, guard: AbstractContextManager = nullcontext()) -> dict:
+                  step: float = 5.0, guard: AbstractContextManager = nullcontext(),
+                  packed: Callable[[str], PackedRun | None] | None = None) -> dict:
     """The picked laps on one line: section times, the ideal lap, where each lap loses time and why, and traces.
 
     load(run) reads one run; it is called once per run, the quickest lap's run first, and the run is let go
     before the next is read. guard is held from reading a run until it is let go (the server's one-log-at-a-time
-    lock). corners are the track's official corners. Raises ValueError when a picked lap is not in its run.
+    lock). packed(run), when given, is the run's lap pack and compact traces (lappack.py) if they hold every lap
+    picked from it: those laps are then traced from them, without reading the log or taking the guard. corners are
+    the track's official corners. Raises ValueError when a picked lap is not in its run.
     """
     if not MIN_LAPS <= len(picks) <= MAX_LAPS:
         raise ValueError(f"Pick {MIN_LAPS} to {MAX_LAPS} laps")
@@ -91,10 +95,19 @@ def compare_picks(picks: list[Pick], load: Callable[[str], SessionData], corners
     traced: dict[int, Traced] = {}
     line = length = sources = None
     for run in order:
+        mine = sorted(((i, p) for i, p in enumerate(picks) if p.run == run), key=lambda ip: ip[1].time)
+        fast = packed(run) if packed is not None else None
+        if fast is not None:
+            try:
+                got, line, length, sources = _from_pack(fast, mine, line, length, sources)
+                traced.update(got)
+                continue
+            except NotCovered:  # not all there after all: from the log
+                pass
         with guard:  # while this run's log is in memory
             data = load(run)
             math_channels(data)
-            for i, p in sorted(((i, p) for i, p in enumerate(picks) if p.run == run), key=lambda ip: ip[1].time):
+            for i, p in mine:
                 lap = next((l for l in data.laps if l.number == p.number), None)
                 if lap is None:
                     raise ValueError(f"{p.meta.get('session', run)} has no lap {p.number}")
@@ -111,6 +124,23 @@ def compare_picks(picks: list[Pick], load: Callable[[str], SessionData], corners
     out["aligned_by"] = "gps" if line is not None else "wheel speed"
     out["channels"] = {r: sources[r] for r in out["traces"]["roles"] if r in sources}
     return out
+
+
+def _from_pack(run: PackedRun, mine: list[tuple[int, Pick]], line, length, sources):
+    """compare_picks' tracing of one run's picked laps (the quickest first), from its lap pack: the same traces as
+    from its log, but no log is read."""
+    got = {}
+    for i, p in mine:
+        lap = run.pack.laps.get(p.number)
+        if lap is None:
+            raise NotCovered(f"lap {p.number} isn't in the pack")
+        if length is None:  # the quickest picked lap: its path is the line every lap is placed on
+            w = run.window(p.number)
+            line = track_line(w, lap)
+            length = line.length if line is not None else round(lap_length(w, lap))
+            sources = run.own.sources
+        got[i] = Traced(p, lap, run.trace(p.number, line, length, KEEP))
+    return got, line, length, sources
 
 
 def _summarise(laps: list[Traced], corners: list[CornerSpec] | None, step: float) -> dict:
