@@ -137,3 +137,14 @@ def test_a_number_set_by_hand_stays(client):
     assert q["needs"] == [] and "Your car there" not in q["why"]
     assert client.post(f"/season-match/{q['id']}", json={"answer": q["options"][0]["key"]}).status_code == 200
     assert client.get("/seasons").json()[0]["car_number"] == "7"
+
+
+def test_last_year_s_number_is_not_this_year_s(client):
+    """Numbers change from season to season: our 2025 season's #99 isn't taken for 2026; the entry list says #12."""
+    r = client.post("/seasons", json={"name": "GT4 European Series 2025", "series": "gt4-europe", "year": 2025,
+                                      "car_number": "99", "rounds": []})
+    assert r.status_code in (200, 201), r.text
+    _seed_cars(ENTRIES)
+    _event_with_driver(client, "Max Verdi")
+    q = _question(client)
+    assert q["needs"] == [] and "Your car there: #12" in q["why"]

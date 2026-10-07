@@ -177,7 +177,7 @@ export default function EventScreen() {
         !folder.dates_by_hand && folder.log_start ? 'Dates from the logs' : null,
         folder.sessions > 0 ? <><B>{folder.sessions}</B> runs · <B>{folder.clean_laps}</B> clean laps</> : 'No runs yet',
         folder.best_lap_s != null ? <>Best <B>{formatLap(folder.best_lap_s)}</B></> : null,
-      ] : [<><B>{folder.sessions}</B> runs in no event</>]} />
+      ] : [<><B>{folder.sessions}</B> run{folder.sessions === 1 ? '' : 's'} in no event</>]} />
     </View>
   ) : undefined;
 
