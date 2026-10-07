@@ -4,6 +4,7 @@ import { Fragment, ReactNode, useCallback, useEffect, useMemo, useRef, useState 
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextStyle, useWindowDimensions, ViewStyle } from 'react-native';
 
 import { LapCompare } from '@/components/LapCompare';
+import { Tick } from '@/components/Controls';
 import { SessionResults } from '@/components/OfficialSessionCard';
 import {
   B, Block, Colophon, Fig, Folio, Hero, Label, Page, Section, Swatch, TextLink, useGutter, useWide,
@@ -17,6 +18,7 @@ import { Text, View } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
 import { UntimedNote } from '@/components/UntimedNote';
 import { Analysis, api, Debrief, DETECTED_CORNERS_NOTE, formatLap, prefetch, SessionDetail } from '@/lib/api';
+import { encodePicks, MAX_LAPS } from '@/lib/compare';
 import { Tagged } from '@/lib/drivers';
 import { dayLabel, KIND_NAMES, sessionsInOrder } from '@/lib/events';
 import { poll } from '@/lib/poll';
@@ -125,7 +127,14 @@ export default function SessionScreen() {
   const wide = useWide();
   const { id } = useLocalSearchParams<{ id: string }>();
   const sessionId = Number(id);
+  const gutter = useGutter();
   const [session, setSession] = useState<SessionDetail | null>(null);
+  // the laps ticked in the lap chart (Gabriele, 2026-10-07): two to six, then Compare laps in the bar at the foot of
+  // the screen; another run starts with none
+  const [ticked, setTicked] = useState<number[]>([]);
+  useEffect(() => setTicked([]), [sessionId]);
+  const tick = (lap: number) => setTicked((t) => (t.includes(lap) ? t.filter((x) => x !== lap)
+    : t.length >= MAX_LAPS ? t : [...t, lap]));
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [debriefs, setDebriefs] = useState<Debrief[]>([]);
   const [stints, setStints] = useState<StintView | null>(null);
@@ -301,9 +310,11 @@ export default function SessionScreen() {
       dek: 'The best lap against the best of each section, from this run and from the whole event.',
       body: <RunFigures chart={chart} analysis={analysis} cleanCount={cleanCount} offCount={offCount} /> });
     sections.push({ title: 'Lap chart',
-      dek: chart.tyres ? 'Every lap in numbers: section times, then hot pressure and TPMS temperature at each corner.'
-        : 'Every lap in numbers: its time and the time of each section.',
-      body: <LapChart chart={chart} runs={order.filter((s) => s.best_lap_s != null).length} /> });
+      dek: (chart.tyres ? 'Every lap in numbers: section times, then hot pressure and TPMS temperature at each corner.'
+        : 'Every lap in numbers: its time and the time of each section.') +
+        ' Tick two to six laps, then Compare laps at the foot of the screen.',
+      body: <LapChart chart={chart} runs={order.filter((s) => s.best_lap_s != null).length} ticked={ticked}
+        onTick={tick} /> });
   }
   if (hasClean && ready) {
     sections.push({ title: 'The track', dek: 'Its sections, numbered as the lap chart has them.',
@@ -344,7 +355,16 @@ export default function SessionScreen() {
       </View>
     ) });
 
+  // the ticked laps on the lap comparison, in the order ticked; one ticked lap against the run's fastest
+  const fastestLap = laps.find((l) => l.status === 'fastest')?.number ?? null;
+  const pickedLaps = ticked.length === 1 && fastestLap != null && ticked[0] !== fastestLap ? [ticked[0], fastestLap]
+    : ticked;
+  const compareHref = pickedLaps.length >= 2
+    ? { pathname: '/compare' as const, params: { laps: encodePicks(pickedLaps.map((lap) => ({ session_id: sessionId, lap }))) } }
+    : null;
+
   return (
+    <View style={styles.screen}>
     <Page top={top}>
       <Stack.Screen options={{ title: [title, track].filter(Boolean).join(' · ') }} />
       {folder && (
@@ -402,6 +422,21 @@ export default function SessionScreen() {
       </View>
       <Colophon left="The Engineer · Lap chart" right={[title, track].filter(Boolean).join(' · ')} />
     </Page>
+    {ticked.length > 0 && (
+      <View style={styles.bar} {...noPrint}>
+        <View style={StyleSheet.flatten([styles.barInner, { paddingHorizontal: gutter }])}>
+          <Text style={styles.barText}>
+            {ticked.length >= 2 ? `${ticked.length} laps` : `Lap ${ticked[0]}: tick another to compare`}
+          </Text>
+          {compareHref && (
+            <TextLink href={compareHref} red arrow
+              label={ticked.length >= 2 ? 'Compare laps' : `Against lap ${fastestLap}, the fastest`} />
+          )}
+          <TextLink onPress={() => setTicked([])} label="Clear" small />
+        </View>
+      </View>
+    )}
+    </View>
   );
 }
 
@@ -451,7 +486,7 @@ function RunFigures({ chart, analysis, cleanCount, offCount }: {
 // ---------- 02 the lap chart ----------
 
 // column widths of the lap chart on a wide screen
-const W = { lap: 40, stat: 74, time: 74, gap: 52, sec: 48, sp: 10, p: 40, t: 34, row: 33 };
+const W = { tick: 30, lap: 40, stat: 74, time: 74, gap: 52, sec: 48, sp: 10, p: 40, t: 34, row: 33 };
 
 /** How a section time reads: purple the event's best pass, green the run's, the slower tint otherwise. */
 function secTone(c: Palette, chart: Chart, lap: ChartLap, i: number): { bg?: string; fg?: string; bold?: boolean } {
@@ -476,7 +511,8 @@ const pText = (v: number | null) => (v == null ? '–' : v.toFixed(2));
 const tText = (v: number | null) => (v == null ? '–' : String(Math.round(v)));
 const sum = (vs: (number | null)[]) => (vs.every((v) => v != null) ? (vs as number[]).reduce((a, b) => a + b, 0) : null);
 
-function LapChart({ chart, runs }: { chart: Chart; runs: number }) {
+function LapChart({ chart, runs, ticked, onTick }: { chart: Chart; runs: number; ticked: number[];
+  onTick: (lap: number) => void }) {
   const styles = useStyles();
   const wide = useWide();
   const c = useTheme();
@@ -519,7 +555,8 @@ function LapChart({ chart, runs }: { chart: Chart; runs: number }) {
         )}
       </View>
 
-      {wide ? <ChartTable chart={chart} fastest={fastestColor} /> : <ChartBlocks chart={chart} fastest={fastestColor} />}
+      {wide ? <ChartTable chart={chart} fastest={fastestColor} ticked={ticked} onTick={onTick} />
+        : <ChartBlocks chart={chart} fastest={fastestColor} ticked={ticked} onTick={onTick} />}
 
       <Text style={styles.chartNote}>
         Times in seconds.{chart.eventBest ? ` Purple: the quickest pass of the section in all ${runs} runs of the event;` : ''}
@@ -567,11 +604,13 @@ function Cell({ w, children, bg, fg, bold, left, style, text }: {
   );
 }
 
-function ChartTable({ chart, fastest }: { chart: Chart; fastest: string }) {
+function ChartTable({ chart, fastest, ticked, onTick }: { chart: Chart; fastest: string; ticked: number[];
+  onTick: (lap: number) => void }) {
   const styles = useStyles();
   const c = useTheme();
   const n = chart.codes.length;
-  const lapW = W.lap + W.stat + W.time + W.gap;
+  const lapW = W.tick + W.lap + W.stat + W.time + W.gap;
+  const full = ticked.length >= MAX_LAPS;
   const width = lapW + n * W.sec + (chart.tyres ? 2 * W.sp + 4 * W.p + 4 * W.t : 0);
   const stintAt = new Map(chart.stints.map((s) => [s.first, s]));
   const foot = (label: string, values: (number | null)[], color: string, first: boolean) => (
@@ -601,7 +640,7 @@ function ChartTable({ chart, fastest }: { chart: Chart; fastest: string }) {
           )}
         </View>
         <View style={styles.colHead}>
-          <Cell w={W.lap} left text={styles.headLap}>#</Cell>
+          <Cell w={W.tick + W.lap} left text={styles.headLap}>#</Cell>
           <Cell w={W.stat} left text={styles.headText}>Status</Cell>
           <Cell w={W.time} text={styles.headText}>Time</Cell>
           <Cell w={W.gap} text={styles.headText}>Gap</Cell>
@@ -623,7 +662,16 @@ function ChartTable({ chart, fastest }: { chart: Chart; fastest: string }) {
             <Fragment key={l.number}>
               {s && <StintHead stint={s} wide />}
               <View style={StyleSheet.flatten([styles.tr, off && styles.off])}>
-                <Cell w={W.lap} left text={StyleSheet.flatten([styles.lapNo, off && styles.offText])}>{l.number}</Cell>
+                {/* the tick and the lap's number, one target the row's height */}
+                <Pressable onPress={() => onTick(l.number)} disabled={full && !ticked.includes(l.number)}
+                  accessibilityRole="checkbox" accessibilityLabel={`Compare lap ${l.number}`}
+                  accessibilityState={{ checked: ticked.includes(l.number), disabled: full && !ticked.includes(l.number) }}
+                  style={StyleSheet.flatten([styles.cell, styles.cellLeft, styles.tickCell, { width: W.tick + W.lap }])}>
+                  <View {...noPrint}>
+                    <Tick on={ticked.includes(l.number)} disabled={full && !ticked.includes(l.number)} size={18} />
+                  </View>
+                  <Text style={StyleSheet.flatten([styles.lapNo, off && styles.offText])}>{l.number}</Text>
+                </Pressable>
                 <Cell w={W.stat} left><StatusMark status={l.status} fastest={fastest} /></Cell>
                 <Cell w={W.time} bg={l.status === 'fastest' ? fastest : undefined} fg={l.status === 'fastest' ? c.timing.onBest : undefined}
                   text={StyleSheet.flatten([styles.timeText, off && styles.offText])}>{formatLap(l.time)}</Cell>
@@ -680,10 +728,12 @@ const lines = (n: number) => {
   return Array.from({ length: rows }, (_, r) => Array.from({ length: Math.min(per, n - r * per) }, (_, k) => r * per + k));
 };
 
-function ChartBlocks({ chart, fastest }: { chart: Chart; fastest: string }) {
+function ChartBlocks({ chart, fastest, ticked, onTick }: { chart: Chart; fastest: string; ticked: number[];
+  onTick: (lap: number) => void }) {
   const styles = useStyles();
   const c = useTheme();
   const gutter = useGutter();
+  const full = ticked.length >= MAX_LAPS;
   const strips = lines(chart.codes.length);
   const stintAt = new Map(chart.stints.map((s) => [s.first, s]));
   const tyreRow = (l: ChartLap | null, m: TyreMeasure) => (
@@ -741,6 +791,10 @@ function ChartBlocks({ chart, fastest }: { chart: Chart; fastest: string }) {
             {s && <StintHead stint={s} />}
             <View style={StyleSheet.flatten([styles.pLap, off && styles.off, off && { marginHorizontal: -gutter, paddingHorizontal: gutter }])}>
               <View style={styles.pTop}>
+                <View {...noPrint}>
+                  <Tick on={ticked.includes(l.number)} onPress={() => onTick(l.number)}
+                    disabled={full && !ticked.includes(l.number)} label={`Compare lap ${l.number}`} />
+                </View>
                 <Text style={StyleSheet.flatten([styles.pNo, off && styles.offText])}>{l.number}</Text>
                 <View style={l.status === 'fastest' ? { backgroundColor: fastest } : undefined}>
                   <Text style={StyleSheet.flatten([styles.pTime, l.status === 'fastest' && { color: c.timing.onBest },
@@ -820,6 +874,12 @@ function Corners({ analysis }: { analysis: Analysis }) {
 
 const useStyles = themed((c) => ({
   body: { backgroundColor: 'transparent' },
+  screen: { flex: 1, backgroundColor: c.background },
+  // the ticked laps' bar at the foot of the screen, as the event page has it for runs
+  bar: { borderTopWidth: 3, borderColor: c.rule, backgroundColor: c.background, paddingVertical: 10 },
+  barInner: { width: '100%', maxWidth: 1240, alignSelf: 'center', flexDirection: 'row',
+    flexWrap: 'wrap', alignItems: 'center', columnGap: 20, rowGap: 8 },
+  barText: { ...Type.label, fontFamily: Fonts.label, fontSize: 13, color: c.text, marginRight: 'auto' },
   stale: { opacity: 0.45, pointerEvents: 'none' },
   loading: { alignSelf: 'flex-start', marginVertical: 16 },
   error: { color: c.error, marginTop: 12 },
@@ -869,6 +929,7 @@ const useStyles = themed((c) => ({
   cellLeft: { alignItems: 'flex-start', paddingLeft: 0 },
   cellText: { ...Type.number, fontFamily: face500(), fontSize: 14, color: c.text },
   lapNo: { fontFamily: Fonts.display, fontSize: 20, lineHeight: 24, color: c.text },
+  tickCell: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', gap: 10 },
   timeText: { ...Type.number, fontFamily: face700(), fontSize: 16, color: c.text },
   gapText: { ...Type.number, fontFamily: face600(), fontSize: 13, color: c.delta.loss },
   foot: { alignItems: 'stretch' },

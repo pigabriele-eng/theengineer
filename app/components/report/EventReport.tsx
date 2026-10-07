@@ -17,7 +17,7 @@ import { TrackGrip } from '@/components/report/TrackGrip';
 import { useEventFolder, useSessionEvent } from '@/components/SessionSwitcher';
 import { Text, View } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
-import { useEventParts } from '@/components/weekend/SessionReports';
+import { EventPartsRead, useEventParts } from '@/components/weekend/SessionReports';
 import { formatLap } from '@/lib/api';
 import { noPrint } from '@/lib/print';
 import { todayIso } from '@/lib/calendar';
@@ -96,7 +96,7 @@ const reportPhoto = (track: string | null | undefined): Photo => {
  * view when a section is tapped to see it there (`onShowMap`, with the map's place in the report, where the browser
  * can't). */
 export default function EventReport({
-  eventId, part, sessionId, embedded, firstNo = 1, onSections, folder: hostFolder, onShowMap,
+  eventId, part, sessionId, embedded, firstNo = 1, onSections, folder: hostFolder, onShowMap, parts: hostParts,
 }: {
   eventId?: number;
   part?: string; // with eventId: that official session's report ("FP1", "Q1", "03_Q"; lib/sessionReports.ts)
@@ -106,6 +106,7 @@ export default function EventReport({
   onSections?: (count: number) => void;
   folder?: Folder | null;
   onShowMap?: (y: number) => void;
+  parts?: EventPartsRead; // embedded: the event's official sessions as the page has read them, for the switcher
 }) {
   const theme = useTheme();
   const styles = useStyles();
@@ -196,7 +197,8 @@ export default function EventReport({
     // embedded on the web, the browser brings the map into view in whatever scrolls the page around it (a section's
     // place isn't measured again when what is above it grows); elsewhere the page scrolls to the map's place
     const node = mapAt.current as unknown as { scrollIntoView?: (o: object) => void } | null;
-    if (node?.scrollIntoView) node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // the map's top at the top of the screen (on a phone the map and the list under it are taller than the screen)
+    if (node?.scrollIntoView) node.scrollIntoView({ behavior: 'smooth', block: 'start' });
     else onShowMap?.(mapY);
   };
   // how many numbered sections there are, for the page around it to number its own on from them
@@ -379,6 +381,7 @@ export default function EventReport({
         <ScopeBar folder={folder} current={'session' in scope ? scope.session : null}
           whole={!fromPart || defaultStage(folder, todayIso()) === 'after'}
           part={isPartScope(scope) ? scope.part : null} scope={runScope} pdfName={pdfName} names={names}
+          given={hostParts}
           onWhole={() => (embedded ? setPicked({ of: givenKey, scope: { event: folder.id! } })
             : router.setParams({ event: String(folder.id), session: undefined, part: undefined }))}
           onPart={(code) => (embedded ? setPicked({ of: givenKey, scope: { event: folder.id!, part: code } })
@@ -452,7 +455,7 @@ function sectionTones(theme: Palette, report: Report): Record<string, string> {
 
 /** What the report is for: the whole event, one of its official sessions (FP1, Q1, R1, every run of it) or one run.
  * A run alone in its session is picked by the session's name only (the same report). */
-function ScopeBar({ folder, current, whole, part, scope, pdfName, names, onWhole, onPart, onPick }: {
+function ScopeBar({ folder, current, whole, part, scope, pdfName, names, onWhole, onPart, onPick, given }: {
   folder: NonNullable<ReturnType<typeof useEventFolder>>;
   current: number | null; // the run shown, or null
   whole: boolean; // the whole event can be picked (left out while the weekend is on, for a session's report)
@@ -463,11 +466,13 @@ function ScopeBar({ folder, current, whole, part, scope, pdfName, names, onWhole
   onWhole: () => void;
   onPart: (code: string) => void;
   onPick: (id: number) => void;
+  given?: EventPartsRead; // the official sessions as the page has read them: not read again
 }) {
   const styles = useStyles();
   const wide = useWide();
   // the sessions with a timed lap (and the one shown)
-  const parts = (useEventParts(folder.id).answer?.parts ?? []).filter((p) => p.best != null || p.code === part);
+  const own = useEventParts(given ? null : folder.id);
+  const parts = ((given ?? own).answer?.parts ?? []).filter((p) => p.best != null || p.code === part);
   // runs alone in their session are reached by the session's name
   const alone = new Set(parts.filter((p) => p.runs.length === 1).map((p) => p.runs[0].id));
   const partOn = (p: Part) => p.code === part || (part == null && current != null && p.runs.length === 1

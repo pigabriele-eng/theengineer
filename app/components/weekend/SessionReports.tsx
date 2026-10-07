@@ -46,9 +46,15 @@ export function useEventParts(eventId: number | null | undefined) {
   return { answer: answer?.event_id === eventId ? answer : null, error };
 }
 
-export default function SessionReports({ eventId }: { eventId: number }) {
+/** The event's official sessions as useEventParts reads them: what a page that reads them itself hands on. */
+export type EventPartsRead = ReturnType<typeof useEventParts>;
+
+/** `parts`: the list as the page around it has read it already (the race weekend's After, which shows the report's
+ * switcher too): not read again here. */
+export default function SessionReports({ eventId, parts: given }: { eventId: number; parts?: EventPartsRead }) {
   const styles = useStyles();
-  const { answer, error } = useEventParts(eventId);
+  const own = useEventParts(given ? null : eventId);
+  const { answer, error } = given ?? own;
   const parts = useMemo(() => partsInOrder(answer), [answer]);
   return (
     <View>
