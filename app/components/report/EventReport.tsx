@@ -37,8 +37,7 @@ import {
   SectionReport,
 } from '@/lib/report';
 import {
-  deltaColor, Fonts, inkOn, lossStep, Palette, phaseColor, Photo, PHOTOS, photoFor, TAP, tapRoom, themed, Type,
-  useTheme,
+  deltaColor, Fonts, inkOn, lossStep, Palette, phaseColor, Photo, PHOTOS, photoFor, TAP, tapRoom, themed, Type, useTheme,
 } from '@/constants/Theme';
 
 const POLL_MS = 2000;
@@ -461,7 +460,7 @@ function ScopeBar({ folder, current, whole, part, scope, pdfName, names, onWhole
           {parts.map((p) => {
             const on = partOn(p);
             return (
-              <Pressable key={p.code} onPress={() => onPart(p.code)} accessibilityRole="button" hitSlop={4}
+              <Pressable key={p.code} onPress={() => onPart(p.code)} accessibilityRole="button"
                 accessibilityLabel={`${p.title} report`} accessibilityState={{ selected: on }}
                 style={styles.runHit}>
                 <View style={StyleSheet.flatten([styles.run, on && styles.runOn])}>
@@ -482,7 +481,7 @@ function ScopeBar({ folder, current, whole, part, scope, pdfName, names, onWhole
               const on = s.id === current;
               const run = names.byId(s.id);
               return (
-                <Pressable key={s.id} onPress={() => onPick(s.id)} accessibilityRole="button" hitSlop={4}
+                <Pressable key={s.id} onPress={() => onPick(s.id)} accessibilityRole="button"
                   accessibilityLabel={`Report for ${run?.name ?? s.name}`} accessibilityState={{ selected: on }}
                   style={styles.runHit}>
                   <View style={StyleSheet.flatten([styles.run, on && styles.runOn])}>
@@ -1041,7 +1040,8 @@ const useStyles = themed((c) => ({
   small: { fontFamily: Fonts.label, fontSize: 12, lineHeight: 16, color: c.textMuted },
   h4: { ...Type.label, fontSize: 13, color: c.text, borderTopWidth: 3, borderColor: c.rule, paddingTop: 6, marginTop: 6 },
   bold: { fontFamily: face700() },
-  dim: { opacity: 0.45 },
+  // a session left out: in the caption grey, not faded (it must still read at 4.5:1)
+  dim: { color: c.textMuted },
   error: { color: c.error, marginTop: 16 },
   loading: { alignSelf: 'flex-start', marginVertical: 16 },
   summary: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 25, color: c.text, marginTop: 22, maxWidth: 820 },
@@ -1052,11 +1052,11 @@ const useStyles = themed((c) => ({
   scope: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 16, rowGap: 8, paddingTop: 12,
     paddingBottom: 11, borderBottomWidth: 1, borderColor: c.rule },
   // the runs by name wrap within the page's width
-  runs: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 12, rowGap: 4, maxWidth: '100%' },
+  runs: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 12, rowGap: 0, maxWidth: '100%' },
   daySplit: { width: 1, height: 16, backgroundColor: c.rule },
-  // a full tap target around each name, without moving it (constants/Theme.ts tapRoom): the name is 24 px tall
-  runHit: tapRoom((TAP - 24) / 2, 4),
-  run: { borderBottomWidth: 3, borderColor: 'transparent', paddingBottom: 1 },
+  // each run a 44 px tap target, its name and underline at the foot of it
+  runHit: { minWidth: TAP, minHeight: TAP, justifyContent: 'flex-end', alignItems: 'flex-start' },
+  run: { borderBottomWidth: 3, borderColor: 'transparent', paddingBottom: 1, backgroundColor: 'transparent' },
   runOn: { borderColor: c.mark },
   runText: { fontFamily: Fonts.display, fontSize: 18, lineHeight: 20, color: c.textMuted },
   runTextOn: { color: c.text },
@@ -1104,8 +1104,8 @@ const useStyles = themed((c) => ({
   rankSide: { flex: 1, minWidth: 0 },
   mapTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, borderBottomWidth: 1,
     borderColor: c.rule, paddingBottom: 6 },
-  lostRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: 6, paddingBottom: 5, borderBottomWidth: 1,
-    borderColor: c.separator },
+  lostRow: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: TAP, paddingTop: 6, paddingBottom: 5,
+    borderBottomWidth: 1, borderColor: c.separator },
   lostOn: { backgroundColor: c.band },
   lostName: { fontFamily: Fonts.display, fontSize: 19, lineHeight: 21, width: 72, color: c.text },
   lostTrack: { flex: 1, height: 14 },
@@ -1115,7 +1115,7 @@ const useStyles = themed((c) => ({
   rampCell: { height: 12, borderTopWidth: 1, borderBottomWidth: 1, borderColor: c.rule },
   rampFirst: { borderLeftWidth: 1 },
   rampLast: { borderRightWidth: 1 },
-  rampText: { fontFamily: Fonts.label, fontSize: 11, marginTop: 3, color: c.text },
+  rampText: { fontFamily: Fonts.label, fontSize: 12, marginTop: 3, color: c.text },
 
   // 04 where the time goes
   phaseLabels: { position: 'relative', height: 46, marginBottom: 6 },
@@ -1143,7 +1143,8 @@ const useStyles = themed((c) => ({
   card: { gap: 10, borderTopWidth: 3, borderColor: c.rule, paddingTop: 10, marginTop: 18 },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   cardTone: { width: 16, height: 16, borderWidth: 1, borderColor: c.rule },
-  cardCodeLink: { flex: 1 },
+  // the corner's name: a 44 px tap target, the head laid out as drawn
+  cardCodeLink: { flex: 1, ...tapRoom(4) },
   cardCode: { fontFamily: Fonts.display, fontSize: 34, lineHeight: 36, textTransform: 'uppercase', color: c.text },
   cardGain: { ...Type.number, fontFamily: face700(), fontSize: 17, color: c.text },
   cardHeadline: { fontFamily: Fonts.body, fontWeight: '600', fontSize: 19, lineHeight: 25, color: c.text },
@@ -1161,7 +1162,7 @@ const useStyles = themed((c) => ({
   table: { flex: 1, minWidth: 560 },
   thRow: { flexDirection: 'row', paddingBottom: 5, borderBottomWidth: 1, borderColor: c.rule, gap: 6 },
   tr: { flexDirection: 'row', paddingVertical: 6, borderBottomWidth: 1, borderColor: c.separator, gap: 6 },
-  th: { ...Type.label, flex: 1, fontSize: 11, color: c.textSecondary, textAlign: 'right' },
+  th: { ...Type.label, flex: 1, fontSize: 13, color: c.textSecondary, textAlign: 'right' },
   td: { ...Type.number, flex: 1, fontSize: 14, textAlign: 'right', color: c.text },
   runCol: { flex: 2, textAlign: 'left' },
   relation: { gap: 2, paddingVertical: 8, borderBottomWidth: 1, borderColor: c.separator },

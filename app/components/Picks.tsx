@@ -71,7 +71,8 @@ export function Tabs<K extends string | number | null>({ items, value, onChange,
 }
 
 /** One thing to pick among many (a lap, a session): its name over its figure, the picked one underlined in red.
- * `fill` paints the figure as a flat block (the event's fastest lap in purple), with `ink` on it. */
+ * `fill` paints the figure as a flat block (the event's fastest lap in purple), with `ink` on it. `dim` (a lap that
+ * isn't clean) puts its figure in the caption grey, still readable; only a `disabled` one fades. */
 export function Choice({ label, detail, on, onPress, fill, ink, dim, disabled, accessibilityLabel }: {
   label: string;
   detail?: string;
@@ -87,12 +88,13 @@ export function Choice({ label, detail, on, onPress, fill, ink, dim, disabled, a
   return (
     <Pressable onPress={onPress} disabled={disabled} accessibilityRole="button" accessibilityLabel={accessibilityLabel}
       accessibilityState={{ selected: on, disabled }} {...(on ? null : noPrint)}
-      style={StyleSheet.flatten([detail ? styles.pickHit : styles.pickHitBare, (dim || disabled) && !on && styles.dim])}>
+      style={StyleSheet.flatten([detail ? styles.pickHit : styles.pickHitBare, disabled && !on && styles.dim])}>
       <View style={StyleSheet.flatten([styles.pick, on && styles.tabOn])}>
         <Text style={StyleSheet.flatten([styles.pickLabel, on && styles.tabTextOn])}>{label}</Text>
         {detail ? (
           <View style={StyleSheet.flatten([styles.pickDetailBox, fill ? { backgroundColor: fill } : null])}>
-            <Text style={StyleSheet.flatten([styles.pickDetail, fill && ink ? { color: ink } : null])}>{detail}</Text>
+            <Text style={StyleSheet.flatten([styles.pickDetail, dim && !on && styles.pickDetailDim,
+              fill && ink ? { color: ink } : null])}>{detail}</Text>
           </View>
         ) : null}
       </View>
@@ -232,6 +234,7 @@ const useStyles = themed((c) => ({
   pickLabel: { fontFamily: Fonts.display, fontSize: 18, lineHeight: 21, color: c.textMuted },
   pickDetailBox: { alignSelf: 'flex-start', paddingHorizontal: 0 },
   pickDetail: { ...Type.number, fontSize: 13, color: c.text, paddingHorizontal: 2 },
+  pickDetailDim: { color: c.textMuted },
   box: { borderWidth: 2, borderColor: c.borderStrong, alignItems: 'center', justifyContent: 'center' },
   tick: { fontFamily: face('label', 700), fontSize: 13, lineHeight: 15, color: c.onTint },
   // 12 px above and below the box (it was 4: the row takes the same room) make it a 44 px tap target

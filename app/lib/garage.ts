@@ -62,6 +62,7 @@ export type RunSet = {
 };
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
+  if (init?.method && init.method !== 'GET') reading = null; // a change: the next read asks again
   const res = await apiFetch(path, init);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -77,8 +78,21 @@ const send = (method: string, body: unknown): RequestInit => ({
   body: JSON.stringify(body),
 });
 
+// The garage on its way: every part of the page that asks for it meanwhile (the run's chips, the event's runs, a
+// form) gets this one answer instead of asking again.
+let reading: Promise<Garage> | null = null;
+
 export const garageApi = {
-  get: () => call<Garage>('/garage'),
+  get: (): Promise<Garage> => {
+    if (reading) return reading;
+    const p = call<Garage>('/garage');
+    reading = p;
+    const done = () => {
+      if (reading === p) reading = null;
+    };
+    p.then(done, done);
+    return p;
+  },
   addTeam: (name: string) => call<{ id: number; name: string }>('/garage/teams', send('POST', { name })),
   renameTeam: (id: number, name: string) => call<{ id: number; name: string }>(`/garage/teams/${id}`, send('PATCH', { name })),
   removeTeam: (id: number) => call<void>(`/garage/teams/${id}`, { method: 'DELETE' }),

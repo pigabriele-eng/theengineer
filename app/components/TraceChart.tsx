@@ -29,9 +29,9 @@ type Props = {
 };
 
 const PAD = { left: 40, right: 8, top: 8, bottom: 18 };
-const LABEL_ROW = 11; // px between rows of corner labels
+const LABEL_ROW = 13; // px between rows of corner labels
 const LABEL_ROWS = 3;
-const LABEL_CHAR = 6; // rough width of one character at fontSize 10
+const LABEL_CHAR = 7.2; // rough width of one character at fontSize 12
 const SANS = Fonts.sans;
 
 type Marker = { at: number; label: string };
@@ -141,14 +141,14 @@ export function TraceChart({ title, unit, distance, series, cursor, onCursor, ma
               <Line x1={PAD.left} x2={width - PAD.right} y1={y(0)} y2={y(0)} stroke={c.axis} strokeWidth={1}
                 strokeOpacity={0.55} />
             )}
-            <SvgText x={PAD.left - 4} y={PAD.top + 8} fontSize={10} fill={c.muted} textAnchor="end" fontFamily={SANS}>
+            <SvgText x={PAD.left - 4} y={PAD.top + 8} fontSize={12} fill={c.muted} textAnchor="end" fontFamily={SANS}>
               {fmt(hi)}
             </SvgText>
-            <SvgText x={PAD.left - 4} y={PAD.top + h} fontSize={10} fill={c.muted} textAnchor="end" fontFamily={SANS}>
+            <SvgText x={PAD.left - 4} y={PAD.top + h} fontSize={12} fill={c.muted} textAnchor="end" fontFamily={SANS}>
               {fmt(lo)}
             </SvgText>
             {labels.map((m) => (
-              <SvgText key={m.label} x={m.x} y={height - 4 + m.row * LABEL_ROW} fontSize={10} fill={c.ink2}
+              <SvgText key={m.label} x={m.x} y={height - 4 + m.row * LABEL_ROW} fontSize={12} fill={c.ink2}
                 textAnchor="middle" fontFamily={SANS}>
                 {m.label}
               </SvgText>

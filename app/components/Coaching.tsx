@@ -9,32 +9,27 @@ import { useWide } from '@/components/Programme';
 import { Palette } from '@/constants/Colors';
 import { Fonts, phaseColor, themed, Type, useTheme } from '@/constants/Theme';
 import { fetchFixed, fetchTop, FixedAnswer, FixedThing, Thing, TopAnswer, Verdict, working } from '@/lib/coaching';
+import { poll } from '@/lib/poll';
 import type { TechniqueStatus } from '@/lib/technique';
-
-const POLL_MS = 4000;
 
 const seconds = (s: number) => `${s.toFixed(2)} s`;
 
-/** One coaching answer for a run, read again while its laps are being checked. */
+/** One coaching answer for a run, read again while its laps are being checked (lib/poll.ts: less and less often). */
 function useCoaching<T extends { status: TechniqueStatus }>(load: () => Promise<T>, key: string) {
   const [state, setState] = useState<{ answer: T | null; error: string | null }>({ answer: null, error: null });
   useEffect(() => {
-    let live = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     setState({ answer: null, error: null });
-    const go = () => load().then(
+    return poll((live) => load().then(
       (answer) => {
-        if (!live) return;
+        if (!live()) return false;
         setState({ answer, error: null });
-        if (working(answer.status)) timer = setTimeout(go, POLL_MS);
+        return working(answer.status);
       },
-      (e) => live && setState({ answer: null, error: (e as Error).message }),
-    );
-    go();
-    return () => {
-      live = false;
-      if (timer) clearTimeout(timer);
-    };
+      (e) => {
+        if (live()) setState({ answer: null, error: (e as Error).message });
+        return false;
+      },
+    ));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
   return state;

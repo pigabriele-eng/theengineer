@@ -6,13 +6,14 @@ import { Choice, FigRow, Meter, Notice, PageHead, Tabs, useText } from '@/compon
 import PrintButton from '@/components/PrintButton';
 import { Colophon, Fig, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { Bars } from '@/components/ReportCharts';
-import { SessionSwitcher, useEventFolder } from '@/components/SessionSwitcher';
+import { SessionSwitcher, useEventFolder, useSessionEvent } from '@/components/SessionSwitcher';
 import { TechniqueInputs } from '@/components/TechniqueInputs';
 import { TechniqueTrace } from '@/components/TechniqueTrace';
 import { Text, View } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
 import { ZOOM_HINT, ZoomGroup } from '@/components/Zoom';
-import { formatLap } from '@/lib/api';
+import { formatLap, prefetch } from '@/lib/api';
+import { poll } from '@/lib/poll';
 import {
   BestSource,
   BestTechnique,
@@ -31,7 +32,6 @@ import {
 } from '@/lib/technique';
 import { deltaColor, face, Fonts, inkOn, phaseColor, themed, Type, useTheme } from '@/constants/Theme';
 
-const POLL_MS = 2000;
 const SIDE_BY_SIDE = 900; // from this wide the charts are taller
 const SIDE_MAP = 1000; // from this wide the track map has a column of its own on the right; narrower, it's pinned on top
 const CLOSE_UP_M = 150; // metres either side of a mistake in its close-up
@@ -69,59 +69,66 @@ export default function TechniqueScreen() {
   const sideWidth = Math.round(Math.min(440, Math.max(320, width * 0.28)));
   const sideBySide = width - (side ? sideWidth : 0) >= SIDE_BY_SIDE;
 
-  // the session's check of one lap; while the server works it out, ask again every couple of seconds
+  // the session's check of one lap; while the server works it out, asked again (lib/poll.ts: less and less often)
   useEffect(() => {
     if (sessionId == null) return;
-    let live = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     setLoading(true);
-    const poll = async () => {
+    return poll(async (live) => {
       try {
         const a = await fetchSessionTechnique(sessionId, lap);
-        if (!live) return;
+        if (!live()) return false;
         setAnswer(a);
         setError(null);
         setLoading(false);
-        if (working(a.status)) timer = setTimeout(poll, POLL_MS);
+        return working(a.status);
       } catch (e) {
-        if (!live) return;
+        if (!live()) return false;
         setError((e as Error).message);
         setLoading(false);
-        timer = setTimeout(poll, POLL_MS * 3);
+        return true;
       }
-    };
-    poll();
-    return () => {
-      live = false;
-      if (timer) clearTimeout(timer);
-    };
+    });
   }, [sessionId, lap, nonce]);
 
-  // the event: where to open (its quickest lap) and its other sessions to switch to, by day
-  const eventId = eventParam ?? answer?.event?.id ?? null;
+  // the event: where to open (its quickest lap) and its other sessions to switch to, by day. Its parts (the event's
+  // check, its sessions and its track map) are asked for at once, not after the session's check: the event comes
+  // with the link from a run, else from the run itself (a light read), until the check names it
+  const lookedUp = useSessionEvent(eventParam == null && answer == null ? sessionId : null);
+  const lastEvent = useRef<number | null>(null); // a session picked here is of the same event
+  const eventId = eventParam ?? answer?.event?.id ?? lookedUp ?? lastEvent.current;
+  if (eventId != null) lastEvent.current = eventId;
   const folder = useEventFolder(eventId ?? (answer ? null : undefined));
   const sessionSettled = sessionId == null || (answer != null && !working(answer.status));
+  // the lap's track map: the event's for a session of an event (as the check's `map` says), else the session's own
+  const mapPath = eventId != null ? `/events/${eventId}/map`
+    : sessionId != null && lookedUp === null ? `/sessions/${sessionId}/map` : null;
   useEffect(() => {
-    if (eventId == null || !sessionSettled) return;
-    let live = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const poll = async () => {
+    if (mapPath) prefetch(mapPath);
+  }, [mapPath]);
+  // the event's check, asked for at once. Opened at the event, it is asked again while it's worked out (its answer
+  // picks the session); opened at a session, the session's check (the same one) is what's asked again, and the
+  // event's once more when that is in
+  const eventLed = sessionId == null;
+  const evWorking = useRef(false);
+  const again = sessionSettled && evWorking.current;
+  useEffect(() => {
+    if (eventId == null) return;
+    return poll(async (live) => {
       try {
         const a = await fetchEventTechnique(eventId);
-        if (!live) return;
+        if (!live()) return false;
+        evWorking.current = working(a.status);
         setEv(a);
-        if (working(a.status)) timer = setTimeout(poll, POLL_MS);
-        else if (a.best) setSessionId((cur) => cur ?? a.best!.session_id);
+        if (working(a.status)) return eventLed;
+        if (a.best) setSessionId((cur) => cur ?? a.best!.session_id);
+        return false;
       } catch (e) {
-        if (live) setError((e as Error).message);
+        if (live()) setError((e as Error).message);
+        return false;
       }
-    };
-    poll();
-    return () => {
-      live = false;
-      if (timer) clearTimeout(timer);
-    };
-  }, [eventId, sessionSettled, nonce]);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventId, nonce, again]);
 
   const check = answer?.lap ?? null;
   useEffect(() => setSelected(check?.mistakes.length ? 1 : null), [check?.key]);

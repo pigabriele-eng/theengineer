@@ -38,7 +38,7 @@ import { driverState } from '@/lib/runDriver';
 import { PrepAvailability } from '@/lib/prep';
 import { fetchFinishes, Finishes } from '@/lib/finishes';
 import { fetchReport, Report } from '@/lib/report';
-import { face, Fonts, Space, themed, Type, useTheme } from '@/constants/Theme';
+import { face, Fonts, Space, TAP, themed, Type, useTheme } from '@/constants/Theme';
 
 // What the page knows about an event beyond the list: its runs by day, its report and the logger it was recorded on.
 type Detail = { folder?: Folder; report?: Report; logger?: string };
@@ -712,7 +712,8 @@ const useStyles = themed((c) => ({
   dayHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', borderTopWidth: 3,
     borderBottomWidth: 1, borderColor: c.rule, paddingTop: 7, paddingBottom: 6 },
   run: { borderBottomWidth: 1, borderColor: c.separator, paddingTop: 9, paddingBottom: 8 },
-  runLine: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  // the run's link: at least a 44 px tap target, a run without a lap too
+  runLine: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: TAP },
   // the driver line, under the run's name (past its number)
   runMore: { marginLeft: RUN_NO_W + 10 },
   runPicker: { marginTop: 10 },

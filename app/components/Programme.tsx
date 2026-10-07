@@ -23,6 +23,7 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 
 import { Text, View } from '@/components/Themed';
 import { Fonts, Focus, Photo, Space, TAP, tapRoom, themed, Type, useTheme, WIDE } from '@/constants/Theme';
+import { useKnownMode } from '@/lib/eventModes';
 import { noPrint, printFill, printHead } from '@/lib/print';
 
 /** True on a wide screen (desktop, tablet): pages take their multi-column layout. */
@@ -56,9 +57,10 @@ const NAV: { key: NavKey; label: string; href: Href }[] = [
   { key: 'tools', label: 'Tools', href: '/tools' },
 ];
 
-/** Which part of the app a page belongs to: its masthead link is underlined. */
-export function navOf(pathname: string): NavKey {
-  if (pathname.startsWith('/coaching')) return 'coaching';
+/** Which part of the app a page belongs to: its masthead link is underlined. An event's page is a coaching day's
+ * when `coaching` says so (the event's mode, lib/eventModes.ts). */
+export function navOf(pathname: string, coaching = false): NavKey {
+  if (pathname.startsWith('/coaching') || (coaching && pathname.startsWith('/event/'))) return 'coaching';
   if (pathname.startsWith('/drivers')) return 'drivers';
   if (pathname.startsWith('/upload')) return 'upload';
   if (pathname.startsWith('/tools') || pathname.startsWith('/garage') || pathname.startsWith('/seasons')) return 'tools';
@@ -72,7 +74,9 @@ export function Masthead() {
   const styles = useStyles();
   const wide = useWide();
   const insets = useSafeAreaInsets();
-  const on = navOf(usePathname());
+  const path = usePathname();
+  const event = /^\/event\/(\d+)/.exec(path);
+  const on = navOf(path, useKnownMode(event ? Number(event[1]) : null) === 'coaching');
   const nav = (
     <View style={wide ? styles.nav : styles.navPhone} accessibilityRole="tablist">
       {NAV.map((n) => (
