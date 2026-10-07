@@ -1,6 +1,6 @@
 // A race weekend while it is on (Gabriele, 2026-10-07: "during the race weekend the effort shifts to data
-// comparison"): the answers first, then the runs. Three things for each driver's next run, the latest run against the
-// event's best (where the time is, the traces), the debriefs of every run with a big button to record one for the
+// comparison"): the answers first, then the runs. Three things for each driver's next run, each official session's
+// report (FP1, Q1, R1), the latest run against the event's best (where the time is, the traces), the debriefs of every run with a big button to record one for the
 // latest, and setup changes to try for it. Then the event page's own sections (its runs by day, side by side, what it
 // was run with, its results, a run to add), passed in as children.
 import { Href, Link, useFocusEffect, useRouter } from 'expo-router';
@@ -12,6 +12,7 @@ import { CompareTraces, LineKey, useLapColors, WhereTheTimeIs } from '@/componen
 import { ErrorLine, MainButton, Note } from '@/components/Controls';
 import { Fig, Label, Section, TextLink, useWide } from '@/components/Programme';
 import { IdeasView } from '@/components/SetupIdeas';
+import SessionReports from '@/components/weekend/SessionReports';
 import { Text, View } from '@/components/Themed';
 import { CompareResult, compareLaps, encodePicks, formatLap, signedSeconds } from '@/lib/compare';
 import { dayLabel, eventsApi, Folder } from '@/lib/events';
@@ -41,15 +42,20 @@ export default function WeekendDuring({ eventId, folder: given, children }: {
   const drivers = useMemo(() => latestByDriver(folder), [folder]);
   const pair = useMemo(() => latestAgainstBest(folder), [folder]);
   const latest = useMemo(() => latestRun(folder), [folder]);
-  // 1 three things, 2 the latest run against the best (3 where the time is, 4 the traces), then debriefs and setup
-  const debriefsNo = pair ? 5 : 3;
+  // 1 three things, 2 the session reports, 3 the latest run against the best (4 where the time is, 5 the traces),
+  // then debriefs and setup (lib/weekendRuns.ts duringSections)
+  const debriefsNo = pair ? 6 : 4;
   return (
     <>
       <Section no={1} title="Three things for next run"
         dek="For each driver’s latest run: the costliest mistakes that repeat, each at a different corner, what to do instead and what it is worth a lap.">
         <ThreeThings eventId={eventId} drivers={drivers} />
       </Section>
-      <LatestAgainstBest no={2} pair={pair} />
+      <Section no={2} title="Session reports"
+        dek="One report per session of the weekend (FP1, Q1, the races), from every run of it.">
+        <SessionReports eventId={eventId} />
+      </Section>
+      <LatestAgainstBest no={3} pair={pair} />
       <Debriefs no={debriefsNo} eventId={eventId} folder={folder} />
       <Section no={debriefsNo + 1} title="Setup suggestions"
         dek={latest ? `For ${latest.name}: changes to try, from what the driver said and what the data show.` : undefined}>

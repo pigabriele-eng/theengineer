@@ -27,6 +27,7 @@ import { Text, View } from '@/components/Themed';
 import CoachingDay from '@/components/coaching/CoachingDay';
 import WeekendBefore from '@/components/weekend/Before';
 import WeekendDuring from '@/components/weekend/During';
+import SessionReports from '@/components/weekend/SessionReports';
 import EventReport from '@/components/report/EventReport';
 import { formatLap, prefetch } from '@/lib/api';
 import { todayIso, When, whenOf } from '@/lib/calendar';
@@ -218,7 +219,7 @@ export default function EventScreen() {
   // both make and that need only the event's number start (prefetch, lib/api.ts), so they don't wait for it too.
   useEffect(() => {
     if (!isEvent || asked != null || folder != null) return;
-    prefetch(`/events/${key}/info`, `/results/events/${key}`, `/events/${key}/debriefs`);
+    prefetch(`/events/${key}/info`, `/results/events/${key}`, `/events/${key}/debriefs`, `/reports/events/${key}/parts`);
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps -- once a visit, on opening
   const pickStage = (s: Stage) => router.setParams({ stage: s });
   // a coaching day opens on its own answers (components/coaching/CoachingDay.tsx): no Before, During and After
@@ -360,8 +361,16 @@ export default function EventScreen() {
   const dayStyle = cols === 'across' ? styles.dayAcross : cols === 'half' ? styles.dayHalf : wide ? styles.day : undefined;
 
   // During's own sections come first (lib/weekendRuns.ts duringSections), a coaching day's answers likewise
-  // (lib/coachingDay.ts COACHING_SECTIONS); Before is the prep report alone; After opens on the runs
+  // (lib/coachingDay.ts COACHING_SECTIONS); Before is the prep report alone; After opens on the session reports, then
+  // the runs
   let no = coaching ? COACHING_SECTIONS : during ? duringSections(folder) : 0;
+  // each official session's report (FP1, Q1, R1), at the top of After (in During, among its own sections)
+  const sessionReports = after && eventId != null && (
+    <Section no={++no} title="Session reports"
+      dek="One report per session of the weekend (FP1, Q1, the races), from every run of it; the whole weekend’s is below the runs.">
+      <SessionReports eventId={eventId} />
+    </Section>
+  );
   const runs = folder && showRuns && (
     <Section no={++no} title="Runs" dek={isEvent
       ? 'Day by day, each with its driver and best lap. Tick two to six, then Compare laps at the foot of the screen; tap a name to rename it, a best lap to open the run.'
@@ -493,6 +502,7 @@ export default function EventScreen() {
           </WeekendDuring>
         ) : after ? (
           <>
+            {sessionReports}
             {runs}
             {sideBySide}
             {report}
