@@ -219,7 +219,8 @@ const useStyles = themed((c) => ({
   labelFocus: { color: c.error },
   from: { fontFamily: Type.dek.fontFamily, fontSize: 14, lineHeight: 19, color: c.textSecondary },
 
-  input: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 22, paddingHorizontal: 0, paddingTop: 6, paddingBottom: 6,
+  // 44 px tall: a tap target
+  input: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 22, paddingHorizontal: 0, paddingTop: 10, paddingBottom: 10,
     borderBottomWidth: 2, borderColor: c.rule, backgroundColor: 'transparent', minWidth: 0, outlineWidth: 0 },
   inputBox: { borderWidth: 1, borderBottomWidth: 2, paddingHorizontal: 8 },
   inputLarge: { fontFamily: Fonts.display, fontSize: 30, lineHeight: 36, textTransform: 'uppercase' },

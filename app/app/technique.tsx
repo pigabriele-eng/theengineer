@@ -29,7 +29,7 @@ import {
   SessionTechnique,
   working,
 } from '@/lib/technique';
-import { deltaColor, face, Fonts, phaseColor, themed, Type, useTheme } from '@/constants/Theme';
+import { deltaColor, face, Fonts, inkOn, phaseColor, themed, Type, useTheme } from '@/constants/Theme';
 
 const POLL_MS = 2000;
 const SIDE_BY_SIDE = 900; // from this wide the charts are taller
@@ -556,7 +556,7 @@ function MistakeRow({ n, m, on, first, onPress }: { n: number; m: Mistake; on: b
       style={StyleSheet.flatten([styles.mistake, !first && styles.mistakeRule, on && styles.mistakeOn])}>
       <View style={styles.mistakeHead}>
         <View style={StyleSheet.flatten([styles.no, on && styles.noOn])}>
-          <Text style={styles.noText}>{n}</Text>
+          <Text style={StyleSheet.flatten([styles.noText, on && styles.noOnText])}>{n}</Text>
         </View>
         <View style={styles.flex}>
           <Text style={styles.mistakeTitle}>{m.title}</Text>
@@ -601,7 +601,7 @@ function ObviousRow({ m, first, on, onPress }: { m: ObviousMistake; first: boole
       style={StyleSheet.flatten([styles.mistake, !first && styles.mistakeRule, on && styles.mistakeOn])}>
       <View style={styles.mistakeHead}>
         <View style={StyleSheet.flatten([styles.no, styles.noOn])}>
-          <Text style={styles.noText}>!</Text>
+          <Text style={StyleSheet.flatten([styles.noText, styles.noOnText])}>!</Text>
         </View>
         <View style={styles.flex}>
           <Text style={styles.mistakeTitle}>{m.title}</Text>
@@ -792,6 +792,7 @@ const useStyles = themed((c) => ({
   mistakeHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
   no: { backgroundColor: c.rule, minWidth: 30, paddingHorizontal: 6, paddingTop: 4, paddingBottom: 3, alignItems: 'center' },
   noOn: { backgroundColor: c.mark },
+  noOnText: { color: inkOn(c.mark) }, // white on the red: 4.5:1
   noText: { fontFamily: Fonts.display, fontSize: 18, lineHeight: 21, color: c.background },
   mistakeTitle: { fontFamily: face('body', 600), fontSize: 19, lineHeight: 25, color: c.text },
   meta: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 4 },
