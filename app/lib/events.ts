@@ -94,9 +94,9 @@ export type EventFields = { name?: string; start?: string | null; end?: string |
 
 // What deleting an event with its runs removes (server/app/event_delete.py): its runs, their laps, their logs, every
 // stored file (logs, lap traces, technique checks, recordings) and the bytes they take in storage (null: unknown).
-export type EventSize = { event_id: number; name: string; runs: number; laps: number; logs: number; files: number;
+export type EventSize = { event_id: number | null; name: string; runs: number; laps: number; logs: number; files: number;
   bytes: number | null };
-export type EventDeleted = Omit<EventSize, 'event_id'> & { deleted: number; rows: Record<string, number> };
+export type EventDeleted = Omit<EventSize, 'event_id'> & { deleted: number | null; rows: Record<string, number> };
 
 export const eventsApi = {
   folders: () => call<FolderSummary[]>('/events/folders'),
@@ -105,9 +105,10 @@ export const eventsApi = {
     call<Folder>('/events/folders', send('POST', body)),
   update: (id: number, body: EventFields) => call<Folder>(`/events/${id}`, send('PATCH', body)),
   remove: (id: number) => call<{ deleted: number; sessions_kept: number[] }>(`/events/${id}`, { method: 'DELETE' }),
-  // the event with its runs, their logs and everything kept for them: for good
-  size: (id: number) => call<EventSize>(`/events/${id}/size`),
-  removeWithRuns: (id: number) => call<EventDeleted>(`/events/${id}?runs=delete`, { method: 'DELETE' }),
+  // the event with its runs, their logs and everything kept for them: for good. NO_EVENT: the runs in no event
+  size: (id: number | typeof NO_EVENT) => call<EventSize>(id === NO_EVENT ? '/loose-runs/size' : `/events/${id}/size`),
+  removeWithRuns: (id: number | typeof NO_EVENT) =>
+    call<EventDeleted>(id === NO_EVENT ? '/loose-runs' : `/events/${id}?runs=delete`, { method: 'DELETE' }),
   // move sessions into an event, or out of their events with NO_EVENT
   move: (key: string, sessionIds: number[]) =>
     call<Folder>(`/events/${key}/sessions`, send('POST', { session_ids: sessionIds })),

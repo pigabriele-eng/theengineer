@@ -1,11 +1,12 @@
 // Deleting an event, the same on its page and on the Sessions list: with its runs and their logs, for good (it frees
 // their storage), or only the folder (its runs stay, under Not in an event). What a full delete would remove is asked
-// first (server/app/event_delete.py), so the choice says how many runs and how much storage.
+// first (server/app/event_delete.py), so the choice says how many runs and how much storage. The runs in no event
+// ("Not in an event") are deleted the same way, all at once.
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 
 import { Text, View, useThemeColor } from '@/components/Themed';
-import { EventDeleted, EventSize, eventsApi, storageSize } from '@/lib/events';
+import { EventDeleted, EventSize, eventsApi, NO_EVENT, storageSize } from '@/lib/events';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -25,7 +26,7 @@ const subscribe = (l: () => void) => {
 
 /** The choice: delete the event with its runs and logs (danger), only the folder (quiet), or keep it. */
 export function DeleteEvent({ id, name, onDeleted, onCancel }: {
-  id: number;
+  id: number | typeof NO_EVENT;
   name: string;
   onDeleted: (how: 'runs' | 'folder') => void;
   onCancel: () => void;
@@ -50,7 +51,7 @@ export function DeleteEvent({ id, name, onDeleted, onCancel }: {
     setError(null);
     try {
       if (how === 'runs') setLastDeleted(await eventsApi.removeWithRuns(id));
-      else await eventsApi.remove(id);
+      else if (id !== NO_EVENT) await eventsApi.remove(id);
       onDeleted(how);
     } catch (e) {
       setError((e as Error).message);
@@ -60,9 +61,10 @@ export function DeleteEvent({ id, name, onDeleted, onCancel }: {
 
   const runs = size?.runs ?? 0;
   const frees = size?.bytes ? ` (frees ${storageSize(size.bytes)})` : '';
+  const loose = id === NO_EVENT;
   return (
     <View style={styles.box}>
-      <Text style={styles.title}>Delete &ldquo;{name}&rdquo;?</Text>
+      <Text style={styles.title}>{loose ? 'Delete the runs not in an event?' : <>Delete &ldquo;{name}&rdquo;?</>}</Text>
       {!size && !error && <ActivityIndicator style={styles.spinner} />}
       {size && runs > 0 && (
         <>
@@ -76,16 +78,22 @@ export function DeleteEvent({ id, name, onDeleted, onCancel }: {
           </Text>
           <Pressable onPress={() => remove('runs')} disabled={busy != null} accessibilityRole="button"
             style={StyleSheet.flatten([styles.button, styles.danger, busy != null && styles.dim])}>
-            <Text style={styles.dangerText}>Delete the event, its {plural(runs, 'run')} and their logs{frees}</Text>
+            <Text style={styles.dangerText}>
+              {loose ? `Delete these ${plural(runs, 'run')} and their logs${frees}`
+                : `Delete the event, its ${plural(runs, 'run')} and their logs${frees}`}
+            </Text>
           </Pressable>
-          <Pressable onPress={() => remove('folder')} disabled={busy != null} accessibilityRole="button"
-            style={StyleSheet.flatten([styles.button, styles.quiet, busy != null && styles.dim])}>
-            <Text style={styles.buttonText}>Only remove the folder, keep the runs</Text>
-            <Text style={styles.hint}>They stay, with their logs, under Not in an event.</Text>
-          </Pressable>
+          {!loose && (
+            <Pressable onPress={() => remove('folder')} disabled={busy != null} accessibilityRole="button"
+              style={StyleSheet.flatten([styles.button, styles.quiet, busy != null && styles.dim])}>
+              <Text style={styles.buttonText}>Only remove the folder, keep the runs</Text>
+              <Text style={styles.hint}>They stay, with their logs, under Not in an event.</Text>
+            </Pressable>
+          )}
         </>
       )}
-      {size && runs === 0 && (
+      {size && runs === 0 && loose && <Text style={styles.text}>There are no runs here.</Text>}
+      {size && runs === 0 && !loose && (
         <>
           <Text style={styles.text}>It has no runs: only the event goes.</Text>
           <Pressable onPress={() => remove('runs')} disabled={busy != null} accessibilityRole="button"
@@ -109,7 +117,11 @@ export function DeleteEvent({ id, name, onDeleted, onCancel }: {
 }
 
 /** "✕ Delete" on an event of the Sessions list; the choice opens under it. */
-export function DeleteEventAction({ id, name, onDeleted }: { id: number; name: string; onDeleted: () => void }) {
+export function DeleteEventAction({ id, name, onDeleted }: {
+  id: number | typeof NO_EVENT;
+  name: string;
+  onDeleted: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const tint = useThemeColor({}, 'tint');
   return (
@@ -138,8 +150,8 @@ export function DeletedNotice() {
   return (
     <View style={styles.notice}>
       <Text style={styles.noticeText}>
-        Deleted &ldquo;{d.name}&rdquo; with {plural(d.runs, 'run')} and {plural(d.files, 'stored file')}
-        {d.bytes ? `: ${storageSize(d.bytes)} freed` : ''}.
+        {d.deleted == null ? `Deleted the ${plural(d.runs, 'run')} not in an event` : <>Deleted &ldquo;{d.name}&rdquo; with {plural(d.runs, 'run')}</>}
+        {' '}and {plural(d.files, 'stored file')}{d.bytes ? `: ${storageSize(d.bytes)} freed` : ''}.
       </Text>
       <Pressable onPress={() => setLastDeleted(null)} hitSlop={8} accessibilityRole="button"
         accessibilityLabel="Dismiss">
