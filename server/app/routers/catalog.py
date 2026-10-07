@@ -1,6 +1,6 @@
 """Tracks, drivers, cars and events: the reference data sessions hang off."""
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -26,6 +26,9 @@ def set_corners(track_id: int, body: list[schemas.CornerIn], db: Session = Depen
     track = db.get(models.Track, track_id)
     if track is None:
         raise HTTPException(404, "Track not found")
+    for old in track.corners:  # debrief points on the old corners keep their corner's code, not a link to it
+        db.execute(update(models.DebriefPoint).where(models.DebriefPoint.corner_id == old.id)
+                   .values(corner_id=None, corner_code=func.coalesce(models.DebriefPoint.corner_code, old.code)))
     track.corners = [models.Corner(**c.model_dump()) for c in body]
     db.commit()
     db.refresh(track)

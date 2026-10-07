@@ -250,19 +250,22 @@ def _round_cands(db: Session, f: _Facts) -> list[_Cand]:
 
 
 def _known_number(db: Session, series: str, year: int, event_id: int) -> str | None:
-    """Our car's number in a series' season: as the results module has it for this event (or as set by hand on it),
-    else in our season of the same series and year, else as set by hand on another event's results of that year. Never
+    """Our car's number in a series' season: as set by hand on this event's results, else in our season of the same
+    series and year, else as the results module found it for this event from our logged laps, else as set by hand on
+    another event's results of that year. Never
     from another year: numbers change from season to season (Gabriele, 2026-10-07), so then our car is looked for on
     the round's entry list by our drivers (_numbers_of)."""
     link = db.scalar(select(rm.EventResultLink).where(rm.EventResultLink.event_id == event_id))
-    if link is not None and link.car_number and (link.series == series or link.by_hand):
+    if link is not None and link.car_number and link.by_hand:
         return link.car_number
     number = db.scalar(select(seasons.Season.car_number).where(seasons.Season.series == series,
                                                                seasons.Season.year == year,
                                                                seasons.Season.car_number.is_not(None))
                        .order_by(seasons.Season.id.desc()).limit(1))
-    if number:
+    if number:  # the season's number, set by the user, before one found from our logged laps
         return number
+    if link is not None and link.car_number and link.series == series:
+        return link.car_number
     return db.scalar(select(rm.EventResultLink.car_number).where(
         rm.EventResultLink.series == series, rm.EventResultLink.year == year, rm.EventResultLink.by_hand == 1,
         rm.EventResultLink.car_number.is_not(None)).order_by(rm.EventResultLink.updated_at.desc()).limit(1))

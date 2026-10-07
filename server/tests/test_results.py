@@ -265,3 +265,179 @@ def test_our_finishes_for_the_home_list(client, fake_site):
     assert body["qualifying"][str(done["id"])][0]["position"] == 2
     assert client.get("/results/finishes", params={"event_ids": str(other["id"])}).json()["events"] == {}
     assert client.get("/results/finishes", params={"event_ids": "x"}).status_code == 422
+
+
+def test_a_circuit_in_spain_is_not_spa():
+    assert venue_key("Circuit de Barcelona-Catalunya, Montmeló, Spain") == "barcelona"
+    assert venue_key("Circuit Ricardo Tormo, Valencia, Spain") == "valencia"
+    assert venue_key("Circuit de Spa-Francorchamps") == "spa" and venue_key("Hockenheimring") == "hockenheim"
+    assert venue_key("Lausitzring") == "lausitzring"
+
+
+def test_the_season_s_car_number_beats_one_found_from_logged_laps(client, fake_site):
+    from app.db import SessionLocal
+    from app.results import models as rm
+    from app.season_match import _known_number
+
+    fake_site.sync(years=[2026])
+    client.post("/tracks", json={"name": "Test Track"})
+    ev = client.post("/events/folders", json={"name": "Round 5"}).json()
+    _session(client, ev["id"], "Q", (0.97, 0.98), "19/09/2026", "11:30:00")
+    with SessionLocal() as db:  # an earlier open found #8 from our logged laps
+        db.add(rm.EventResultLink(event_id=ev["id"], series="gt4-europe", year=2026, round_id="75", car_number="8"))
+        db.commit()
+    r = client.post("/seasons", json={"name": "GT4 European Series 2026", "series": "gt4-europe", "year": 2026,
+                                      "car_number": "911", "rounds": []})
+    assert r.status_code in (200, 201), r.text
+    body = client.get(f"/results/events/{ev['id']}").json()
+    assert (body["car_number"], body["car_number_from"]) == ("911", "the season")
+    with SessionLocal() as db:
+        assert _known_number(db, "gt4-europe", 2026, ev["id"]) == "911"
+    body = client.put(f"/results/events/{ev['id']}/link", json={"car_number": "70"}).json()  # by hand beats both
+    assert (body["car_number"], body["car_number_from"]) == ("70", "set")
+    with SessionLocal() as db:
+        assert _known_number(db, "gt4-europe", 2026, ev["id"]) == "70"
+
+
+def test_setting_only_the_car_number_leaves_the_round_matched_automatically(client, fake_site):
+    from app.db import SessionLocal
+    from app.results import models as rm
+
+    fake_site.sync(years=[2026])
+    client.post("/tracks", json={"name": "Test Track"})
+    ev = client.post("/events/folders", json={"name": "Round 5"}).json()
+    _session(client, ev["id"], "Q", (0.97, 0.98), "19/09/2026", "11:30:00")
+    assert client.get(f"/results/events/{ev['id']}").json()["round"]["round_id"] == "75"  # matched by itself
+    body = client.put(f"/results/events/{ev['id']}/link", json={"car_number": "911"}).json()
+    assert body["round"]["round_id"] == "75" and body["car_number_from"] == "set"
+    with SessionLocal() as db:
+        link = db.query(rm.EventResultLink).filter_by(event_id=ev["id"]).one()
+        assert (link.by_hand, link.car_number, link.round_id) == (1, "911", None)  # the round isn't frozen
+    client.put(f"/results/events/{ev['id']}/link", json={"round_id": "75", "car_number": "911"})
+    client.put(f"/results/events/{ev['id']}/link", json={"car_number": "8"})
+    with SessionLocal() as db:  # a round set by hand stays set
+        assert db.query(rm.EventResultLink).filter_by(event_id=ev["id"]).one().round_id == "75"
+
+
+def test_one_round_the_site_fails_on_doesn_t_stop_the_others_and_long_text_is_cut(client, fake_site, monkeypatch):
+    import httpx
+
+    from app.db import SessionLocal
+    from app.results import models as rm
+    from app.results import resultlist
+
+    class TwoRounds(FakeSite):
+        @staticmethod
+        def rounds(client, season_id):
+            return [("74", "Broken"), ("75", "Test Track")]
+
+        @staticmethod
+        def round_sessions(client, season_id, round_id):
+            if round_id == "74":
+                raise httpx.ConnectError("timed out")
+            return FakeSite.round_sessions(client, season_id, round_id)
+
+    def parse(data, kind=None):
+        p = resultlist.parse_pages([data.decode()], kind)
+        p.title, p.fastest = "T" * 100, "F" * 100
+        p.rows[0].car_model, p.rows[0].status, p.rows[0].car_class = "M" * 100, "classified-x", "C" * 30
+        return p
+
+    monkeypatch.setitem(fake_site.ADAPTERS, "gt4-europe", TwoRounds)
+    monkeypatch.setattr(fake_site, "parse_pdf", parse)
+    fake_site.sync(years=[2026])
+    assert any("Broken" in e for e in fake_site.state.errors)
+    with SessionLocal() as db:
+        (s, _) = db.query(rm.ResultSession).order_by(rm.ResultSession.code).all()
+        assert (len(s.title), len(s.fastest)) == (60, 80)
+        row = s.rows[0]
+        assert (len(row.car_model), len(row.status), len(row.car_class)) == (80, 12, 20)
+
+
+def test_a_sheet_is_downloaded_before_the_heavy_lock_is_taken(fake_site):
+    from types import SimpleNamespace
+
+    from app import heavy
+    from app.results import resultlist
+
+    held = []
+
+    class Site:
+        @staticmethod
+        def fetch(client, url):
+            held.append(getattr(heavy.lock._held, "depth", 0))  # a slow download must not hold up log analysis
+            return QUALI.encode()
+
+    table = resultlist.parse_pages([RACE])
+    table.weather = {}
+    out = fake_site._with_weather(None, Site, SimpleNamespace(pdf_url="https://x/q1.pdf"), table)
+    assert held == [0] and out.weather["conditions_end"] == "Wet"
+
+
+def test_two_first_opens_of_an_event_at_once(client, fake_site, monkeypatch):
+    """The other open added the event's link between this one looking for it and saving: no error, its link is used."""
+    from app.db import SessionLocal
+    from app.results import models as rm
+    from app.routers import results
+
+    fake_site.sync(years=[2026])
+    client.post("/tracks", json={"name": "Test Track"})
+    ev = client.post("/events/folders", json={"name": "Round 5"}).json()
+    _session(client, ev["id"], "Q", (0.97, 0.98), "19/09/2026", "11:30:00")
+    with SessionLocal() as db:
+        db.add(rm.EventResultLink(event_id=ev["id"], series="gt4-europe", year=2026))
+        db.commit()
+    real, calls = results._link, []
+
+    def late(db, event_id):  # this open looked before the other one saved
+        calls.append(event_id)
+        return None if len(calls) <= 2 else real(db, event_id)
+
+    monkeypatch.setattr(results, "_link", late)
+    r = client.get(f"/results/events/{ev['id']}")
+    assert r.status_code == 200 and r.json()["round"]["round_id"] == "75"
+    with SessionLocal() as db:
+        (link,) = db.query(rm.EventResultLink).filter_by(event_id=ev["id"]).all()
+        assert link.round_id == "75"
+        assert db.query(rm.EventRound).filter_by(event_id=ev["id"]).one().round_id == "75"
+
+
+def test_the_list_of_rounds_counts_cars_in_one_query(client, fake_site):
+    from sqlalchemy import event
+
+    from app import db as app_db
+
+    fake_site.sync(years=[2026])
+    seen = []
+
+    def log(conn, cursor, statement, *args):
+        seen.append(statement)
+
+    event.listen(app_db.engine, "before_cursor_execute", log)
+    try:
+        rounds = client.get("/results/rounds").json()
+    finally:
+        event.remove(app_db.engine, "before_cursor_execute", log)
+    assert [s["cars"] for s in rounds[0]["sessions"]] == [4, 3]
+    assert sum("result_rows" in s for s in seen) == 1  # not one query per session
+
+
+def test_a_live_round_read_again_unchanged_is_left_as_it_is(client, fake_site, monkeypatch):
+    from app.db import SessionLocal
+    from app.prep.official import _loaded
+    from app.results import models as rm
+
+    def state():
+        with SessionLocal() as db:
+            return _loaded(db), sorted((s.code, s.fetched_at, tuple(r.id for r in s.rows))
+                                       for s in db.query(rm.ResultSession).all())
+
+    fake_site.sync(years=[2026])
+    before = state()
+    fake_site.sync(years=[2026], round_id="75", force=True)  # the refresh during the event: nothing new
+    assert len(FakeSite.calls) == 4 and state() == before  # the backtest's key (count, latest fetch) holds
+    monkeypatch.setattr(FakeSite, "fetch", staticmethod(lambda client, url: (
+        QUALI.replace("1:42.147", "1:42.000") if "q1" in url else RACE).encode()))
+    fake_site.sync(years=[2026], round_id="75", force=True)  # a corrected sheet
+    after = state()
+    assert after[0] != before[0] and after[1][0][1] > before[1][0][1] and after[1][1] == before[1][1]

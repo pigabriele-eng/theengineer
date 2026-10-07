@@ -422,3 +422,30 @@ def test_a_new_pair_is_asked_about_once_and_known_by_style_after(client):
     assert r.status_code == 200, r.text
     got = {s["session_id"]: s for s in client.get(f"/events/{second['event']}/driver-guess").json()["sessions"]}
     assert got[second[f"{side}3"]]["driver_id"] == other and got[second[f"{side}3"]]["auto"] is None
+
+
+def test_a_run_deleted_since_and_one_failing_event_don_t_stop_the_others(client, monkeypatch):
+    from app import driver_prints
+    from app.db import SessionLocal
+
+    anna = client.post("/garage/drivers", json={"name": "Anna"}).json()["id"]
+    evs = [client.post("/events/folders", json={"name": n}).json()["id"] for n in ("First", "Second")]
+    gone = ds.Guess(mode="groups", separation=None, groups=[ds.Group(driver_id=anna, source="fingerprint", laps=9)],
+                    sessions=[ds.SessionGuess(session_id=987654, group=0, share=1.0, laps=9)], labels=np.array([]))
+    monkeypatch.setattr(driver_prints, "guess_for", lambda *a, **k: gone)
+    with SessionLocal() as db:  # the print names a run that was deleted since
+        assert driver_prints.settle(db, evs[0], object(), {}) == 0
+        for ev in evs:
+            db.add(driver_prints.StylePrint(event_id=ev, signature="s", payload={}))
+        db.commit()
+        real, seen = driver_prints.settle, []
+
+        def settle(db, event_id, ep, learned):
+            seen.append(event_id)
+            if event_id == evs[0]:
+                raise RuntimeError("broken event")
+            return real(db, event_id, ep, learned)
+
+        monkeypatch.setattr(driver_prints, "settle", settle)
+        driver_prints.settle_all(db, {ev: ("s", []) for ev in evs})
+        assert seen == evs  # the second event is still settled
