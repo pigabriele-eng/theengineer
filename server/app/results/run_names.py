@@ -263,7 +263,7 @@ def _clashing(windows: dict[int, tuple[datetime, datetime]]) -> set[int]:
 
 
 def _by_driver(runs: list[models.RunSession], codes: dict[int, str], asks: dict[int, list[str]],
-               order: dict[int, datetime]) -> dict[int, str]:
+               order: dict[int, tuple]) -> dict[int, str]:
     """Qualifying runs the lap times can't tell apart (Q1 or Q2), told by who drove: the Q1 driver starts Race 1,
     so the run of the driver of Race 1's first stint is Q1 and a run of the other driver Q2."""
     open_q = [r for r in runs if r.id in asks and set(asks[r.id]) <= {"Q1", "Q2"} and r.driver_id]
@@ -293,13 +293,13 @@ def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | Non
     out["offset_h"] = h
     codes_in = {c for c, _, _ in table}
     codes: dict[int, str] = {}
-    order: dict[int, datetime] = {}
+    order: dict[int, tuple] = {}  # by the log's start, then by its first lap (runs split from one log)
     asks: dict[int, list[str]] = {}
     for r in runs:
         m = marks.get(r.id)
         # by when its first lap began: two runs split from one log (one per driver) keep their order
         first = min((lap.start_s for lap in r.laps), default=0.0)
-        order[r.id] = windows.get(r.id, (r.created_at.replace(tzinfo=None),))[0] + timedelta(seconds=first)
+        order[r.id] = (windows.get(r.id, (r.created_at.replace(tzinfo=None),))[0], first)
         if m is not None and m.answered and m.code:
             codes[r.id] = m.code
             continue
@@ -321,6 +321,14 @@ def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | Non
     for rid, code in _by_driver(runs, codes, asks, order).items():
         codes[rid] = code
         del asks[rid]
+    # paid tests numbered in the order they ran, whatever their folders' numbers: the earliest is PT1
+    tests: dict[str, list[int]] = {}
+    for r in runs:
+        if prefix(codes.get(r.id, "")) == "T" and not (marks.get(r.id) and marks[r.id].answered):
+            tests.setdefault(codes[r.id], []).append(r.id)
+    for i, (_, ids) in enumerate(sorted(tests.items(), key=lambda g: min(order[x] for x in g[1])), 1):
+        for rid in ids:
+            codes[rid] = f"T{i}"
     for r in runs:
         if r.id in asks:
             out["questions"].append({"session_id": r.id, "name": r.name,

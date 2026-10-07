@@ -93,9 +93,9 @@ def test_quali_runs_too_close_to_call_are_told_by_who_started_race_1():
     q_a, q_b = (models.RunSession(id=i, driver_id=d) for i, d in ((10, piana), (11, rackl)))
     r1_first, r1_second = models.RunSession(id=20, driver_id=rackl), models.RunSession(id=21, driver_id=piana)
     t = datetime(2026, 5, 30, 19, 26)
-    order = {10: t, 11: t, 20: t, 21: t + timedelta(minutes=30)}
+    order = {10: (t, 0), 11: (t, 0), 20: (t, 60), 21: (t, 1800)}
     got = run_names._by_driver([q_a, q_b, r1_first, r1_second], {20: "R1", 21: "R1"},
                                {10: ["Q2", "Q1"], 11: ["Q2", "Q1"]}, order)
     assert got == {10: "Q2", 11: "Q1"}
     # no driver known: still asked
-    assert run_names._by_driver([models.RunSession(id=10)], {}, {10: ["Q1", "Q2"]}, {10: t}) == {}
+    assert run_names._by_driver([models.RunSession(id=10)], {}, {10: ["Q1", "Q2"]}, {10: (t, 0)}) == {}
