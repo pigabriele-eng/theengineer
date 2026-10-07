@@ -21,6 +21,7 @@ import {
   CalendarState, calendarApi, countByWhen, defaultFilter, Filter, filtered, Plan, todayIso, When, whenOf,
 } from '@/lib/calendar';
 import { Country, countryOfAny } from '@/lib/countries';
+import { DAY_GAP, dayColumns } from '@/lib/dayColumns';
 import { Garage, garageApi, RunFields } from '@/lib/garage';
 import {
   dayLabel, eventsApi, Folder, FolderSession, FolderSummary, NO_EVENT,
@@ -404,9 +405,6 @@ function LooseRuns({ f, onChanged }: { f: FolderSummary; onChanged: () => void }
 
 // ---------- an open event's runs ----------
 
-const DAY_GAP = 24; // between the day columns of an open event
-const MIN_DAY = 230; // narrowest a day column gets before the days go two a row
-
 /** An event open on the page: its links, its runs by day (each with its best lap: a purple block for the event's
  * best, else a red bar for the gap to it, and its driver, or who the driving style says, with Change), and beside
  * them the best lap, clean laps, ideal lap (the lead event's, from its report; runs for the others) and the event's
@@ -467,10 +465,9 @@ function Feature({ f, detail, garage, onGarage, onChanged }: {
   // Three or four days of driving (Gabriele, 2026-10-07: "allow for 4 columns"): the days take the page's whole
   // width side by side and the figures go under them; a window too narrow for that many columns shows two a row
   const { width } = useWindowDimensions();
-  const nDays = folder?.days.length ?? 0;
-  const full = wide && nDays >= 3;
-  const across = Math.min(width, 1240) - 2 * Space.gutter;
-  const oneRow = !full || (across - (nDays - 1) * DAY_GAP) / nDays >= MIN_DAY;
+  const cols = dayColumns(folder?.days.length ?? 0, width, wide, Space.gutter);
+  const full = cols != null;
+  const oneRow = cols !== 'half';
   const dayStyle = full ? (oneRow ? styles.dayAcross : styles.dayHalf) : wide ? styles.day : undefined;
   let no = 0;
   let dated = 0;
