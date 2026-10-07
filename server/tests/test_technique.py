@@ -434,3 +434,31 @@ def test_braking_grip_left_unused_is_judged_against_the_best_braking_there():
     assert flagged == [5]  # only the lap giving away clearly more than the best braking there
     m = obvious[5][0]
     assert m["cost_s"] >= BRAKE_UNUSED_S and m["cost_s"] < 0.06 and "best braking" in m["what"]
+
+
+def test_a_check_kept_in_an_older_shape_is_worked_out_again_not_read(client):
+    """A result kept before the lap's time without its mistakes (no "format") is no answer: never a 500."""
+    import app.db
+    import app.models
+    from app.routers import technique
+
+    track = client.post("/tracks", json={"name": "Test ring", "corners": [
+        {"code": code, "apex_m": at, "sector": sector} for code, at, sector in CORNERS]}).json()
+    event = client.post("/events", json={"name": "Test day", "track_id": track["id"]}).json()
+    s = client.post("/sessions", json={"event_id": event["id"], "name": "Run 1"}).json()
+    client.post(f"/sessions/{s['id']}/files", files={"file": ("run.ld", write_ld(simulate(paces=(0.95, 0.96))[0]))})
+    assert _wait(client, f"/technique/sessions/{s['id']}")["status"] == "ready"
+    with app.db.SessionLocal() as db:  # as kept before: laps with a gap to the perfect lap, no format
+        row = technique._row(db, f"event:{event['id']}")
+        old = {k: v for k, v in row.result.items() if k != "format"}
+        old["laps"] = [{k: v for k, v in x.items() if k not in ("mistakes_s", "without_mistakes")} | {"gap": 1.0}
+                       for x in old["laps"]]
+        row.result = old
+        db.commit()
+    for url in (f"/technique/sessions/{s['id']}", f"/technique/events/{event['id']}"):
+        r = client.get(url)
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] in ("queued", "running")
+    body = _wait(client, f"/technique/sessions/{s['id']}")
+    assert body["status"] == "ready" and body["lap"]["without_mistakes"] <= body["lap"]["time"]
+    assert client.get(f"/technique/events/{event['id']}").json()["sessions"][0]["best"]["without_mistakes"]
