@@ -1,9 +1,12 @@
-import { Link, useFocusEffect, useNavigation, useRouter } from 'expo-router';
+import { Link, useFocusEffect, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 
 import { DeletedNotice, DeleteEventAction } from '@/components/DeleteEvent';
 import { CalendarLine, FilterBar, PlanForm, plannedLine, RemovePlanned } from '@/components/EventFilter';
+import {
+  DateBoard, FlagLook, flagLook, HeroBadge, HeroFrame, NamePlate, RowCode, RowRule, RowStripe, useStripeRoom,
+} from '@/components/FlagMarks';
 import { FoldHead, SubFoldHead } from '@/components/Fold';
 import { PrepButton, usePrepAvailability } from '@/components/PrepButton';
 import {
@@ -16,6 +19,7 @@ import { api, formatLap } from '@/lib/api';
 import {
   CalendarState, calendarApi, countByWhen, defaultFilter, Filter, filtered, Plan, todayIso, When, whenOf,
 } from '@/lib/calendar';
+import { Country, countryOfAny } from '@/lib/countries';
 import {
   dateRange, dayLabel, eventsApi, Folder, FolderSession, FolderSummary, NO_EVENT,
 } from '@/lib/events';
@@ -54,6 +58,7 @@ export default function SessionsScreen() {
   const router = useRouter();
   const navigation = useNavigation();
   const prep = usePrepAvailability(); // events whose track has past data: the Prep report button
+  const look = flagLook(useLocalSearchParams<{ flags?: string }>().flags); // TEMPORARY: the four ways to pick from
 
   const load = useCallback(() => {
     eventsApi.folders().then(
@@ -95,6 +100,8 @@ export default function SessionsScreen() {
     ?? filtered(all, 'past', today).find((f) => f.id != null && f.sessions > 0)
     ?? filtered(all, 'upcoming', today).find((f) => f.id != null) ?? null;
   const leadWhen = lead ? whenOf(lead, today) : null;
+  const countryOfEvent = (f: FolderSummary) => countryOfAny([f.track, f.id != null ? plans.get(f.id)?.venue : null, f.name]);
+  const leadCountry = lead ? countryOfEvent(lead) : null;
 
   // folded or open: what was tapped on this device, else the default
   const defaults = openByDefault(years, lead, Number(today.slice(0, 4)));
@@ -144,9 +151,14 @@ export default function SessionsScreen() {
 
   const top = lead ? (
     <>
-      <Hero photo={photoFor(lead.track)} tag={TAG[leadWhen!]} rest="Sessions" title={headlineOf(lead, leadDetail?.folder)}
-        deck={deckOf(lead, plans.get(lead.id!))} />
+      <HeroFrame look={look} country={leadCountry}>
+        <Hero photo={photoFor(lead.track)} tag={TAG[leadWhen!]} rest="Sessions" title={headlineOf(lead, leadDetail?.folder)}
+          deck={deckOf(lead, plans.get(lead.id!))} badgeAbove={look === 'd'}
+          badge={look ? <HeroBadge look={look} country={leadCountry}
+            board={lead.season?.round != null ? `R${lead.season.round}` : shortDates(lead.start, lead.end) ?? ''} /> : undefined} />
+      </HeroFrame>
       <Folio items={[
+        look === 'c' && leadCountry ? <><B>{leadCountry.code}</B> {leadCountry.name}</> : null,
         lead.track ? (
           <>{lead.track}{leadDetail?.report ? <> <B>{metres(leadDetail.report.length_m)}</B></> : null}</>
         ) : null,
@@ -228,6 +240,7 @@ export default function SessionsScreen() {
         <YearFold key={y.key} no={i + 1} y={y} isOpen={isOpen} toggle={toggle} today={today}>
           {(c) => c.events.map((f) => (
             <EventFold key={f.key} f={f} open={isOpen(eventKey(f))} onToggle={() => toggle(eventKey(f))}
+              look={look} country={countryOfEvent(f)}
               detail={details[f.key]} plan={f.id != null ? plans.get(f.id) : undefined}
               prep={f.id != null ? prep[String(f.id)] : undefined} onChanged={load} onRenamed={renamed(f.key)} />
           ))}
@@ -346,8 +359,10 @@ function shortDates(start: string | null, end: string | null) {
 /** An event: one line (its days, name, round, track, runs and best lap, or what is planned) that folds and opens with
  * a tap; open, its runs and links (an event with data) and its actions: Rename, Delete (Remove when planned) and the
  * Prep report. Renaming takes the line's place. */
-function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged }: {
+function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged, look, country }: {
   f: FolderSummary;
+  look: FlagLook | null; // TEMPORARY: how its country shows (components/FlagMarks.tsx), none without
+  country: Country | null;
   open: boolean;
   onToggle: () => void;
   detail?: Detail;
@@ -370,8 +385,14 @@ function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged
   const status = planned ? { text: past ? 'No data' : 'Planned', line: past ? c.textMuted : c.rule }
     : { text: `Best ${formatLap(f.best_lap_s)}`, line: c.rule };
   const dates = shortDates(f.start, f.end) ?? 'Days not set';
+  const room = useStripeRoom();
+  const itemStyle = look === 'a' ? StyleSheet.flatten([styles.item, { paddingLeft: room, position: 'relative' as const }])
+    : look === 'c' ? StyleSheet.flatten([styles.item, { paddingTop: 0 }]) : styles.item;
+  const dateText = <Text style={wide ? styles.itemDate : styles.itemDatePhone}>{dates}</Text>;
   return (
-    <View style={styles.item}>
+    <View style={itemStyle}>
+      {look === 'a' && <RowStripe country={country} />}
+      {look === 'c' && <RowRule country={country} />}
       {renaming ? (
         <RenameEvent id={id} initial={f.name} onCancel={() => setRenaming(false)}
           onSaved={(saved) => {
@@ -382,10 +403,24 @@ function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged
         <Pressable onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded: open }}
           accessibilityLabel={`${f.name}, ${dates}, ${meta}, ${status.text}`}
           accessibilityHint={open ? 'Folds the event' : 'Opens the event'} style={styles.itemHead}>
-          <View style={wide ? styles.itemLine : styles.itemLinePhone}>
-            <Text style={wide ? styles.itemDate : styles.itemDatePhone}>{dates}</Text>
+          <View style={StyleSheet.flatten([wide ? styles.itemLine : styles.itemLinePhone,
+            look === 'd' && wide && { alignItems: 'flex-start' as const }])}>
+            {look === 'd' ? (
+              <View style={wide ? styles.dateCol : undefined}><DateBoard country={country} dates={dates} /></View>
+            ) : look === 'c' && wide ? (
+              <View style={styles.dateCol}>{dateText}<RowCode country={country} /></View>
+            ) : look === 'c' ? (
+              <View style={styles.datePhoneLine}><RowCode country={country} />{dateText}</View>
+            ) : dateText}
             <View style={styles.itemWhat}>
-              <Text style={wide ? styles.itemName : styles.itemNamePhone}>{shortName(f)}</Text>
+              {look === 'b' ? (
+                <View style={wide ? styles.nameLine : styles.nameLinePhone}>
+                  <NamePlate country={country} />
+                  <Text style={StyleSheet.flatten([wide ? styles.itemName : styles.itemNamePhone, styles.nameShrink])}>
+                    {shortName(f)}
+                  </Text>
+                </View>
+              ) : <Text style={wide ? styles.itemName : styles.itemNamePhone}>{shortName(f)}</Text>}
               <Text style={styles.itemMeta}>{meta}</Text>
             </View>
             <Text style={StyleSheet.flatten([styles.status, { borderColor: status.line }])}>{status.text}</Text>
@@ -595,6 +630,12 @@ const useStyles = themed((c) => ({
   itemDate: { fontFamily: Fonts.display, fontSize: 34, lineHeight: 34, textTransform: 'uppercase', width: DATE_W, color: c.text },
   itemDatePhone: { ...Type.label, fontSize: 15, letterSpacing: 1.8, color: c.text },
   itemWhat: { flex: 1, minWidth: 0 },
+  // TEMPORARY: the country in the row (components/FlagMarks.tsx)
+  dateCol: { width: DATE_W },
+  datePhoneLine: { flexDirection: 'row', alignItems: 'baseline', gap: 12 },
+  nameLine: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  nameLinePhone: { flexDirection: 'row', alignItems: 'center', gap: 11 },
+  nameShrink: { flexShrink: 1 },
   itemName: { fontFamily: Fonts.display, fontSize: 30, lineHeight: 32, textTransform: 'uppercase', color: c.text },
   itemNamePhone: { fontFamily: Fonts.display, fontSize: 26, lineHeight: 28, textTransform: 'uppercase', color: c.text },
   itemMeta: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 22, color: c.textSecondary, marginTop: 4 },

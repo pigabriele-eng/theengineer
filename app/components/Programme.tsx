@@ -173,7 +173,7 @@ export function Credit({ photo, style, textStyle }: { photo: Photo; style?: View
 
 /** The full-bleed photo at the top of a page: the photo, a dark gradient only behind the headline, the credit in the top
  * right corner, then the kicker (a red tag and the rest, which can link back up), the huge headline and an italic deck. */
-export function Hero({ photo, tag, rest, restHref, title, deck, height, deckGap }: {
+export function Hero({ photo, tag, rest, restHref, title, deck, height, deckGap, badge, badgeAbove }: {
   photo: Photo;
   tag: string;
   rest?: string;
@@ -182,6 +182,8 @@ export function Hero({ photo, tag, rest, restHref, title, deck, height, deckGap 
   deck?: string;
   height?: number;
   deckGap?: number; // room between the headline and the deck: more under a name with an underscore (06_D2S1)
+  badge?: ReactNode; // set first in the kicker (or over it, with badgeAbove): the event's country on the home page
+  badgeAbove?: boolean;
 }) {
   const styles = useStyles();
   const { width } = useWindowDimensions();
@@ -212,7 +214,9 @@ export function Hero({ photo, tag, rest, restHref, title, deck, height, deckGap 
       <Credit photo={photo} style={StyleSheet.flatten([styles.credit, wide ? null : styles.creditPhone])}
         textStyle={styles.creditText} />
       <View style={StyleSheet.flatten([styles.copy, { left: gutter, right: gutter, bottom: wide ? 26 : 18 }])}>
+        {badge && badgeAbove ? <View style={styles.badgeAbove}>{badge}</View> : null}
         <View style={styles.kicker}>
+          {badge && !badgeAbove ? badge : null}
           <View style={styles.kickTag}><Text style={styles.kickTagText}>{tag}</Text></View>
           {rest && restHref ? (
             <Link href={restHref} asChild>
@@ -463,6 +467,7 @@ const useStyles = themed((c) => ({
   creditText: { fontFamily: Fonts.label, fontSize: 10, letterSpacing: 0.6, color: 'rgba(255,255,255,0.88)', textAlign: 'right' },
   copy: { position: 'absolute' },
   kicker: { flexDirection: 'row', alignItems: 'stretch', marginBottom: 12, flexWrap: 'wrap' },
+  badgeAbove: { flexDirection: 'row', marginBottom: 14 },
   kickTag: { backgroundColor: c.mark, paddingHorizontal: 9, paddingTop: 5, paddingBottom: 4, justifyContent: 'center' },
   kickTagText: { ...Type.label, fontSize: 12, letterSpacing: 1.7, color: '#ffffff' },
   kickRest: { borderWidth: 1, borderLeftWidth: 0, borderColor: 'rgba(247,244,236,0.85)', paddingHorizontal: 10, paddingTop: 5,
