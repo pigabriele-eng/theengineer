@@ -212,7 +212,8 @@ export default function EventScreen() {
     <View onLayout={(e) => (topH.current = e.nativeEvent.layout.height)}>
       <Hero photo={isEvent ? photoFor(folder.track) : PHOTOS.dusk} tag={isEvent ? TAG[whenOf(folder, todayIso())] : 'Unfiled'}
         rest="Weekend" restHref="/" title={headlineOf(folder, isEvent)} deck={deckOf(folder, isEvent)}
-        height={wide ? 380 : 400} badge={country ? <HeroCountry country={country} /> : undefined} />
+        // a lower photo than other pages: the weekend page is read for its answers, which start under it
+        height={wide ? 320 : 290} badge={country ? <HeroCountry country={country} /> : undefined} />
       <Folio items={isEvent ? [
         folder.track,
         dateRange(folder.start, folder.end),
