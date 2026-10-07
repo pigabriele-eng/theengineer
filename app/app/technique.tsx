@@ -663,8 +663,10 @@ function BudgetView({ check }: { check: LapCheck }) {
   const styles = useStyles();
   const wide = useWide();
   const b = check.budget;
+  const copied = b.in_targets ?? 0;
   const rows = [
     { label: 'Mistakes', value: b.mistakes },
+    ...(copied < 0 ? [{ label: 'In perfect lap', value: copied }] : []),
     { label: 'At the limit', value: b.at_limit },
     { label: 'Optimism', value: b.optimism },
     ...(b.pit_lane > 0 ? [{ label: 'Pit lane', value: b.pit_lane }] : []),
@@ -672,7 +674,10 @@ function BudgetView({ check }: { check: LapCheck }) {
   ];
   const words: { label: string; value: number; text: string }[] = [
     { label: 'Mistakes', value: b.mistakes,
-      text: `the ${check.mistakes.length} above, against the realistic target.` },
+      text: 'every mistake above, each at what it alone costs.' },
+    ...(copied < 0 ? [{ label: 'In perfect lap', value: copied,
+      text: 'perfect driving is built on the quickest laps, this one included, so it repeats part of these mistakes: ' +
+        'that part is no gap to it, though it is still time to find.' }] : []),
     { label: 'At the limit', value: b.at_limit,
       text: 'flat out, braking with the ABS working or driving out on the traction control, yet slower than perfect ' +
         'driving. The car on the day (tyres, tow, wind), not the pedals.' },

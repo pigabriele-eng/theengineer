@@ -110,3 +110,19 @@ def test_an_early_upshift_taken_out_of_the_lap_shifts_at_the_ideal_revs(model):
     assert 0.5 * (early["t"][n] - right["t"][n]) <= early["t"][n] - took <= 1.5 * (early["t"][n] - right["t"][n])
     # without the shift model nothing is put right
     assert without_mistakes(early, env, [Section("T1", 0, n, None)], [item]).tolist() == v.tolist()
+
+
+def test_perfect_driving_shifts_up_at_the_ideal_revs(model):
+    from app.analysis.laps import Section
+    from app.analysis.technique import ideal_shift_saving, with_ideal_shifts
+    early = straight({5: model.ideal[5] - 800, 6: model.ideal[6]})
+    right = straight({5: model.ideal[5], 6: model.ideal[6]})
+    n = len(early["speed"]) - 1
+    secs = [Section("T1", 0, n, 0)]
+    fixed = with_ideal_shifts(early, model, secs)
+    v = early["speed"]
+    assert fixed is not None and np.all(fixed >= v - 1e-9) and np.all(fixed <= right["speed"] + 0.5)
+    lost = early["t"][n] - right["t"][n]
+    assert 0.5 * lost <= ideal_shift_saving(early, fixed)[-1] <= 1.5 * lost
+    # shifted right already, or no shift points to tell: nothing to put right
+    assert with_ideal_shifts(right, model, secs) is None and with_ideal_shifts(early, None, secs) is None
