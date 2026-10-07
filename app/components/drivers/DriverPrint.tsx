@@ -14,7 +14,7 @@ import { Text, View } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
 import { Driver, driversApi } from '@/lib/drivers';
 import { DriverPrint, Trait } from '@/lib/fingerprints';
-import { themed } from '@/constants/Theme';
+import { TAP, themed } from '@/constants/Theme';
 
 /** One driver: their style in words, what it means for lap time, the events it was learned from with the pace
  * against teammates, and where the fingerprint found them without a tag. */
@@ -167,7 +167,7 @@ function EventName({ id, name, date }: { id: number; name: string | null; date?:
   const t = useText();
   return (
     <Link href={{ pathname: '/event/[id]', params: { id: String(id) } }} asChild>
-      <Pressable accessibilityRole="link" hitSlop={4} style={styles.flex}>
+      <Pressable accessibilityRole="link" style={styles.event}>
         <Text style={t.body}>
           <Text style={t.strong}>{name ?? `Event ${id}`}</Text>{date ? `  ${date}` : ''}
         </Text>
@@ -181,13 +181,13 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const useStyles = themed((c) => ({
   block: { gap: 26 },
   list: { gap: 12 },
-  flex: { flex: 1, minWidth: 0 },
+  event: { flex: 1, minWidth: 0, minHeight: TAP, justifyContent: 'center' }, // a link a finger finds
   row: { flexDirection: 'row', alignItems: 'baseline', gap: 16, flexWrap: 'wrap' },
   rowPhone: { gap: 4 },
   figs: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, rowGap: 2 },
   trait: { gap: 3, borderLeftWidth: 3, borderColor: c.rule, paddingLeft: 12 },
   traitHead: { flexDirection: 'row', gap: 12, alignItems: 'baseline', flexWrap: 'wrap' },
   advice: { gap: 3 },
-  gain: { color: c.mark },
+  gain: { color: c.error }, // the red that reads as words (mark, for rules and underlines, is 4.3:1 on the paper)
   name: { width: '100%', gap: 12, borderLeftWidth: 3, borderColor: c.mark, paddingLeft: 12, marginTop: 4 },
 }));
