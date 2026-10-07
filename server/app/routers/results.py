@@ -72,8 +72,12 @@ def rounds(year: int | None = None, series: str = sync.DEFAULT_SERIES, db: Sessi
          .options(selectinload(rm.ResultRound.sessions)).order_by(rm.ResultRound.year, rm.ResultRound.order))
     if year is not None:
         q = q.where(rm.ResultRound.year == year)
+    found = db.scalars(q).all()
+    ids = [s.id for r in found for s in r.sessions]
+    cars = dict(db.execute(select(rm.ResultRow.session_pk, func.count(rm.ResultRow.id))
+                           .where(rm.ResultRow.session_pk.in_(ids)).group_by(rm.ResultRow.session_pk)).all())
     return [{"year": r.year, "round": r.order, "round_id": r.round_id, "name": r.name, "venue": r.venue,
-             "sessions": [summary.session_dict(s) for s in r.sessions]} for r in db.scalars(q).all()]
+             "sessions": [summary.session_dict(s, cars=cars.get(s.id, 0)) for s in r.sessions]} for r in found]
 
 
 @router.get("/sessions/{result_session_id}")

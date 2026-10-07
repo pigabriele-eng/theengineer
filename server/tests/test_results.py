@@ -400,3 +400,23 @@ def test_two_first_opens_of_an_event_at_once(client, fake_site, monkeypatch):
         (link,) = db.query(rm.EventResultLink).filter_by(event_id=ev["id"]).all()
         assert link.round_id == "75"
         assert db.query(rm.EventRound).filter_by(event_id=ev["id"]).one().round_id == "75"
+
+
+def test_the_list_of_rounds_counts_cars_in_one_query(client, fake_site):
+    from sqlalchemy import event
+
+    from app import db as app_db
+
+    fake_site.sync(years=[2026])
+    seen = []
+
+    def log(conn, cursor, statement, *args):
+        seen.append(statement)
+
+    event.listen(app_db.engine, "before_cursor_execute", log)
+    try:
+        rounds = client.get("/results/rounds").json()
+    finally:
+        event.remove(app_db.engine, "before_cursor_execute", log)
+    assert [s["cars"] for s in rounds[0]["sessions"]] == [4, 3]
+    assert sum("result_rows" in s for s in seen) == 1  # not one query per session

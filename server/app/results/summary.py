@@ -42,10 +42,12 @@ def row_dict(r: rm.ResultRow) -> dict:
             "diff_s": r.diff_s}
 
 
-def session_dict(s: rm.ResultSession, rows: bool = False) -> dict:
+def session_dict(s: rm.ResultSession, rows: bool = False, cars: int | None = None) -> dict:
+    """cars: the number of cars when already counted (a list of many sessions), else counted from its rows."""
     out = {"id": s.id, "code": s.code, "title": s.title, "kind": s.kind, "starts_at": s.starts_at,
            "weather": s.weather or {}, "fastest": s.fastest, "source_url": s.source_url,
-           "cars": len(s.rows), "fetched_at": s.fetched_at.isoformat() if s.fetched_at else None}
+           "cars": len(s.rows) if cars is None else cars,
+           "fetched_at": s.fetched_at.isoformat() if s.fetched_at else None}
     if rows:
         out["rows"] = [row_dict(r) for r in s.rows]
     return out
