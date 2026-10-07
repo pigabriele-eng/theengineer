@@ -1,16 +1,19 @@
 import { Href, Link } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet } from 'react-native';
+import { Pressable, StyleSheet } from 'react-native';
 
 import { AppearancePicker } from '@/components/AppearancePicker';
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { Colophon, Page, Section, TextLink, useWide } from '@/components/Programme';
+import { Text, View } from '@/components/Themed';
+import { Opening } from '@/components/ToolForm';
 import { authEnabled, signOut, useAuthSession } from '@/lib/auth';
-import { themed, Type } from '@/constants/Theme';
+import { Fonts, themed, Type } from '@/constants/Theme';
 
 type Tool = { href: Href; title: string; blurb: string };
 
-const GROUPS: { name: string; tools: Tool[] }[] = [
+const GROUPS: { name: string; dek: string; tools: Tool[] }[] = [
   {
     name: 'Tyres',
+    dek: 'What to set cold, what the temperatures across the tread say, and where the grip is.',
     tools: [
       {
         href: '/tools/pressures',
@@ -33,6 +36,7 @@ const GROUPS: { name: string; tools: Tool[] }[] = [
   },
   {
     name: 'Setup',
+    dek: 'A sheet per run, and what each change did.',
     tools: [
       {
         href: '/tools/setup',
@@ -43,6 +47,7 @@ const GROUPS: { name: string; tools: Tool[] }[] = [
   },
   {
     name: 'Car',
+    dek: 'The cars, who drives them, and how they behave on their springs.',
     tools: [
       {
         href: '/garage',
@@ -58,6 +63,7 @@ const GROUPS: { name: string; tools: Tool[] }[] = [
   },
   {
     name: 'Events',
+    dek: 'The season and the weekends to come.',
     tools: [
       {
         href: '/tools/calendar',
@@ -75,6 +81,7 @@ const GROUPS: { name: string; tools: Tool[] }[] = [
   },
   {
     name: 'Logger data',
+    dek: 'A stint read from the logger’s own export.',
     tools: [
       {
         href: '/tools/stint',
@@ -85,60 +92,81 @@ const GROUPS: { name: string; tools: Tool[] }[] = [
   },
 ];
 
+/** The Tools page: the engineering tools in numbered sections, one ruled line each (its name, what it does, the way
+ * in), then the appearance and the account. */
 export default function ToolsScreen() {
-  const styles = useStyles();
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      {GROUPS.map((g) => (
-        <View key={g.name} style={styles.group}>
-          <Text style={styles.groupName}>{g.name}</Text>
-          {g.tools.map((t) => (
-            <Link key={t.title} href={t.href} asChild>
-              <Pressable style={styles.row}>
-                <View style={styles.rowText}>
-                  <Text style={styles.title}>{t.title}</Text>
-                  <Text style={styles.blurb}>{t.blurb}</Text>
-                </View>
-                <Text style={styles.chevron}>›</Text>
-              </Pressable>
-            </Link>
-          ))}
-        </View>
+    <Page>
+      <Opening title="Tools"
+        dek="The engineer’s bench: tyre pressures and temperatures, the tyre model, the setup sheet and the vehicle model, and where the cars, seasons and calendar are kept." />
+      {GROUPS.map((g, i) => (
+        <Section key={g.name} no={i + 1} title={g.name} dek={g.dek}>
+          <View>
+            {g.tools.map((t, k) => <ToolLine key={t.title} tool={t} first={k === 0} />)}
+          </View>
+        </Section>
       ))}
-      <AppearancePicker />
-      {authEnabled && <Account />}
-    </ScrollView>
+      <AppearancePicker no={GROUPS.length + 1} />
+      {authEnabled && <Account no={GROUPS.length + 2} />}
+      <Colophon left="The Engineer · Tools" links={[
+        { label: 'Sessions', href: '/' },
+        { label: 'Garage', href: '/garage' },
+        { label: 'Seasons', href: '/seasons' },
+      ]} />
+    </Page>
   );
 }
 
-function Account() {
+/** One tool: its name large, what it does, and an arrow; the whole line opens it. */
+function ToolLine({ tool, first }: { tool: Tool; first: boolean }) {
+  const styles = useStyles();
+  const wide = useWide();
+  return (
+    // Link asChild hands its child's style to a web anchor, which can't take a style array: one object
+    <Link href={tool.href} asChild>
+      <Pressable accessibilityRole="link" accessibilityLabel={`${tool.title}: ${tool.blurb}`}
+        style={StyleSheet.flatten([wide ? styles.line : styles.linePhone, first && styles.lineFirst])}>
+        <Text style={wide ? styles.name : styles.namePhone}>{tool.title}</Text>
+        <Text style={wide ? styles.blurb : styles.blurbPhone}>{tool.blurb}</Text>
+        <Text style={wide ? styles.arrow : styles.arrowPhone}>Open →</Text>
+      </Pressable>
+    </Link>
+  );
+}
+
+function Account({ no }: { no: number }) {
   const styles = useStyles();
   const { session } = useAuthSession();
-  const tint = useThemeColor({}, 'tint');
   return (
-    <View style={styles.group}>
-      <Text style={styles.groupName}>Account</Text>
-      <View style={styles.row}>
-        <View style={styles.rowText}>
-          <Text style={styles.title}>Signed in</Text>
-          <Text style={styles.blurb}>{session?.user.email}</Text>
+    <Section no={no} title="Account" dek="Who this device is signed in as.">
+      <View style={styles.account}>
+        <View style={styles.accountWho}>
+          <Text style={styles.signedIn}>Signed in</Text>
+          <Text style={styles.email}>{session?.user.email}</Text>
         </View>
-        <Pressable onPress={() => signOut()} accessibilityRole="button" hitSlop={8}>
-          <Text style={[styles.signOut, { color: tint }]}>Sign out</Text>
-        </Pressable>
+        <TextLink onPress={() => signOut()} label="Sign out" red />
       </View>
-    </View>
+    </Section>
   );
 }
 
+const NAME_W = 300;
+
 const useStyles = themed((c) => ({
-  container: { padding: 16, gap: 20 },
-  group: { gap: 4 },
-  groupName: Type.label,
-  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderColor: c.separator },
-  rowText: { flex: 1, backgroundColor: 'transparent', gap: 2 },
-  title: { fontSize: 16, fontWeight: '600' },
-  blurb: { opacity: 0.6, lineHeight: 19 },
-  chevron: { fontSize: 24, opacity: 0.4, paddingLeft: 8 },
-  signOut: { fontSize: 16, fontWeight: '600', paddingLeft: 8 },
+  line: { flexDirection: 'row', alignItems: 'baseline', gap: 26, borderBottomWidth: 1, borderColor: c.rule, paddingTop: 15,
+    paddingBottom: 14 },
+  linePhone: { flexDirection: 'column', gap: 6, borderBottomWidth: 1, borderColor: c.rule, paddingTop: 13, paddingBottom: 12 },
+  lineFirst: { borderTopWidth: 1 },
+  name: { fontFamily: Fonts.display, fontSize: 30, lineHeight: 32, textTransform: 'uppercase', width: NAME_W, color: c.text },
+  namePhone: { fontFamily: Fonts.display, fontSize: 26, lineHeight: 28, textTransform: 'uppercase', color: c.text },
+  blurb: { flex: 1, fontFamily: Fonts.body, fontSize: 16, lineHeight: 23, color: c.textSecondary },
+  blurbPhone: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 22, color: c.textSecondary },
+  arrow: { ...Type.link, fontSize: 13, color: c.text, borderBottomWidth: 2, borderColor: c.rule, paddingBottom: 1 },
+  arrowPhone: { ...Type.link, fontSize: 12, alignSelf: 'flex-start', color: c.text, borderBottomWidth: 2, borderColor: c.rule,
+    paddingBottom: 1, marginTop: 4 },
+  account: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 16,
+    borderTopWidth: 1, borderBottomWidth: 1, borderColor: c.rule, paddingVertical: 14 },
+  accountWho: { flexShrink: 1 },
+  signedIn: { ...Type.label, color: c.textSecondary },
+  email: { fontFamily: Fonts.label, fontSize: 18, color: c.text, marginTop: 4 },
 }));

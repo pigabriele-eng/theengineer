@@ -123,7 +123,7 @@ export default function SeasonsScreen() {
   return (
     <Page scrollRef={scroll}>
       <Stack.Screen options={{ title: 'Seasons' }} />
-      <PageTitle kicker="Sessions" title="Seasons"
+      <PageTitle title="Seasons"
         dek="Make a season for the year: its rounds become planned events under Upcoming, with their dates and venue, and each round’s event takes its tyre, car, team and drivers from the season unless you set them on the event." />
       <View style={styles.top}>
         {error && <ErrorLine>{error}</ErrorLine>}
