@@ -37,8 +37,19 @@ services:
     name: theengineer-web
     runtime: static
     rootDir: app
-    buildCommand: npm ci && npx expo export --platform web --output-dir dist
+    # web-preload: the fonts are fetched beside the app's script, not after it (scripts/web-preload.mjs)
+    buildCommand: npm ci && npx expo export --platform web --output-dir dist && node scripts/web-preload.mjs dist
     staticPublishPath: dist
+    # The script, fonts and photos carry a hash of their content in their names (a new version gets a new name), so
+    # the browser keeps them for a year without asking again. The pages themselves (index.html) keep Render's default,
+    # so a deploy shows at the next visit.
+    headers:
+      - path: /_expo/static/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
     routes:
       - type: rewrite
         source: /*

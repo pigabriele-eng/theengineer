@@ -38,3 +38,4 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npx expo export --platform web --output-dir dist
+      - run: node scripts/web-preload.mjs dist

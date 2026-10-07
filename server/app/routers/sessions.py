@@ -266,14 +266,41 @@ def session_analysis(session_id: int, file_id: int | None = None, reference_lap:
 
 
 @router.get("/{session_id}/compare")
-@one_at_a_time
 def session_compare(session_id: int, lap: int, reference_lap: int | None = None, file_id: int | None = None,
                     step: float = 5.0, db: Session = Depends(get_db)):
     """Speed, throttle, brake and time delta of one lap against the reference lap, for charts, with the
-    reference lap's corners numbered as in the analysis."""
-    f, data, track = load_main_file(db, _get(db, session_id), file_id)
-    try:
-        return {"file_id": f.id, **compare_laps(data, lap, reference_lap, max(1.0, min(step, 50.0)),
-                                                official_corners(track))}
-    except ValueError as e:
-        raise HTTPException(404, str(e)) from e
+    reference lap's corners numbered as in the analysis. The session page's views (a lap of its main log against
+    its best lap) are kept once worked out (app/page_cache.py), one per lap."""
+    s = _get(db, session_id)
+    step = max(1.0, min(step, 50.0))
+
+    def work() -> dict:
+        f, data, track = load_main_file(db, s, file_id)
+        try:
+            return {"file_id": f.id, **compare_laps(data, lap, reference_lap, step, official_corners(track))}
+        except ValueError as e:
+            raise HTTPException(404, str(e)) from e
+
+    main = page_cache.main_file(s)
+    if main is None or file_id not in (None, main.id) or step != 5.0 \
+            or reference_lap not in (None, default_reference_lap(s, main)) \
+            or lap not in {l.number for l in s.laps if l.file_id == main.id}:
+        with heavy.lock:  # another view: worked out each time, as before
+            return work()
+    return page_cache.cached(db, f"session:{s.id}|compare|{lap}|{reference_lap}",
+                             lambda: page_cache.session_signature(db, "compare", s, main), work)
+
+
+def default_reference_lap(s: models.RunSession, f: models.LoggerFile) -> int | None:
+    """The lap the analysis compares against by default, from the laps as stored: the log's fastest clean lap."""
+    clean = [l for l in s.laps if l.file_id == f.id and l.clean]
+    return min(clean, key=lambda l: l.time_s).number if clean else None
+
+
+def default_compare(s: models.RunSession) -> tuple[int, int] | None:
+    """The pair the session page opens its lap comparison on: the next-fastest clean lap of the main log against the
+    fastest (components/LapCompare.tsx)."""
+    f = page_cache.main_file(s)
+    ref = default_reference_lap(s, f) if f is not None else None
+    others = [l for l in s.laps if l.file_id == f.id and l.clean and l.number != ref] if ref is not None else []
+    return (min(others, key=lambda l: l.time_s).number, ref) if others else None

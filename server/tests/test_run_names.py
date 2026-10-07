@@ -29,7 +29,7 @@ def test_the_timetable_and_a_logger_clock_an_hour_out():
     q = datetime(2026, 9, 19, 11, 25)
     assert run_names._verdict(run_names._shares((q, q + timedelta(minutes=30)), table, timedelta())) == \
         (None, ["Q2", "Q1"])
-    assert run_names.label("R2") == "Race 2" and run_names.label("T3") == "PT3" and run_names.label("FP1") == "FP1"
+    assert run_names.label("R2") == "R2" and run_names.label("T3") == "PT3" and run_names.label("FP1") == "FP1"
 
 
 def test_runs_are_named_and_a_name_typed_by_hand_stays(client, fake_site):  # noqa: F811
@@ -42,10 +42,10 @@ def test_runs_are_named_and_a_name_typed_by_hand_stays(client, fake_site):  # no
     r2 = _session(client, ev["id"], "04_R1", (0.99, 1.0), "19/09/2026", "17:50:00")
     client.patch(f"/sessions/{r2}", json={"name": "My stint"})
     body = client.get(f"/results/events/{ev['id']}/run-names").json()
-    assert {n["session_id"]: n["name"] for n in body["named"]} == {q: "Q1", r1: "Race 1 stint 1"}
+    assert {n["session_id"]: n["name"] for n in body["named"]} == {q: "Q1", r1: "R1 stint 1"}
     names = {s["id"]: (s["name"], s["kind"]) for d in client.get(f"/events/{ev['id']}").json()["days"]
              for s in d["sessions"]}
-    assert names[q] == ("Q1", "qualifying") and names[r1] == ("Race 1 stint 1", "race") and names[r2][0] == "My stint"
+    assert names[q] == ("Q1", "qualifying") and names[r1] == ("R1 stint 1", "race") and names[r2][0] == "My stint"
     # a tap answers a question: this run was in none of them
     assert client.post(f"/results/run-names/{r1}", json={"code": None}).status_code == 200
     assert client.post(f"/results/run-names/{r1}", json={"code": "X9"}).status_code == 422
@@ -68,7 +68,8 @@ def test_what_the_folders_and_the_logger_say():
     mark = rm.RunNameMark(auto_name="FP2 run 1")
     assert run_names.hint(_run("FP2 run 1", "FP"), mark) == ("practice", None)
     assert [run_names.run_name("T2", 1, 1), run_names.run_name("FP1", 2, 4), run_names.run_name("Q1", 1, 1),
-            run_names.run_name("R2", 1, 2)] == ["PT2 stint 1", "FP1 stint 2", "Q1", "Race 2 stint 1"]
+            run_names.run_name("R2", 1, 2), run_names.run_name("R1", 1, 1)] == \
+        ["PT2 stint 1", "FP1 stint 2", "Q1", "R2 stint 1", "R1 stint 1"]  # a race stint alone too (a DNF)
 
 
 def test_logs_saved_after_the_session_go_to_the_last_one_of_their_kind():
@@ -92,9 +93,9 @@ def test_quali_runs_too_close_to_call_are_told_by_who_started_race_1():
     q_a, q_b = (models.RunSession(id=i, driver_id=d) for i, d in ((10, piana), (11, rackl)))
     r1_first, r1_second = models.RunSession(id=20, driver_id=rackl), models.RunSession(id=21, driver_id=piana)
     t = datetime(2026, 5, 30, 19, 26)
-    order = {10: t, 11: t, 20: t, 21: t + timedelta(minutes=30)}
+    order = {10: (t, 0), 11: (t, 0), 20: (t, 60), 21: (t, 1800)}
     got = run_names._by_driver([q_a, q_b, r1_first, r1_second], {20: "R1", 21: "R1"},
                                {10: ["Q2", "Q1"], 11: ["Q2", "Q1"]}, order)
     assert got == {10: "Q2", 11: "Q1"}
     # no driver known: still asked
-    assert run_names._by_driver([models.RunSession(id=10)], {}, {10: ["Q1", "Q2"]}, {10: t}) == {}
+    assert run_names._by_driver([models.RunSession(id=10)], {}, {10: ["Q1", "Q2"]}, {10: (t, 0)}) == {}
