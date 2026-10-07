@@ -372,3 +372,31 @@ def test_a_sheet_is_downloaded_before_the_heavy_lock_is_taken(fake_site):
     table.weather = {}
     out = fake_site._with_weather(None, Site, SimpleNamespace(pdf_url="https://x/q1.pdf"), table)
     assert held == [0] and out.weather["conditions_end"] == "Wet"
+
+
+def test_two_first_opens_of_an_event_at_once(client, fake_site, monkeypatch):
+    """The other open added the event's link between this one looking for it and saving: no error, its link is used."""
+    from app.db import SessionLocal
+    from app.results import models as rm
+    from app.routers import results
+
+    fake_site.sync(years=[2026])
+    client.post("/tracks", json={"name": "Test Track"})
+    ev = client.post("/events/folders", json={"name": "Round 5"}).json()
+    _session(client, ev["id"], "Q", (0.97, 0.98), "19/09/2026", "11:30:00")
+    with SessionLocal() as db:
+        db.add(rm.EventResultLink(event_id=ev["id"], series="gt4-europe", year=2026))
+        db.commit()
+    real, calls = results._link, []
+
+    def late(db, event_id):  # this open looked before the other one saved
+        calls.append(event_id)
+        return None if len(calls) <= 2 else real(db, event_id)
+
+    monkeypatch.setattr(results, "_link", late)
+    r = client.get(f"/results/events/{ev['id']}")
+    assert r.status_code == 200 and r.json()["round"]["round_id"] == "75"
+    with SessionLocal() as db:
+        (link,) = db.query(rm.EventResultLink).filter_by(event_id=ev["id"]).all()
+        assert link.round_id == "75"
+        assert db.query(rm.EventRound).filter_by(event_id=ev["id"]).one().round_id == "75"

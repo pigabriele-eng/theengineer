@@ -18,6 +18,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app import models, plans
@@ -166,6 +167,32 @@ def _link(db: Session, event_id: int) -> rm.EventResultLink | None:
     return db.scalar(select(rm.EventResultLink).where(rm.EventResultLink.event_id == event_id))
 
 
+def _keep_match(db: Session, event_id: int, series: str, year: int, round_id: str, number: str | None) -> None:
+    """The round and car the overview matched, kept on the event's link (unless set by hand) and its EventRound.
+    Two first opens of an event at once both add them: the second finds the first's rows and updates those."""
+    for attempt in range(2):
+        try:
+            link = _link(db, event_id)
+            if link is None:
+                db.add(rm.EventResultLink(event_id=event_id, series=series, year=year, round_id=round_id,
+                                          car_number=number))
+            elif not link.by_hand:
+                link.series, link.year, link.round_id, link.car_number = series, year, round_id, number
+            elif link.series != series:  # a car number set by hand on an event first matched to another series:
+                link.series, link.year, link.round_id = series, year, None  # its round stays matched automatically
+            seen = db.scalar(select(rm.EventRound).where(rm.EventRound.event_id == event_id))
+            if seen is None:
+                seen = rm.EventRound(event_id=event_id)
+                db.add(seen)
+            seen.series, seen.year, seen.round_id, seen.car_number = series, year, round_id, number
+            db.commit()
+            return
+        except IntegrityError:
+            db.rollback()
+            if attempt:
+                raise
+
+
 def event_overview(db: Session, ev: models.Event) -> dict:
     facts = _event_facts(db, ev)
     link = _link(db, ev.id)
@@ -203,19 +230,7 @@ def event_overview(db: Session, ev: models.Event) -> dict:
             number = None
         out["car_number_from"] = f"logged laps ({matches} matching)" if number else None
     out["car_number"] = number
-    if link is None:
-        db.add(rm.EventResultLink(event_id=ev.id, series=series, year=rnd.year, round_id=rnd.round_id,
-                                  car_number=number))
-    elif not link.by_hand:
-        link.series, link.year, link.round_id, link.car_number = series, rnd.year, rnd.round_id, number
-    elif link.series != series:  # a car number set by hand on an event first matched to another series: its round
-        link.series, link.year, link.round_id = series, rnd.year, None  # stays matched automatically
-    seen = db.scalar(select(rm.EventRound).where(rm.EventRound.event_id == ev.id))
-    if seen is None:
-        seen = rm.EventRound(event_id=ev.id)
-        db.add(seen)
-    seen.series, seen.year, seen.round_id, seen.car_number = series, rnd.year, rnd.round_id, number
-    db.commit()
+    _keep_match(db, ev.id, series, rnd.year, rnd.round_id, number)
     try:  # our runs named after the official session each ran in (FP1 stint 2, Q1, R1 stint 1)
         out["run_names"] = run_names.name_runs(db, ev.id, rnd, number)
         facts = _event_facts(db, ev)
