@@ -24,9 +24,28 @@ const sec = (s: number) => `${s.toFixed(2)} s`;
 /** "T10 0.41 s · T11-T12 0.29 s": the corners where most of the gap is, biggest first. */
 export const cornerWords = (corners: SuggestedCorner[]) => corners.map((c) => `${c.code} ${sec(c.loss_s)}`).join(' · ');
 
-/** The same for a screen reader: "T10, 0.41 seconds; T11-T12, 0.29 seconds". */
+// a time and its unit never apart at the end of a line
+const secTogether = (s: number) => `${s.toFixed(2)} s`;
+
+/** "throttle on and off (0.17 s)": the technique check's mistake of the slower lap at the corner, if it found one. */
+export const mistakeWords = (c: SuggestedCorner): string | null =>
+  (c.mistake ? `${c.mistake.words} (${secTogether(c.mistake.cost_s)})` : null);
+
+/** The same for a screen reader: "T10, 0.41 seconds, throttle on and off there, costing 0.17 seconds; T11-T12, 0.29
+ * seconds". */
 export const cornerSpeech = (corners: SuggestedCorner[]) =>
-  corners.map((c) => `${c.code}, ${c.loss_s.toFixed(2)} seconds`).join('; ');
+  corners.map((c) => `${c.code}, ${c.loss_s.toFixed(2)} seconds${c.mistake
+    ? `, ${c.mistake.words} there, costing ${c.mistake.cost_s.toFixed(2)} seconds` : ''}`).join('; ');
+
+/** What the technique check found at each of a suggestion's corners, by corner, in words for the comparison's
+ * "Where the time is" ("Technique check: throttle on and off here, 0.17 s"). */
+export function mistakeNotes(corners: SuggestedCorner[] | null): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const c of corners ?? []) {
+    if (c.mistake) out[c.code] = `Technique check: ${c.mistake.words} here, ${secTogether(c.mistake.cost_s)}`;
+  }
+  return out;
+}
 
 /** What a suggestion compares, in a few words: "Teammates · qualifying", "PIA · R2 against R1",
  * "PIA · best and typical lap, R1 stint 1". `code` gives a driver's tag (lib/driverTag.ts codeOf). */

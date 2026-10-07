@@ -51,11 +51,15 @@ type GlanceProps = {
   onFocus: (i: number) => void;
   onShow: (code: string, at?: number) => void;
   no?: number;
+  // a line to add under a section's words, by its code (the weekend page's Laps tab: what the technique check found
+  // there on this lap)
+  notes?: Record<string, string>;
 };
 
 /** Where the time is for one lap: the sections where the other laps were quicker, biggest first, with the phase
  * and what the driver did differently there. The three biggest side by side, as the programme's columns. */
-export const WhereTheTimeIs = memo(function WhereTheTimeIs({ data, colors, focus, onFocus, onShow, no = 2 }: GlanceProps) {
+export const WhereTheTimeIs = memo(function WhereTheTimeIs({ data, colors, focus, onFocus, onShow, no = 2,
+  notes }: GlanceProps) {
   const styles = useStyles();
   const t = useText();
   const theme = useTheme();
@@ -78,7 +82,8 @@ export const WhereTheTimeIs = memo(function WhereTheTimeIs({ data, colors, focus
             const vs = data.laps[o.versus];
             return (
               <Pressable key={o.code} onPress={() => onShow(o.code, (o.where_m[0] + o.where_m[1]) / 2)}
-                accessibilityRole="button" accessibilityLabel={`${o.code}: ${o.loss_s.toFixed(2)} s. Show on the traces`}
+                accessibilityRole="button"
+                accessibilityLabel={`${o.code}: ${o.loss_s.toFixed(2)} s. ${notes?.[o.code] ? `${notes[o.code]}. ` : ''}Show on the traces`}
                 style={StyleSheet.flatten([wide ? styles.col : styles.colPhone,
                   wide ? i > 0 && styles.colRule : i > 0 && styles.colTop])}>
                 <View style={styles.colHead}>
@@ -93,6 +98,7 @@ export const WhereTheTimeIs = memo(function WhereTheTimeIs({ data, colors, focus
                   <Text style={StyleSheet.flatten([t.labelMuted, styles.shrink])} numberOfLines={1}>{lapLabel(vs)}</Text>
                 </View>
                 <Text style={t.body}>{sentence(o)}</Text>
+                {notes?.[o.code] && <Text style={styles.note}>{notes[o.code]}</Text>}
                 <Swatch color={phaseColor(theme, o.phase)} label={`Mostly ${o.phase}`} width={14} height={10} />
                 <Text style={styles.show} {...noPrint}>Show on the traces →</Text>
               </Pressable>
@@ -325,6 +331,8 @@ const useStyles = themed((c) => ({
   show: { ...Type.link, fontSize: 12, letterSpacing: 1.2, color: c.text, alignSelf: 'flex-start', borderBottomWidth: 2,
     borderColor: c.rule, paddingBottom: 1, marginTop: 2 },
   also: { marginTop: 14 },
+  note: { fontFamily: face('body', 700), fontSize: 16, lineHeight: 23, color: c.text, borderLeftWidth: 3,
+    borderColor: c.mark, paddingLeft: 10 },
   // the section table: hairlines between rows, an ink rule under the head, colour as flat blocks in the cells
   headRow: { flexDirection: 'row', alignItems: 'flex-end', borderBottomWidth: 1, borderColor: c.rule },
   row: { flexDirection: 'row', alignItems: 'stretch', height: TAP, borderBottomWidth: 1, borderColor: c.separator },

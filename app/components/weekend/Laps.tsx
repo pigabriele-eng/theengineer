@@ -3,8 +3,9 @@
 // in the hotel going through data from FP or Quali before the race on the next day"). Phone first, one hand:
 // 01 the comparisons worth making, worked out by the server (server/app/compare_suggest.py: teammates head to head,
 // each driver against their last session, the best lap against a typical one; like with like on tyres, real laps
-// only), each with the corners where most of the gap is; 02 to 05 the comparison itself, the first suggestion's
-// already open (the laps, where the time is, the section times, the traces); 06 the weekend's laps to pick by hand.
+// only), each with the corners where most of the gap is and what the technique check found wrong there on the slower
+// lap; 02 to 05 the comparison itself, the first suggestion's already open (the laps, where the time is, the section
+// times, the traces); 06 the weekend's laps to pick by hand.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, LayoutChangeEvent, Pressable, StyleSheet } from 'react-native';
 
@@ -18,7 +19,9 @@ import { Text, View } from '@/components/Themed';
 import { CompareResult, compareLaps, encodePicks, formatLap, MAX_LAPS, MIN_LAPS, signedSeconds } from '@/lib/compare';
 import { codeOf } from '@/lib/driverTag';
 import { fetchSuggestions, PickRun, PickSession, SuggestedLap, Suggestion, Suggestions } from '@/lib/lapSuggestions';
-import { cornerWords, lapWords, suggestionSpeech, suggestionTitle, toggleLap } from '@/lib/lapsFirst';
+import {
+  cornerWords, lapWords, mistakeNotes, mistakeWords, suggestionSpeech, suggestionTitle, toggleLap,
+} from '@/lib/lapsFirst';
 import { poll } from '@/lib/poll';
 import { DETECTED_CORNERS_NOTE } from '@/lib/api';
 import { face, Fonts, TAP, themed, Type, useTheme } from '@/constants/Theme';
@@ -40,12 +43,13 @@ export default function WeekendLaps({ eventId, onShow }: { eventId: number; onSh
   const [tapped, setTapped] = useState(false); // a suggestion was tapped: open it now, whether its corners are known
   const [own, setOwn] = useState<LapPick[]>([]);
 
-  // the suggestions, asked again while the server works out their corners (lib/poll.ts)
+  // the suggestions, asked again while the server works out their corners or the technique check the mistakes at them
+  // come from is worked out (lib/poll.ts)
   useEffect(() => poll((live) => fetchSuggestions(eventId).then((a) => {
     if (!live()) return false;
     setAnswer(a);
     setError(null);
-    return a.status === 'working';
+    return a.status === 'working' || a.technique === 'working';
   }, (e) => {
     if (live()) setError((e as Error).message);
     return true;
@@ -90,6 +94,11 @@ export default function WeekendLaps({ eventId, onShow }: { eventId: number; onSh
     setTapped(true);
     onShow?.(compareY.current);
   };
+  const corners = suggestions.some((s) => s.corners?.length);
+  // the traces scrolled to (a section shown in the comparison): one function for good, so the views keep theirs
+  const onShowNow = useRef(onShow);
+  onShowNow.current = onShow;
+  const toTraces = useCallback((y: number) => onShowNow.current?.(compareY.current + y), []);
 
   return (
     <>
@@ -111,11 +120,18 @@ export default function WeekendLaps({ eventId, onShow }: { eventId: number; onSh
             <Note>{`Finding where the time is: ${answer.progress.done} of ${answer.progress.total}`}</Note>
           </View>
         )}
+        {answer?.status === 'ready' && answer.technique === 'working' && corners && (
+          <View style={styles.working}>
+            <ActivityIndicator />
+            <Note>The technique check is still running: what went wrong at each corner shows here once it’s done.</Note>
+          </View>
+        )}
       </Section>
 
       <View onLayout={(e: LayoutChangeEvent) => (compareY.current = e.nativeEvent.layout.y)}>
         <Comparison laps={laps} picked={picked} data={data?.key === key ? data.result : null} error={compareError}
-          waiting={laps.length >= MIN_LAPS && !ready} answer={answer} />
+          waiting={laps.length >= MIN_LAPS && !ready} answer={answer}
+          onTraces={toTraces} />
       </View>
 
       <PickYourOwn sessions={answer?.sessions ?? null} picks={own} onPicks={setOwn}
@@ -142,7 +158,19 @@ function SuggestionRow({ no, s, on, onPress }: { no: number; s: Suggestion; on: 
         </View>
         {s.laps.map((l, i) => <LapLine key={i} lap={l} color={colors.laps[i]} />)}
         {s.corners == null ? <Text style={styles.cornersWaiting}>Finding the corners…</Text>
-          : s.corners.length > 0 && (
+          : s.corners.some((c) => c.mistake) ? (
+            // with what the technique check found there: a corner a line, the mistake after it (at the start of its
+            // line, "T11-T12 0.29 s" is never split)
+            <View style={styles.cornerList}>
+              <Text style={styles.corner}>Most of the gap:</Text>
+              {s.corners.map((c) => (
+                <Text key={c.code} style={styles.mistake}>
+                  <Text style={styles.corner}>{cornerWords([c])}</Text>
+                  {c.mistake ? ` · ${mistakeWords(c)}` : ''}
+                </Text>
+              ))}
+            </View>
+          ) : s.corners.length > 0 && (
             // each corner on one line ("T11-T12 0.29 s" never split), the row wrapping between them
             <View style={styles.corners}>
               <Text style={styles.corner}>Most of the gap:</Text>
@@ -171,13 +199,14 @@ function LapLine({ lap, color }: { lap: SuggestedLap; color: string }) {
 
 // ---------- the comparison ----------
 
-function Comparison({ laps, picked, data, error, waiting, answer }: {
+function Comparison({ laps, picked, data, error, waiting, answer, onTraces }: {
   laps: LapPick[];
   picked: Suggestion | null;
   data: CompareResult | null;
   error: string | null;
   waiting: boolean;
   answer: Suggestions | null;
+  onTraces: (y: number) => void; // scroll to the traces, y within the comparison
 }) {
   const styles = useStyles();
   const wide = useWide();
@@ -193,10 +222,16 @@ function Comparison({ laps, picked, data, error, waiting, answer }: {
     setCursor(null);
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps -- once per comparison
   const step = data?.traces.step_m ?? 5;
+  // a section shown from Where the time is or the section times: the traces zoomed to it, scrolled to (as on the
+  // Compare page)
+  const tracesY = useRef(0);
   const showSection = useCallback((code: string | null, at?: number) => {
     setZoom(code);
     setCursor(at != null ? Math.round(at / step) : null);
-  }, [step]);
+    onTraces(tracesY.current - 8);
+  }, [step, onTraces]);
+  // what the technique check found at the suggestion's corners, on its slower lap: shown with that lap's sections
+  const notes = useMemo(() => mistakeNotes(picked?.corners ?? null), [picked]);
 
   if (laps.length < MIN_LAPS) {
     return answer && (
@@ -244,10 +279,12 @@ function Comparison({ laps, picked, data, error, waiting, answer }: {
       {data ? (
         <>
           <WhereTheTimeIs no={3} data={data} colors={colors} focus={Math.min(focus, data.laps.length - 1)}
-            onFocus={setFocus} onShow={showSection} />
+            onFocus={setFocus} onShow={showSection} notes={picked && focus === picked.slower ? notes : undefined} />
           <SectionTable no={4} data={data} colors={colors} onPick={(code) => showSection(code)} />
-          <CompareTraces no={5} data={data} colors={colors} zoom={zoom} onZoom={setZoom} cursor={cursor}
-            onCursor={setCursor} />
+          <View onLayout={(e: LayoutChangeEvent) => (tracesY.current = e.nativeEvent.layout.y)}>
+            <CompareTraces no={5} data={data} colors={colors} zoom={zoom} onZoom={setZoom} cursor={cursor}
+              onCursor={setCursor} />
+          </View>
         </>
       ) : (
         <Section no={3} title="Where the time is">{busy}</Section>
@@ -360,6 +397,8 @@ const useStyles = themed((c) => ({
   rowGap: { ...Type.number, fontFamily: face('label', 700), fontSize: 18, color: c.text },
   corners: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 6, marginTop: 6 },
   corner: { fontFamily: face('body', 600), fontSize: 17, lineHeight: 24, color: c.text, flexShrink: 0 },
+  cornerList: { marginTop: 6 },
+  mistake: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 24, color: c.text },
   cornersWaiting: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 22, color: c.textSecondary, marginTop: 6 },
   onShow: { ...Type.label, fontSize: 14, color: c.textSecondary, marginTop: 6 },
 

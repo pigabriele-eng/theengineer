@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  askedTab, cornerWords, lapWords, openingTab, suggestionSpeech, suggestionTitle, toggleLap,
+  askedTab, cornerSpeech, cornerWords, lapWords, mistakeNotes, mistakeWords, openingTab, suggestionSpeech,
+  suggestionTitle, toggleLap,
 } from './lapsFirst.ts';
 
 const lap = (extra = {}) => ({
@@ -33,6 +34,16 @@ test('a suggestion in words', () => {
   assert.equal(suggestionSpeech(q, code, time),
     'Teammates · qualifying. BER 102.44, 03_Q · lap 1 · new tyres, against LIN 103.60, 03_Q (2) · lap 2 · new tyres. '
     + '1.16 seconds apart. Most of the gap: T10, 0.41 seconds; T11-T12, 0.29 seconds.');
+
+  // the technique check's mistake at a corner, where it found one
+  const marked = [{ ...q.corners[0], mistake: { kind: 'on_off_throttle', words: 'throttle on and off', cost_s: 0.169 } },
+    { ...q.corners[1], mistake: null }];
+  assert.equal(mistakeWords(marked[0]), 'throttle on and off (0.17\u00a0s)');
+  assert.equal(mistakeWords(marked[1]), null);
+  assert.equal(cornerSpeech(marked),
+    'T10, 0.41 seconds, throttle on and off there, costing 0.17 seconds; T11-T12, 0.29 seconds');
+  assert.deepEqual(mistakeNotes(marked), { T10: 'Technique check: throttle on and off here, 0.17\u00a0s' });
+  assert.deepEqual(mistakeNotes(null), {});
 
   const used = { ...q, tyres: 'used' };
   assert.equal(suggestionTitle(used, code), 'Teammates · used tyres');
