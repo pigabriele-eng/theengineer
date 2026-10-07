@@ -32,8 +32,11 @@ export type Mistake = {
  * and off through a corner, the speed stalling or dropping on the way out.
  * cost_s is what it alone cost: the speed the lift lost carried down the straight, the later braking point missed. */
 /** What an obvious mistake really costs by corner and kind, measured on the laps (with it against without it,
- * driver by driver, every check at the track pooled); the model's estimate where too few laps measure it. */
+ * driver by driver, every check at the track pooled); the model's estimate where too few laps measure it or the
+ * loss is still within the noise (the flag stands either way). */
 export type MeasuredCost = { key: string; code: string; kind: ObviousMistake['kind']; measured: boolean;
+  /** the measured loss stands clear of the noise (cost_s is then the measured one, else the model's) */
+  clear?: boolean; measured_s?: number | null; pm_s?: number | null;
   cost_s: number; model_s: number; laps_with: number; laps_without: number; events: number };
 
 export type ObviousMistake = {

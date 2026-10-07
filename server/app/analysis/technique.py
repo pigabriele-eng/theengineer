@@ -1685,6 +1685,7 @@ def habits(laps: list[list[dict]], min_laps: int = 2) -> list[dict]:
 # ---------- what each obvious mistake really costs, measured on the laps ----------
 
 MEASURE_MIN_LAPS = 3  # laps with a mistake, and laps without, before its cost is measured rather than modelled
+MEASURE_SIGMAS = 2.0  # a measured loss counts once it is this many standard errors clear of none
 
 
 def mistake_stats(laps: list[tuple[str | None, list[float], list[dict]]], sections: list[Section]) -> list[dict]:
@@ -1723,10 +1724,14 @@ def mistake_stats(laps: list[tuple[str | None, list[float], list[dict]]], sectio
                 clean = [i for i in mine if i not in with_]
             if not clean:
                 continue
-            had = float(np.median([window(laps[i][1], k) for i in with_]))
-            free = float(np.median([window(laps[i][1], k) for i in clean]))
+            w1 = np.array([window(laps[i][1], k) for i in with_])
+            w0 = np.array([window(laps[i][1], k) for i in clean])
+            had, free = float(np.median(w1)), float(np.median(w0))
+            # the noise on that difference: a median's standard error, about 1.25 x the mean's
+            se = 1.25 * float(np.sqrt((w1.var(ddof=1) / len(w1) if len(w1) > 1 else 0.0)
+                                      + (w0.var(ddof=1) / len(w0) if len(w0) > 1 else 0.0)))
             out.append({"code": sections[k].code, "kind": kind, "driver": driver, "laps_with": len(with_),
-                        "laps_without": len(clean), "diff_s": round(had - free, 4),
+                        "laps_without": len(clean), "diff_s": round(had - free, 4), "se_s": round(se, 4),
                         "model_s": round(float(np.mean(model[(k, kind)])), 4)})
     return out
 
@@ -1735,7 +1740,8 @@ def pool_stats(stats: list[list[dict]]) -> dict[str, dict]:
     """Every event's (or session's) mistake_stats pooled, by "code:kind": the measured cost (each driver's and each
     event's difference, weighted by the laps behind it: the fewer of with and without), the laps and events it rests
     on, and the model's own estimate beside it. measured is True once MEASURE_MIN_LAPS laps with and without it
-    back it; otherwise cost_s is the model's."""
+    back it; clear once the loss stands clear of the noise (MEASURE_SIGMAS of pm_s, its standard error). cost_s is the
+    measured loss where clear, the model's otherwise: a mistake the laps can't measure yet is still a mistake."""
     acc: dict[str, dict] = {}
     for events, group in enumerate(stats):
         for x in group:
@@ -1745,6 +1751,7 @@ def pool_stats(stats: list[list[dict]]) -> dict[str, dict]:
             w = float(min(x["laps_with"], x["laps_without"]))
             a["w"] += w
             a["sum"] += w * x["diff_s"]
+            a["se2"] = a.get("se2", 0.0) + (w * x.get("se_s", 0.0)) ** 2
             a["laps_with"] += x["laps_with"]
             a["laps_without"] += x["laps_without"]
             a["model"].append(x["model_s"])
@@ -1753,8 +1760,13 @@ def pool_stats(stats: list[list[dict]]) -> dict[str, dict]:
     for key, a in acc.items():
         measured = a["laps_with"] >= MEASURE_MIN_LAPS and a["laps_without"] >= MEASURE_MIN_LAPS and a["w"] > 0
         model_s = float(np.mean(a["model"]))
-        out[key] = {"key": key, "code": a["code"], "kind": a["kind"], "measured": measured,
-                    "cost_s": round(max(a["sum"] / a["w"], 0.0), 3) if measured else round(model_s, 3),
+        diff = a["sum"] / a["w"] if a["w"] > 0 else 0.0
+        pm = float(np.sqrt(a.get("se2", 0.0))) / a["w"] if a["w"] > 0 else 0.0
+        # measured, yet no loss clear of the noise (MEASURE_SIGMAS of it): not measurable yet, the flag stands
+        clear = measured and diff > MEASURE_SIGMAS * pm
+        out[key] = {"key": key, "code": a["code"], "kind": a["kind"], "measured": measured, "clear": clear,
+                    "measured_s": round(diff, 3) if measured else None, "pm_s": round(pm, 3) if measured else None,
+                    "cost_s": round(diff, 3) if clear else round(model_s, 3),
                     "model_s": round(model_s, 3), "laps_with": a["laps_with"], "laps_without": a["laps_without"],
                     "events": len(a["events"])}
     return out

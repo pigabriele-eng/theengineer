@@ -626,12 +626,13 @@ function ObviousRow({ m, first, on, onPress }: { m: ObviousMistake; first: boole
 
 /** What the laps say a mistake costs, or why the model's estimate stands. */
 function measuredLine(x: MeasuredCost) {
-  const over = `${x.laps_with} lap${x.laps_with === 1 ? '' : 's'} with it against ${x.laps_without} without` +
-    (x.events > 1 ? `, over ${x.events} events here` : '');
+  const laps = x.laps_with + x.laps_without;
+  const over = `${x.laps_with} with it, ${x.laps_without} without` + (x.events > 1 ? `, over ${x.events} events here` : '');
   if (!x.measured) return `Too few laps to measure it yet (${over}): the cost shown is the model's estimate.`;
-  return x.cost_s < 0.005
-    ? `Measured on the laps: no loss to see (${over}); the model's estimate is ${s2(x.model_s)}.`
-    : `Measured on the laps: ${s2(x.cost_s)} each time (${over}); the model's estimate is ${s2(x.model_s)}.`;
+  const range = `${s2(x.measured_s ?? 0)} ± ${s2(x.pm_s ?? 0)}`;
+  if (x.clear === false)
+    return `Not measurable yet (${laps} laps): ${range} on the laps, within the noise; the model's estimate is ${s2(x.model_s)}. Still a mistake.`;
+  return `Measured on the laps: ${range} each time (${over}); the model's estimate is ${s2(x.model_s)}.`;
 }
 
 /** The obvious mistakes ranked by what they really cost on the laps. */
@@ -649,7 +650,7 @@ function MeasuredCosts({ list, no }: { list: MeasuredCost[]; no: number }) {
             <Text style={styles.habitTitle}>{(PUT_RIGHT[x.kind] ?? x.kind).replace(/^./, (c) => c.toUpperCase())} · {x.code}</Text>
             <Text style={styles.habitCost}>{s2(x.cost_s)}</Text>
           </View>
-          <Meter share={x.cost_s / top} color={x.measured ? theme.delta.loss : theme.textMuted} height={8} />
+          <Meter share={x.cost_s / top} color={x.clear ?? x.measured ? theme.delta.loss : theme.textMuted} height={8} />
           <Text style={t.small}>{measuredLine(x)}</Text>
         </View>
       ))}

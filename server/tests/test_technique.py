@@ -376,7 +376,12 @@ def test_what_a_mistake_really_costs_is_measured_on_the_laps():
     assert (pia["code"], pia["kind"], pia["laps_with"], pia["laps_without"]) == ("T1", "exit_lift", 4, 8)
     assert pia["diff_s"] == pytest.approx(0.2, abs=0.03) and pia["model_s"] == pytest.approx(0.05)
     pooled = pool_stats([stats])["T1:exit_lift"]
-    assert pooled["measured"] and pooled["cost_s"] == pytest.approx(0.2, abs=0.03) and pooled["events"] == 1
+    assert pooled["measured"] and pooled["clear"] and pooled["cost_s"] == pytest.approx(0.2, abs=0.03)
+    assert pooled["events"] == 1 and 0 < pooled["pm_s"] < 0.05
+    # within the noise: measured, not clear, and the model's estimate stands (the flag is never hidden)
+    noisy = [("PIA", [10.0 + rng.normal(0, 0.3), 8.0, 12.0], [lift] if i % 2 else []) for i in range(8)]
+    vague = pool_stats([mistake_stats(noisy, secs)])["T1:exit_lift"]
+    assert vague["measured"] and not vague["clear"] and vague["cost_s"] == pytest.approx(0.05)
     # too few laps with it: the model's estimate stands, and says so
     few = pool_stats([mistake_stats([*laps[:4], ("PIA", [10.0, 8.0, 12.0], [])], secs)])["T1:exit_lift"]
     assert not few["measured"] and few["cost_s"] == pytest.approx(0.05)

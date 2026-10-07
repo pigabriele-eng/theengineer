@@ -258,7 +258,7 @@ def session_technique(session_id: int, lap: int | None = None, db: Session = Dep
         out["lap"] = _lap_out(row, res, chosen, session_habits, measured)
     # the obvious mistakes ranked by what they really cost, most expensive first (the model's estimate where too few
     # laps measure one)
-    out["measured"] = sorted(measured.values(), key=lambda m: (not m["measured"], -m["cost_s"]))[:HABITS_SHOWN]
+    out["measured"] = sorted(measured.values(), key=lambda m: (not m["clear"], -m["cost_s"]))[:HABITS_SHOWN]
     out["habits"] = {"session": session_habits[:HABITS_SHOWN], "session_laps": len(laps),
                      "event": res["habits"]["event"][:HABITS_SHOWN] if kind == "event" else None,
                      "event_laps": len(res["laps"]) if kind == "event" else None}
@@ -286,7 +286,7 @@ def event_technique(event_id: int, db: Session = Depends(get_db)):
     out["best"] = ({"session_id": quickest["session_id"], "number": quickest["number"], "time": quickest["time"]}
                    if quickest else None)
     out["habits"] = res["habits"]["event"][:HABITS_SHOWN] if res else None
-    out["measured"] = (sorted(_measured(db, row, res).values(), key=lambda m: (not m["measured"], -m["cost_s"]))
+    out["measured"] = (sorted(_measured(db, row, res).values(), key=lambda m: (not m["clear"], -m["cost_s"]))
                        [:HABITS_SHOWN] if res and row is not None else None)
     out["laps_checked"] = len(res["laps"]) if res else 0
     return out
