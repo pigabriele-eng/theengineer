@@ -424,6 +424,7 @@ def ensure_traces(db: Session, item: Item, track: models.Track | None) -> models
     rec = db.scalar(select(models.SessionTraces).where(models.SessionTraces.session_id == item.session.id))
     if rec is not None and rec.signature == item.signature:
         return rec
+    db.commit()  # hands the database connection back while this waits its turn: the pool is small
     with heavy.lock:
         # another job (the prebuild, a report, a technique check) may have made them while this one waited its turn
         rec = db.scalars(select(models.SessionTraces).where(models.SessionTraces.session_id == item.session.id)
