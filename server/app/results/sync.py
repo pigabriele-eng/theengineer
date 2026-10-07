@@ -352,9 +352,26 @@ def _loop() -> None:
                     for year in calendar_years(series):  # calendars and new entry lists
                         start_calendar(series, year)
                         wait_idle(600)
+                name_all_runs()
         except Exception:
             log.exception("results refresh failed")
         time.sleep(REFRESH_MINUTES * 60)
+
+
+def name_all_runs() -> None:
+    """Every event's runs named after the official sessions they ran in (results/run_names.py), as the Results
+    section does when it opens: runs already in the app and timetables that arrived after the upload."""
+    from app.routers import results  # the event's round, as the Results section finds it
+
+    with app_db.SessionLocal() as db:
+        ids = db.scalars(select(models.RunSession.event_id).where(models.RunSession.event_id.is_not(None))
+                         .distinct()).all()
+        for eid in ids:
+            try:
+                results.event_run_names(eid, db)
+            except Exception:
+                db.rollback()
+                log.exception("naming the runs of event %s failed", eid)
 
 
 _loop_thread: threading.Thread | None = None

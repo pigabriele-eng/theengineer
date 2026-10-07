@@ -12,6 +12,7 @@ GET /results/events/{id}/prediction is the event's Prediction tab and, once the 
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -22,7 +23,7 @@ from sqlalchemy.orm import Session, selectinload
 from app import models, plans
 from app.db import get_db
 from app.results import models as rm
-from app.results import predict, summary, sync
+from app.results import predict, run_names, summary, sync
 from app.results.venues import venue_key
 
 log = logging.getLogger(__name__)
@@ -203,6 +204,12 @@ def event_overview(db: Session, ev: models.Event) -> dict:
     elif link.series != series:  # a car number set by hand on an event first matched to another series
         link.series, link.year, link.round_id = series, rnd.year, rnd.round_id
     db.commit()
+    try:  # our runs named after the official session each ran in (FP1 run 2, Q1, Race 1)
+        out["run_names"] = run_names.name_runs(db, ev.id, rnd, number)
+        facts = _event_facts(db, ev)
+    except Exception:
+        db.rollback()
+        log.exception("naming the runs of event %s failed", ev.id)
     matched: dict[int, list[dict]] = {}
     for r in facts["rows"]:
         s = summary.match_session(rnd, number, [r["name"], r["log_session"]], r["kind"], r["best_lap_s"])
@@ -283,6 +290,31 @@ def event_prediction(event_id: int, db: Session = Depends(get_db)):
         log.exception("prediction for event %s failed", ev.id)
         out["note"] = out["note"] or "The prediction could not be worked out from the results loaded."
     return out
+
+
+class RunNameIn(BaseModel):
+    code: str | None = Field(default=None, max_length=8)  # the official session (FP1, Q2, R1); None: none of them
+
+
+@router.get("/events/{event_id}/run-names")
+def event_run_names(event_id: int, db: Session = Depends(get_db)):
+    """The event's runs named after the official session each ran in, and the questions about runs that don't sit
+    clearly in one (each with the sessions to pick from)."""
+    overview = event_overview(db, _event(db, event_id))
+    return overview.get("run_names") or {"offset_h": 0, "named": [], "questions": [],
+                                         "note": overview.get("note") or "No official timetable for this event"}
+
+
+@router.post("/run-names/{session_id}")
+def answer_run_name(session_id: int, body: RunNameIn, db: Session = Depends(get_db)):
+    """One tap on a question: the run ran in this official session (or in none); the event's runs are named again."""
+    s = db.get(models.RunSession, session_id)
+    if s is None:
+        raise HTTPException(404, "Run not found")
+    if body.code is not None and not re.fullmatch(r"(FP|PQ|Q|R|T)\d?", body.code):
+        raise HTTPException(422, "Not an official session")
+    run_names.answer(db, session_id, body.code)
+    return event_run_names(s.event_id, db) if s.event_id is not None else {"named": [], "questions": []}
 
 
 @router.post("/events/{event_id}/fetch", status_code=202)

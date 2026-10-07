@@ -119,3 +119,17 @@ class ResultEntry(Base):
     brand: Mapped[str | None] = mapped_column(String(40))
     car_class: Mapped[str | None] = mapped_column(String(20))
     round: Mapped[ResultCalendarRound] = relationship(back_populates="entries")
+
+
+class RunNameMark(Base):
+    """How one of our runs got its name from the official timetable (results/run_names.py): the official session it
+    ran in (``code``, or "none" when it ran in none), whether that came from a question, and whether the name was
+    typed by hand (then it is never changed again)."""
+    __tablename__ = "run_name_marks"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)  # run_sessions.id
+    by_hand: Mapped[bool] = mapped_column(default=False)
+    code: Mapped[str | None] = mapped_column(String(8))  # FP1, Q2, R1, T3, PQ; "none"
+    answered: Mapped[bool] = mapped_column(default=False)  # the code is the user's answer to a question
+    auto_name: Mapped[str | None] = mapped_column(String(120))  # the name last given from the timetable
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
