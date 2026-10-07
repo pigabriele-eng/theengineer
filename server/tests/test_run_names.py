@@ -81,6 +81,8 @@ def test_logs_saved_after_the_session_go_to_the_last_one_of_their_kind():
     assert run_names._by_time(at("2026-07-17T11:21:05"), "practice", table) == ["FP1"]  # not FP2, later that day
     assert run_names._by_time(at("2026-07-18T14:27:51"), "qualifying", table) == ["Q2", "Q1"]  # the best lap tells
     assert run_names._by_time(at("2026-07-19T13:31:07"), "race", table) == ["R2"]  # R1 was the day before
+    assert run_names._by_time(at("2026-07-17T19:55:00"), "practice", table) == ["FP2"]  # FP1 ended hours before
+    assert run_names._hint("04_PQ") == ("practice", "PQ")  # Spa 2026: no PQ in the timetable, so FP2 by time
     # the offset that puts R1's log in R2 is not taken: its folder says R1
     t = at("2026-07-19T10:23:44")
     h, _ = run_names.place([(1, (t, t + timedelta(minutes=7)))], table, {1: ("R1",)})

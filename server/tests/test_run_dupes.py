@@ -15,7 +15,7 @@ def test_a_run_uploaded_twice_is_kept_once(client, monkeypatch):
     ev = client.post("/events/folders", json={"name": "Round 5"}).json()
     first = _session(client, ev["id"], "03_Q", (0.97, 0.98), "19/09/2026", "11:16:00")
     copy = _session(client, ev["id"], "03_Q (2)", (0.97, 0.98), "19/09/2026", "11:16:00")
-    later = _session(client, ev["id"], "03_Q (3)", (0.97, 0.98), "19/09/2026", "11:40:00")  # another time: kept
+    later = _session(client, ev["id"], "03_Q (3)", (0.96, 0.995), "19/09/2026", "11:40:00")  # another time: kept
     other = _session(client, ev["id"], "03_Q (4)", (0.97, 0.99), "19/09/2026", "11:16:00")  # other laps: kept
     client.patch(f"/sessions/{copy}", json={"name": "Quali Gabriele"})
     with app_db.SessionLocal() as db:
@@ -41,3 +41,16 @@ def test_an_upload_with_the_same_log_twice_keeps_one_run(client, monkeypatch):
         job = client.get(f"/imports/{job['id']}").json()
     assert job["status"] == "done" and len(job["session_ids"]) == 1
     assert client.get(f"/sessions/{job['session_ids'][0]}").status_code == 200  # the older of the two
+
+
+def test_a_log_saved_partway_through_is_a_piece_of_the_full_one():
+    from app import models, run_dupes
+
+    def run(*times):
+        return models.RunSession(laps=[models.Lap(number=i, time_s=t, start_s=0) for i, t in enumerate(times)])
+
+    full = run(160.1, 151.36, 150.2, 149.92, 159.24, 151.0)
+    assert run_dupes._part_of(run(150.2, 149.92), full)  # two laps in a row of the full log
+    assert not run_dupes._part_of(run(150.2, 159.24), full)  # not in a row
+    assert not run_dupes._part_of(run(149.92), full)  # one lap could be chance
+    assert not run_dupes._part_of(full, run(150.2, 149.92))
