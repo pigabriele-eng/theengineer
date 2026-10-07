@@ -20,6 +20,7 @@ cold pressures that land in it (the pressure calculator's own logic, tyres/press
 """
 from __future__ import annotations
 
+import re
 import warnings
 from collections import defaultdict
 from statistics import median
@@ -78,6 +79,8 @@ COOLED_BAR = 0.25  # this much lower: the tyres were changed or left to cool
 NEAR_SESSION_BEST_S = 0.5  # the build's best lap is at most this far off the session's best ...
 MAX_PEAK_LAP = 6  # ... on one of the first this many flying laps
 QUALI_LAPS_AFTER = 3  # a quali sim pits within this many laps of its best; more, and it became a long run
+# a session named like qualifying ("Q", "Q2", "03_Q", "Quali") or marked as one
+QUALI_NAME = re.compile(r"(?:^|[^a-z0-9])(q[1-3]?|qp|quali|qualy|qualif[a-z]*)(?:$|[^a-z0-9])", re.IGNORECASE)
 PUSH_GAP_S = 0.3  # near-best: within this much of the day's best lap
 PEAK_HOLD_S = 0.4  # the peak holds while laps stay this close to it
 
@@ -513,21 +516,32 @@ def aggregate(sessions: list[dict], pressure_runs: list[dict] | None = None,
     return out
 
 
+def is_quali_session(s: dict) -> bool:
+    """A session marked as qualifying, or named like one."""
+    return s.get("kind") == "qualifying" or bool(QUALI_NAME.search(s.get("name") or ""))
+
+
 def _quali_runs(sessions: list[dict], day_best: dict[str, float]) -> list[dict]:
     out = []
     for s in sessions:
         several = len(s["runs"]) > 1 or bool(s["runs"] and s["runs"][0]["number"] > 1)
+        quali_session = is_quali_session(s)
         for run in s["runs"]:
             fly = run["flying"]
             times = [f["time"] for f in fly]
             bi = int(np.argmin(times[:MAX_PEAK_LAP]))  # the build's peak; a long run may go quicker later
             peak = fly[bi]
             building = bi >= 1 and float(np.polyfit(np.arange(bi + 1), times[: bi + 1], 1)[0]) < 0
+            # a real qualifying run often peaks on its first flying lap, after the out-lap's warm-up, and pits soon
+            # after; a long run's flat or fading laps don't (it has more laps, or its first isn't the quickest)
+            first_best = bi == 0 and len(fly) <= QUALI_LAPS_AFTER + 1 and all(t > times[0] for t in times[1:])
             near = peak["time"] - s["best"] <= NEAR_SESSION_BEST_S
             warm, install = run["warm"], run["install"] or {}
             drag = (warm["drag_s"] or 0) + (install.get("drag_s") or 0)
             cold_start = run["pre_warmed"] is False
-            if not (building and near and (cold_start or drag >= BRAKE_WARM_S)):
+            # in a qualifying session the warm-up may be in an earlier log (the logger restarted in the pits)
+            prepared = cold_start or drag >= BRAKE_WARM_S or quali_session
+            if not ((building or first_best) and near and prepared):
                 continue
             label = s["name"] + (f" run {run['number']}" if several else "")
             after = fly[bi + 1:]
@@ -827,7 +841,9 @@ def _advice(r: dict) -> list[dict]:
         out.append({"key": "no_sims", "title": "No quali-style run found",
                     "text": "No run started on cold tyres or with a brake warm-up and then built its lap times to a "
                             f"best within {NEAR_SESSION_BEST_S:.1f} s of the session's best in its first "
-                            f"{MAX_PEAK_LAP} flying laps. Run a quali simulation to get the warm-up advice."})
+                            f"{MAX_PEAK_LAP} flying laps, or set its best on the first flying lap and pitted soon "
+                            "after. Run a quali simulation, or name the qualifying session Q (or mark it as "
+                            "qualifying), to get the warm-up advice."})
     if push:
         out.append({"key": "push", "title": "When to push",
                     "text": f"All {_plural(push['laps'], 'lap')} within {push['gap_s']:.1f} s of the day's best "
@@ -917,8 +933,10 @@ def _advice(r: dict) -> list[dict]:
 METHOD = [
     "Runs are split at every stop of 15 s or more. A quali-style run starts on cold tyres (fronts less than 25 °C "
     "above the air temperature when leaving) or with at least 15 s of brake dragging, then its flying laps get "
-    "quicker to a best within 0.5 s of the session's best on one of its first 6 flying laps. A quali sim pits "
-    "within 3 laps of that best; a quali-style start carries on as a long run.",
+    "quicker to a best within 0.5 s of the session's best on one of its first 6 flying laps, or its first flying "
+    "lap is its best and it pits within 3 laps. In a session marked as qualifying or named like one (Q, Q1, "
+    "Quali) the cold-tyre or brake-dragging start isn't needed: the warm-up may be in an earlier log. A quali sim "
+    "pits within 3 laps of its best; a quali-style start carries on as a long run.",
     "Tyre temperatures and pressures are the TPMS: the air inside the tyre, not the tread. At the line means the "
     "median over 3 s either side of it; axle values are the average of the two tyres.",
     "Push temperatures are the coolest that any lap within 0.3 s of the day's best started from. Ready is the first "
