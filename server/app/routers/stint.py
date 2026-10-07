@@ -31,10 +31,13 @@ from app.vehicle.presets import preset_detail
 
 router = APIRouter()
 
-MAX_LOGS = 12  # in one view
+MAX_LOGS = 12  # ticked in one view of the stint tool (an event's main logs, for the report, may be more)
 CACHE_BYTES = 48 * 1024**2
 _cache: OrderedDict[tuple, LogSummary] = OrderedDict()
 _cache_lock = threading.Lock()  # guards the cache only; reading logs runs under app.heavy.lock
+# in the signature of an event's view: the ones kept before it read every main log (a refusal over 12 logs) are
+# worked out again
+EVENT_VIEW = "every main log"
 
 
 def _cached(key: tuple) -> LogSummary | None:
@@ -115,7 +118,9 @@ def reduced(db: Session, f: models.LoggerFile) -> tuple[LogSummary, models.Track
 
 def stint_view(db: Session, file_ids: list[int]) -> dict:
     """The stints of the logs. Two views are kept once worked out (app/page_cache.py), with their lap tags in their
-    signature: one log's (the session page's) and an event's main logs together (the report's quick laps)."""
+    signature: one log's (the session page's) and an event's main logs together (the report's quick laps). The
+    event's view reads every main log, however many: a race weekend has twenty or more, and its logs are read one
+    at a time and kept reduced (about 1 MB each), so the number of logs doesn't add to the memory a read takes."""
     ids = list(dict.fromkeys(file_ids))
     files = [db.get(models.LoggerFile, i) for i in ids]
     if ids and None not in files:
@@ -127,8 +132,8 @@ def stint_view(db: Session, file_ids: list[int]) -> dict:
         if len(events) == 1 and None not in events and sorted(ids) == event_files(db, (eid := events.pop())):
             return page_cache.cached(
                 db, f"event:{eid}|stint",
-                lambda: page_cache.signature("stint", sorted(_view_signature(db, f) for f in files)),
-                lambda: _stint_view(db, ids), locked=False)
+                lambda: page_cache.signature("stint", sorted(_view_signature(db, f) for f in files), EVENT_VIEW),
+                lambda: _stint_view(db, ids, limit=False), locked=False)
     return _stint_view(db, ids)
 
 
@@ -152,11 +157,11 @@ def _view_signature(db: Session, f: models.LoggerFile) -> str:
                                         sorted(tags_for_files(db, [f.id]).get(f.id, {}).items()))
 
 
-def _stint_view(db: Session, file_ids: list[int]) -> dict:
+def _stint_view(db: Session, file_ids: list[int], limit: bool = True) -> dict:
     ids = list(dict.fromkeys(file_ids))
     if not ids:
         raise HTTPException(422, "Tick at least one log")
-    if len(ids) > MAX_LOGS:
+    if limit and len(ids) > MAX_LOGS:
         raise HTTPException(422, f"Tick at most {MAX_LOGS} logs at once")
     files = []
     for fid in ids:

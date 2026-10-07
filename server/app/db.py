@@ -4,6 +4,8 @@ from collections.abc import Iterator
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
+from app import connections  # noqa: F401  requests waiting for the heavy-work lock hand their connection back
+
 
 def database_url(url: str) -> str:
     """Postgres URLs as Supabase and other hosts give them (postgres:// or postgresql://) use the psycopg 3

@@ -10,6 +10,7 @@ import { Bars, LineChart, LineSeries, useChartColors } from '@/components/Report
 import { Balance } from '@/components/report/Balance';
 import { GripReport } from '@/components/report/GripReport';
 import { GripBalance, TyreCorners, useQuickLaps } from '@/components/report/QuickLaps';
+import { ServerNote } from '@/components/report/ServerNote';
 import { TrackGrip } from '@/components/report/TrackGrip';
 import { useEventFolder, useSessionEvent } from '@/components/SessionSwitcher';
 import { Text, View } from '@/components/Themed';
@@ -303,6 +304,7 @@ export default function ReportScreen() {
       {switching && <ActivityIndicator style={styles.loading} />}
       {!answer && !error && <ActivityIndicator style={styles.loading} />}
       {error && <Text style={styles.error}>Can&apos;t reach the server: {error}</Text>}
+      <ServerNote />
       {answer && working && <Progress answer={answer} />}
       {answer?.status === 'failed' && (
         <View style={styles.banner}>

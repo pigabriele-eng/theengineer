@@ -54,3 +54,75 @@ def test_a_lock_another_thread_holds_is_not_taken_without_waiting():
         t.start()
         t.join()
     assert took == [False]
+
+
+def _small_pool(tmp_path):
+    """A database with one connection and no wait for it: a second reader fails at once while the first holds it."""
+    from sqlalchemy import Column, Integer, MetaData, Table, create_engine, insert
+    from sqlalchemy.orm import sessionmaker
+
+    import app.connections  # noqa: F401  (app.db imports it: the hand-back is registered)
+
+    engine = create_engine(f"sqlite:///{tmp_path}/pool.db", pool_size=1, max_overflow=0, pool_timeout=0.2)
+    rows = Table("rows", MetaData(), Column("id", Integer, primary_key=True))
+    rows.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(insert(rows).values(id=1))
+    return engine, rows, sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+
+def test_a_request_waiting_for_the_lock_hands_its_database_connection_back(tmp_path):
+    from sqlalchemy import select
+
+    engine, rows, Session = _small_pool(tmp_path)
+    read, waiting, done = [], threading.Event(), threading.Event()
+
+    def request():
+        with Session() as db:
+            read.append(db.scalar(select(rows.c.id)))  # holds the only connection from here
+            waiting.set()
+            with lock:  # another log is being read: it waits, without the connection
+                read.append(db.scalar(select(rows.c.id)))  # and takes one again
+        done.set()
+
+    with lock:
+        t = threading.Thread(target=request)
+        t.start()
+        assert waiting.wait(5)
+        deadline = time.monotonic() + 5
+        while lock.waiting == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert engine.pool.checkedout() == 0
+        with Session() as other:  # a request answered from what is kept still gets a connection
+            assert other.scalar(select(rows.c.id)) == 1
+    assert done.wait(5)
+    t.join()
+    assert read == [1, 1]
+
+
+def test_a_request_with_writes_not_committed_keeps_its_connection(tmp_path):
+    from sqlalchemy import func, insert, select
+
+    engine, rows, Session = _small_pool(tmp_path)
+    holding, release = threading.Event(), threading.Event()
+
+    def request():
+        with Session() as db:
+            db.execute(insert(rows).values(id=2))  # written, not committed: never committed early
+            holding.set()
+            with lock:
+                release.wait(5)
+            db.rollback()
+
+    with lock:
+        t = threading.Thread(target=request)
+        t.start()
+        assert holding.wait(5)
+        deadline = time.monotonic() + 5
+        while lock.waiting == 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert engine.pool.checkedout() == 1
+    release.set()
+    t.join()
+    with Session() as db:
+        assert db.scalar(select(func.count()).select_from(rows)) == 1  # the write was rolled back, as asked

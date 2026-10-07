@@ -1,6 +1,7 @@
 // Client for the report (GET /reports/events/{id}, GET /reports/sessions/{id}): how to go faster, worked out by the
 // server in the background from every clean lap of an event or of one session.
 import { apiFetch, Session } from '@/lib/api';
+import { apiFetchAgain } from '@/lib/retry';
 
 export type ReportScope = { event: number } | { session: number };
 
@@ -158,7 +159,7 @@ const path = (scope: ReportScope) =>
   'event' in scope ? `/reports/events/${scope.event}` : `/reports/sessions/${scope.session}`;
 
 async function call<T>(p: string, init?: RequestInit): Promise<T> {
-  const res = await apiFetch(p, init);
+  const res = init ? await apiFetch(p, init) : await apiFetchAgain(p); // a read is asked again while unanswered
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail ?? `Request failed (${res.status})`);

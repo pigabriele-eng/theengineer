@@ -1,6 +1,7 @@
 // Client for the stint tool: the logs to choose from (GET /stint/logs), the stints of the ticked logs
 // (GET /stint?files=1,2) and the lap tags (PUT/DELETE /lap-tags).
 import { apiFetch } from '@/lib/api';
+import { apiFetchAgain } from '@/lib/retry';
 
 export type LapKind = 'flying' | 'out' | 'in' | 'pit' | 'slow';
 export type Tag = 'sc' | 'fcy' | 'traffic';
@@ -164,11 +165,11 @@ async function ok<T>(res: Response): Promise<T> {
 }
 
 export async function fetchStintLogs(): Promise<LogEvent[]> {
-  return (await ok<{ events: LogEvent[] }>(await apiFetch('/stint/logs'))).events;
+  return (await ok<{ events: LogEvent[] }>(await apiFetchAgain('/stint/logs'))).events;
 }
 
 export async function fetchStintView(files: number[]): Promise<StintView> {
-  return ok<StintView>(await apiFetch(`/stint?files=${files.join(',')}`));
+  return ok<StintView>(await apiFetchAgain(`/stint?files=${files.join(',')}`));
 }
 
 /** Tag a lap (sc, fcy, traffic); 'none': the user looked and the lap counts; 'count': a lap the analysis leaves
