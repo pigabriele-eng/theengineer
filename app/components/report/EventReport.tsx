@@ -9,17 +9,21 @@ import {
 import { Bars, LineChart, LineSeries, useChartColors } from '@/components/ReportCharts';
 import { Balance } from '@/components/report/Balance';
 import { GripReport } from '@/components/report/GripReport';
-import { GripBalance, TyreCorners, useQuickLaps } from '@/components/report/QuickLaps';
+import { GripBalance, LapsScope, TyreCorners, useQuickLaps } from '@/components/report/QuickLaps';
 import { ServerNote } from '@/components/report/ServerNote';
 import { TrackGrip } from '@/components/report/TrackGrip';
 import { useEventFolder, useSessionEvent } from '@/components/SessionSwitcher';
 import { Text, View } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
+import { useEventParts } from '@/components/weekend/SessionReports';
 import { formatLap } from '@/lib/api';
 import { noPrint } from '@/lib/print';
+import { todayIso } from '@/lib/calendar';
 import { dateRange } from '@/lib/events';
 import { RunNamer, runNamer } from '@/lib/runLabels';
+import { fetchPartReport, Part, PartScope, refreshPartReport } from '@/lib/sessionReports';
 import { TrackShapeData } from '@/lib/trackshape';
+import { defaultStage } from '@/lib/weekendRuns';
 import {
   fetchReport,
   Habit,
@@ -56,6 +60,10 @@ const PHASE_WORDS: Record<string, { most: string; where: string; title: string }
 const SCORE_FLOOR = 95; // the sub-score bars run from 95 % to 100 %
 
 const s2 = (v: number) => `${v.toFixed(2)} s`;
+// what a report is for: the whole event, one official session of it (FP1, Q1, R1: every run of it) or one run
+type Scope = { event: number; part?: undefined } | { session: number; part?: undefined } | PartScope;
+const isPartScope = (s: Scope): s is PartScope => typeof s.part === 'string';
+const keyOf = (s: Scope) => JSON.stringify(isPartScope(s) ? { event: s.event, part: s.part } : s);
 const metres = (m: number) => `${Math.round(m).toLocaleString('en-GB')} m`;
 const MAX_EVIDENCE = 5; // measures shown under a section before "Show all"
 // lap time axis ticks as m:ss, with tenths only when the ticks are closer than a second
@@ -72,7 +80,8 @@ const reportPhoto = (track: string | null | undefined): Photo => {
   return p === PHOTOS.hockenheim ? { ...p, focus: { x: 0.5, y: 0.82 }, focusPhone: { x: 0.3, y: 0.5 } } : p;
 };
 
-/** How to go faster, for a whole event (every session of a test) or one session, as a race programme: the photo and
+/** How to go faster, for a whole event (every session of a test), one official session of it (`part`: "FP1", every
+ * run of that session) or one run, as a race programme: the photo and
  * the headline, the lap's figures, the three biggest gains, section by section on the map, where the time goes, grip
  * and balance, the tyres, the track's grip, then corner by corner what to change and the evidence, trends,
  * consistency and what goes with lap time.
@@ -81,8 +90,9 @@ const reportPhoto = (track: string | null | undefined): Photo => {
  * the colophon, with the run switcher's pick in the page's address. With `embedded` it renders inside another page
  * (the race weekend's After tab): no hero, page title or colophon of its own and no scrolling of its own, and the run
  * switcher keeping its pick to itself. */
-export default function EventReport({ eventId, sessionId, embedded }: {
+export default function EventReport({ eventId, part, sessionId, embedded }: {
   eventId?: number;
+  part?: string; // with eventId: that official session's report ("FP1", "Q1", "03_Q"; lib/sessionReports.ts)
   sessionId?: number;
   embedded?: boolean;
 }) {
@@ -91,12 +101,17 @@ export default function EventReport({ eventId, sessionId, embedded }: {
   const wide = useWide();
   const gutter = useGutter();
   const { width } = useWindowDimensions();
-  const given: ReportScope | null = eventId != null ? { event: eventId } : sessionId != null ? { session: sessionId } : null;
-  const givenKey = given ? JSON.stringify(given) : '';
-  // embedded, the run switcher's pick (whole event or one session) for the report asked for; a new one drops it
-  const [picked, setPicked] = useState<{ of: string; scope: ReportScope } | null>(null);
-  const scope = embedded && picked?.of === givenKey ? picked.scope : given;
-  const key = scope ? JSON.stringify(scope) : '';
+  const given: Scope | null = eventId != null ? (part ? { event: eventId, part } : { event: eventId })
+    : sessionId != null ? { session: sessionId } : null;
+  const givenKey = given ? keyOf(given) : '';
+  // embedded, the switcher's pick (whole event, one official session or one run) for the report asked for; a new one
+  // drops it
+  const [picked, setPicked] = useState<{ of: string; scope: Scope } | null>(null);
+  // opened on one official session (a weekend's session reports): while the weekend is on, the whole event's report
+  // stays out of the switcher, it is for after the weekend (Gabriele, 2026-10-07)
+  const [fromPart] = useState(given != null && isPartScope(given));
+  const scope: Scope | null = embedded && picked?.of === givenKey ? picked.scope : given;
+  const key = scope ? keyOf(scope) : '';
   const [answer, setAnswer] = useState<ReportAnswer | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [focus, setFocus] = useState<string | null>(null);
@@ -109,7 +124,12 @@ export default function EventReport({ eventId, sessionId, embedded }: {
   // keeps its place and the section picked on the map
   const sessionEvent = useSessionEvent(scope && 'session' in scope ? scope.session : null);
   const folder = useEventFolder(scope && 'event' in scope ? scope.event : sessionEvent);
-  const quick = useQuickLaps(scope);
+  // an official session's runs, once its report has answered: what its sections worked out per run show
+  const partRuns = scope && isPartScope(scope) && answer?.scope === 'part' && answer.part === scope.part
+    ? answer.sessions.map((s) => s.id) : null;
+  const lapsScope: LapsScope | null = !scope ? null : !(isPartScope(scope)) ? scope
+    : partRuns ? (partRuns.length === 1 ? { session: partRuns[0] } : { sessions: partRuns }) : null;
+  const quick = useQuickLaps(lapsScope);
   const [polls, setPolls] = useState(0); // bumped by Retry: the poll below starts again
 
   // ask for the report; while the server works it out, ask again every couple of seconds
@@ -119,7 +139,7 @@ export default function EventReport({ eventId, sessionId, embedded }: {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
       try {
-        const a = await fetchReport(scope);
+        const a = await (isPartScope(scope) ? fetchPartReport(scope) : fetchReport(scope));
         if (!live) return;
         setAnswer(a);
         setError(null);
@@ -141,7 +161,7 @@ export default function EventReport({ eventId, sessionId, embedded }: {
   const retry = useCallback(async () => {
     if (!scope) return;
     try {
-      setAnswer(await refreshReport(scope));
+      setAnswer(await (isPartScope(scope) ? refreshPartReport(scope) : refreshReport(scope)));
       setError(null);
       setPolls((n) => n + 1); // the poll above has stopped; start it again
     } catch (e) {
@@ -162,34 +182,48 @@ export default function EventReport({ eventId, sessionId, embedded }: {
     const none = <Text style={styles.note}>Open a report from an event on the Sessions page, or from a session.</Text>;
     return embedded ? none : <Page>{none}</Page>;
   }
-  const isEvent = 'event' in scope;
+  const isPart = isPartScope(scope);
+  const isEvent = 'event' in scope && !isPart;
+  // the sections worked out per event or per run (the map, grip use, balance, technique, quali prep): an official
+  // session of one run shows that run's, one of several runs the event's map and leaves the others out
+  const oneRun = partRuns?.length === 1 ? partRuns[0] : null;
+  const runScope: ReportScope = !isPartScope(scope) ? scope
+    : oneRun != null ? { session: oneRun } : { event: scope.event };
+  const perRun = !isPart || oneRun != null;
+  const kindName = isPartScope(scope) ? `${answer && answer.part === scope.part ? answer.title : scope.part} report`
+    : isEvent ? 'Event report' : 'Session report';
   const working = answer?.status === 'queued' || answer?.status === 'running';
-  const switching = answer != null && key !== JSON.stringify(answer.scope === 'event' ? { event: answer.id }
-    : { session: answer.id });
+  const switching = answer != null && key !== keyOf(answer.scope === 'event' ? { event: answer.id }
+    : answer.scope === 'part' ? { event: answer.id, part: answer.part ?? '' } : { session: answer.id });
   // the sessions have clean laps (the report is ready or being worked out), so the other sections have data too
   const hasLaps = report != null || working || answer?.sessions.some((s) => s.included) === true;
   const highlight = focus ?? report?.gains[0]?.code ?? undefined;
   const tones = report ? sectionTones(theme, report) : undefined;
-  const map = isEvent
-    ? <TrackMap event={scope.event} highlight={highlight} withShape onShape={setShape} sectionColors={tones} />
-    : <TrackMap session={scope.session} highlight={highlight} withShape onShape={setShape} sectionColors={tones} />;
+  const map = 'event' in runScope
+    ? <TrackMap event={runScope.event} highlight={highlight} withShape onShape={setShape} sectionColors={tones} />
+    : <TrackMap session={runScope.session} highlight={highlight} withShape onShape={setShape} sectionColors={tones} />;
   const track = answer?.track ?? folder?.track ?? null;
   const runs = report?.runs_analysed ?? 0;
-  const dates = folder ? dateRange(folder.start, folder.end) : null;
-  const pdfName = [isEvent ? 'Event report' : 'Session report', answer?.title ?? folder?.name].filter(Boolean).join(' · ');
+  // an official session's days are its runs'; its runs are called runs (an event's, sessions)
+  const partDays = isPart && answer ? answer.sessions.map((s) => names.byId(s.id)?.date).filter((d): d is string => !!d)
+    .sort() : [];
+  const dates = partDays.length ? dateRange(partDays[0], partDays[partDays.length - 1])
+    : folder ? dateRange(folder.start, folder.end) : null;
+  const runWord = (n: number) => (isPart ? (n === 1 ? 'run' : 'runs') : n === 1 ? 'session' : 'sessions');
+  const pdfName = [kindName, isPart ? folder?.name : answer?.title ?? folder?.name].filter(Boolean).join(' · ');
 
   const top = (
     <View onLayout={(e: LayoutChangeEvent) => setTopH(e.nativeEvent.layout.height)}>
-      <Hero photo={reportPhoto(track)} tag={isEvent ? 'Event report' : 'Session report'}
-        rest={answer?.title ?? folder?.name ?? undefined}
-        restHref={isEvent ? { pathname: '/event/[id]', params: { id: String(scope.event) } }
+      <Hero photo={reportPhoto(track)} tag={kindName}
+        rest={(isPart ? folder?.name : answer?.title ?? folder?.name) ?? undefined}
+        restHref={'event' in scope ? { pathname: '/event/[id]', params: { id: String(scope.event) } }
           : { pathname: '/session/[id]', params: { id: scope.session } }}
         title="How to go faster"
         deck={report ? `${[track, dates].filter(Boolean).join(', ')}: ${report.laps_analysed} clean laps from ${runs} ` +
-          `${runs === 1 ? 'session' : 'sessions'}.` : undefined} />
+          `${runWord(runs)}.` : undefined} />
       <Folio items={[
         track ? <>{track}{report ? <> <B>{metres(report.length_m)}</B></> : null}</> : null,
-        report ? <><B>{report.laps_analysed}</B> clean laps · <B>{runs}</B> {runs === 1 ? 'session' : 'sessions'}</> : null,
+        report ? <><B>{report.laps_analysed}</B> clean laps · <B>{runs}</B> {runWord(runs)}</> : null,
         report ? <>Fastest <B>{formatLap(report.headline.fastest.time)}</B></> : null,
         report ? (report.numbering === 'official' ? 'Official corner numbers' : 'Corners numbered from the log') : null,
       ]} />
@@ -244,18 +278,22 @@ export default function EventReport({ eventId, sessionId, embedded }: {
     sections.push({ title: 'Tyres',
       dek: 'Hot TPMS temperature and hot pressure per corner, median of the quick laps.',
       body: lapsBody((laps) => <TyreCorners laps={laps} />) });
-    if (isEvent) {
+    if ('event' in scope && !(isPartScope(scope))) {
       sections.push({ title: 'Track grip',
         dek: 'Grip at the limit by session, with the tyres’ state taken out: the rest is the track rubbering in, its ' +
           'temperature and the weather.',
         body: <TrackGrip event={scope.event} bare /> });
     }
-    sections.push({ title: 'Grip use & traction control',
-      dek: 'How much of the car’s grip the laps use while braking and cornering, and where traction control cuts in.',
-      body: isEvent ? <GripReport event={scope.event} bare /> : <GripReport session={scope.session} bare /> });
-    sections.push({ title: 'Car balance & setup',
-      dek: 'Where the car limits the lap, and the setup changes to try.',
-      body: isEvent ? <Balance event={scope.event} bare /> : <Balance session={scope.session} bare /> });
+    if (perRun) { // worked out for a whole event or one run: an official session of several runs leaves them out
+      sections.push({ title: 'Grip use & traction control',
+        dek: 'How much of the car’s grip the laps use while braking and cornering, and where traction control cuts in.',
+        body: 'event' in runScope ? <GripReport event={runScope.event} bare />
+          : <GripReport session={runScope.session} bare /> });
+      sections.push({ title: 'Car balance & setup',
+        dek: 'Where the car limits the lap, and the setup changes to try.',
+        body: 'event' in runScope ? <Balance event={runScope.event} bare />
+          : <Balance session={runScope.session} bare /> });
+    }
   }
   if (report) {
     sections.push({ title: 'Corner by corner',
@@ -268,7 +306,8 @@ export default function EventReport({ eventId, sessionId, embedded }: {
     sections.push({ title: 'Trends & consistency', body: <Trends report={report} names={names} /> });
     sections.push({ title: 'What goes with lap time',
       body: <Relations relations={report.lap_time_relations} laps={report.laps_analysed} /> });
-    sections.push({ title: isEvent ? 'Sessions in this report' : 'This session', body: (
+    const listTitle = isEvent ? 'Sessions in this report' : isPart ? 'Runs in this report' : 'This session';
+    sections.push({ title: listTitle, body: (
       <View style={styles.rows}>
         {answer!.sessions.map((s) => {
           const run = names.byId(s.id);
@@ -296,7 +335,7 @@ export default function EventReport({ eventId, sessionId, embedded }: {
           <Text key={m} style={styles.method}>{m}</Text>
         ))}
         <View style={styles.quali}>
-          <TextLink href={{ pathname: '/quali', params: isEvent ? { event: scope.event } : { session: scope.session } }}
+          <TextLink href={{ pathname: '/quali', params: runScope }}
             label="Quali prep: warm-up, build laps, tyre windows and pressures" arrow />
         </View>
       </View>
@@ -305,14 +344,19 @@ export default function EventReport({ eventId, sessionId, embedded }: {
 
   const body = (
     <>
-      {!embedded && <Stack.Screen options={{ title: answer ? `Report · ${answer.title}` : 'Report' }} />}
+      {!embedded && (
+        <Stack.Screen options={{ title: isPart ? kindName : answer ? `Report · ${answer.title}` : 'Report' }} />
+      )}
       {folder && folder.id != null && (
-        <ScopeBar folder={folder} current={'session' in scope ? scope.session : null} scope={scope} pdfName={pdfName}
-          names={names}
+        <ScopeBar folder={folder} current={'session' in scope ? scope.session : null}
+          whole={!fromPart || defaultStage(folder, todayIso()) === 'after'}
+          part={isPartScope(scope) ? scope.part : null} scope={runScope} pdfName={pdfName} names={names}
           onWhole={() => (embedded ? setPicked({ of: givenKey, scope: { event: folder.id! } })
-            : router.setParams({ event: String(folder.id), session: undefined }))}
+            : router.setParams({ event: String(folder.id), session: undefined, part: undefined }))}
+          onPart={(code) => (embedded ? setPicked({ of: givenKey, scope: { event: folder.id!, part: code } })
+            : router.setParams({ event: String(folder.id), part: code, session: undefined }))}
           onPick={(id) => (embedded ? setPicked({ of: givenKey, scope: { session: id } })
-            : router.setParams({ session: String(id), event: undefined }))} />
+            : router.setParams({ session: String(id), event: undefined, part: undefined }))} />
       )}
       {switching && <ActivityIndicator style={styles.loading} />}
       {!answer && !error && <ActivityIndicator style={styles.loading} />}
@@ -327,7 +371,8 @@ export default function EventReport({ eventId, sessionId, embedded }: {
       )}
       {answer?.status === 'empty' && (
         <Text style={styles.para}>
-          No clean laps to analyse yet. Upload the logs of this {answer.scope}; the report is worked out as soon as they
+          No clean laps to analyse yet. Upload the logs of this {answer.scope === 'event' ? 'event' : 'session'}; the
+          report is worked out as soon as they
           are imported.
         </Text>
       )}
@@ -346,7 +391,7 @@ export default function EventReport({ eventId, sessionId, embedded }: {
         <View style={styles.headLinks}>
           {hasLaps && (
             <View {...noPrint}>
-              <TextLink href={{ pathname: '/technique', params: isEvent ? { event: scope.event } : { session: scope.session } }}
+              <TextLink href={{ pathname: '/technique', params: runScope }}
                 label="Technique check" arrow />
             </View>
           )}
@@ -359,8 +404,8 @@ export default function EventReport({ eventId, sessionId, embedded }: {
         <Section key={s.title} no={i + 1} title={s.title} dek={s.dek} onLayout={s.onLayout}>{s.body}</Section>
       ))}
       {!embedded && (
-        <Colophon left={`The Engineer · ${isEvent ? 'Event report' : 'Session report'}`}
-          right={[answer?.title, track].filter(Boolean).join(' · ')} />
+        <Colophon left={`The Engineer · ${kindName}`}
+          right={[isPart ? folder?.name : answer?.title, track].filter(Boolean).join(' · ')} />
       )}
     </>
   );
@@ -375,31 +420,64 @@ function sectionTones(theme: Palette, report: Report): Record<string, string> {
   return Object.fromEntries(report.sections.map((s) => [s.code, lossStep(theme, Math.max(s.gain_s, 0) / top)]));
 }
 
-// ---------- the scope: whole event or one session ----------
+// ---------- the scope: whole event, one official session or one run ----------
 
-function ScopeBar({ folder, current, scope, pdfName, names, onWhole, onPick }: {
+/** What the report is for: the whole event, one of its official sessions (FP1, Q1, R1, every run of it) or one run.
+ * A run alone in its session is picked by the session's name only (the same report). */
+function ScopeBar({ folder, current, whole, part, scope, pdfName, names, onWhole, onPart, onPick }: {
   folder: NonNullable<ReturnType<typeof useEventFolder>>;
-  current: number | null; // the session shown, or null for the whole event
-  scope: ReportScope;
+  current: number | null; // the run shown, or null
+  whole: boolean; // the whole event can be picked (left out while the weekend is on, for a session's report)
+  part: string | null; // the official session shown, or null
+  scope: ReportScope; // for the technique check
   pdfName: string;
   names: RunNamer;
   onWhole: () => void;
+  onPart: (code: string) => void;
   onPick: (id: number) => void;
 }) {
   const styles = useStyles();
   const wide = useWide();
+  // the sessions with a timed lap (and the one shown)
+  const parts = (useEventParts(folder.id).answer?.parts ?? []).filter((p) => p.best != null || p.code === part);
+  // runs alone in their session are reached by the session's name
+  const alone = new Set(parts.filter((p) => p.runs.length === 1).map((p) => p.runs[0].id));
+  const partOn = (p: Part) => p.code === part || (part == null && current != null && p.runs.length === 1
+    && p.runs[0].id === current);
+  // the timed runs not alone in their session, by day
+  const runDays = folder.days.map((d, di) => ({ key: d.date ?? `day${di}`,
+    sessions: d.sessions.filter((s) => s.best_lap_s != null && !alone.has(s.id)) }))
+    .filter((d) => d.sessions.length > 0);
   return (
     // the whole bar stays off the printed page: the headline says what the report is for
     <View style={styles.scope} {...noPrint}>
       <Label>Report for</Label>
-      <TextLink onPress={onWhole} label="Whole event" red={current == null} small />
-      <Label muted>or one session</Label>
+      {whole && <TextLink onPress={onWhole} label="Whole event" red={current == null && part == null} small />}
+      {parts.length > 0 && whole && <Label muted>or one session</Label>}
+      {parts.length > 0 && (
+        <View style={styles.runs}>
+          {/* each official session by its code ("FP1", "Q1", "R1"), in the order they ran */}
+          {parts.map((p) => {
+            const on = partOn(p);
+            return (
+              <Pressable key={p.code} onPress={() => onPart(p.code)} accessibilityRole="button"
+                accessibilityLabel={`${p.title} report`} accessibilityState={{ selected: on }}
+                style={styles.runHit}>
+                <View style={StyleSheet.flatten([styles.run, on && styles.runOn])}>
+                  <Text style={StyleSheet.flatten([styles.runText, on && styles.runTextOn])}>{p.code}</Text>
+                </View>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
+      {runDays.length > 0 && <Label muted>{parts.length ? 'or one run' : 'or one session'}</Label>}
       <View style={styles.runs}>
-        {folder.days.map((d, di) => (
-          <Fragment key={d.date ?? `day${di}`}>
+        {runDays.map(({ key, sessions }, di) => (
+          <Fragment key={key}>
             {di > 0 && <View style={styles.daySplit} />}
             {/* each run by its own name in short ("FP1 S1", "Q1"), in the event page's order, the days apart */}
-            {d.sessions.filter((s) => s.best_lap_s != null).map((s) => {
+            {sessions.map((s) => {
               const on = s.id === current;
               const run = names.byId(s.id);
               return (
