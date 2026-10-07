@@ -68,11 +68,11 @@ function openByDefault(seasons: Season[]): Set<number> {
 }
 
 /** The questions waiting about a season: which event is one of its rounds (an option names one of its rounds, or the
- * season) and who drove its rounds' events. */
+ * season) and who drove its rounds' events (a driver the driving style can't name). */
 function questionsOf(s: Season, questions: SeasonQuestion[]) {
   const keys = new Set([...s.rounds.map((r) => `round:${r.id}`), `season:${s.id}`]);
   const events = new Set(s.rounds.map((r) => r.event_id).filter((id): id is number => id != null));
-  return questions.filter((q) => q.options.some((o) => keys.has(o.key)) || (q.kind === 'drivers' && events.has(q.event_id)));
+  return questions.filter((q) => q.options.some((o) => keys.has(o.key)) || (q.kind === 'driver' && events.has(q.event_id)));
 }
 
 /** Seasons made ahead: a series and a year with our car number and our entry (tyre, car, team, drivers 1 to 4). A

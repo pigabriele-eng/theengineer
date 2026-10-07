@@ -184,6 +184,7 @@ class Group:
     laps: int
     match: float | None = None  # cosine to the known driver's fingerprint
     v: np.ndarray | None = None  # the group's mean fingerprint by kind
+    hint: int | None = None  # a known driver it is only somewhat like (app/driver_prints.py: asked, named first)
 
 
 @dataclass
@@ -358,11 +359,11 @@ def silhouette(p: np.ndarray, lab: np.ndarray) -> float:
     return float(s.mean())
 
 
-def style_groups(p: np.ndarray, min_split: float = KNOWN_SPLIT) -> tuple[np.ndarray, float] | None:
-    """The laps' best split into 2 or 3 style groups and how clearly they separate (silhouette), or None."""
+def style_groups(p: np.ndarray, min_split: float = KNOWN_SPLIT, max_groups: int = 3) -> tuple[np.ndarray, float] | None:
+    """The laps' best split into 2 to max_groups style groups and how clearly they separate (silhouette), or None."""
     n = len(p)
     best: tuple[np.ndarray, float] | None = None
-    for k in (2, 3):
+    for k in range(2, max_groups + 1):
         if n < k * MIN_GROUP_LAPS:
             continue
         lab = _kmeans(p, k)
@@ -427,9 +428,11 @@ def _stints(numbers: list[int], lab: list[int]) -> list[Stint]:
     return [Stint([numbers[i] for i in idx], g, float(np.mean([lab[i] == g for i in idx]))) for idx, g in out]
 
 
-def guess(ep: EventPrint, tags: dict[int, int | None], known: dict[int, np.ndarray] | None = None) -> Guess:
+def guess(ep: EventPrint, tags: dict[int, int | None], known: dict[int, np.ndarray] | None = None,
+          max_groups: int = 3) -> Guess:
     """Style groups, named where possible, and every session's stints. tags: session id -> its driver id (None when
-    untagged). known: driver id -> fingerprint by kind from other events (in ep.kinds' order)."""
+    untagged). known: driver id -> fingerprint by kind from other events (in ep.kinds' order). max_groups: how many
+    drivers the car could have had (two in a two-driver car: a third group would be one of them on other tyres)."""
     known = known or {}
     n = len(ep.numbers)
     if n < MIN_LAPS:
@@ -445,7 +448,7 @@ def guess(ep: EventPrint, tags: dict[int, int | None], known: dict[int, np.ndarr
         lab = ((p[:, None] - centres[None]) ** 2).sum(2).argmin(1)
         groups = [Group(d, "tag", 0) for d in tagged]
     else:
-        found = style_groups(p)
+        found = style_groups(p, max_groups=max_groups)
         groups = []
         if found is not None:
             lab, separation = found

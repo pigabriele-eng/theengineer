@@ -1,14 +1,15 @@
 // Which season an event belongs to, asked in a line with one-tap answers (server/app/season_match.py): on the event
 // page, right after an upload, and on the Sessions list (SeasonMatchCount: how many are waiting, opened in place).
-// After an upload it also says what joined its season by itself, with a way to take that back. Who drove an event's
-// runs is answered with one driver for them all, or on the Tag drivers screen. In the programme's way: each question
+// After an upload it also says what joined its season by itself, with a way to take that back. A driver the driving
+// style can't name is asked about once its laps are read (asked again every few seconds meanwhile): the likely names
+// as answers, or a name typed in, and one answer names every run of that style. In the programme's way: each question
 // under a thick ink rule, its kind in Archivo capitals, the question itself large, the answers as ink blocks and the
 // way out as a text link.
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, ViewStyle } from 'react-native';
 
-import { ErrorLine, Field, FormActions, Input, MainButton, Note, Said } from '@/components/Controls';
+import { Choice, Choices, ErrorLine, Field, FormActions, Input, MainButton, Note, Said } from '@/components/Controls';
 import { Label, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { Pending, SeasonQuestion, seasonMatchApi } from '@/lib/seasonMatch';
@@ -16,16 +17,28 @@ import { Fonts, themed } from '@/constants/Theme';
 
 type Scope = { eventId?: number; runIds?: number[] };
 
-const LABEL: Record<SeasonQuestion['kind'], string> = { round: 'Season', official: 'Series season', drivers: 'Drivers' };
+const LABEL: Record<SeasonQuestion['kind'], string> = { round: 'Season', official: 'Series season', driver: 'Driver' };
+const POLL_MS = 5000;
+const MAX_POLLS = 60; // five minutes: a report that never ends doesn't keep asking
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 function usePending(scope: Scope) {
   const [pending, setPending] = useState<Pending | null>(null);
+  const [polls, setPolls] = useState(0);
   const key = `${scope.eventId ?? ''}|${(scope.runIds ?? []).join(',')}`;
   const load = useCallback(() => {
     seasonMatchApi.pending(scope).then(setPending, () => setPending(null)); // an older server: nothing shown
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps -- the scope is its key
   useFocusEffect(load);
+  // the driving style is still being read: a driver question may follow, so ask again shortly
+  useEffect(() => {
+    if (!pending?.checking || polls >= MAX_POLLS) return;
+    const t = setTimeout(() => {
+      setPolls((n) => n + 1);
+      load();
+    }, POLL_MS);
+    return () => clearTimeout(t);
+  }, [pending, polls, load]);
   return { pending, load };
 }
 
@@ -93,16 +106,20 @@ function Question({ q, showEvent, onDone }: { q: SeasonQuestion; showEvent: bool
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [number, setNumber] = useState('');
+  const [name, setName] = useState('');
   const needsNumber = q.needs.includes('car_number');
   const single = q.options.length === 1;
+  const driver = q.kind === 'driver';
   // our drivers are on several cars of the round's entry list: each one a tap, the likeliest first
   const cars = single && needsNumber ? q.options[0].numbers ?? [] : [];
 
-  const send = async (key: string, carNumber = number, busyKey = key) => {
-    setBusy(busyKey);
+  const send = async (key: string, { carNumber = number, driverId, busyKey }:
+    { carNumber?: string; driverId?: number; busyKey?: string } = {}) => {
+    setBusy(busyKey ?? (driverId != null ? `driver:${driverId}` : key));
     setError(null);
     try {
-      const r = await seasonMatchApi.answer(q.id, key, carNumber);
+      const pick = key !== 'other' ? undefined : driverId != null ? { id: driverId } : { name };
+      const r = await seasonMatchApi.answer(q.id, key, carNumber, pick);
       onDone(r.done);
     } catch (e) {
       setError((e as Error).message);
@@ -113,7 +130,7 @@ function Question({ q, showEvent, onDone }: { q: SeasonQuestion; showEvent: bool
     <MainButton key={key} label={label} sub={sub} onPress={() => send(key)} busy={busy === key}
       disabled={busy != null || (needsNumber && !number.trim())} />
   );
-  const answers = q.kind === 'drivers' ? q.options.map((o) => yes(o.key, o.label ?? o.key))
+  const answers = driver ? q.options.map((o) => yes(o.key, o.label ?? o.key, o.why))
     : single ? [yes(q.options[0].key, needsNumber ? 'Add the season' : 'Yes')]
     : q.options.map((o) => yes(o.key, o.label ?? o.key, o.why));
 
@@ -122,12 +139,11 @@ function Question({ q, showEvent, onDone }: { q: SeasonQuestion; showEvent: bool
       <Label style={styles.kind}>{LABEL[q.kind]}{showEvent && q.event_name ? ` · ${q.event_name}` : ''}</Label>
       <Text style={wide ? styles.prompt : styles.promptPhone}>{q.prompt}</Text>
       {q.why ? <Note>{q.why}</Note> : null}
-      {q.kind === 'drivers' && q.runs != null ? <Note>{plural(q.runs, 'run')} without a driver.</Note> : null}
       {cars.length > 0 && (
         <FormActions style={styles.answers}>
           {cars.map((c) => (
             <MainButton key={`car-${c.car_number}`} label={c.label} sub={c.why} busy={busy === `car-${c.car_number}`}
-              disabled={busy != null} onPress={() => send(q.options[0].key, c.car_number, `car-${c.car_number}`)} />
+              disabled={busy != null} onPress={() => send(q.options[0].key, { carNumber: c.car_number, busyKey: `car-${c.car_number}` })} />
           ))}
         </FormActions>
       )}
@@ -140,14 +156,35 @@ function Question({ q, showEvent, onDone }: { q: SeasonQuestion; showEvent: bool
       )}
       <FormActions style={styles.answers}>
         {answers}
-        {q.kind === 'drivers' && (
-          <TextLink href={{ pathname: '/drivers/tag', params: { event: String(q.event_id) } }} label="Tag each run" arrow />
-        )}
-        {busy === 'no' ? <ActivityIndicator /> : (
-          <TextLink onPress={() => send('no')} disabled={busy != null}
-            label={q.kind === 'drivers' ? 'Skip' : single ? 'No' : 'None of these'} />
-        )}
+        {!driver && (busy === 'no' ? <ActivityIndicator /> : (
+          <TextLink onPress={() => send('no')} disabled={busy != null} label={single ? 'No' : 'None of these'} />
+        ))}
       </FormActions>
+      {driver && (q.drivers?.length ?? 0) > 0 && (
+        <View style={styles.others}>
+          <Label small>{q.options.length ? 'Or another driver' : 'Pick a driver'}</Label>
+          <Choices>
+            {q.drivers!.map((d) => (
+              <Choice key={d.id} label={d.name} on={busy === `driver:${d.id}`} disabled={busy != null}
+                onPress={() => send('other', { driverId: d.id })} />
+            ))}
+          </Choices>
+        </View>
+      )}
+      {driver && (
+        <>
+          <Field label="Add a new driver" style={styles.number}>
+            <Input value={name} onChangeText={setName} placeholder="Name" maxLength={120}
+              editable={busy == null} accessibilityLabel="New driver's name" box returnKeyType="done"
+              onSubmitEditing={() => name.trim() && send('other')} />
+          </Field>
+          <FormActions>
+            <MainButton label="Add the driver" onPress={() => send('other')} busy={busy === 'other'}
+              disabled={busy != null || !name.trim()} />
+            {busy === 'no' ? <ActivityIndicator /> : <TextLink onPress={() => send('no')} disabled={busy != null} label="Skip" />}
+          </FormActions>
+        </>
+      )}
       {error && <ErrorLine>{error}</ErrorLine>}
     </View>
   );
@@ -189,6 +226,7 @@ const useStyles = themed((c) => ({
   promptPhone: { fontFamily: Fonts.display, fontSize: 19, lineHeight: 23, textTransform: 'uppercase', color: c.text },
   summary: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 24, color: c.text },
   number: { maxWidth: 360 },
+  others: { gap: 8 },
   answers: { marginTop: 6 },
   spinner: { alignSelf: 'flex-start' },
 }));
