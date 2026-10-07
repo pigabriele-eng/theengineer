@@ -49,24 +49,36 @@ def test_a_mistake_named_and_obvious_at_one_corner_counts_once():
 
 
 def test_a_habit_getting_better_worse_or_the_same():
-    better = ht.trend([(0.2, 20, "Zandvoort"), (0.08, 30, "Misano")])
+    better = ht.trend([(60, 300, "Zandvoort"), (24, 300, "Misano")])
     assert better["dir"] == "better"
     assert better["words"] == "Better: from 20% of corners at Zandvoort to 8% at Misano."
-    worse = ht.trend([(0.05, 20, "Paul Ricard"), (0.06, 20, "Monza"), (0.12, 20, "Spa")])
+    worse = ht.trend([(15, 300, "Paul Ricard"), (18, 300, "Monza"), (36, 300, "Spa")])
     assert worse["dir"] == "worse" and "at Paul Ricard to 9% at Monza and Spa" in worse["words"]
-    assert ht.trend([(0.1, 20, "A"), (0.11, 20, "B")])["dir"] == "steady"
-    assert ht.trend([(0.1, 20, "A")]) is None
-    # small rates: a change of less than a corner in a hundred is the same
-    assert ht.trend([(0.004, 20, "A"), (0.0, 20, "B")])["dir"] == "steady"
+    assert ht.trend([(30, 300, "A"), (33, 300, "B")])["dir"] == "steady"
+    assert ht.trend([(30, 300, "A")]) is None
+    # small rates: a change of less than two corners in a hundred is the same
+    assert ht.trend([(4, 300, "A"), (0, 300, "B")])["dir"] == "steady"
+    # a big change on a few corners is luck, not a trend; on a handful there's too little to say
+    assert ht.trend([(3, 40, "A"), (0, 40, "B")])["dir"] == "steady"
+    assert ht.trend([(4, 12, "A"), (0, 12, "B")]) is None
+
+
+def test_corner_types_count_only_corners_where_the_mistakes_cost():
+    res = {"sections": SECTIONS, "laps": [
+        _lap(1, [_m("exit_lift", "T1", 0.04), _m("brake_early", "T1", 0.07, "braking"), _m("lift", "T2", 0.03)]),
+    ]}
+    t = ht.tally_event(res, {1: 11}, {"T1": "slow", "T2": "fast", "T3": "flat"})[11]
+    assert t.type_hits == {"slow": 1}  # 0.11 s at T1; 0.03 s at T2 is the small stuff every lap has
+    assert t.type_cost["slow"] == pytest.approx(0.11) and t.type_cost["fast"] == pytest.approx(0.03)
 
 
 def _events() -> list[ht.Event]:
     types = {"T1": "slow", "T2": "fast", "T3": "flat"}
     first = {"sections": SECTIONS, "laps":
-             [_lap(1, [_m("exit_lift", "T1")]) for _ in range(6)] + [_lap(2, []) for _ in range(6)]}
+             [_lap(1, [_m("exit_lift", "T1")]) for _ in range(12)] + [_lap(2, []) for _ in range(12)]}
     second = {"sections": SECTIONS, "laps":
-              [_lap(3, []) for _ in range(5)] + [_lap(3, [_m("exit_lift", "T1")])] +
-              [_lap(4, [_m("late_shift", "T2", 0.05)]) for _ in range(6)]}
+              [_lap(3, []) for _ in range(10)] + [_lap(3, [_m("exit_lift", "T1")]) for _ in range(2)] +
+              [_lap(4, [_m("late_shift", "T2", 0.05)]) for _ in range(12)]}
     drivers = {1: 11, 2: 22, 3: 11, 4: 22}
     return [ht.Event(1, "Zandvoort", ht.tally_event(first, drivers, types)),
             ht.Event(2, "Misano", ht.tally_event(second, drivers, types))]
@@ -76,15 +88,15 @@ def test_the_tracker_follows_each_driver_over_the_events():
     out = ht.tracker(_events(), {11: "Gabriele Piana", 22: "Max Rackl"}, {11: "PIA", 22: "RAC"},
                      {1: "Zandvoort", 2: "Misano"})
     assert [d["code"] for d in out["drivers"]] == ["PIA", "RAC"]
-    assert out["drivers"][0]["laps"] == 12 and out["drivers"][0]["events"] == 2
+    assert out["drivers"][0]["laps"] == 24 and out["drivers"][0]["events"] == 2
     lift = next(h for h in out["habits"] if h["kind"] == "exit_lift")
     pia = lift["drivers"]["11"]
     assert lift["label"] == "Lifting on the way out" and lift["group"] == "throttle" and lift["do"]
-    assert pia["rate"] == pytest.approx(7 / 36, abs=1e-4)
+    assert pia["rate"] == pytest.approx(14 / 72, abs=1e-4)
     assert pia["trend"]["dir"] == "better"  # every lap at Zandvoort, one in six at Misano
     assert [e["event_id"] for e in pia["by_event"]] == [1, 2]
     assert pia["corners"][0] == {"code": "T1", "event_id": 1, "track": "Zandvoort", "rate": 1.0}
-    assert pia["types"]["slow"] == pytest.approx(7 / 12, abs=1e-4)
+    assert pia["types"]["slow"] == pytest.approx(14 / 24, abs=1e-4)
     assert lift["drivers"]["22"]["rate"] == 0.0
     shift = next(h for h in out["habits"] if h["kind"] == "late_shift")
     assert shift["group"] == "shifting" and shift["drivers"]["22"]["trend"]["dir"] == "worse"
@@ -137,8 +149,8 @@ def test_the_habits_page(client):
 
     later, (c, d) = event("Misano 2026", "2026-09-20", ["Gabriele Piana", "Max Rackl"])
     early, (a, b) = event("Zandvoort 2026", "2026-06-10", ["Gabriele Piana", "Max Rackl"])
-    checked(early, [_lap(a, [_m("exit_lift", "T1")]) for _ in range(6)] + [_lap(b, []) for _ in range(6)])
-    checked(later, [_lap(c, []) for _ in range(6)] + [_lap(d, [_m("exit_lift", "T2")]) for _ in range(6)])
+    checked(early, [_lap(a, [_m("exit_lift", "T1")]) for _ in range(12)] + [_lap(b, []) for _ in range(12)])
+    checked(later, [_lap(c, []) for _ in range(12)] + [_lap(d, [_m("exit_lift", "T2")]) for _ in range(12)])
 
     body = client.get("/drivers/habits").json()
     assert body["status"] == "ready" and body["checking"] == []
@@ -154,7 +166,7 @@ def test_the_habits_page(client):
     assert client.put(f"/sessions/{d}/driver", json={"driver_name": "Gabriele Piana"}).status_code == 200
     body = client.get("/drivers/habits").json()
     lift = next(h for h in body["habits"] if h["kind"] == "exit_lift")
-    assert lift["drivers"][codes["PIA"]]["by_event"][-1]["rate"] == pytest.approx(6 / 36, abs=1e-4)
+    assert lift["drivers"][codes["PIA"]]["by_event"][-1]["rate"] == pytest.approx(12 / 72, abs=1e-4)
 
     # a check still being worked out says so
     third, _ = event("Spa 2026", "2026-07-01", ["Max Rackl"])

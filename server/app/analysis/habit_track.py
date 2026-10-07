@@ -8,12 +8,16 @@ the corners they drove where it was flagged (a lap through a track of 12 corners
 fewer corners compare. What it costs is the time it cost a lap, on average.
 
 A habit is getting better or worse by its share of corners at the driver's earlier events against their recent ones
-(the first half of their events against the rest, by date); a change smaller than a quarter of it, or than one
-corner in a hundred, is about the same. Only events where the driver did MIN_EVENT_LAPS clean laps or more count.
+(the first half of their events against the rest, by date); a change smaller than a quarter of it, than two corners
+in a hundred, or than the luck of a few corners (TREND_Z standard errors) is about the same. Only events where the
+driver did MIN_EVENT_LAPS clean laps or more count. With two events that is one track against another.
 
 Corners are typed by the speed at their slowest point on the event's fastest lap: slow, medium and fast corners, and
-flat-out kinks (sections with no real slowest point). The way two drivers differ every time they share the car comes
-from their style fingerprints (analysis/driver_style.py), which are relative to the other laps of the same event.
+flat-out kinks (sections with no real slowest point). Nearly every corner of a lap shows some small mistake, so a
+corner counts for its type only when its mistakes together cost COSTLY_S or more.
+
+The way two drivers differ every time they share the car comes from their style fingerprints
+(analysis/driver_style.py), which are relative to the other laps of the same event.
 """
 from __future__ import annotations
 
@@ -27,7 +31,10 @@ from app.analysis.technique import HABITS
 
 MIN_EVENT_LAPS = 5  # fewer clean laps at an event and it doesn't count towards a trend
 TREND_SHARE = 0.25  # a change of at least this share of the habit's rate is a trend
-TREND_MIN = 0.01  # ... and of at least one corner in a hundred
+TREND_MIN = 0.02  # ... and of at least two corners in a hundred
+TREND_Z = 2.0  # ... and this many standard errors: more than the luck of a few corners
+TREND_CORNERS = 30  # fewer corners driven before or since and there is too little to say
+COSTLY_S = 0.1  # s: a corner whose mistakes cost this much on a lap counts in the corner types
 CORNER_SHOWN = 3  # corners where a habit shows most
 CORNER_MIN_RATE = 0.2  # of the driver's laps at that event: less is not where it shows
 HABIT_MIN_HITS = 2  # a habit flagged fewer times than this for every driver is left out
@@ -141,7 +148,7 @@ class Tally:
     cost: defaultdict = field(default_factory=lambda: defaultdict(float))  # kind -> seconds
     group_hits: Counter = field(default_factory=Counter)  # group -> corner passes with any mistake of the group
     group_cost: defaultdict = field(default_factory=lambda: defaultdict(float))
-    type_hits: Counter = field(default_factory=Counter)  # type -> corner passes of that type with any mistake
+    type_hits: Counter = field(default_factory=Counter)  # type -> corner passes of that type costing COSTLY_S
     type_cost: defaultdict = field(default_factory=lambda: defaultdict(float))
     kind_type_hits: Counter = field(default_factory=Counter)  # (kind, type)
     kind_code_hits: Counter = field(default_factory=Counter)  # (kind, code)
@@ -173,7 +180,6 @@ def tally_event(result: dict, driver_of: dict[int, int], types: dict[str, str]) 
             if k not in found or cost > found[k][0]:
                 found[k] = (cost, m.get("phase"))
         by_group: dict[tuple[str, str], float] = {}
-        by_code: dict[str, float] = {}
         for (kind, code), (cost, phase) in found.items():
             t.hits[kind] += 1
             t.cost[kind] += cost
@@ -183,14 +189,16 @@ def tally_event(result: dict, driver_of: dict[int, int], types: dict[str, str]) 
                 t.kind_type_hits[(kind, types[code])] += 1
             g = (group_of(kind, phase), code)
             by_group[g] = max(by_group.get(g, 0.0), cost)
-            by_code[code] = max(by_code.get(code, 0.0), cost)
-        for (g, _), cost in by_group.items():
+        by_code: dict[str, float] = {}  # what the corner's mistakes cost: each group's costliest, added up
+        for (g, code), cost in by_group.items():
             t.group_hits[g] += 1
             t.group_cost[g] += cost
+            by_code[code] = by_code.get(code, 0.0) + cost
         for code, cost in by_code.items():
             if code in types:
-                t.type_hits[types[code]] += 1
                 t.type_cost[types[code]] += cost
+                if cost >= COSTLY_S:
+                    t.type_hits[types[code]] += 1
     return out
 
 
@@ -217,23 +225,25 @@ def _names(labels: list[str], latest: bool) -> str:
     return f"the {len(labels)} {'latest' if latest else 'earlier'} events"
 
 
-def trend(points: list[tuple[float, int, str]]) -> dict | None:
+def trend(points: list[tuple[int, int, str]]) -> dict | None:
     """Better, worse or about the same: the rate at the driver's earlier events against their recent ones. points:
-    (rate, laps, event label) per event, oldest first, events with too few laps left out by the caller."""
+    (hits, corners driven, event label) per event, oldest first, events with too few laps left out by the caller."""
     if len(points) < 2:
         return None
     half = len(points) // 2
     early, recent = points[:half], points[half:]
-
-    def mean(ps: list[tuple[float, int, str]]) -> float:
-        return float(np.average([p[0] for p in ps], weights=[p[1] for p in ps]))
-
-    a, b = mean(early), mean(recent)
-    step = max(TREND_MIN, TREND_SHARE * max(a, b))
+    ha, na = sum(p[0] for p in early), sum(p[1] for p in early)
+    hb, nb = sum(p[0] for p in recent), sum(p[1] for p in recent)
+    if min(na, nb) < TREND_CORNERS:
+        return None
+    a, b = ha / na, hb / nb
+    pooled = (ha + hb) / (na + nb)
+    se = float(np.sqrt(pooled * (1 - pooled) * (1 / na + 1 / nb)))
+    real = abs(b - a) >= max(TREND_MIN, TREND_SHARE * max(a, b)) and abs(b - a) >= TREND_Z * se
     then, now = _names([p[2] for p in early], False), _names([p[2] for p in recent], True)
-    if b - a <= -step:
+    if real and b < a:
         return {"dir": "better", "words": f"Better: from {pct(a)} of corners at {then} to {pct(b)} at {now}."}
-    if b - a >= step:
+    if real:
         return {"dir": "worse", "words": f"Worse: from {pct(a)} of corners at {then} to {pct(b)} at {now}."}
     return {"dir": "steady", "words": f"About the same: {pct(a)} of corners at {then}, {pct(b)} at {now}."}
 
@@ -244,7 +254,7 @@ def stat(rows: list[tuple[Event, int, int, float, int]]) -> dict:
     rows = [r for r in rows if r[4] > 0 and r[2] > 0]
     hits, passes = sum(r[1] for r in rows), sum(r[2] for r in rows)
     cost, laps = sum(r[3] for r in rows), sum(r[4] for r in rows)
-    pts = [(r[1] / r[2], r[4], r[0].label) for r in rows if r[4] >= MIN_EVENT_LAPS]
+    pts = [(r[1], r[2], r[0].label) for r in rows if r[4] >= MIN_EVENT_LAPS]
     return {"rate": round(hits / passes, 4) if passes else 0.0,
             "cost_per_lap_s": round(cost / laps, 3) if laps else 0.0,
             "laps": laps, "events": len(rows), "trend": trend(pts),
@@ -321,6 +331,7 @@ def tracker(events: list[Event], names: dict[int, str], codes: dict[int, str], t
                      "events": sum(1 for e in events if d in e.tallies and e.tallies[d].laps)} for d in drivers],
         "groups": groups,
         "corner_types": corner_types,
+        "corner_types_note": f"A corner counts when its mistakes cost {COSTLY_S:.1f} s or more on that lap.",
         "habits": habits[:HABITS_KEPT],
         "pairs": style_pairs(styles or {}, drivers),
     }
