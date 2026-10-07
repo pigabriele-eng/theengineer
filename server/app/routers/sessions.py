@@ -1,10 +1,11 @@
 """Run sessions: logger uploads, lap lists, analysis and voice debriefs for one run."""
+import logging
 import shutil
 import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 from sqlalchemy.orm import Session
 
 from app import garage, heavy, models, page_cache, schemas, storage
@@ -21,6 +22,7 @@ from app.timing import read_file, store_laps, track_line
 _line = track_line  # the track's start/finish line for lap timing (other routers import it by this name)
 
 router = APIRouter(prefix="/sessions")
+log = logging.getLogger(__name__)
 
 # .csv and .txt are logger exports (MoTeC i2, AiM Race Studio, Pi Toolbox); the logger is read from the file
 SUPPORTED = {".ld": "motec", ".ldx": "motec", ".csv": "csv", ".txt": "csv"}
@@ -174,6 +176,7 @@ def add_log(db: Session, s: models.RunSession, path: Path, name: str,
         raise HTTPException(422, str(e)) from e
 
     key = storage.save_file(path, ext)
+    _delete_unless_committed(db, key)
     logger = SUPPORTED[ext]
     meta = {"event": ld.event_name, "event_session": ld.event_session, "venue": ld.venue,
             "device_serial": ld.device_serial, "date": ld.date, "time": ld.time,
@@ -190,6 +193,37 @@ def add_log(db: Session, s: models.RunSession, path: Path, name: str,
     db.flush()
     store_laps(db, s, rec, LapTiming(data.laps, data.lap_source, data.timing_line), track)
     return rec
+
+
+_UNCOMMITTED = "stored files no committed row points to yet"
+
+
+def _delete_unless_committed(db: Session, key: str) -> None:
+    """Delete the stored file again unless db commits the row that points to it: when something fails later, the
+    rows are rolled back and the file would stay in storage (1 GB on Supabase's free plan) with nothing pointing to
+    it. Best effort: a file that can't be deleted is logged."""
+    if _UNCOMMITTED not in db.info:
+        db.info[_UNCOMMITTED] = []
+        event.listen(db, "after_commit", _committed)  # this session's transactions only
+        event.listen(db, "after_transaction_end", _not_committed)
+    db.info[_UNCOMMITTED].append(key)
+
+
+def _committed(db: Session) -> None:
+    db.info[_UNCOMMITTED].clear()
+
+
+def _not_committed(db: Session, transaction) -> None:
+    """A transaction ended (rolled back, or the session closed) without committing: its stored files go."""
+    if transaction.parent is not None:  # a savepoint: the files go or stay with the whole transaction
+        return
+    keys = db.info[_UNCOMMITTED]
+    while keys:
+        key = keys.pop()
+        try:
+            storage.delete(key)
+        except Exception:
+            log.exception("Couldn't delete stored file %s, whose rows were rolled back", key)
 
 
 def _attach_ldx(db: Session, s: models.RunSession, name: str, raw: bytes) -> dict:

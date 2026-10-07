@@ -70,6 +70,29 @@ def test_gps_lap_timing_learned_from_an_earlier_log(client):
     assert abs(r["best_lap_s"] - min(lap_times)) < 0.05
 
 
+def test_upload_that_fails_after_storing_leaves_no_file_behind(client, monkeypatch):
+    """Storage is small (1 GB on Supabase's free plan): an upload that fails after its log was stored deletes it
+    again, as nothing points to it once the rows are rolled back."""
+    import os
+    from pathlib import Path
+
+    import pytest
+
+    from app.routers import sessions as sessions_router
+    from tests.synthetic import simulate, write_ld
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("something went wrong after the log was stored")
+
+    monkeypatch.setattr(sessions_router, "_attach_track", boom)
+    s = client.post("/sessions", json={}).json()
+    with pytest.raises(RuntimeError):
+        client.post(f"/sessions/{s['id']}/files", files={"file": ("run.ld", write_ld(simulate()[0]))})
+    assert client.get(f"/sessions/{s['id']}").json()["files"] == []
+    stored = Path(os.environ["STORAGE_DIR"])
+    assert not [p for p in stored.rglob("*") if p.is_file()]
+
+
 def test_ldx_upload_attaches_beacons_to_its_log(client):
     from tests.synthetic import simulate, write_ld
 
