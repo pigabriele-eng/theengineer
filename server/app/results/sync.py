@@ -317,6 +317,17 @@ def current_links(db: Session, today: date | None = None) -> list[rm.EventResult
     return out
 
 
+def calendar_years(series: str) -> list[int]:
+    """The seasons whose calendar the daily check reads: this year's and next year's always (dates move, entry lists
+    come out), earlier ones from the series' first year once, while they aren't loaded (a past season made from
+    its calendar, or an upload matched to a past round, needs them)."""
+    this = date.today().year
+    with app_db.SessionLocal() as db:
+        have = set(db.scalars(select(rm.ResultCalendarRound.year).where(rm.ResultCalendarRound.series == series)
+                              .distinct()).all())
+    return [y for y in range(first_year(series), this) if y not in have] + [this, this + 1]
+
+
 def _loop() -> None:
     last_season_check = 0.0
     while True:
@@ -331,7 +342,7 @@ def _loop() -> None:
                 for series in ADAPTERS:
                     start(series)  # seasons not loaded yet, and new sheets of the current one
                     wait_idle(3600)
-                    for year in (date.today().year, date.today().year + 1):  # calendars and new entry lists
+                    for year in calendar_years(series):  # calendars and new entry lists
                         start_calendar(series, year)
                         wait_idle(600)
         except Exception:

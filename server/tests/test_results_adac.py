@@ -239,3 +239,14 @@ def test_a_season_round_event_finds_its_official_round(client, monkeypatch):
     assert (body["series"], body["year"], body["round"]["round_id"]) == ("adac-gt4-germany", 2025, "2025-10-03")
     assert (body["car_number"], body["car_number_from"]) == ("51", "the season")
     assert body["sessions"][0]["us"]["position"] == 2
+
+
+def test_past_calendars_are_read_once(client, monkeypatch):
+    from datetime import date
+
+    from app.results import sync
+    this = date.today().year
+    assert sync.calendar_years("adac-gt4-germany") == [*range(2023, this), this, this + 1]
+    with _site([]) as site:
+        sync.sync_calendar("adac-gt4-germany", 2025, client=site)
+    assert 2025 not in sync.calendar_years("adac-gt4-germany")
