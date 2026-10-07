@@ -147,7 +147,9 @@ export type ImportJob = {
   current: string | null;
   session_ids: number[];
   errors: { file: string; error: string }[];
-  skipped: { file: string; reason: string }[];
+  // already: a log already in the app, left out (session_id: the run it is in)
+  skipped: { file: string; reason: string; already?: boolean; session_id?: number }[];
+  already_uploaded?: number; // how many of skipped were already uploaded
   message: string | null;
 };
 

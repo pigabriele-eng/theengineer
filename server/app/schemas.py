@@ -112,7 +112,9 @@ class ImportJobOut(Orm):
     current: str | None
     session_ids: list[int]
     errors: list[dict]  # {"file", "error"}
-    skipped: list[dict]  # {"file", "reason"}: files that aren't logs, and logs with no laps (empty runs)
+    skipped: list[dict]  # {"file", "reason"}: files that aren't logs, logs with no laps (empty runs) and logs already
+    # uploaded ({"already": true, "session_id": the run it is in}), left out before they are read
+    already_uploaded: int = 0  # how many of skipped were already uploaded
     untimed: list[dict] = []  # {"session_id", "name", "file", "title", "reason", "fix", ...}: kept, laps not timed
     message: str | None
     created_at: dt.datetime

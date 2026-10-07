@@ -6,7 +6,9 @@ import { Fig, Section, Swatch, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { TraceChart } from '@/components/TraceChart';
 import { useColorScheme } from '@/components/useColorScheme';
+import { ResetZoom, useZoomState, ZOOM_HINT, ZoomGroup } from '@/components/Zoom';
 import { DETECTED_CORNERS_NOTE } from '@/lib/api';
+import { isZoomed, shownRange } from '@/lib/zoom';
 import {
   CompareResult,
   formatLap,
@@ -249,6 +251,11 @@ export function CompareTraces({ data, colors, ideal, zoom, onZoom, cursor, onCur
   const distance = useMemo(() => tr.distance.slice(i0, i1 + 1).map((d) => d - d0), [tr.distance, i0, i1, d0]);
   const ref = ideal ? tr.ideal : tr.laps[data.reference];
   const refName = ideal ? 'the ideal lap' : `L${data.laps[data.reference].lap} · ${data.laps[data.reference].session}`;
+  // the charts zoom together, within the section picked; another section starts from all of it
+  const free = useZoomState(`${zoom}`);
+  const full: [number, number] = [0, distance[distance.length - 1] ?? 0];
+  const zoomedIn = isZoomed(free.view, full);
+  const shown = shownRange(free.view, full);
 
   // the reference's own line is the zero line; in a zoomed section the gap counts from the section's start
   const delta = useMemo(() => {
@@ -260,12 +267,29 @@ export function CompareTraces({ data, colors, ideal, zoom, onZoom, cursor, onCur
     const series = ideal ? [{ values: sliced(tr.ideal.t), color: colors.ideal }] : [];
     return [...series, ...tr.laps.map((l, i) => ({ values: sliced(l.t), color: colors.laps[i] }))];
   }, [tr, ref, i0, i1, ideal, colors]);
-  const seriesOf = (role: TraceRole) => {
+  // each chart's lines, kept from one render to the next so a chart only redraws them when they or its view change
+  const byRole = useMemo(() => {
     const part = (values: number[] | undefined, color: string) => (values ? [{ values: values.slice(i0, i1 + 1), color }] : []);
-    return [...(ideal ? part(tr.ideal[role], colors.ideal) : []), ...tr.laps.flatMap((l, i) => part(l[role], colors.laps[i]))];
-  };
-  // the whole lap is marked section by section; a zoomed section shows each official corner in it
-  const marks = section && section.corners.length > 1 ? data.track_corners : data.corners;
+    const out: Partial<Record<TraceRole, { values: number[]; color: string }[]>> = {};
+    for (const role of tr.roles) {
+      out[role] = [...(ideal ? part(tr.ideal[role], colors.ideal) : []),
+        ...tr.laps.flatMap((l, i) => part(l[role], colors.laps[i]))];
+    }
+    return out;
+  }, [tr, i0, i1, ideal, colors]);
+  const seriesOf = (role: TraceRole) => byRole[role] ?? [];
+  // whole gears on the axis, the same however far the charts are zoomed: a range of at least five keeps the labels
+  // whole numbers
+  const gears = useMemo((): [number, number] | undefined => {
+    const all = byRole.gear?.flatMap((s) => s.values).filter(Number.isFinite) ?? [];
+    if (!all.length) return undefined;
+    const top = all.reduce((a, b) => Math.max(a, b));
+    return [Math.min(all.reduce((a, b) => Math.min(a, b)), top - 5), top];
+  }, [byRole]);
+  // the whole lap is marked section by section; a zoomed section, or a zoom into under half the lap or section,
+  // shows each official corner in it
+  const marks = (section && section.corners.length > 1) || (zoomedIn && shown[1] - shown[0] < (full[1] - full[0]) / 2)
+    ? data.track_corners : data.corners;
   const markers = marks
     .filter((c) => c.apex_m >= tr.distance[i0] && c.apex_m <= tr.distance[i1])
     .map((c) => ({ at: c.apex_m - d0, label: c.code }));
@@ -284,33 +308,32 @@ export function CompareTraces({ data, colors, ideal, zoom, onZoom, cursor, onCur
           <Swatch key={i} color={colors.laps[i]} label={`L${l.lap} · ${l.session}`} width={14} height={4} />
         ))}
       </View>
-      <Text style={styles.at}>
-        {at != null
-          ? `${Math.round(at).toLocaleString()} m${here ? ` · ${here}` : ''}`
-          : section
-            ? `${section.code}: ${section.start_m.toLocaleString()} to ${section.end_m.toLocaleString()} m`
-            : `Whole lap: ${data.length_m.toLocaleString()} m`}
-      </Text>
+      <View style={styles.atRow}>
+        <Text style={styles.at}>
+          {at != null
+            ? `${Math.round(at).toLocaleString()} m${here ? ` · ${here}` : ''}`
+            : zoomedIn
+              ? `Zoomed: ${Math.round(shown[0] + d0).toLocaleString()} to ${Math.round(shown[1] + d0).toLocaleString()} m`
+              : section
+                ? `${section.code}: ${section.start_m.toLocaleString()} to ${section.end_m.toLocaleString()} m`
+                : `Whole lap: ${data.length_m.toLocaleString()} m`}
+        </Text>
+        <ResetZoom zoom={free} reserve />
+      </View>
+      <ZoomGroup zoom={free}>
       <View style={styles.charts}>
         <TraceChart {...shared} title={`Time vs ${refName}`} unit="s" zeroLine height={120} series={delta} />
-        {CHARTS.filter((c) => tr.roles.includes(c.role)).map((c) => {
-          const series = seriesOf(c.role);
-          let domain = c.domain;
-          if (c.role === 'gear') {
-            // whole gears on the axis: a range of at least five keeps the labels whole numbers
-            const top = Math.max(...series.flatMap((s) => s.values));
-            domain = [Math.min(...series.flatMap((s) => s.values), top - 5), top];
-          }
-          return (
-            <TraceChart key={c.role} {...shared} title={c.title} unit={c.unit} height={c.height} domain={domain}
-              series={series} />
-          );
-        })}
+        {CHARTS.filter((c) => tr.roles.includes(c.role)).map((c) => (
+          <TraceChart key={c.role} {...shared} title={c.title} unit={c.unit} height={c.height}
+            domain={c.role === 'gear' ? gears : c.domain} series={seriesOf(c.role)} />
+        ))}
       </View>
+      </ZoomGroup>
       <Text style={StyleSheet.flatten([t.small, styles.measure])}>
         Time: above zero, a lap is behind {refName} at that point
-        {section ? ` (counted from the start of ${section.code})` : ''}. Drag across a chart to read every lap at the
-        same point.{data.aligned_by === 'gps' ? ' The laps are placed on one GPS line, so they meet metre for metre.' : ''}
+        {section ? ` (counted from the start of ${section.code})` : ''}. Hover over or touch a chart to read every lap
+        at the same point. {ZOOM_HINT}
+        {data.aligned_by === 'gps' ? ' The laps are placed on one GPS line, so they meet metre for metre.' : ''}
         {data.channels.gear ? ` Gear is the logged ${data.channels.gear} channel.` : ''}
         {data.numbering === 'detected' ? ` ${DETECTED_CORNERS_NOTE}` : ''}
       </Text>
@@ -353,6 +376,8 @@ const useStyles = themed((c) => ({
   best: { fontFamily: face('label', 700), color: c.timing.onBest },
   strong: { fontFamily: face('label', 700) },
   legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 22, rowGap: 8, marginTop: 14, marginBottom: 6 },
-  at: { ...Type.number, fontSize: 13, color: c.textSecondary, marginTop: 10, marginBottom: 6 },
+  atRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 18, rowGap: 6, marginTop: 10,
+    marginBottom: 6, minHeight: 22 },
+  at: { ...Type.number, fontSize: 13, color: c.textSecondary },
   charts: { gap: 14 },
 }));

@@ -28,7 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import heavy, models, run_labels, storage
+from app import heavy, models, page_cache, run_labels, storage
 from app.analysis import compact
 from app.analysis.advice import build_report
 from app.db import SessionLocal, get_db
@@ -228,14 +228,15 @@ def _queue(db: Session, plan: Plan, row: models.ReportCache | None) -> models.Re
 @router.get("/events/{event_id}")
 def event_report(event_id: int, db: Session = Depends(get_db)):
     """How to go faster across every session of an event (a test): the report when it is up to date, otherwise the
-    progress of the one being worked out (and the last report, marked stale)."""
-    return report_for(db, "event", event_id)
+    progress of the one being worked out (and the last report, marked stale). Written out as JSON here: FastAPI's own
+    encoder took twice as long over the report's 80 kB (app/page_cache.py RawJSON)."""
+    return page_cache.RawJSON(page_cache.as_json(report_for(db, "event", event_id)))
 
 
 @router.get("/sessions/{session_id}")
 def session_report(session_id: int, db: Session = Depends(get_db)):
     """The same for one session's laps."""
-    return report_for(db, "session", session_id)
+    return page_cache.RawJSON(page_cache.as_json(report_for(db, "session", session_id)))
 
 
 def _refresh(db: Session, kind: str, id_: int) -> dict:

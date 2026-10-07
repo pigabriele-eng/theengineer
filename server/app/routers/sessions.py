@@ -277,8 +277,8 @@ def session_analysis(session_id: int, file_id: int | None = None, reference_lap:
     if main is None or reference_lap is not None or file_id not in (None, main.id):
         with heavy.lock:
             return work()
-    return page_cache.cached(db, f"session:{s.id}|analysis",
-                             lambda: page_cache.session_signature(db, "analysis", s, main), work)
+    return page_cache.RawJSON(page_cache.cached(
+        db, f"session:{s.id}|analysis", lambda: page_cache.session_signature(db, "analysis", s, main), work, raw=True))
 
 
 @router.get("/{session_id}/compare")
@@ -305,8 +305,9 @@ def session_compare(session_id: int, lap: int, reference_lap: int | None = None,
             return work()
     # the session page's view (its main log, 5 m steps) keeps the scope it always had: the prebuild makes it
     view = "" if f.id == page_cache.main_file(s).id and step == 5.0 else f"|{f.id}|{step!r}"
-    return page_cache.cached(db, f"session:{s.id}|compare|{lap}|{reference_lap}{view}",
-                             lambda: page_cache.session_signature(db, "compare", s, f), work)
+    return page_cache.RawJSON(page_cache.cached(
+        db, f"session:{s.id}|compare|{lap}|{reference_lap}{view}",
+        lambda: page_cache.session_signature(db, "compare", s, f), work, raw=True))
 
 
 def default_reference_lap(s: models.RunSession, f: models.LoggerFile) -> int | None:
