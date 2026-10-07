@@ -12,7 +12,9 @@ useful first:
   c. each driver's best used-tyre lap against their typical lap of the same stint (the clean lap nearest the stint's
      median), for consistency.
 Each pair comes with the corners where most of the gap is: the sections of the lap comparison (POST /compare/laps,
-routers/lapcompare.py) where the slower lap loses the most, on the track's official corner numbers.
+routers/lapcompare.py) where the slower lap loses the most, on the track's official corner numbers; and where the
+technique check (routers/technique.py, read here and never started) flags a mistake of the slower lap in one of those
+corners, the costliest in a few words with what it costs ("T3 0.21 s · lifted on the exit (0.11 s)").
 
 Tyres (Gabriele, firm): qualifying is on new tyres and low fuel, the races on the qualifying set (used), everything
 else on used tyres unless known otherwise: a run's tyres are the ones run_tyres.py gives every page (the driver's
@@ -28,7 +30,9 @@ read only where a run has none, under heavy.lock as the comparison always does).
 their own while the app asks again ("status": "working", the corners known so far filled in), then kept in page_cache
 under a signature of the event's runs, laps, drivers and track, so the next visit answers at once. The comparisons
 themselves stay in the lap comparison's own memory, so opening a suggestion answers at once too. After an upload the
-prebuild works them out for an event that is on now or just finished (warm()).
+prebuild works them out for an event that is on now or just finished (warm()). The mistakes are added to every
+answer as it goes out, from the technique check's kept result (its laps' obvious mistakes, held in memory until the
+check changes), so a check that finishes later shows at the next ask without working the corners out again.
 """
 from __future__ import annotations
 
@@ -37,6 +41,7 @@ import re
 import statistics
 import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
@@ -46,6 +51,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app import db as app_db  # SessionLocal is looked up when used: the tests swap the database
 from app import heavy, models, page_cache, prebuild, run_labels, run_parts, run_tyres
+from app.analysis.technique import HABITS
 from app.db import get_db
 from app.routers import lapcompare
 
@@ -60,6 +66,9 @@ MIN_CORNER_S = 0.03  # a corner losing less than this isn't named (unless it is 
 MIN_STINT_LAPS = 4  # clean laps a stint needs for its typical lap to mean something
 MIN_TYPICAL_GAP_S = 0.05  # a typical lap this close to the best: nothing to learn from the pair
 RECENT_DAYS = 3  # the prebuild works the suggestions out for events whose newest run is this recent
+MIN_MISTAKE_S = 0.02  # a mistake costing less than this isn't named at a corner
+SAME_LAP_S = 0.01  # the technique check's lap is the suggested one when their times agree this closely
+TECHNIQUE_KEPT = 4  # events whose technique laps are held in memory
 
 ORDER_PREFIX = run_tyres.ORDER_PREFIX  # "03_Q" -> "Q"
 QUALIFYING = re.compile(r"^(?:PQ|Q\d*|QUALI\w*|PRE-QUALI\w*)\b", re.I)
@@ -287,6 +296,87 @@ def _with_corners(db: Session, pair: dict) -> dict:
     return {**pair, "corners": corners_of(res, pair["slower"]), "numbering": res["numbering"]}
 
 
+# ---------- the mistakes at those corners ----------
+
+# A mistake in a few words, after its corner ("T3 0.21 s · lifted on the exit (0.11 s)"): the technique check's
+# obvious mistakes (analysis/technique.py obvious_mistakes and _with_exit_lifts), else its name for the habit.
+MISTAKE_WORDS = {
+    "exit_lift": "lifted on the exit",
+    "exit_stall": "speed stalled on the exit",
+    "on_off_throttle": "throttle on and off",
+    "power_step": "stepped on the power",
+    "power_oversteer": "oversteer on the power",
+    "early_shift": "shifted up early",
+    "late_shift": "shifted up late",
+    "braking_unused": "braking grip left unused",
+    "soft_straight_braking": "soft braking in a straight line",
+}
+
+
+def mistake_words(kind: str) -> str:
+    if kind in MISTAKE_WORDS:
+        return MISTAKE_WORDS[kind]
+    name = HABITS.get(kind) or kind.replace("_", " ")
+    return name[:1].lower() + name[1:]
+
+
+TechniqueLaps = dict[tuple[int, int], tuple[float, list[dict]]]  # (run, lap) -> (time, obvious mistakes)
+_technique: OrderedDict[int, tuple[tuple, TechniqueLaps]] = OrderedDict()  # event -> (check's stamp, its laps)
+_technique_lock = threading.Lock()
+
+
+def technique_laps(db: Session, event_id: int) -> tuple[str, TechniqueLaps]:
+    """The obvious mistakes of the event's laps as its technique check found them, read from the kept result (the
+    check itself is the prebuild's and the Technique page's to start): "ready" with them, "working" while the check
+    is worked out (an earlier result's laps meanwhile), "none" when there is none."""
+    T = models.TechniqueCache
+    head = db.execute(select(T.id, T.status, T.result_signature).where(T.scope == f"event:{event_id}")).first()
+    if head is None:
+        return "none", {}
+    stamp = (head.id, head.result_signature)
+    with _technique_lock:
+        kept = _technique.get(event_id)
+    if kept is not None and kept[0] == stamp:
+        laps = kept[1]
+    else:
+        result = db.scalar(select(T.result).where(T.id == head.id)) or {}
+        laps = {(x["session_id"], x["number"]): (x["time"], [{k: o[k] for k in ("code", "kind", "cost_s")}
+                                                              for o in x.get("obvious") or []])
+                for x in result.get("laps") or []}
+        with _technique_lock:
+            _technique[event_id] = (stamp, laps)
+            _technique.move_to_end(event_id)
+            while len(_technique) > TECHNIQUE_KEPT:
+                _technique.popitem(last=False)
+    if head.status in ("queued", "running"):
+        return "working", laps
+    return ("ready" if laps else "none"), laps
+
+
+def with_mistakes(pair: dict, laps: TechniqueLaps) -> dict:
+    """The pair with, at each of its corners, the costliest mistake the technique check found there on the slower
+    lap ("mistake": {kind, words, cost_s}, or null)."""
+    if not pair.get("corners"):
+        return pair
+    lap = pair["laps"][pair["slower"]]
+    checked = laps.get((lap["session_id"], lap["lap"]))
+    if checked is not None and abs(checked[0] - lap["time"]) > SAME_LAP_S:
+        checked = None  # an earlier check, of laps since changed
+    corners = []
+    for c in pair["corners"]:
+        found = [o for o in (checked[1] if checked else []) if o["code"] == c["code"] and o["cost_s"] >= MIN_MISTAKE_S]
+        top = max(found, key=lambda o: o["cost_s"]) if found else None
+        corners.append({**c, "mistake": {"kind": top["kind"], "words": mistake_words(top["kind"]),
+                                         "cost_s": round(top["cost_s"], 3)} if top else None})
+    return {**pair, "corners": corners}
+
+
+def _out(db: Session, answer: dict) -> dict:
+    """The answer as it goes out: the technique check's mistakes at the corners, and whether it is still working."""
+    status, laps = technique_laps(db, answer["event_id"])
+    return {**answer, "suggestions": [with_mistakes(p, laps) for p in answer["suggestions"]], "technique": status}
+
+
 # ---------- the answer ----------
 
 _lock = threading.Lock()
@@ -333,7 +423,8 @@ def _job(event_id: int, sig: str, pairs: list[dict], notes: list[str], sessions:
 def suggestions(event_id: int, db: Session = Depends(get_db)):
     """Up to five pairs of the event's laps to compare first, each with the corners where most of the gap is, and the
     event's sessions with every lap of their runs (to pick laps by hand). "status": "working" while the corners are
-    worked out (those known so far filled in, the others null): ask again; "ready" once all are."""
+    worked out (those known so far filled in, the others null): ask again; "ready" once all are. Each corner's
+    "mistake" comes from the technique check; "technique": "working" while it is worked out (ask again for them)."""
     if db.get(models.Event, event_id) is None:
         raise HTTPException(404, "Event not found")
     sessions = _sessions(db, event_id)
@@ -341,13 +432,13 @@ def suggestions(event_id: int, db: Session = Depends(get_db)):
     scope = _scope(event_id)
     hit = page_cache.lookup(db, scope, sig)
     if hit is not None and hit[0] == 200:
-        return hit[1]
+        return _out(db, hit[1])
     runs, listed = _runs(db, sessions)
     pairs, notes = suggest(runs)
     if not pairs:
         out = _answer(event_id, "ready", [], notes, listed)
         page_cache.store(db, scope, sig, out)
-        return out
+        return _out(db, out)
     with _lock:
         job = _working.get(scope)
         if job is None or not job["thread"].is_alive():
@@ -357,7 +448,7 @@ def suggestions(event_id: int, db: Session = Depends(get_db)):
             job = _working[scope] = {"sig": sig, "pairs": progress, "thread": thread}
             thread.start()
         known = job["pairs"] if job["sig"] == sig else pairs
-    return _answer(event_id, "working", list(known), notes, listed)
+    return _out(db, _answer(event_id, "working", list(known), notes, listed))
 
 
 def wait_idle(timeout: float = 120) -> bool:

@@ -20,7 +20,10 @@ export type SuggestedLap = {
   role: 'best' | 'typical'; // typical: the stint's lap nearest its median
 };
 
-export type SuggestedCorner = { code: string; loss_s: number; phase: string };
+/** The technique check's costliest mistake of the slower lap at a corner (routers/technique.py, its obvious ones). */
+export type CornerMistake = { kind: string; words: string; cost_s: number };
+
+export type SuggestedCorner = { code: string; loss_s: number; phase: string; mistake?: CornerMistake | null };
 
 export type Suggestion = {
   kind: 'teammates' | 'progress' | 'consistency';
@@ -55,6 +58,8 @@ export type Suggestions = {
   suggestions: Suggestion[];
   notes: string[];
   sessions: PickSession[];
+  // the technique check the corners' mistakes come from: working while it is worked out (ask again for them)
+  technique?: 'ready' | 'working' | 'none';
 };
 
 export async function fetchSuggestions(eventId: number): Promise<Suggestions> {

@@ -1,5 +1,9 @@
-"""Laps to compare first (app/compare_suggest.py): which pairs, like with like on tyres, and their corners."""
+"""Laps to compare first (app/compare_suggest.py): which pairs, like with like on tyres, their corners and the
+mistakes there."""
+from sqlalchemy import select
+
 from app import compare_suggest as cs
+from app import db as app_db, models
 from app.compare_suggest import Run, session_type, suggest
 from tests.synthetic import simulate, write_ld
 
@@ -83,6 +87,27 @@ def test_corners_of_a_comparison():
     assert cs.corners_of(tiny, 0) == [{"code": "T2", "loss_s": 0.012, "phase": "mid-corner"}]
 
 
+def test_mistakes_at_the_corners():
+    pair = {"kind": "teammates", "slower": 1, "corners": [
+        {"code": "T10", "loss_s": 0.41, "phase": "entry"}, {"code": "T3", "loss_s": 0.2, "phase": "exit"},
+        {"code": "T6-T7", "loss_s": 0.18, "phase": "exit"}],
+        "laps": [{"session_id": 1, "lap": 1, "time": 102.44}, {"session_id": 2, "lap": 2, "time": 103.6}]}
+    laps = {(2, 2): (103.6, [{"code": "T10", "kind": "braking_unused", "cost_s": 0.03},
+                             {"code": "T10", "kind": "on_off_throttle", "cost_s": 0.169},
+                             {"code": "T3", "kind": "exit_lift", "cost_s": 0.0},  # too small to name
+                             {"code": "T9", "kind": "exit_stall", "cost_s": 0.2}]),  # not one of the corners
+            (1, 1): (102.44, [{"code": "T6-T7", "kind": "on_off_throttle", "cost_s": 0.113}])}  # the faster lap's
+    out = cs.with_mistakes(pair, laps)
+    assert [c["mistake"] for c in out["corners"]] == [
+        {"kind": "on_off_throttle", "words": "throttle on and off", "cost_s": 0.169}, None, None]
+    assert [c["loss_s"] for c in out["corners"]] == [0.41, 0.2, 0.18]
+    # a check of the lap before it changed (another time) isn't this lap's; no corners yet: nothing to add
+    assert cs.with_mistakes(pair, {(2, 2): (104.1, laps[(2, 2)][1])})["corners"][0]["mistake"] is None
+    assert cs.with_mistakes({**pair, "corners": None}, laps)["corners"] is None
+    assert cs.mistake_words("power_oversteer") == "oversteer on the power"
+    assert cs.mistake_words("brake_early") == "braking early"  # the habit's name
+
+
 def _upload(client, session, paces):
     r = client.post(f"/sessions/{session['id']}/files", files={"file": ("run.ld", write_ld(simulate(paces=paces)[0]))})
     assert r.status_code == 201, r.text
@@ -135,6 +160,29 @@ def test_suggestions_endpoint(client):
     laps = [{"session_id": x["session_id"], "lap": x["lap"]} for x in res["suggestions"][0]["laps"]]
     r = client.post("/compare/laps", json={"laps": laps})
     assert r.status_code == 200 and r.json()["laps"][1]["driver"] == "Bo Lind"
+
+    # the technique check's mistakes at the corners: none without a check, asked again while it works, then the
+    # costliest one of the slower lap at each corner, without working the corners out again
+    assert res["technique"] == "none"
+    assert all(c["mistake"] is None for p in res["suggestions"] for c in p["corners"])
+    top = res["suggestions"][0]
+    slow, corner = top["laps"][top["slower"]], top["corners"][0]["code"]
+    with app_db.SessionLocal() as db:
+        db.add(models.TechniqueCache(scope=f"event:{event['id']}", signature="s", status="running"))
+        db.commit()
+    assert client.get(f"/events/{event['id']}/compare/suggestions").json()["technique"] == "working"
+    with app_db.SessionLocal() as db:
+        row = db.scalar(select(models.TechniqueCache).where(models.TechniqueCache.scope == f"event:{event['id']}"))
+        row.status, row.result_signature = "done", "lap-suggestions-test"
+        row.result = {"laps": [{"session_id": slow["session_id"], "number": slow["lap"], "time": slow["time"],
+                                "obvious": [{"code": corner, "kind": "exit_lift", "cost_s": 0.112, "title": "x"},
+                                            {"code": corner, "kind": "early_shift", "cost_s": 0.04, "title": "y"}]}]}
+        db.commit()
+    marked = client.get(f"/events/{event['id']}/compare/suggestions").json()
+    assert marked["technique"] == "ready" and marked["status"] == "ready" and cs.wait_idle(1)
+    assert marked["suggestions"][0]["corners"][0]["mistake"] == {"kind": "exit_lift", "words": "lifted on the exit",
+                                                                 "cost_s": 0.112}
+    assert {**marked, "suggestions": res["suggestions"], "technique": "none"} == res  # nothing else changed
 
     # a driver changed on a run: worked out again
     assert client.patch(f"/garage/runs/{r_bo}", json={"driver_id": anna["id"]}).status_code == 200
