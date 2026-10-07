@@ -18,12 +18,13 @@ from __future__ import annotations
 
 import logging
 import re
+import statistics
 import threading
 from collections import OrderedDict
 from datetime import date
-from typing import Annotated, Literal
+from dataclasses import dataclass, field
+from typing import Annotated, Literal, NamedTuple
 
-import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
@@ -99,14 +100,15 @@ def session_row(s: models.RunSession) -> dict:
     clean = [l for l in laps if l.clean]
     best = min(clean, key=lambda l: l.time_s) if clean else None
     times = [l.time_s for l in clean]
+    med = statistics.median(times) if times else None  # np.median's, for plain floats, without numpy's overhead
     day, at, logged = _when(s)
     return {"id": s.id, "name": s.name or f"Session {s.id}", "kind": s.kind.value, "event_id": s.event_id,
             "driver": s.driver.name if s.driver else None, "driver_id": s.driver_id, "car_id": s.car_id,
             "date": day.isoformat() if day else None, "time": at,
             "log_session": logged, "laps": len(laps), "clean_laps": len(clean),
             "best_lap_s": best.time_s if best else None, "best_lap": best.number if best else None,
-            "typical_s": round(float(np.median(times)), 3) if times else None,
-            "consistency": consistency(times), "has_log": bool(s.files)}
+            "typical_s": round(float(med), 3) if times else None,
+            "consistency": consistency(times, med), "has_log": bool(s.files)}
 
 
 def _sessions(db: Session, event_id: int | None) -> list[models.RunSession]:
@@ -115,6 +117,62 @@ def _sessions(db: Session, event_id: int | None) -> list[models.RunSession]:
     col = models.RunSession.event_id
     q = q.where(col == event_id if event_id is not None else col.is_(None))
     return list(db.scalars(q.order_by(models.RunSession.id)).all())
+
+
+class _File(NamedTuple):
+    id: int
+    meta: dict
+
+
+class _Lap(NamedTuple):
+    file_id: int
+    number: int
+    time_s: float
+    clean: bool
+
+
+class _Driver(NamedTuple):
+    name: str
+
+
+@dataclass
+class _Run:
+    """What session_row, _folder and _days read of a session, loaded column by column (no ORM objects for its files
+    and laps): the folder list reads every session of every event."""
+    id: int
+    name: str | None
+    kind: models.SessionKind
+    event_id: int | None
+    driver_id: int | None
+    car_id: int | None
+    driver: _Driver | None
+    files: list[_File] = field(default_factory=list)
+    laps: list[_Lap] = field(default_factory=list)
+
+
+_ALL = object()
+
+
+def _runs(db: Session, event_id: int | object | None = _ALL) -> list[_Run]:
+    """The sessions of one event (None: of no event; by default every session), in the order of their ids, with
+    their files (in the order of theirs) and laps (by number), as _sessions has them for reading."""
+    S, F, L = models.RunSession, models.LoggerFile, models.Lap
+
+    def mine(q):
+        if event_id is _ALL:
+            return q
+        return q.where(S.event_id == event_id if event_id is not None else S.event_id.is_(None))
+
+    runs = {r[0]: _Run(*r[:6], driver=_Driver(r[6]) if r[6] is not None else None)
+            for r in db.execute(mine(select(S.id, S.name, S.kind, S.event_id, S.driver_id, S.car_id, models.Driver.name)
+                                     .outerjoin(models.Driver, S.driver_id == models.Driver.id)).order_by(S.id))}
+    for sid, *row in db.execute(mine(select(F.session_id, F.id, F.meta).join(S, S.id == F.session_id))
+                                .order_by(F.session_id, F.id)):
+        runs[sid].files.append(_File(*row))
+    for sid, *row in db.execute(mine(select(L.session_id, L.file_id, L.number, L.time_s, L.clean)
+                                     .join(S, S.id == L.session_id)).order_by(L.session_id, L.number, L.id)):
+        runs[sid].laps.append(_Lap(*row))
+    return list(runs.values())
 
 
 def _dates_row(db: Session, event_id: int) -> models.EventDates | None:
@@ -207,11 +265,8 @@ def list_folders(db: Session = Depends(get_db)):
     any (first, so they are filed). Each event also says the season it is in ({"id", "name", "year", "round"}, null
     when none), so the list can be grouped by championship, and who drove it in what (drivers and cars, the most
     laps first)."""
-    sessions = db.scalars(select(models.RunSession).options(
-        selectinload(models.RunSession.laps), selectinload(models.RunSession.files),
-        selectinload(models.RunSession.driver))).all()
-    by_event: dict[int | None, list[models.RunSession]] = {}
-    for s in sessions:
+    by_event: dict[int | None, list[_Run]] = {}
+    for s in _runs(db):
         by_event.setdefault(s.event_id, []).append(s)
     dates = {d.event_id: d for d in db.scalars(select(models.EventDates)).all()}
     events = db.scalars(select(models.Event).options(selectinload(models.Event.track))).all()
@@ -220,7 +275,7 @@ def list_folders(db: Session = Depends(get_db)):
         select(models.Car.id, models.Car.name, garage.CarInfo.model)
         .outerjoin(garage.CarInfo, garage.CarInfo.car_id == models.Car.id)).all()}
 
-    def summary(ev: models.Event | None, sessions: list[models.RunSession], d: models.EventDates | None) -> dict:
+    def summary(ev: models.Event | None, sessions: list[_Run], d: models.EventDates | None) -> dict:
         rows = [session_row(s) for s in sessions]
         return {**_folder(ev, sessions, d, rows), **_crew(rows, cars)}
 
@@ -249,7 +304,7 @@ def create_folder(body: FolderIn, db: Session = Depends(get_db)):
 def folder(key: str, db: Session = Depends(get_db)):
     """One folder: the event (or the sessions in no event) with its sessions grouped by day."""
     ev = _key_event(db, key)
-    sessions = _sessions(db, ev.id if ev else None)
+    sessions = _runs(db, ev.id if ev else None)
     rows = [session_row(s) for s in sessions]
     out = _folder(ev, sessions, _dates_row(db, ev.id) if ev else None, rows)
     out["days"] = _days(rows)

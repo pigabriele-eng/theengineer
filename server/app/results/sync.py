@@ -23,7 +23,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import httpx
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app import db as app_db  # SessionLocal is looked up when used: the tests swap the database
 from app import heavy, models
@@ -332,23 +332,39 @@ def wait_idle(timeout: float = 120) -> None:
     cal_state.join(timeout)
 
 
-def _event_days(db: Session, event_id: int) -> tuple[date | None, date | None]:
-    from app.routers import events  # the events router knows an event's dates (set by hand, else its logs')
+def _event_days(db: Session, event_ids: list[int]) -> dict[int, tuple[date | None, date | None]]:
+    """Each event's first and last day as its folder on the events page gives them (routers/events._folder): set by
+    hand, else the days its logs were recorded, else the event's date. Read in three queries for all of them, without
+    the sessions' laps."""
+    from app.routers import events  # the events router knows the day a session's log was recorded
 
-    ev = db.get(models.Event, event_id)
-    if ev is None:
-        return None, None
-    folder = events._folder(ev, events._sessions(db, event_id), events._dates_row(db, event_id))
-    start, end = folder["start"], folder["end"]
-    return (date.fromisoformat(start) if start else None, date.fromisoformat(end) if end else None)
+    hand = {d.event_id: d for d in db.scalars(select(models.EventDates)
+                                              .where(models.EventDates.event_id.in_(event_ids))).all()}
+    logged: dict[int, set[date]] = {}
+    for s in db.scalars(select(models.RunSession).options(selectinload(models.RunSession.files))
+                        .where(models.RunSession.event_id.in_(event_ids))).all():
+        if (day := events._when(s)[0]) is not None:
+            logged.setdefault(s.event_id, set()).add(day)
+    out = {}
+    for ev in db.scalars(select(models.Event).where(models.Event.id.in_(event_ids))).all():
+        dates = hand.get(ev.id)
+        if dates is not None and (dates.start is not None or dates.end is not None):
+            out[ev.id] = (dates.start or dates.end, dates.end or dates.start)
+        elif days := logged.get(ev.id):
+            out[ev.id] = (min(days), max(days))
+        else:
+            out[ev.id] = (ev.date, ev.date)
+    return out
 
 
 def current_links(db: Session, today: date | None = None) -> list[rm.EventResultLink]:
     """Links of events that are on now: from the day before their first day to two days after their last."""
     today = today or date.today()
     out = []
-    for link in db.scalars(select(rm.EventResultLink).where(rm.EventResultLink.round_id.is_not(None))).all():
-        start, end = _event_days(db, link.event_id)
+    links = db.scalars(select(rm.EventResultLink).where(rm.EventResultLink.round_id.is_not(None))).all()
+    days = _event_days(db, [link.event_id for link in links]) if links else {}
+    for link in links:
+        start, end = days.get(link.event_id, (None, None))
         if start and today >= start - timedelta(days=1) and today <= (end or start) + timedelta(days=2):
             out.append(link)
     return out

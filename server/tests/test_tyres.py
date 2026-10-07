@@ -156,6 +156,36 @@ def test_pressure_calculator_learns_from_uploaded_logs(client):
     assert not rr["flags"]  # no rear minimum entered
 
 
+def test_logged_runs_are_read_from_each_log_once(client, monkeypatch):
+    """Each log's pressure runs are kept once read: asked again, the runs and the plan read no log and don't wait for
+    the heavy-work lock, and a session's conditions changed since still count."""
+    from app import heavy
+    from app.routers import tyres
+
+    car = client.post("/cars", json={"name": "BMW M4 GT4 Evo"}).json()
+    sids = []
+    for i, (cold_c, track_c) in enumerate(CONDITIONS[:3]):
+        s = client.post("/sessions", json={"name": f"Run {i + 1}", "car_id": car["id"]}).json()
+        log = one_run(1.30 - 0.01 * i, cold_c, known_rise(cold_c, track_c))
+        assert client.post(f"/sessions/{s['id']}/files", files={"file": (f"run{i}.ld", log)}).status_code == 201
+        sids.append(s["id"])
+    body = {"targets": {"FL": 1.9, "RR": 2.0}, "set_c": 25, "car_id": car["id"]}
+    runs = client.get("/tyres/runs", params={"car_id": car["id"]}).json()
+    plan = client.post("/tyres/pressures", json=body).json()
+    assert runs["summary"]["FL"]["runs"] == 3 and plan["corners"][0]["data"]["runs"] == 3
+
+    def no_log(*a, **k):
+        raise AssertionError("a log was read again")
+    monkeypatch.setattr(tyres, "read_file", no_log)
+    with heavy.lock:  # another job is reading a log: kept runs don't wait for it
+        assert client.get("/tyres/runs", params={"car_id": car["id"]}).json() == runs
+        assert client.post("/tyres/pressures", json=body).json() == plan
+        client.patch(f"/sessions/{sids[0]}/conditions", json={"track_temp_c": 41.0, "ambient_temp_c": 18.0})
+        again = client.get("/tyres/runs", params={"car_id": car["id"]}).json()
+    first = next(r for r in again["runs"] if r["session_id"] == sids[0])
+    assert first["track_c"] == 41.0 and first["ambient_c"] == 18.0 and first["ambient_source"] == "session"
+
+
 def test_pressure_calculator_per_tyre_kind(client):
     """A tyre learns its pressure rise only from the sessions on it (the tyre their event names) and is checked
     against its own P-Book figures; sessions with no tyre set count for none."""

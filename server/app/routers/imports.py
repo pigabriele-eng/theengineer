@@ -10,6 +10,7 @@ a planned event's venue on one of its days goes into that event (plans.planned_f
 remembered (ImportEvent), so the app can offer to name them or join them to the race weekend they belong to.
 """
 import ctypes
+import functools
 import gc
 import logging
 import queue
@@ -305,6 +306,7 @@ def _release_memory() -> None:
         pass
 
 
+@functools.lru_cache(maxsize=4096)  # the folder list reads every session's log date each time
 def _date(text: str) -> date | None:
     for fmt in DATE_FORMATS:
         try:
