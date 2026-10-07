@@ -23,6 +23,7 @@ import { RunNameQuestions } from '@/components/RunNames';
 import { SeasonMatch } from '@/components/SeasonMatch';
 import { filledNote, localPick, PickerKind, RunChips, RunNameEditor, RunPicker, useGarage } from '@/components/RunChips';
 import { Text, View } from '@/components/Themed';
+import WeekendBefore from '@/components/weekend/Before';
 import WeekendDuring from '@/components/weekend/During';
 import { formatLap } from '@/lib/api';
 import { todayIso, When, whenOf } from '@/lib/calendar';
@@ -34,6 +35,7 @@ import { dateRange, dayLabel, eventsApi, Folder, FolderSession, KIND_NAMES, NO_E
 import { EventGuess } from '@/lib/fingerprints';
 import { Garage, garageApi, RunFields } from '@/lib/garage';
 import { duringSections } from '@/lib/weekendRuns';
+import { EventMode, fetchMode, setMode as saveMode } from '@/lib/eventModes';
 import { noPrint } from '@/lib/print';
 import { face, Fonts, PHOTOS, photoFor, themed, Type, useTheme } from '@/constants/Theme';
 
@@ -57,7 +59,7 @@ export default function EventScreen() {
   const wide = useWide();
   const gutter = useGutter();
   const { width } = useWindowDimensions();
-  const params = useLocalSearchParams<{ id: string; compare?: string; stage?: string }>();
+  const params = useLocalSearchParams<{ id: string; compare?: string; stage?: string; car?: string }>();
   const key = params.id === NO_EVENT ? NO_EVENT : String(Number(params.id));
   const router = useRouter();
   const [folder, setFolder] = useState<Folder | null>(null);
@@ -74,6 +76,22 @@ export default function EventScreen() {
   const { garage, reload: reloadGarage } = useGarage();
   const [eventDrivers, setEventDrivers] = useState<number[]>([]); // the event's drivers 1 to 4, offered first
   const [hasInfo, setHasInfo] = useState(true); // the server answers for the event's info (an older one doesn't)
+  // a race weekend or a coaching day (lib/eventModes.ts): switched with one tap in the folio
+  const [mode, setModeState] = useState<EventMode | null>(null);
+  useEffect(() => {
+    if (key === NO_EVENT) return;
+    let live = true;
+    fetchMode(Number(key)).then((m) => live && setModeState(m), () => {});
+    return () => {
+      live = false;
+    };
+  }, [key]);
+  const changeMode = (m: EventMode) => {
+    if (key === NO_EVENT || m === mode) return;
+    const was = mode;
+    setModeState(m);
+    saveMode(Number(key), m).then(setModeState, () => setModeState(was));
+  };
   const scroll = useRef<ScrollView>(null);
   const topH = useRef(0); // the photo and its folio, above the page's body
   const compareY = useRef(0); // where Side by side starts in the body
@@ -201,6 +219,7 @@ export default function EventScreen() {
         !folder.dates_by_hand && folder.log_start ? 'Dates from the logs' : null,
         folder.sessions > 0 ? <><B>{folder.sessions}</B> runs · <B>{folder.clean_laps}</B> clean laps</> : 'No runs yet',
         folder.best_lap_s != null ? <>Best <B>{formatLap(folder.best_lap_s)}</B></> : null,
+        mode && <ModeSwitch mode={mode} onChange={changeMode} />,
       ] : [<><B>{folder.sessions}</B> run{folder.sessions === 1 ? '' : 's'} in no event</>]} />
     </View>
   ) : undefined;
@@ -247,16 +266,9 @@ export default function EventScreen() {
     </View>
   );
 
-  // Before the weekend: the prep report (the lap to aim for, corner by corner, grip, the setup to start with)
+  // Before the weekend: the prep report itself (the lap to aim for, corner by corner, grip, the setup to start with)
   const before = isEvent && eventId != null && folder && !during && (
-    <Section no={1} title="Before the weekend"
-      dek="The lap to aim for, corner by corner, the track’s grip and the setup to start with, from the past events here.">
-      <View style={styles.beforeLinks}>
-        <TextLink href={{ pathname: '/prep', params: { event: eventId } }} label="Open the prep report" red arrow />
-        {timed && <TextLink href={{ pathname: '/quali', params: { event: eventId } }} label="Quali prep" arrow />}
-        <TextLink href={{ pathname: '/prediction', params: { event: eventId } }} label="Prediction" arrow />
-      </View>
-    </Section>
+    <WeekendBefore eventId={eventId} car={params.car ?? null} />
   );
 
   // One panel at a time in a ruled band under the links: rename, change the dates, delete the event, move or delete
@@ -322,8 +334,8 @@ export default function EventScreen() {
     : wide ? styles.days : styles.daysPhone;
   const dayStyle = cols === 'across' ? styles.dayAcross : cols === 'half' ? styles.dayHalf : wide ? styles.day : undefined;
 
-  // During's own sections come first (lib/weekendRuns.ts duringSections); Before's one
-  let no = during ? duringSections(folder) : isEvent ? 1 : 0;
+  // During's own sections come first (lib/weekendRuns.ts duringSections); Before is the prep report alone
+  let no = during ? duringSections(folder) : 0;
   const runs = folder && showRuns && (
     <Section no={++no} title="Runs" dek={isEvent
       ? 'Day by day, each with its best lap. Tick two to six to put them side by side; tap a name to rename it, a best lap to open the run.'
@@ -431,13 +443,10 @@ export default function EventScreen() {
             {results}
             {addRun}
           </WeekendDuring>
-        ) : (
+        ) : isEvent ? before : (
           <>
-            {before}
             {runs}
             {sideBySide}
-            {info}
-            {results}
             {addRun}
           </>
         )}
@@ -509,6 +518,30 @@ function deckOf(f: Folder, isEvent: boolean) {
 /** The biggest gap of a run's best lap to the event's best: the length of a full gap bar. */
 function maxGapOf(runs: FolderSession[], best: number | null) {
   return Math.max(0.5, ...runs.map((s) => (s.best_lap_s != null && best != null ? s.best_lap_s - best : 0)));
+}
+
+// ---------- race weekend or coaching day ----------
+
+const MODES: { key: EventMode; label: string }[] = [
+  { key: 'weekend', label: 'Race weekend' },
+  { key: 'coaching', label: 'Coaching day' },
+];
+
+/** The event's mode in the folio, one tap to switch: the one it is in bold over a red underline. Words in a line of
+ * text (a folio item is text), each a button. */
+function ModeSwitch({ mode, onChange }: { mode: EventMode; onChange: (m: EventMode) => void }) {
+  const styles = useStyles();
+  return (
+    <Text accessibilityRole="radiogroup" accessibilityLabel="What this event is">
+      {MODES.map((m, i) => (
+        <Text key={m.key}>
+          {i > 0 ? ' / ' : ''}
+          <Text onPress={() => onChange(m.key)} accessibilityRole="radio" accessibilityState={{ checked: m.key === mode }}
+            style={m.key === mode ? styles.modeOn : styles.modeOff}>{m.label}</Text>
+        </Text>
+      ))}
+    </Text>
+  );
 }
 
 // ---------- the event's figures ----------
@@ -734,9 +767,12 @@ const useStyles = themed((c) => ({
   manage: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 18, rowGap: 10, marginLeft: 'auto' },
   managePhone: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 18, rowGap: 10, width: '100%',
     borderTopWidth: 1, borderColor: c.separator, paddingTop: 12 },
+  // the mode switch: a tall tap area around the words (inline padding, the folio's height unchanged)
+  modeOn: { fontFamily: Type.label.fontFamily, textDecorationLine: 'underline', textDecorationColor: c.mark,
+    paddingVertical: 12 },
+  modeOff: { color: c.textSecondary, paddingVertical: 12 },
   more: { marginTop: 40, borderTopWidth: 3, borderColor: c.rule, paddingTop: 10, gap: 14 },
   moreLinks: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 22, rowGap: 14 },
-  beforeLinks: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 26, rowGap: 14 },
   band: { marginTop: 20, borderTopWidth: 3, borderColor: c.rule, paddingTop: 10, gap: 12, maxWidth: 680 },
   confirm: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 24, color: c.text },
   notice: { marginTop: 18, maxWidth: 720 },
