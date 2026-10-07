@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, StyleSheet, useWindowDimensions } from 'r
 
 import { DeletedNotice, DeleteEventAction } from '@/components/DeleteEvent';
 import { CalendarLine, FilterBar, PlanForm, plannedLine, RemovePlanned } from '@/components/EventFilter';
+import { CountryTag } from '@/components/Flag';
 import { FoldHead, SubFoldHead } from '@/components/Fold';
 import { PrepButton, usePrepAvailability } from '@/components/PrepButton';
 import {
@@ -16,6 +17,7 @@ import { api, formatLap } from '@/lib/api';
 import {
   CalendarState, calendarApi, countByWhen, defaultFilter, Filter, filtered, Plan, todayIso, When, whenOf,
 } from '@/lib/calendar';
+import { Country, countryOfAny } from '@/lib/countries';
 import {
   dayLabel, eventsApi, Folder, FolderSession, FolderSummary, NO_EVENT,
 } from '@/lib/events';
@@ -94,6 +96,8 @@ export default function SessionsScreen() {
   const lead = filtered(all, 'current', today).find((f) => f.id != null)
     ?? filtered(all, 'past', today).find((f) => f.id != null && f.sessions > 0)
     ?? filtered(all, 'upcoming', today).find((f) => f.id != null) ?? null;
+  // an event's country, from its track, else the venue it was planned at, else its name ("Monza test")
+  const countryOfEvent = (f: FolderSummary) => countryOfAny([f.track, f.id != null ? plans.get(f.id)?.venue : null, f.name]);
 
   // folded or open: what was tapped on this device, else the default
   const defaults = openByDefault(years, lead, Number(today.slice(0, 4)));
@@ -206,6 +210,7 @@ export default function SessionsScreen() {
         <YearFold key={y.key} no={i + 1} y={y} isOpen={isOpen} toggle={toggle} today={today}>
           {(c) => c.events.map((f) => (
             <EventFold key={f.key} f={f} open={isOpen(eventKey(f))} onToggle={() => toggle(eventKey(f))}
+              country={countryOfEvent(f)}
               detail={details[f.key]} plan={f.id != null ? plans.get(f.id) : undefined}
               prep={f.id != null ? prep[String(f.id)] : undefined} onChanged={load} onRenamed={renamed(f.key)} />
           ))}
@@ -287,8 +292,9 @@ function shortDates(start: string | null, end: string | null) {
 /** An event: one line (its days, name, round, track, runs and best lap, or what is planned) that folds and opens with
  * a tap; open, its runs and links (an event with data) and its actions: Rename, Delete (Remove when planned) and the
  * Prep report. Renaming takes the line's place. */
-function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged }: {
+function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged, country }: {
   f: FolderSummary;
+  country: Country | null; // its flag and three letters before its name
   open: boolean;
   onToggle: () => void;
   detail?: Detail;
@@ -327,7 +333,14 @@ function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged
           <View style={wide ? styles.itemLine : styles.itemLinePhone}>
             <Text style={wide ? styles.itemDate : styles.itemDatePhone}>{dates}</Text>
             <View style={styles.itemWhat}>
-              <Text style={wide ? styles.itemName : styles.itemNamePhone}>{shortName(f)}</Text>
+              {country ? (
+                <View style={wide ? styles.nameLine : styles.nameLinePhone}>
+                  <CountryTag country={country} />
+                  <Text style={StyleSheet.flatten([wide ? styles.itemName : styles.itemNamePhone, styles.nameShrink])}>
+                    {shortName(f)}
+                  </Text>
+                </View>
+              ) : <Text style={wide ? styles.itemName : styles.itemNamePhone}>{shortName(f)}</Text>}
               <Text style={styles.itemMeta}>{meta}</Text>
             </View>
             <Text style={StyleSheet.flatten([styles.status, { borderColor: status.line }])}>{status.text}</Text>
@@ -550,6 +563,10 @@ const useStyles = themed((c) => ({
   itemDate: { fontFamily: Fonts.display, fontSize: 34, lineHeight: 34, textTransform: 'uppercase', width: DATE_W, color: c.text },
   itemDatePhone: { ...Type.label, fontSize: 15, letterSpacing: 1.8, color: c.text },
   itemWhat: { flex: 1, minWidth: 0 },
+  // the flag and three letters before the name
+  nameLine: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  nameLinePhone: { flexDirection: 'row', alignItems: 'center', gap: 11 },
+  nameShrink: { flexShrink: 1 },
   itemName: { fontFamily: Fonts.display, fontSize: 30, lineHeight: 32, textTransform: 'uppercase', color: c.text },
   itemNamePhone: { fontFamily: Fonts.display, fontSize: 26, lineHeight: 28, textTransform: 'uppercase', color: c.text },
   itemMeta: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 22, color: c.textSecondary, marginTop: 4 },
