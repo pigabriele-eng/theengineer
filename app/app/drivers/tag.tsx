@@ -1,4 +1,4 @@
-import { Stack } from 'expo-router';
+import { Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
 
@@ -26,13 +26,14 @@ export default function TagDriversScreen() {
   const [confirmRemove, setConfirmRemove] = useState(false);
   const tint = useThemeColor({}, 'tint');
   const background = useThemeColor({}, 'background');
+  const { event } = useLocalSearchParams<{ event?: string }>(); // opened for one event (asked who drove it)
 
   const load = useCallback(async () => {
     try {
       const [b, d] = await Promise.all([loadBlocks(), driversApi.list()]);
       setBlocks(b);
       setDrivers(d);
-      setOpen((o) => o ?? new Set([firstOpen(b, todayIso())].filter((k): k is string => k != null)));
+      setOpen((o) => o ?? new Set([event ?? firstOpen(b, todayIso())].filter((k): k is string => k != null)));
     } catch (e) {
       setError((e as Error).message);
     }
