@@ -70,6 +70,52 @@ def test_gps_lap_timing_learned_from_an_earlier_log(client):
     assert abs(r["best_lap_s"] - min(lap_times)) < 0.05
 
 
+def test_upload_that_fails_after_storing_leaves_no_file_behind(client, monkeypatch):
+    """Storage is small (1 GB on Supabase's free plan): an upload that fails after its log was stored deletes it
+    again, as nothing points to it once the rows are rolled back."""
+    import os
+    from pathlib import Path
+
+    import pytest
+
+    from app.routers import sessions as sessions_router
+    from tests.synthetic import simulate, write_ld
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("something went wrong after the log was stored")
+
+    monkeypatch.setattr(sessions_router, "_attach_track", boom)
+    s = client.post("/sessions", json={}).json()
+    with pytest.raises(RuntimeError):
+        client.post(f"/sessions/{s['id']}/files", files={"file": ("run.ld", write_ld(simulate()[0]))})
+    assert client.get(f"/sessions/{s['id']}").json()["files"] == []
+    stored = Path(os.environ["STORAGE_DIR"])
+    assert not [p for p in stored.rglob("*") if p.is_file()]
+
+
+def test_upload_lets_other_log_work_run_once_its_log_is_stored(client, monkeypatch):
+    """The heavy-work lock is held while the log is read and stored, not while the run is matched to its season and
+    its pages are queued (no log is read there), so a page that reads logs doesn't wait for those."""
+    from app import heavy, prebuild, season_match
+    from tests.synthetic import simulate, write_ld
+
+    held = {}
+
+    def after_import(db, run_ids):
+        held["season"] = getattr(heavy.lock._held, "depth", 0)
+
+    def after_upload(db, session_ids):
+        held["prebuild"] = getattr(heavy.lock._held, "depth", 0)
+
+    monkeypatch.setattr(season_match, "after_import", after_import)
+    monkeypatch.setattr(prebuild, "after_upload", after_upload)
+    event = client.post("/events", json={"name": "Test day"}).json()
+    s = client.post("/sessions", json={"event_id": event["id"]}).json()
+    r = client.post(f"/sessions/{s['id']}/files", files={"file": ("run.ld", write_ld(simulate()[0]))})
+    assert r.status_code == 201, r.text
+    assert held == {"season": 0, "prebuild": 0}
+
+
 def test_ldx_upload_attaches_beacons_to_its_log(client):
     from tests.synthetic import simulate, write_ld
 

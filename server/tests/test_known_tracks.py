@@ -38,6 +38,28 @@ def test_a_track_stored_without_corners_gets_the_official_ones_when_next_used(cl
         assert official_corners(db.get(app.models.Track, track_id)) == [("T1", 300, None)]
 
 
+def test_two_requests_reading_a_track_at_once_give_it_its_corners_once(client):
+    """Pages read the track's corners and give a track stored without them the official ones: two requests doing
+    so at the same moment, each with the track as it was before, add them once."""
+    import app.db
+    import app.models
+    from app.routers.sessions import official_corners
+
+    with app.db.SessionLocal() as db:
+        db.add(app.models.Track(name="Zandvoort"))
+        db.commit()
+    track_id = client.get("/tracks").json()[0]["id"]
+    with app.db.SessionLocal() as a, app.db.SessionLocal() as b:
+        ta, tb = a.get(app.models.Track, track_id), b.get(app.models.Track, track_id)
+        assert ta.corners == [] and tb.corners == []  # both read it before either added them
+        assert len(official_corners(ta)) == 14
+        assert len(official_corners(tb)) == 14
+        a.commit()
+        b.commit()
+    stored = client.get(f"/tracks/{track_id}").json()
+    assert [c["code"] for c in stored["corners"]] == [f"T{i}" for i in range(1, 15)]
+
+
 def test_every_known_track_numbers_its_corners_in_lap_order_from_a_source():
     for key, t in KNOWN.items():
         at = [c[1] for c in t["corners"]]

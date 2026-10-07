@@ -8,10 +8,18 @@ section. Tracks without a usable outline yet (Valencia, Lausitzring, Sachsenring
 numbering could not be confirmed (Barcelona, Portimão, Jeddah, Oschersleben, Norisring) are left out: their logs keep
 C1, C2... until they are added.
 """
+import logging
 import re
+import threading
+
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session, object_session
 
 from app import models
 from app.results.venues import plain
+
+log = logging.getLogger(__name__)
+_filling = threading.Lock()  # one request at a time gives a stored track its corners
 
 KNOWN: dict[str, dict] = {
     "Hockenheim GP": {
@@ -197,10 +205,37 @@ def known_track(name: str | None) -> tuple[str, dict] | None:
 
 
 def fill_corners(track: models.Track) -> None:
-    """Give a track with no corners the official ones, when we know them."""
+    """Give a track with no corners the official ones, when we know them.
+
+    Pages that only read call this too, so two requests can find a stored track without corners at the same moment:
+    a stored track gets them in a transaction of its own, committed at once, after a look at what is stored now
+    (another request may just have added them), and the caller's track then reads them back.
+    """
     found = known_track(track.name)
     if found is None or track.corners:
         return
     _, t = found
+    db = object_session(track)
+    if db is None or track.id is None:  # a track being made: no other request has it
+        _fill(track, t)
+        return
+    with _filling:
+        try:
+            with Session(db.get_bind()) as own:
+                stored = own.get(models.Track, track.id)
+                if stored is None:  # made in the caller's transaction, not committed yet: no other request has it
+                    _fill(track, t)
+                    return
+                if not stored.corners:
+                    _fill(stored, t)
+                    own.commit()
+        except SQLAlchemyError:  # the database busy with the caller's own writes (SQLite): added with them
+            log.warning("Couldn't add the official corners of %s on their own: added with the request", track.name)
+            _fill(track, t)
+            return
+        db.refresh(track, ["corners", "length_m"])
+
+
+def _fill(track: models.Track, t: dict) -> None:
     track.length_m = track.length_m or t["length_m"]
     track.corners = [models.Corner(code=c, apex_m=m, sector=s) for c, m, s in t["corners"]]

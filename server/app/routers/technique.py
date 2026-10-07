@@ -103,7 +103,8 @@ def _state(db: Session, kind: str, id_: int) -> tuple[reports.Plan, models.Techn
         return plan, row, "failed"
     if not reports._used(plan):
         return plan, row, "empty"
-    if row is not None and row.signature == sig and plan.scope in _pending:
+    # still in _pending for a moment after it marks itself done or failed: only queued and running are passed on
+    if row is not None and row.signature == sig and plan.scope in _pending and row.status in ("queued", "running"):
         return plan, row, row.status
     if row is not None and row.result is not None and row.result_signature == sig:
         return plan, row, "ready"
