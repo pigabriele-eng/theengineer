@@ -88,6 +88,13 @@ def test_the_list_says_who_drove_an_event_and_in_what(client):
     assert folders[ev["id"]]["drivers"] == ["Michael Rackl", "Gabriele Piana"]
     assert folders[ev["id"]]["cars"] == ["BMW M4 GT4 Evo (G82)", "Car #7"]
     assert folders[empty["id"]]["drivers"] == [] and folders[empty["id"]]["cars"] == []
+    # each driver's laps in all, and those of runs nobody is set on yet
+    assert folders[ev["id"]]["driver_laps"] == [{"name": "Michael Rackl", "laps": 4},
+                                                {"name": "Gabriele Piana", "laps": 3}]
+    assert folders[ev["id"]]["unassigned_laps"] == 0
+    d = _session(client, ev["id"], "Run 4", (0.98, 0.99))
+    folders = {f["id"]: f for f in client.get("/events/folders").json()}
+    assert folders[ev["id"]]["unassigned_laps"] == 2 and d
 
 
 def test_events_are_renamed_redated_and_deleted_keeping_their_sessions(client):
