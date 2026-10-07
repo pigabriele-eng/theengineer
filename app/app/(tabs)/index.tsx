@@ -12,7 +12,7 @@ import { SeasonsLink } from '@/components/SeasonsLink';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
 import { CalendarState, calendarApi, countByWhen, defaultFilter, Filter, filtered, Plan, todayIso, whenOf } from '@/lib/calendar';
-import { dateRange, eventsApi, FolderSummary } from '@/lib/events';
+import { dateRange, eventsApi, FolderSummary, NO_EVENT } from '@/lib/events';
 import { launchEvent } from '@/lib/openCurrent';
 import { PrepAvailability } from '@/lib/prep';
 
@@ -196,6 +196,11 @@ function FolderCard({ f, plan, prep, onRenamed, onChanged }: {
           <Text style={styles.chevron}>›</Text>
         </Pressable>
       </Link>
+      {loose && (
+        <View style={styles.cardActions}>
+          <DeleteEventAction id={NO_EVENT} name={f.name} onDeleted={onChanged} />
+        </View>
+      )}
       {!loose && (
         <View style={styles.cardActions}>
           <Pressable onPress={() => setRenaming(true)} accessibilityRole="button" accessibilityLabel={`Rename ${f.name}`}

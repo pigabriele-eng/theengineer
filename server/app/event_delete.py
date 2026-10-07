@@ -2,7 +2,8 @@
 entered for them.
 
 DELETE /events/{id}?runs=delete (routers/events.py hands it here; without runs=delete only the folder goes and its
-runs stay, under "Not in an event"). GET /events/{id}/size says first what it would remove: the runs, their laps,
+runs stay, under "Not in an event"); DELETE /loose-runs deletes the runs in no event the same way. GET /events/{id}/size
+(and GET /loose-runs/size) says first what it would remove: the runs, their laps,
 their logs, the stored files and the bytes they take in storage (as stored: logs are compressed on Supabase).
 
 What goes is found from the tables' own description (the SQLAlchemy metadata), not from a list kept by hand, so a
@@ -261,10 +262,10 @@ def _delete_files(keys: list[str], sizes: dict[str, int] | None) -> tuple[int, i
     return n, freed
 
 
-def _forget(event_id: int, file_ids: set[int], keys: list[str]) -> None:
-    """Answers kept in memory for the event or its logs."""
+def _forget(folder: str, file_ids: set[int], keys: list[str]) -> None:
+    """Answers kept in memory for the folder (an event's id, or "none") or its logs."""
     from app.routers import events, technique, trackmap  # here: events.py uses this module
-    for module, gone in ((trackmap, lambda k: k[0] in file_ids), (events, lambda k: k[0] == str(event_id))):
+    for module, gone in ((trackmap, lambda k: k[0] in file_ids), (events, lambda k: k[0] == folder)):
         with module._cache_lock:
             for k in [k for k in module._cache if gone(k)]:
                 del module._cache[k]
@@ -310,16 +311,47 @@ def size(event_id: int, db: Session = Depends(app_db.get_db)):
 
 def delete_event(db: Session, event_id: int) -> dict:
     """Delete the event with its runs, their logs and everything kept for them (see the module's notes)."""
-    from app import calendar_sync  # here: it imports the routers, which import this module
-
     name = _event_or_404(db, event_id).name
     _not_importing(db)
+
+    def start() -> dict[str, set[int]]:
+        _event_or_404(db, event_id)
+        return {"events": {event_id}}
+    return {"deleted": event_id, **_delete(db, start, name, str(event_id))}
+
+
+def _loose_ids(db: Session) -> set[int]:
+    """The runs in no event (the Sessions list's "Not in an event")."""
+    return set(db.scalars(select(models.RunSession.id).where(models.RunSession.event_id.is_(None))))
+
+
+@router.get("/loose-runs/size")
+def loose_size(db: Session = Depends(app_db.get_db)):
+    """What deleting every run in no event would remove, as GET /events/{id}/size says it for an event."""
+    f = find(db, {"run_sessions": _loose_ids(db)}, reset=False)
+    return {"event_id": None, "name": LOOSE_NAME, **counts(f, _sizes(f.keys))}
+
+
+@router.delete("/loose-runs")
+def delete_loose(db: Session = Depends(app_db.get_db)):
+    """Delete every run in no event, with their logs and everything kept for them, as an event's runs go."""
+    _not_importing(db)
+    return {"deleted": None, **_delete(db, lambda: {"run_sessions": _loose_ids(db)}, LOOSE_NAME, "none")}
+
+
+LOOSE_NAME = "Not in an event"
+
+
+def _delete(db: Session, start, name: str, folder: str) -> dict:
+    """Delete what start() names (read again once the locks are held) and everything that goes with it."""
+    from app import calendar_sync  # here: it imports the routers, which import this module
+
     with heavy.lock:  # no analysis reads a log while it goes
         with calendar_sync._lock:  # calendar entries and season rounds change one at a time
             db.expire_all()
-            _event_or_404(db, event_id)
+            first = start()
             _not_importing(db)  # again: one may have started while this waited for the lock
-            f = find(db, {"events": {event_id}})
+            f = find(db, first)
             sizes = _sizes(f.keys)
             try:
                 rows = _apply(db, f)
@@ -328,14 +360,14 @@ def delete_event(db: Session, event_id: int) -> dict:
                 db.rollback()
                 raise
         files, freed = _delete_files(f.keys, sizes)
-    _forget(event_id, f.ids("logger_files"), f.keys)
+    _forget(folder, f.ids("logger_files"), f.keys)
     out = {**counts(f, sizes), "files": files, "bytes": None if sizes is None else freed}
-    log.warning("Deleted event %r (%s) with %s runs, %s laps and %s stored files (%s bytes); rows: %s; cleared: %s",
-                name, event_id, out["runs"], out["laps"], files, out["bytes"], rows,
+    log.warning("Deleted %r (%s) with %s runs, %s laps and %s stored files (%s bytes); rows: %s; cleared: %s",
+                name, folder, out["runs"], out["laps"], files, out["bytes"], rows,
                 {f"{t}.{c}": len(v) for (t, c), v in f.cleared.items() if v})
     if _busy():
         _sweep_later({k: set(f.ids(k)) for k in ("events", "run_sessions", "logger_files")})
-    return {"deleted": event_id, "name": name, **out, "rows": rows,
+    return {"name": name, **out, "rows": rows,
             "cleared": {f"{t}.{c}": len(v) for (t, c), v in f.cleared.items() if v}}
 
 

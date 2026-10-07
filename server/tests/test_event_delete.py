@@ -318,3 +318,17 @@ def test_cache_scopes_naming_what_goes(scope, named):
     from app import event_delete
 
     assert event_delete.scope_named(scope, {"events": {3}, "run_sessions": {12}}) is named
+
+
+def test_the_runs_in_no_event_go_and_the_events_runs_stay(client, tmp_path):
+    a, b = _import(client, "LooseA"), _import(client, "KeptB")
+    assert client.delete(f"/events/{a['event']}").status_code == 200  # only the folder: its runs are now in no event
+    size = client.get("/loose-runs/size").json()
+    assert (size["name"], size["runs"], size["logs"]) == ("Not in an event", 2, 2) and size["laps"] > 0
+    out = client.delete("/loose-runs").json()
+    assert out["runs"] == 2 and out["rows"]["run_sessions"] == 2 and out["rows"]["logger_files"] == 2
+    assert client.get("/loose-runs/size").json()["runs"] == 0
+    for sid in a["sessions"]:
+        assert client.get(f"/sessions/{sid}").status_code == 404
+    kept = client.get(f"/events/{b['event']}").json()
+    assert sorted(s["id"] for d in kept["days"] for s in d["sessions"]) == sorted(b["sessions"])
