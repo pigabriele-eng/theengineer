@@ -70,6 +70,26 @@ def test_an_event_folder_holds_its_sessions_by_day(client):
     assert sunday in [s["id"] for d in body["days"] for s in d["sessions"]]
 
 
+def test_the_list_says_who_drove_an_event_and_in_what(client):
+    _track(client)
+    ev = client.post("/events/folders", json={"name": "Test day"}).json()
+    empty = client.post("/events/folders", json={"name": "Planned"}).json()
+    a = _session(client, ev["id"], "Run 1", (0.97, 0.98))  # two laps each, three in Run 2
+    b = _session(client, ev["id"], "Run 2", (0.95, 0.96, 0.97))
+    c = _session(client, ev["id"], "Run 3", (0.99, 1.0))
+    m4 = client.post("/garage/cars", json={"number": "21", "model": "BMW M4 GT4 Evo (G82)"}).json()["car"]
+    other = client.post("/garage/cars", json={"number": "7"}).json()["car"]
+    for sid, driver, car in ((a, "Michael Rackl", m4), (b, "Gabriele Piana", m4), (c, "michael rackl", other)):
+        r = client.patch(f"/garage/runs/{sid}", json={"driver_name": driver, "car_id": car["id"]})
+        assert r.status_code == 200, r.text
+
+    folders = {f["id"]: f for f in client.get("/events/folders").json()}
+    # each once, the most laps first: Rackl 4, Piana 3; the M4 5, car #7 2 (by its model, else its name)
+    assert folders[ev["id"]]["drivers"] == ["Michael Rackl", "Gabriele Piana"]
+    assert folders[ev["id"]]["cars"] == ["BMW M4 GT4 Evo (G82)", "Car #7"]
+    assert folders[empty["id"]]["drivers"] == [] and folders[empty["id"]]["cars"] == []
+
+
 def test_events_are_renamed_redated_and_deleted_keeping_their_sessions(client):
     ev = client.post("/events/folders", json={"name": "Test", "start": "2026-07-03", "end": "2026-07-05"}).json()
     assert (ev["start"], ev["end"], ev["dates_by_hand"]) == ("2026-07-03", "2026-07-05", True)

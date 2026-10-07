@@ -158,6 +158,7 @@ _thread: threading.Thread | None = None
 _start_lock = threading.Lock()
 _state: dict = {"current": None, "unreadable": set()}  # unreadable: failed in this server's run, not tried again
 _traffic = {"in_flight": 0, "last": 0.0}  # requests being served, and when the last one ended (monotonic)
+_done: set[int] = set()  # runs whose logs this round of the job did, or found unreadable (for the prebuild)
 
 
 def kick() -> None:
@@ -238,6 +239,7 @@ def process_next(quiet: bool = False) -> bool:
         if f is None:
             return True
         _state["current"] = f.filename
+        _done.add(f.session_id)
         try:
             summarise_file(db, f)
             db.commit()
@@ -276,5 +278,21 @@ def _run() -> None:
                 pass
         except Exception:
             log.exception("The tyre data job stopped on an error; it tries again later")
+        _after_round()
         _wake.wait(POLL_S)
         _wake.clear()
+
+
+def _after_round() -> None:
+    """The pages made from the tyre data (track grip, prep) of the runs just done are out of date, or waited for
+    them: the prebuild (app/prebuild.py) works them out in the background."""
+    if not _done:
+        return
+    ids = sorted(_done)
+    _done.clear()
+    try:
+        from app import prebuild  # here: it uses the routers, which use this module
+
+        prebuild.after_tyre_data(ids)
+    except Exception:
+        log.exception("Couldn't queue the prebuild after the tyre data of runs %s", ids)

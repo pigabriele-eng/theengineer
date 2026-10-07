@@ -7,6 +7,7 @@ import { ActivityIndicator, Pressable, StyleSheet, TextStyle, ViewStyle } from '
 import { useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { face, Fonts, themed, Type, useTheme } from '@/constants/Theme';
+import { noPrint } from '@/lib/print';
 
 /** A page's name where there is no photo: the Anton headline and its italic line. */
 export function PageHead({ title, dek, children }: { title: string; dek?: ReactNode; children?: ReactNode }) {
@@ -48,7 +49,8 @@ export function Tabs<K extends string | number | null>({ items, value, onChange,
         {items.map((it) => {
           const on = it.key === value;
           return (
-            <Pressable key={String(it.key)} onPress={() => onChange(it.key)} disabled={it.disabled}
+            // on paper only the picked tab is left, naming what is shown
+            <Pressable key={String(it.key)} onPress={() => onChange(it.key)} disabled={it.disabled} {...(on ? null : noPrint)}
               accessibilityRole="tab" accessibilityState={{ selected: on, disabled: it.disabled }} hitSlop={4}
               style={StyleSheet.flatten([big ? styles.tabBig : styles.tab, on && styles.tabOn,
                 (it.dim || it.disabled) && !on && styles.dim])}>
@@ -83,7 +85,7 @@ export function Choice({ label, detail, on, onPress, fill, ink, dim, disabled, a
   const styles = useStyles();
   return (
     <Pressable onPress={onPress} disabled={disabled} accessibilityRole="button" accessibilityLabel={accessibilityLabel}
-      accessibilityState={{ selected: on, disabled }} hitSlop={2}
+      accessibilityState={{ selected: on, disabled }} hitSlop={2} {...(on ? null : noPrint)}
       style={StyleSheet.flatten([styles.pick, on && styles.tabOn, (dim || disabled) && !on && styles.dim])}>
       <Text style={StyleSheet.flatten([styles.pickLabel, on && styles.tabTextOn])}>{label}</Text>
       {detail ? (
@@ -154,7 +156,7 @@ export function MainAction({ label, onPress, disabled, busy }: { label: string; 
   const c = useTheme();
   return (
     <Pressable onPress={onPress} disabled={disabled || busy} accessibilityRole="button"
-      accessibilityState={{ disabled: disabled || busy, busy }}
+      accessibilityState={{ disabled: disabled || busy, busy }} {...noPrint}
       style={StyleSheet.flatten([styles.action, (disabled || busy) && styles.actionOff])}>
       {busy ? <ActivityIndicator color={c.onTint} /> : <Text style={styles.actionText}>{label}</Text>}
     </Pressable>

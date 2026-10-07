@@ -80,6 +80,7 @@ def assign_driver(body: AssignIn, db: Session = Depends(get_db)):
     d = _pick(db, body)
     db.execute(update(models.RunSession).where(models.RunSession.id.in_(ids)).values(driver_id=d.id if d else None))
     db.commit()
+    _style_learns()
     return {"driver": d, "session_ids": sorted(ids)}
 
 
@@ -92,7 +93,14 @@ def set_session_driver(session_id: int, body: DriverPick, db: Session = Depends(
     d = _pick(db, body)
     s.driver_id = d.id if d else None
     db.commit()
+    _style_learns()
     return {"driver": d, "session_ids": [s.id]}
+
+
+def _style_learns() -> None:
+    """A tag teaches the driver fingerprints: the runs elsewhere the style is now sure of get their driver."""
+    from app import driver_prints  # looked up when used: the tests reload it
+    driver_prints.refresh_in_background()
 
 
 class DriverName(BaseModel):

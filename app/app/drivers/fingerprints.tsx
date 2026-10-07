@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 
 import { Notice, PageHead, useText } from '@/components/Picks';
+import PrintButton from '@/components/PrintButton';
 import { Colophon, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
@@ -49,7 +50,9 @@ export default function FingerprintsScreen() {
     <Page>
       <Stack.Screen options={{ title: 'Driver fingerprints' }} />
       <PageHead title="Driver fingerprints"
-        dek="How each driver drives, from braking to throttle to steering, learned from the runs tagged with their name and set against their teammates in the same car. Every upload adds to it." />
+        dek="How each driver drives, from braking to throttle to steering, learned from the runs tagged with their name and set against their teammates in the same car. Every upload adds to it.">
+        <PrintButton title="Driver fingerprints" />
+      </PageHead>
 
       {db == null && !error && <ActivityIndicator color={theme.text} style={styles.gap} />}
       {error && <Text style={StyleSheet.flatten([t.error, styles.gap])}>{error}</Text>}
@@ -61,7 +64,8 @@ export default function FingerprintsScreen() {
         <View style={StyleSheet.flatten([styles.block, styles.gap])}>
           <Text style={t.body}>
             No fingerprints yet. Tag one run of each driver at an event, and their fingerprint is learned from it.
-            After that the app suggests the driver of every untagged run, at that event and at the others.
+            After that the app sets the driver of every run it is sure of, at that event and at the others, and
+            suggests the rest for a tap.
           </Text>
           <TextLink href="/drivers/tag" label="Tag drivers" arrow />
         </View>

@@ -22,6 +22,10 @@ export type FolderSummary = {
   best_session: string | null;
   // the season (championship) it is in, as a round of it or put in it by hand; null: none (in the list only)
   season?: FolderSeason | null;
+  // who drove it and in what (in the list only): the runs' drivers and cars (a car by its model, else its name),
+  // each once, the most laps first
+  drivers?: string[];
+  cars?: string[];
 };
 
 export type FolderSeason = { id: number; name: string; year: number; round: number | null };

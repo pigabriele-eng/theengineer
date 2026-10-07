@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
 
 import { Choice, FigRow, Meter, Notice, PageHead, Tabs, useText } from '@/components/Picks';
+import PrintButton from '@/components/PrintButton';
 import { Colophon, Fig, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { Bars } from '@/components/ReportCharts';
 import { SessionSwitcher, useEventFolder } from '@/components/SessionSwitcher';
@@ -154,7 +155,9 @@ export default function TechniqueScreen() {
   return (
     <Page>
       <Stack.Screen options={{ title: answer ? `Technique check · ${answer.session.name}` : 'Technique check' }} />
-      <PageHead title="Technique check" dek={dek} />
+      <PageHead title="Technique check" dek={dek}>
+        <PrintButton title={['Technique check', answer?.session.name].filter(Boolean).join(' · ')} />
+      </PageHead>
       <Text style={StyleSheet.flatten([t.note, styles.intro])}>
         Every mistake on the lap against perfect driving: the lap&apos;s own line driven at the best the car has shown
         at every place of the track, across the {answer?.scope === 'session' ? 'session' : 'whole event'}. Each costs

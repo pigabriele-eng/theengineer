@@ -1,6 +1,7 @@
 // Client for the official results (server/app/routers/results.py): the series' timing sheets for an event's round,
 // which car is ours, where we finished in each official session, and the official session a logged run belongs to.
 import { apiFetch } from '@/lib/api';
+import type { PrepOfficial } from '@/lib/prep';
 
 export type SyncState = {
   running: boolean;
@@ -140,6 +141,44 @@ export const resultsApi = {
   link: (eventId: number, body: ResultsLink) =>
     call<EventResults>(`/results/events/${eventId}/link`, send('PUT', body)),
   run: (sessionId: number) => call<RunResult>(`/results/runs/${sessionId}`),
+  // the event's Prediction and, once its round has results, Predicted vs actual
+  prediction: (eventId: number) => call<EventPrediction>(`/results/events/${eventId}/prediction`),
+};
+
+// ---------- prediction ----------
+
+export type PredictionNumber = 'pole' | 'our_lap' | 'position' | 'class_position';
+
+/** One number predicted against what happened: miss = predicted - actual; inside = it fell in the likely range. */
+export type PredictionCheck = {
+  code: string; // Q1, Q2, R1, R2
+  what: PredictionNumber;
+  predicted: number | null;
+  range: [number, number] | null;
+  actual: number | null;
+  miss: number | null;
+  inside: boolean | null;
+  wet: boolean;
+  status?: ResultStatus | null;
+};
+
+export type EventPrediction = {
+  event_id: number;
+  series: string;
+  series_name: string;
+  year: number | null;
+  venue: string | null;
+  track: string | null;
+  round: EventResults['round'];
+  car_number: string | null;
+  car_number_from: string | null;
+  team: string | null;
+  finished: boolean; // the round has official qualifying or race results
+  prediction: PrepOfficial['prediction'];
+  line: string | null;
+  trust: PrepOfficial['trust'];
+  comparison: PredictionCheck[] | null;
+  note: string | null;
 };
 
 // ---------- wording ----------

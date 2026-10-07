@@ -10,6 +10,7 @@ import {
 } from '@/components/Programme';
 import { median, tyreStep, TyreMeasure } from '@/components/report/QuickLaps';
 import { RunHeader } from '@/components/RunChips';
+import PrintButton from '@/components/PrintButton';
 import { SessionSwitcher, useEventFolder } from '@/components/SessionSwitcher';
 import { SetupCard } from '@/components/SetupCard';
 import { Text, View } from '@/components/Themed';
@@ -18,6 +19,7 @@ import { UntimedNote } from '@/components/UntimedNote';
 import { Analysis, api, Debrief, DETECTED_CORNERS_NOTE, formatLap, SessionDetail } from '@/lib/api';
 import { Tagged } from '@/lib/drivers';
 import { dayLabel, KIND_NAMES, sessionsInOrder } from '@/lib/events';
+import { noPrint } from '@/lib/print';
 import { fetchReport } from '@/lib/report';
 import { fetchStintView, StintLap, StintView } from '@/lib/stint';
 import { face, Fonts, Palette, photoFor, themed, Type, useTheme } from '@/constants/Theme';
@@ -325,7 +327,7 @@ export default function SessionScreen() {
               onChanged={() => api.session(sessionId).then(setSession, (e) => setError(e.message))} />
           </View>
         )}
-        <View style={styles.actions}>
+        <View style={styles.actions} {...noPrint}>
           {hasClean && (
             <TextLink href={{ pathname: '/report', params: { session: sessionId } }} label="Report: how to go faster" red arrow />
           )}
@@ -341,6 +343,7 @@ export default function SessionScreen() {
             <TextLink onPress={upload} disabled={busy} label={busy ? 'Uploading…' : 'Upload a logger file'} />
             {busy && <ActivityIndicator color={theme.text} />}
           </View>
+          <PrintButton title={['Lap chart', title, session.event_name].filter(Boolean).join(' · ')} />
         </View>
         {!session.laps.length && (
           <Text style={styles.note}>Upload a logger file: a MoTeC .ld (with its .ldx) or a CSV export.</Text>

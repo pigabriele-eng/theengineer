@@ -286,6 +286,31 @@ def _work() -> None:
             jobs.task_done()
 
 
+def prebuild(kind: str, id_: int) -> str:
+    """For the prebuild (app/prebuild.py): work the check out now, on the calling thread, unless it is up to date,
+    failed for these very inputs, or is queued or being worked out already. What it did."""
+    with SessionLocal() as db:
+        try:
+            plan, sig = _plan(db, kind, id_)
+        except HTTPException:
+            return "gone"
+        if plan.error or not reports._used(plan):
+            return "nothing to do"
+        row = _row(db, plan.scope)
+        if row is not None and row.result is not None and row.result_signature == sig:
+            return "up to date"
+        if row is not None and row.signature == sig and row.status == "failed":
+            return "failed before"
+    if not reports.claim(_lock, _pending, plan.scope):
+        return "queued already"
+    try:
+        run_job(plan.scope)
+    finally:
+        with _lock:
+            _pending.discard(plan.scope)
+    return "done"
+
+
 def wait_idle(timeout: float = 120) -> bool:
     """Wait until every check asked for is worked out (for tests). True when nothing is left."""
     deadline = time.monotonic() + timeout

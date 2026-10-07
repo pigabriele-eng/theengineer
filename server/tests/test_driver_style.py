@@ -135,6 +135,20 @@ def test_quicker_laps_tell_what_pays():
     assert all(link["kind"] != "steer_lock" for link in links)
 
 
+def test_the_car_s_other_driver_names_the_other_style():
+    from app import driver_prints
+
+    ep = ds.event_print(_event([(1, ["smooth"] * 6), (2, ["sharp"] * 6), (3, ["sharp"] * 5)]))
+    g = ds.guess(ep, {1: 11})
+    driver_prints._name_from_entry(g, [11, 22])
+    assert {s.session_id: g.groups[s.group].driver_id for s in g.sessions} == {1: 11, 2: 22, 3: 22}
+    other = next(grp for grp in g.groups if grp.driver_id == 22)
+    assert other.source == "entry" and ds.confidence(g, other, 1.0) == "sure"
+    g = ds.guess(ep, {1: 11})
+    driver_prints._name_from_entry(g, [33, 22])  # the tagged driver isn't one of the car's: nothing follows
+    assert {grp.driver_id for grp in g.groups} == {11, None}
+
+
 def test_too_few_laps_suggest_nothing():
     assert ds.event_print(_event([(1, ["smooth"] * 3)])) is None
 
@@ -204,3 +218,51 @@ def test_an_unknown_event_has_no_suggestions(client):
     assert client.get("/events/999/driver-guess").status_code == 404
     body = client.get("/drivers/fingerprints").json()
     assert body["drivers"] == [] and body["events"] == 0
+
+
+def _weekend(client, name: str, runs: dict[str, tuple[tuple[float, ...], bool]], hour: int) -> dict[str, int]:
+    ev = client.post("/events/folders", json={"name": name}).json()
+    ids = {}
+    for n, (run, (p, sharp)) in enumerate(runs.items()):
+        s = client.post("/sessions", json={"event_id": ev["id"], "name": run}).json()
+        r = client.post(f"/sessions/{s['id']}/files", files={"file": ("run.ld", _log(p, f"{hour}:{n}0:00", sharp))})
+        assert r.status_code == 201, r.text
+        ids[run] = s["id"]
+    return {"event": ev["id"], **ids}
+
+
+def test_drivers_are_set_from_the_style_by_themselves(client):
+    from app import driver_prints
+    from app.routers import reports
+
+    smooth, sharp = (1.0, 0.99, 0.995, 0.985, 0.99), (0.99, 0.985, 0.99, 0.98, 0.995)
+    first = _weekend(client, "First weekend", {"A1": (smooth, False), "B1": (sharp, True)}, 10)
+    second = _weekend(client, "Second weekend", {"A2": (smooth, False), "B2": (sharp, True)}, 14)
+    for ev in (first["event"], second["event"]):  # asking makes the lap traces (an import's report does too)
+        t0 = time.monotonic()
+        while client.get(f"/events/{ev}/driver-guess").json()["status"] == "working" and time.monotonic() - t0 < 120:
+            time.sleep(0.2)
+    assert reports.wait_idle()
+    for run, driver in (("A1", "Anna"), ("B1", "Ben")):  # a person tags the first weekend
+        assert client.put(f"/sessions/{first[run]}/driver", json={"driver_name": driver}).status_code == 200
+    driver_prints.wait_idle()
+
+    names = {d["id"]: d["name"] for d in client.get("/garage").json()["drivers"]}
+    body = client.get(f"/events/{second['event']}/driver-guess").json()
+    by = {s["session_id"]: s for s in body["sessions"]}
+    assert names[by[second["A2"]]["driver_id"]] == "Anna" and names[by[second["B2"]]["driver_id"]] == "Ben"
+    assert by[second["A2"]]["auto"]["source"] == "fingerprint" and by[second["A2"]]["auto"]["match"] >= 0.5
+    first_runs = client.get(f"/events/{first['event']}/driver-guess").json()["sessions"]
+    assert all(s["auto"] is None for s in first_runs)  # tagged by a person
+
+    # a person clears one: it stays cleared, and the style only suggests it
+    assert client.put(f"/sessions/{second['A2']}/driver", json={}).status_code == 200
+    driver_prints.wait_idle()
+    by = {s["session_id"]: s for s in client.get(f"/events/{second['event']}/driver-guess").json()["sessions"]}
+    a2 = by[second["A2"]]
+    assert a2["driver_id"] is None and a2["auto"] is None and a2["suggestion"]["driver"] == "Anna"
+
+    # only people's tags teach the fingerprints
+    db = client.get("/drivers/fingerprints").json()
+    anna = next(d for d in db["drivers"] if d["driver"] == "Anna")
+    assert [e["event"] for e in anna["events"]] == ["First weekend"]

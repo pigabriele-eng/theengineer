@@ -340,6 +340,9 @@ def set_run(session_id: int, body: RunIn, db: Session = Depends(get_db)):
             if new and info is not None and info.team_id is not None:
                 garage.set_driver_team(db, d.id, info.team_id)
     db.commit()
+    if "driver_id" in sent or (body.driver_name or "").strip():
+        from app import driver_prints  # a tag teaches the driver fingerprints; looked up when used (tests reload it)
+        driver_prints.refresh_in_background()
     driver = db.get(models.Driver, s.driver_id) if s.driver_id else None
     car = db.get(models.Car, s.car_id) if s.car_id else None
     return {"id": s.id, "driver_id": s.driver_id, "driver": driver.name if driver else None, "car_id": s.car_id,

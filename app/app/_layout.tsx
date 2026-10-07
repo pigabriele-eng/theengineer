@@ -20,6 +20,7 @@ import Colors from '@/constants/Colors';
 import { Fonts } from '@/constants/Theme';
 import { authEnabled, useAuthSession } from '@/lib/auth';
 import { NoteLaunch } from '@/lib/openCurrent';
+import { installPrint } from '@/lib/print';
 
 export {
   // Catch any errors thrown by the Layout component.
@@ -95,6 +96,8 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
     headerBackTitleStyle: { fontFamily: Fonts.label, fontSize: 14 },
     contentStyle: { backgroundColor: c.background },
   }), [c]);
+  // the print styles (lib/print.ts), so a page prints right from the browser's own Print menu too
+  useEffect(() => installPrint(), []);
   // the browser's own pieces (scrollbars, date fields, the page behind the app) in the same scheme
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;

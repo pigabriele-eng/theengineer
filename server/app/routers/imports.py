@@ -25,7 +25,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from sqlalchemy import inspect, select, update
 from sqlalchemy.orm import Session
 
-from app import empty_runs, heavy, models, plans, schemas, storage
+from app import empty_runs, heavy, models, plans, prebuild, schemas, storage
 from app.analysis.emptyrun import NoLaps
 from app.db import SessionLocal, get_db
 from app.importers import archive
@@ -168,10 +168,13 @@ def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]], event
         job.current = None
         job.finished_at = _now()
         db.commit()
-        try:  # work out the reports of what was imported now, so they are ready when opened
-            reports.schedule_sessions(db, list(job.session_ids or []))
+        try:  # work out the pages of what was imported now, in the background, so they are ready when opened
+            if prebuild.enabled():
+                prebuild.after_upload(db, list(job.session_ids or []))
+            else:  # the reports only, as before the prebuild
+                reports.schedule_sessions(db, list(job.session_ids or []))
         except Exception:
-            log.exception("Couldn't start the reports of import %s", job_id)
+            log.exception("Couldn't start the prebuild of import %s", job_id)
 
 
 def _join_seasons(db: Session, job: models.ImportJob) -> None:

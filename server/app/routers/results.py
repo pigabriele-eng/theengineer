@@ -7,9 +7,11 @@ placed); the event is matched to a round by circuit and year and our car by its 
 logged best laps until it is set by hand (PUT /results/events/{id}/link). POST /results/events/{id}/fetch is the
 "Get results" button. GET /results/runs/{session_id} is the same for one of our sessions. GET /results/history is
 the prep report's view: past years at a circuit, strong and weak circuits, makes compared.
+GET /results/events/{id}/prediction is the event's Prediction tab and, once the round has results, Predicted vs actual.
 """
 from __future__ import annotations
 
+import logging
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -23,6 +25,7 @@ from app.results import models as rm
 from app.results import predict, summary, sync
 from app.results.venues import venue_key
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/results")
 
 
@@ -189,6 +192,59 @@ def _event(db: Session, event_id: int) -> models.Event:
 @router.get("/events/{event_id}")
 def event_results(event_id: int, db: Session = Depends(get_db)):
     return event_overview(db, _event(db, event_id))
+
+
+@router.get("/events/{event_id}/prediction")
+def event_prediction(event_id: int, db: Session = Depends(get_db)):
+    """The event's Prediction and, once its round has official qualifying or race results, Predicted vs actual.
+
+    The prediction reads only rounds before this one (the same no-lookahead rule as the backtest), so a finished
+    event is compared with what the model would have said beforehand. Before any result is in, our best logged lap
+    of the event (practice, a test) is blended in, as in the prep report."""
+    from app.prep.official import backtest_verdict, prediction_line  # the prep report's wording and trust line
+
+    ev = _event(db, event_id)
+    overview = event_overview(db, ev)  # the round, the circuit and our car number, as the Results section has them
+    series, year, venue = overview["series"], overview["year"], overview["venue"]
+    number = overview["car_number"]
+    out: dict = {"event_id": ev.id, "series": series, "series_name": getattr(sync.ADAPTERS.get(series), "NAME", series),
+                 "year": year, "venue": venue, "track": overview["track"], "round": overview["round"],
+                 "car_number": number, "car_number_from": overview["car_number_from"], "team": None,
+                 "finished": False, "prediction": None, "line": None, "trust": None, "comparison": None, "note": None}
+    if year is None or venue is None:
+        out["note"] = "This event has no circuit or date yet, so there is nothing to predict."
+        return out
+    if number is None:
+        out["note"] = ("Which car is ours? Set our car number in the Results section of the event (or on its "
+                       "season) to see the prediction.")
+        return out
+    sessions = summary.model_sessions(db, series)
+    if not sessions:
+        out["note"] = "No official results loaded yet: the server is still reading them from the series' site."
+        return out
+    rnd = _round(db, series, year, venue, (overview["round"] or {}).get("round_id"))
+    if rnd is not None:
+        venue = rnd.venue or venue
+    order = rnd.order if rnd is not None else None
+    team, _ = summary.team_of(summary._rounds(db, series), number, year)
+    out["team"] = team
+    out["finished"] = any(s["venue"] == venue and int(s["year"]) == year and (order is None or s["order"] == order)
+                          for s in sessions)
+    bests = [] if out["finished"] else [r["best_lap_s"] for r in _event_facts(db, ev)["rows"] if r["best_lap_s"]]
+    try:
+        pred = predict.predict_round(sessions, venue, year, car_number=number, team=team, before_order=order,
+                                     logged_best_s=min(bests) if bests else None)
+        pred["line"] = out["line"] = prediction_line(pred)
+        pred["logged_best"] = {"time_s": min(bests), "event": ev.name} if bests else None
+        out["prediction"] = pred
+        if out["finished"]:
+            actual = predict.actual_round(sessions, venue, year, car_number=number, team=team, order=order)
+            out["comparison"] = predict.compare(pred, actual)
+        out["trust"] = backtest_verdict(db, sessions, number, team)
+    except Exception:  # what was worked out above still stands
+        log.exception("prediction for event %s failed", ev.id)
+        out["note"] = out["note"] or "The prediction could not be worked out from the results loaded."
+    return out
 
 
 @router.post("/events/{event_id}/fetch", status_code=202)
