@@ -53,7 +53,7 @@ from app.routers.sessions import official_corners
 router = APIRouter(prefix="/technique")
 log = logging.getLogger(__name__)
 
-TECHNIQUE_VERSION = 17  # raise when the check changes, so every kept one is worked out again
+TECHNIQUE_VERSION = 18  # raise when the check changes, so every kept one is worked out again
 # 5: perfect driving on a lap's own line at limits never below that lap's own (local_limits.on_own_line)
 # 6: the driver's inputs and perfect driving's phases with each lap's speed trace
 # 7: the obvious mistakes (exit lifts, power stepped on, soft straight-line braking); the theoretical lap never quicker
@@ -76,6 +76,8 @@ TECHNIQUE_VERSION = 17  # raise when the check changes, so every kept one is wor
 # 16: no perfect lap shown: every lap against laps on the same tyres (run_tyres), the mistakes that repeat are the
 #     obvious ones, and each lap's time without its mistakes
 # 17: a run imported from a folder ("03_Q", "04_R1") is qualifying or a race for its tyres, as its name says
+# 18: the result says its shape (RESULT_FORMAT), so one kept in an older shape is worked out again, never read
+RESULT_FORMAT = 2  # the shape of a kept result the answers read: 2 with each lap's time without its mistakes (16)
 TRACES_WAIT_S = 3600  # longest the check waits for the logs to be read into lap traces
 HABITS_SHOWN = 12
 DETAILS_KEPT = 16  # laps' full checks kept in memory
@@ -120,7 +122,7 @@ def _state(db: Session, kind: str, id_: int) -> tuple[reports.Plan, models.Techn
     # still in _pending for a moment after it marks itself done or failed: only queued and running are passed on
     if row is not None and row.signature == sig and plan.scope in _pending and row.status in ("queued", "running"):
         return plan, row, row.status
-    if row is not None and row.result is not None and row.result_signature == sig:
+    if row is not None and _current(row) is not None and row.result_signature == sig:
         return plan, row, "ready"
     if row is not None and row.signature == sig and row.status == "failed":
         return plan, row, "failed"  # tried for these very inputs: POST refresh to try again
@@ -153,7 +155,7 @@ def _head(plan: reports.Plan, row: models.TechniqueCache | None, status: str) ->
         "status": status,  # ready, queued, running, failed, empty
         "progress": {"done": row.done, "total": row.total, "current": row.current} if working and row else None,
         "error": (plan.error or (row.error if row else None)) if status == "failed" else None,
-        "stale": row is not None and row.result is not None and row.result_signature != sig,
+        "stale": _current(row) is not None and row.result_signature != sig,
     }
 
 
@@ -163,6 +165,13 @@ def _scope_of(s: models.RunSession) -> tuple[str, int]:
 
 
 # ---------- the answers ----------
+
+def _current(row: models.TechniqueCache | None) -> dict | None:
+    """The kept result, where it is in the shape the answers read; one kept before then is no answer (it is worked
+    out again: its signature is an older TECHNIQUE_VERSION's)."""
+    res = row.result if row is not None else None
+    return res if res and res.get("format") == RESULT_FORMAT else None
+
 
 def _detail(row: models.TechniqueCache, member: str) -> dict | None:
     """One lap's full check, from the file of every lap's."""
@@ -295,7 +304,7 @@ def session_technique(session_id: int, lap: int | None = None, db: Session = Dep
     out["session"] = {"id": s.id, "name": s.name or f"Session {s.id}", "driver": s.driver.name if s.driver else None}
     out["event"] = {"id": s.event_id, "name": s.event.name} if s.event_id and s.event else None
     out["map"] = {"event": s.event_id} if kind == "event" else {"session": s.id}
-    res = row.result if row is not None else None
+    res = _current(row)
     out.update(laps=[], lap=None, lap_note=None, habits=None, measured=None)
     if not res:
         return out
@@ -331,7 +340,7 @@ def event_technique(event_id: int, db: Session = Depends(get_db), brief: bool = 
     out = _head(plan, row, status)
     if brief:  # ?brief=true: only how far the check is
         return out
-    res = row.result if row is not None else None
+    res = _current(row)
     sessions = []
     for item in plan.items:
         laps = [x for x in (res["laps"] if res else []) if x["session_id"] == item.session.id]
@@ -416,7 +425,7 @@ def prebuild(kind: str, id_: int) -> str:
         if plan.error or not reports._used(plan):
             return "nothing to do"
         row = _row(db, plan.scope)
-        if row is not None and row.result is not None and row.result_signature == sig:
+        if row is not None and _current(row) is not None and row.result_signature == sig:
             return "up to date"
         if row is not None and row.signature == sig and row.status == "failed":
             return "failed before"
@@ -587,6 +596,7 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
     for x in laps:  # the mistakes that repeat: the obvious ones
         by_session.setdefault(x["session_id"], []).append(x["obvious"])
     result = {
+        "format": RESULT_FORMAT,
         "length_m": prep.length - 1,  # metres: the trace has a point at both ends
         "numbering": prep.numbering,
         "sections": [{**s.to_dict(), "corners": s.corners} for s in prep.sections],
