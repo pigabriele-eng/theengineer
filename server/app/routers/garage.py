@@ -332,19 +332,16 @@ def set_run(session_id: int, body: RunIn, db: Session = Depends(get_db)):
         filled, linked = garage.put_car(db, s, _car(db, body.car_id).id if body.car_id is not None else None)
     if "driver_id" in sent or (body.driver_name or "").strip():
         d, new = _pick_driver(db, body)
-        s.driver_id = d.id if d else None
         from app import driver_prints  # looked up when used: the tests reload it
-        driver_prints.set_by_person(db, [s.id], s.driver_id)
-        db.flush()
+        driver_prints.picked(db, [s.id], d.id if d else None)  # a person's pick: it teaches the fingerprints
         if d is not None and s.car_id is not None:
-            garage.link_driver(db, d.id, s.car_id)
             info = garage.car_info(db, s.car_id)
             if new and info is not None and info.team_id is not None:
                 garage.set_driver_team(db, d.id, info.team_id)
     db.commit()
     if "driver_id" in sent or (body.driver_name or "").strip():
         from app import driver_prints  # a tag teaches the driver fingerprints; looked up when used (tests reload it)
-        driver_prints.refresh_in_background()
+        driver_prints.learn()
     driver = db.get(models.Driver, s.driver_id) if s.driver_id else None
     car = db.get(models.Car, s.car_id) if s.car_id else None
     return {"id": s.id, "driver_id": s.driver_id, "driver": driver.name if driver else None, "car_id": s.car_id,

@@ -78,7 +78,6 @@ def assign_driver(body: AssignIn, db: Session = Depends(get_db)):
     if not ids:
         raise HTTPException(422, "Pick at least one session or event")
     d = _pick(db, body)
-    db.execute(update(models.RunSession).where(models.RunSession.id.in_(ids)).values(driver_id=d.id if d else None))
     _by_person(db, sorted(ids), d)
     db.commit()
     _style_learns()
@@ -87,12 +86,11 @@ def assign_driver(body: AssignIn, db: Session = Depends(get_db)):
 
 @router.put("/sessions/{session_id}/driver", response_model=AssignOut)
 def set_session_driver(session_id: int, body: DriverPick, db: Session = Depends(get_db)):
-    """Set (or clear) the driver of one session."""
+    """Set (or clear) the driver of one session: the call for a run's driver Change (it teaches the fingerprints)."""
     s = db.get(models.RunSession, session_id)
     if s is None:
         raise HTTPException(404, "Session not found")
     d = _pick(db, body)
-    s.driver_id = d.id if d else None
     _by_person(db, [s.id], d)
     db.commit()
     _style_learns()
@@ -100,14 +98,15 @@ def set_session_driver(session_id: int, body: DriverPick, db: Session = Depends(
 
 
 def _by_person(db: Session, ids: list[int], d: models.Driver | None) -> None:
+    """A person's pick: the runs get the driver and it teaches the fingerprints (driver_prints.picked)."""
     from app import driver_prints  # looked up when used: the tests reload it
-    driver_prints.set_by_person(db, ids, d.id if d else None)
+    driver_prints.picked(db, ids, d.id if d else None)
 
 
 def _style_learns() -> None:
     """A tag teaches the driver fingerprints: the runs elsewhere the style is now sure of get their driver."""
     from app import driver_prints  # looked up when used: the tests reload it
-    driver_prints.refresh_in_background()
+    driver_prints.learn()
 
 
 class DriverName(BaseModel):

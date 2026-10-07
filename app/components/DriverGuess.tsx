@@ -8,8 +8,9 @@ import { face, themed } from '@/constants/Theme';
 
 const POLL_MS = 4000;
 
-/** Who drove each run of the event by driving style: asked again while the event's laps are still being read, and
- * whenever `version` changes (a driver tagged, a run added). */
+/** Who drove each run of the event by driving style: asked once `version` is there (the event's runs: not before,
+ * so a visit asks once), again whenever it changes (a driver tagged, a run added) and while the event's laps are
+ * still being read. */
 export function useDriverGuess(eventId: number | null, version: unknown) {
   const [guess, setGuess] = useState<EventGuess | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -25,6 +26,7 @@ export function useDriverGuess(eventId: number | null, version: unknown) {
     );
   }, [eventId]);
   useEffect(() => {
+    if (version == null) return;
     load();
     return () => {
       if (timer.current) clearTimeout(timer.current);

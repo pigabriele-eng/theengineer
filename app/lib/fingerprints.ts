@@ -89,6 +89,7 @@ export const fingerprintsApi = {
 
 /** The run's line under its driver: what the style says, or null when there is nothing worth saying. */
 export function guessLine(g: RunGuess | undefined, mode: EventGuess['mode'] | undefined): string | null {
+  if (g?.auto?.source === 'season' && g.driver_id != null) return "Driver set from the season's drivers";
   if (!g || !mode || mode === 'too few laps') return null;
   const s = g.suggestion;
   if (g.auto && g.driver_id != null) return 'Driver set from the driving style';
