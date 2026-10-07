@@ -21,11 +21,13 @@ import { noPrint } from '@/lib/print';
 import { todayIso } from '@/lib/calendar';
 import { dateRange } from '@/lib/events';
 import { RunNamer, runNamer } from '@/lib/runLabels';
-import { fetchPartReport, Part, PartScope, refreshPartReport } from '@/lib/sessionReports';
+import { poll } from '@/lib/poll';
+import { fetchPartReport, fetchPartReportProgress, Part, PartScope, refreshPartReport } from '@/lib/sessionReports';
 import { TrackShapeData } from '@/lib/trackshape';
 import { defaultStage } from '@/lib/weekendRuns';
 import {
   fetchReport,
+  fetchReportProgress,
   Habit,
   LapRow,
   PHASES,
@@ -40,7 +42,6 @@ import {
   deltaColor, Fonts, inkOn, lossStep, Palette, phaseColor, Photo, PHOTOS, photoFor, TAP, tapRoom, themed, Type, useTheme,
 } from '@/constants/Theme';
 
-const POLL_MS = 2000;
 const MEDAL = { gold: 'Gold', silver: 'Silver', bronze: 'Bronze' } as const;
 const SCORE_NAMES: Record<string, string> = {
   braking: 'Braking', turn_in: 'Turn-in', mid_corner: 'Mid-corner', traction: 'Traction',
@@ -132,29 +133,35 @@ export default function EventReport({ eventId, part, sessionId, embedded }: {
   const quick = useQuickLaps(lapsScope);
   const [polls, setPolls] = useState(0); // bumped by Retry: the poll below starts again
 
-  // ask for the report; while the server works it out, ask again every couple of seconds
+  // ask for the report; while the server works it out, only how far it is is asked again (lib/poll.ts: less and less
+  // often, ?brief), and the report once more when it's ready
   useEffect(() => {
     if (!scope) return;
-    let live = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const poll = async () => {
+    const busy = (status: string) => status === 'queued' || status === 'running';
+    let read = false; // the report itself read once already
+    return poll(async (live) => {
       try {
+        if (read) {
+          const h = await (isPartScope(scope) ? fetchPartReportProgress(scope) : fetchReportProgress(scope));
+          if (!live()) return false;
+          if (busy(h.status)) {
+            setAnswer((a) => a && { ...a, ...h }); // its progress
+            setError(null);
+            return true;
+          }
+        }
         const a = await (isPartScope(scope) ? fetchPartReport(scope) : fetchReport(scope));
-        if (!live) return;
+        if (!live()) return false;
+        read = true;
         setAnswer(a);
         setError(null);
-        if (a.status === 'queued' || a.status === 'running') timer = setTimeout(poll, POLL_MS);
+        return busy(a.status);
       } catch (e) {
-        if (!live) return;
+        if (!live()) return false;
         setError((e as Error).message);
-        timer = setTimeout(poll, POLL_MS * 3);
+        return true;
       }
-    };
-    poll();
-    return () => {
-      live = false;
-      if (timer) clearTimeout(timer);
-    };
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, polls]);
 

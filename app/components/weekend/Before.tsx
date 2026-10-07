@@ -31,7 +31,6 @@ import {
 import { deltaColor, face, Fonts, themed, Type, useTheme } from '@/constants/Theme';
 import { pct } from '@/lib/trackGrip';
 
-const POLL_MS = 2000;
 const RUNS_SHOWN = 6;
 const VERDICT: Record<string, string> = {
   agree: 'data agrees', slight: 'data leans the same way', normal: 'data reads normal', disagree: 'data says the opposite',
@@ -69,28 +68,21 @@ export default function WeekendBefore({ eventId, car: carParam, onAnswer }: { ev
   const [error, setError] = useState<string | null>(null);
   const [round, setRound] = useState(0); // a refresh starts the polling again
 
-  // ask for the report; while the server works it out, ask again every couple of seconds
+  // ask for the report; while the server works it out, ask again (lib/poll.ts: less and less often)
   useEffect(() => {
-    let live = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const poll = async () => {
+    return poll(async (live) => {
       try {
         const a = await fetchPrep(eventId, car);
-        if (!live) return;
+        if (!live()) return false;
         setAnswer(a);
         setError(null);
-        if (a.status === 'queued' || a.status === 'running') timer = setTimeout(poll, POLL_MS);
+        return a.status === 'queued' || a.status === 'running';
       } catch (e) {
-        if (!live) return;
+        if (!live()) return false;
         setError((e as Error).message);
-        timer = setTimeout(poll, POLL_MS * 3);
+        return true;
       }
-    };
-    poll();
-    return () => {
-      live = false;
-      if (timer) clearTimeout(timer);
-    };
+    });
   }, [key, round]); // eslint-disable-line react-hooks/exhaustive-deps -- the key holds the event and the car
 
   useEffect(() => {

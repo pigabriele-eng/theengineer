@@ -300,10 +300,10 @@ def event_report(event_id: int, brief: bool = False, db: Session = Depends(get_d
 
 
 @router.get("/events/{event_id}/sessions/{code:path}")
-def event_part_report(event_id: int, code: str, db: Session = Depends(get_db)):
+def event_part_report(event_id: int, code: str, brief: bool = False, db: Session = Depends(get_db)):
     """The same for one official session of the event ("FP1", "Q1", "R1", or a log folder's name like "03_Q"; see
-    GET /reports/events/{id}/parts): every run of that session, called as on the event page."""
-    return page_cache.RawJSON(page_cache.as_json(report_for(db, "part", event_id, code)))
+    GET /reports/events/{id}/parts): every run of that session, called as on the event page. ?brief=true as above."""
+    return page_cache.RawJSON(page_cache.as_json(report_for(db, "part", event_id, code, brief=brief)))
 
 
 @router.get("/sessions/{session_id}")

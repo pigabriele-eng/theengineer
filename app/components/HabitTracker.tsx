@@ -6,7 +6,7 @@
 //
 // A page can show one for each driver: they share one request (lib/habits.ts loadHabits), and poll again while the
 // technique check is still at work.
-import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, ViewStyle } from 'react-native';
 
 import { Dot } from '@/components/DriverTrends';
@@ -18,6 +18,7 @@ import { Palette } from '@/constants/Colors';
 import { face, Fonts, themed, Type, useTheme } from '@/constants/Theme';
 import type { HabitEvent, HabitRow, HabitStat, HabitTracker as Habits, HabitTrend } from '@/lib/habits';
 import { loadHabits, peekHabits } from '@/lib/habits';
+import { poll } from '@/lib/poll';
 import {
   barScale,
   checkingWords,
@@ -34,38 +35,30 @@ import {
   trendSentence,
 } from '@/lib/habitView';
 
-const POLL_MS = 10_000;
 const FRESH_MS = 5_000; // a poll takes an answer at most this old: trackers polling together share one request
 const SHOWN = 8;
 
-/** The habit tracker from the server, shared by every tracker on screen, asked again every 10 s while the technique
- * check is still at work. */
+/** The habit tracker from the server, shared by every tracker on screen, asked again while the technique check is
+ * still at work (lib/poll.ts: from 10 s, less and less often up to 20 s: a large answer, slow to change). */
 export function useHabits(): { data: Habits | null; error: string | null } {
   const [data, setData] = useState<Habits | null>(() => peekHabits());
   const [error, setError] = useState<string | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const live = useRef(true); // false once the page is gone: an answer still on its way is dropped, not polled on
-
-  const load = useCallback((maxAgeMs?: number) => {
-    loadHabits(maxAgeMs).then(
+  useEffect(() => {
+    let first = true;
+    return poll((live) => loadHabits(first ? undefined : FRESH_MS).then(
       (d) => {
-        if (!live.current) return;
+        first = false;
+        if (!live()) return false;
         setData(d);
         setError(null);
-        if (timer.current) clearTimeout(timer.current);
-        if (d.status === 'checking') timer.current = setTimeout(() => load(FRESH_MS), POLL_MS);
+        return d.status === 'checking';
       },
-      (e) => live.current && setError((e as Error).message),
-    );
+      (e) => {
+        if (live()) setError((e as Error).message);
+        return false;
+      },
+    ), { firstMs: 10_000, maxMs: 20_000 });
   }, []);
-  useEffect(() => {
-    live.current = true;
-    load();
-    return () => {
-      live.current = false;
-      if (timer.current) clearTimeout(timer.current);
-    };
-  }, [load]);
   return { data, error };
 }
 

@@ -8,7 +8,7 @@ HEAD = {"scope", "id", "title", "part", "track", "status", "progress", "error", 
 def test_a_brief_answer_is_the_status_without_the_report(client):
     _track(client)
     ev = client.post("/events/folders", json={"name": "Test day"}).json()
-    sid = _session(client, ev["id"], "Run 1", (0.95, 0.96, 0.97))
+    sid = _session(client, ev["id"], "FP1", (0.95, 0.96, 0.97))  # also the event's official session FP1
 
     first = client.get(f"/reports/events/{ev['id']}?brief=true").json()
     assert set(first) == HEAD
@@ -24,3 +24,7 @@ def test_a_brief_answer_is_the_status_without_the_report(client):
     one = _wait(client, f"/reports/sessions/{sid}?brief=true")
     assert set(one) == HEAD and one["scope"] == "session" and one["id"] == sid
     assert client.get(f"/reports/sessions/{sid}").json()["report"] is not None
+    # one official session's report of the event: the same
+    part = _wait(client, f"/reports/events/{ev['id']}/sessions/FP1?brief=true")
+    assert set(part) == HEAD and part["part"] == "FP1" and part["status"] == "ready"
+    assert client.get(f"/reports/events/{ev['id']}/sessions/FP1").json()["report"] is not None

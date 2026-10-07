@@ -5,10 +5,10 @@ import { OfficialSessionCard } from '@/components/OfficialSessionCard';
 import { Field, SubHead, usePrepType } from '@/components/PrepParts';
 import { Label, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
+import { poll } from '@/lib/poll';
 import { EventResults, resultsApi, roundTitle, SyncState } from '@/lib/results';
 import { face, themed, useTheme } from '@/constants/Theme';
 
-const POLL_MS = 3000;
 
 /** "Official results" on an event's page: the series round it matches, which car is ours (found from the logged laps
  * or set here), "Get results" to fetch the official sheets, and one ruled column per official session. Its own heading,
@@ -24,7 +24,7 @@ export function ResultsPanel({ eventId, heading = true }: { eventId: number; hea
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const alive = useRef(true);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const following = useRef<(() => void) | null>(null); // stops the poll below
 
   const load = useCallback(async () => {
     try {
@@ -39,21 +39,23 @@ export function ResultsPanel({ eventId, heading = true }: { eventId: number; hea
     }
   }, [eventId]);
 
-  // while the server fetches, ask how far it got every few seconds, then load the results it brought
-  const poll = useCallback(() => {
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(async () => {
-      if (!alive.current) return;
+  // while the server fetches, ask how far it got (lib/poll.ts: less and less often), then load the results it brought
+  const follow = useCallback(() => {
+    following.current?.();
+    following.current = poll(async (live) => {
+      if (!alive.current) return false;
       try {
         const st = await resultsApi.status();
-        if (!alive.current) return;
+        if (!alive.current || !live()) return false;
         setSync(st.sync);
-        if (st.sync.running) poll();
-        else await load();
+        if (st.sync.running) return true;
+        await load();
+        return false;
       } catch (e) {
         if (alive.current) setError((e as Error).message);
+        return false;
       }
-    }, POLL_MS);
+    }, { now: false });
   }, [load]);
 
   useEffect(() => {
@@ -63,21 +65,21 @@ export function ResultsPanel({ eventId, heading = true }: { eventId: number; hea
     load().then((r) => {
       if (r?.sync.running) {
         setSync(r.sync);
-        poll();
+        follow();
       }
     });
     return () => {
       alive.current = false;
-      if (timer.current) clearTimeout(timer.current);
+      following.current?.();
     };
-  }, [load, poll]);
+  }, [load, follow]);
 
   const getResults = async () => {
     setError(null);
     try {
       const res = await resultsApi.fetch(eventId);
       setSync(res.sync);
-      if (res.sync.running) poll();
+      if (res.sync.running) follow();
       else await load();
     } catch (e) {
       setError((e as Error).message);

@@ -231,7 +231,7 @@ def _lap_out(row: models.TechniqueCache, res: dict, x: dict, session_habits: lis
 
 
 @router.get("/sessions/{session_id}")
-def session_technique(session_id: int, lap: int | None = None, db: Session = Depends(get_db)):
+def session_technique(session_id: int, lap: int | None = None, db: Session = Depends(get_db), brief: bool = False):
     """The technique check of one lap of a session (?lap=<number>; by default its quickest clean lap): its mistakes
     against perfect driving, most costly first, what each costs, how the gap to the perfect lap splits, and its speed
     against perfect driving's; with the session's laps and the mistakes that repeat across them and the event."""
@@ -241,6 +241,8 @@ def session_technique(session_id: int, lap: int | None = None, db: Session = Dep
     kind, id_ = _scope_of(s)
     plan, row, status = _state(db, kind, id_)
     out = _head(plan, row, status)
+    if brief:  # ?brief=true: how far the check is, without it, for a page that asks again until it is ready
+        return out
     out["session"] = {"id": s.id, "name": s.name or f"Session {s.id}", "driver": s.driver.name if s.driver else None}
     out["event"] = {"id": s.event_id, "name": s.event.name} if s.event_id and s.event else None
     out["map"] = {"event": s.event_id} if kind == "event" else {"session": s.id}
@@ -272,11 +274,13 @@ def session_technique(session_id: int, lap: int | None = None, db: Session = Dep
 
 
 @router.get("/events/{event_id}")
-def event_technique(event_id: int, db: Session = Depends(get_db)):
+def event_technique(event_id: int, db: Session = Depends(get_db), brief: bool = False):
     """The event's sessions with their clean laps checked, the event's quickest lap (where the check opens) and the
     mistakes that repeat across all of the event's clean laps."""
     plan, row, status = _state(db, "event", event_id)
     out = _head(plan, row, status)
+    if brief:  # ?brief=true: only how far the check is
+        return out
     res = row.result if row is not None else None
     sessions = []
     for item in plan.items:

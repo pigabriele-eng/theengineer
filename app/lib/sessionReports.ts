@@ -3,7 +3,7 @@
 // the event's sessions (lib/sessionParts.ts); GET /reports/events/{id}/sessions/{code} is one session's report,
 // answered like the event's.
 import { apiFetch } from '@/lib/api';
-import { ReportAnswer } from '@/lib/report';
+import { ReportAnswer, ReportProgress } from '@/lib/report';
 import { apiFetchAgain } from '@/lib/retry';
 import type { EventParts, PartScope } from '@/lib/sessionParts';
 
@@ -22,4 +22,6 @@ async function call<T>(p: string, init?: RequestInit): Promise<T> {
 
 export const fetchParts = (eventId: number) => call<EventParts>(`/reports/events/${eventId}/parts`);
 export const fetchPartReport = (s: PartScope) => call<ReportAnswer>(base(s));
+/** How far its report is, without the report (?brief=true). */
+export const fetchPartReportProgress = (s: PartScope) => call<ReportProgress>(`${base(s)}?brief=true`);
 export const refreshPartReport = (s: PartScope) => call<ReportAnswer>(`${base(s)}/refresh`, { method: 'POST' });

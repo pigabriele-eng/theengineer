@@ -17,9 +17,8 @@ import {
   saidOf,
   Verdict,
 } from '@/lib/debriefCheck';
+import { poll } from '@/lib/poll';
 import { face, Fonts, inkOn, Palette, themed, Type, useTheme } from '@/constants/Theme';
-
-const POLL_MS = 3000;
 
 // Status colours (good, warning, critical) mark the verdict next to its icon and label, never on their own.
 const VERDICT: Record<Verdict, { label: string; status: keyof Palette['status']; glyph: string }> = {
@@ -66,30 +65,22 @@ export default function DebriefReport() {
     if (hasAudio) api.debriefAudioUrl(debriefId).then(setAudioUrl);
   }, [hasAudio, debriefId]);
 
-  // Recordings are transcribed and structured on the server; check back until that's done.
+  // Recordings are transcribed and structured on the server; check back until that's done (lib/poll.ts: less and
+  // less often, one ask at a time, so a slow server never has two in flight).
   const pending = d?.status === 'queued' || d?.status === 'processing';
-  // The next look is set after each answer, so a slow server never has two asks in flight.
   useEffect(() => {
     if (!pending) return;
-    let live = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const poll = () => api.debrief(debriefId).then(
+    return poll((live) => api.debrief(debriefId).then(
       (x) => {
-        if (!live) return;
-        setD(x); // done: this effect is cleaned up and the chain stops
-        timer = setTimeout(poll, POLL_MS);
+        if (!live()) return false;
+        setD(x); // done: this effect is cleaned up and the poll stops
+        return x.status === 'queued' || x.status === 'processing';
       },
       (e) => {
-        if (!live) return;
-        setError(e.message);
-        timer = setTimeout(poll, POLL_MS);
+        if (live()) setError(e.message);
+        return true;
       },
-    );
-    timer = setTimeout(poll, POLL_MS);
-    return () => {
-      live = false;
-      if (timer) clearTimeout(timer);
-    };
+    ), { now: false });
   }, [pending, debriefId]);
 
   // Once the points exist, fetch what the logger recorded at each corner they mention, then check every point
