@@ -3,15 +3,17 @@
 // a quieter line, perfect driving's (or the realistic target's) laid over them dashed, the same mistake bands, the
 // obvious mistakes marked where they happen, and perfect driving's own phases as a thin strip above. This lap is slot
 // 1 of the validated chart palette and perfect driving slot 3, as in the speed trace; the fastest lap, the bands and
-// the phases are neutral ink, so colour keeps meaning one thing.
-import { useMemo, useState } from 'react';
-import { GestureResponderEvent, LayoutChangeEvent, Platform, StyleSheet } from 'react-native';
-import Svg, { Circle, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
+// the phases are neutral ink, so colour keeps meaning one thing. Every channel zooms with the speed trace above it.
+import { useId, useMemo, useState } from 'react';
+import { LayoutChangeEvent, Platform, StyleSheet } from 'react-native';
+import Svg, { Circle, ClipPath, Defs, G, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
 
 import { niceTicks, useChartColors } from '@/components/ReportCharts';
 import { Band, bandFill, pointRange, TRACE_PAD_X } from '@/components/TechniqueTrace';
 import { Text, View } from '@/components/Themed';
+import { useZoom, ZoomArea } from '@/components/Zoom';
 import { InputRole, Inputs, MODEL_PHASES } from '@/lib/technique';
+import { isZoomed, pixelOf, Range, shownRange, valueAt } from '@/lib/zoom';
 import { chartPlate, Fonts, phaseColor, PLATE_PAD, themed, Type, useTheme } from '@/constants/Theme';
 
 type Props = {
@@ -52,8 +54,10 @@ const SANS = Fonts.sans;
 
 type Geometry = {
   width: number;
-  i0: number;
+  i0: number; // the points drawn: those in the view and one either side
   i1: number;
+  view: Range; // the metres shown
+  zoomed: boolean;
   stepM: number;
   px: (m: number) => number;
   indexAt: (sx: number) => number; // the whole lap's point under a pixel
@@ -65,37 +69,37 @@ export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, 
   const theme = useTheme();
   const c = useChartColors();
   const [width, setWidth] = useState(0);
-  const [i0, i1] = pointRange(stepM, points - 1, from, to);
-  const x0 = i0 * stepM, x1 = i1 * stepM;
+  // zoomed with the speed trace above (their ZoomGroup), within from..to
+  const zoom = useZoom();
+  const [f0, f1] = pointRange(stepM, points - 1, from, to);
+  const full: Range = [f0 * stepM, f1 * stepM];
+  const view = shownRange(zoom.view, full);
+  const i0 = Math.max(f0, Math.floor(view[0] / stepM)), i1 = Math.min(f1, Math.ceil(view[1] / stepM));
+  const [x0, x1] = view;
+  const in0 = Math.ceil(x0 / stepM - 1e-9), in1 = Math.floor(x1 / stepM + 1e-9); // the points inside the view
   const w = Math.max(width - PAD.left - PAD.right, 1);
   const geo: Geometry = {
-    width, i0, i1, stepM,
-    px: (m) => PAD.left + ((m - x0) / (x1 - x0 || 1)) * w,
-    indexAt: (sx) => i0 + Math.max(0, Math.min(i1 - i0, Math.round(((sx - PAD.left) / w) * (i1 - i0)))),
+    width, i0, i1, view, zoomed: isZoomed(view, full), stepM,
+    px: (m) => pixelOf(m, view, PAD.left, w),
+    indexAt: (sx) => Math.max(in0, Math.min(in1, Math.round(valueAt(sx, view, PAD.left, w) / stepM))),
   };
   const marked = (marks ?? []).filter((m) => m.at_m >= x0 && m.at_m <= x1);
   const shown = bands.filter((b) => b.end_m >= x0 && b.start_m <= x1);
-  const local = cursor != null && cursor >= i0 && cursor <= i1 ? cursor : null;
+  const local = cursor != null && cursor >= in0 && cursor <= in1 ? cursor : null;
   const bandAt = (i: number) => shown.filter((b) => i * stepM >= b.start_m && i * stepM <= b.end_m)
     .sort((a, z) => a.n - z.n)[0];
 
-  // one set of handlers for every chart: hover or drag moves the shared cursor, a tap on a band picks its mistake
-  const scrub = (e: GestureResponderEvent) => onCursor(geo.indexAt(e.nativeEvent.locationX));
-  const touch = {
-    onStartShouldSetResponder: () => true,
-    onResponderGrant: scrub,
-    onResponderMove: scrub,
-    onResponderRelease: () => {
+  // one set of handlers for every chart: hover or drag moves the shared cursor, a tap on a band picks its mistake;
+  // the wheel, a box, a drag or a pinch zooms them all (components/Zoom.tsx)
+  const area = {
+    zoom, full, left: PAD.left, width: w, minSpan: stepM * 4,
+    onCursor: (sx: number) => onCursor(geo.indexAt(sx)),
+    onLeave: () => onCursor(null),
+    onRelease: () => {
       const b = local != null ? bandAt(local) : undefined;
       if (b && onSelect) onSelect(b.n);
       if (Platform.OS !== 'web') onCursor(null);
     },
-    ...(Platform.OS === 'web'
-      ? {
-          onMouseMove: (e: any) => onCursor(geo.indexAt(e.nativeEvent.offsetX ?? e.nativeEvent.locationX)),
-          onMouseLeave: () => onCursor(null),
-        }
-      : {}),
   };
 
   const have = CHANNELS.filter((ch) => inputs[ch.role]);
@@ -124,7 +128,7 @@ export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, 
         )}
       </View>
       {phases && phases.length === points && (
-        <View {...touch}>
+        <ZoomArea {...area}>
           <View style={styles.head}>
             <Text style={styles.title}>Perfect driving</Text>
             <Text style={styles.readout}>{local != null ? MODEL_PHASES[phases[local]] ?? '' : ' '}</Text>
@@ -138,15 +142,15 @@ export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, 
               </View>
             ))}
           </View>
-        </View>
+        </ZoomArea>
       )}
       {have.map((ch, k) => (
-        <View key={ch.role} {...touch}>
+        <ZoomArea key={ch.role} {...area}>
           <Channel geo={geo} title={ch.title} unit={unitOf(ch)} digits={ch.digits} role={ch.role}
             values={inputs[ch.role]!} under={fastest?.[ch.role] ?? null} over={over(ch.role)} bands={shown}
             selected={selected} marks={marked} markLabels={k === 0} cursor={local} height={height(ch.role)}
             corners={k === have.length - 1 ? corners : []} />
-        </View>
+        </ZoomArea>
       ))}
       <Text style={styles.note}>
         {sources.length ? `From the log's ${sources.join(', ')} channels, every ${stepM} m. ` : ''}
@@ -188,7 +192,7 @@ function PhaseStrip({ geo, phases, colors, cursor }: { geo: Geometry; phases: nu
     return out;
   }, [phases, geo.i0, geo.i1]);
   const half = geo.stepM / 2;
-  const lo = geo.i0 * geo.stepM, hi = geo.i1 * geo.stepM;
+  const [lo, hi] = geo.view;
   return (
     <Svg width={geo.width} height={STRIP} pointerEvents="none">
       {runs.map((r) => {
@@ -227,6 +231,7 @@ function Channel({ geo, title, unit, digits, role, values, under, over, bands, s
   const styles = useStyles();
   const theme = useTheme();
   const c = useChartColors();
+  const clip = `clip${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
   const { i0, i1, stepM, px, width } = geo;
   const axisRow = corners.length ? AXIS_ROW : 0;
   const h = height - PAD.top - PAD.bottom;
@@ -259,13 +264,13 @@ function Channel({ geo, title, unit, digits, role, values, under, over, bands, s
       return d;
     };
     return { lap: path(values), under: under ? path(under) : null, over: over ? path(over) : null };
-    // px and py follow from width, the range and the scale
+    // px and py follow from width, the view, the range and the scale
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [values, under, over, i0, i1, width, lo, hi, height, role, stepM]);
+  }, [values, under, over, i0, i1, width, geo.view[0], geo.view[1], lo, hi, height, role, stepM]);
   const fmt = (v: number | undefined) => (v == null || !Number.isFinite(v) ? '–' : v.toFixed(digits));
   const ticksX: { label: string; x: number }[] = [];
   for (const k of [...corners].sort((a, z) => a.at_m - z.at_m)) {
-    if (k.at_m < i0 * stepM || k.at_m > i1 * stepM) continue;
+    if (k.at_m < geo.view[0] || k.at_m > geo.view[1]) continue;
     const kx = px(k.at_m);
     const prev = ticksX[ticksX.length - 1];
     if (prev && kx - prev.x < (prev.label.length + k.code.length) * 3.6 + 6) continue;
@@ -304,8 +309,15 @@ function Channel({ geo, title, unit, digits, role, values, under, over, bands, s
         <Svg width={width} height={height + axisRow} pointerEvents="none"
           accessibilityLabel={`${title} along the lap${under ? ', with the fastest lap’s' : ''}${
             over ? ', with perfect driving’s' : ''}`}>
+          {geo.zoomed && (
+            <Defs>
+              <ClipPath id={clip}>
+                <Rect x={PAD.left} y={0} width={Math.max(width - PAD.left - PAD.right, 1)} height={height} />
+              </ClipPath>
+            </Defs>
+          )}
           {bands.map((b) => {
-            const xa = px(Math.max(b.start_m, i0 * stepM)), xb = px(Math.min(b.end_m, i1 * stepM));
+            const xa = px(Math.max(b.start_m, geo.view[0])), xb = px(Math.min(b.end_m, geo.view[1]));
             return (
               <Rect key={`b${b.n}`} x={xa} y={top} width={Math.max(xb - xa, 2)} height={h}
                 {...bandFill(theme, b, b.n === selected, c.grid, c.muted)} />
@@ -324,15 +336,17 @@ function Channel({ geo, title, unit, digits, role, values, under, over, bands, s
               {String(Math.round(t))}
             </SvgText>
           ))}
-          {paths.under && (
-            <Path d={paths.under} stroke={c.axis} strokeWidth={1.5} fill="none" strokeLinejoin="round" />
-          )}
-          <Path d={paths.lap} stroke={c.s1} strokeWidth={2} fill="none" strokeLinejoin="round"
-            strokeLinecap="round" />
-          {paths.over && (
-            <Path d={paths.over} stroke={c.s3} strokeWidth={1.75} strokeDasharray={MODEL_DASH} fill="none"
-              strokeLinejoin="round" />
-          )}
+          <G clipPath={geo.zoomed ? `url(#${clip})` : undefined}>
+            {paths.under && (
+              <Path d={paths.under} stroke={c.axis} strokeWidth={1.5} fill="none" strokeLinejoin="round" />
+            )}
+            <Path d={paths.lap} stroke={c.s1} strokeWidth={2} fill="none" strokeLinejoin="round"
+              strokeLinecap="round" />
+            {paths.over && (
+              <Path d={paths.over} stroke={c.s3} strokeWidth={1.75} strokeDasharray={MODEL_DASH} fill="none"
+                strokeLinejoin="round" />
+            )}
+          </G>
           {marks.map((m, j) => (
             <Line key={`k${j}`} x1={px(m.at_m)} x2={px(m.at_m)} y1={top} y2={bottom} stroke={c.text}
               strokeWidth={1} strokeDasharray="2,3" />

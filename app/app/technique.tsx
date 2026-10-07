@@ -11,6 +11,7 @@ import { TechniqueInputs } from '@/components/TechniqueInputs';
 import { TechniqueTrace } from '@/components/TechniqueTrace';
 import { Text, View } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
+import { ZOOM_HINT, ZoomGroup } from '@/components/Zoom';
 import { formatLap } from '@/lib/api';
 import {
   BestSource,
@@ -394,6 +395,8 @@ function OnTheTrack({ answer, check, selected, onSelect, sideBySide, cursor, onC
           from={mistake.start_m - CLOSE_UP_M} to={mistake.end_m + CLOSE_UP_M}
           title={`Close-up of ${selected}. ${mistake.title} (${mistake.code})`} cursor={cursor} onCursor={setCursor} />
       )}
+      {/* the whole lap's speed and the inputs under it zoom together; the close-up zooms on its own */}
+      <ZoomGroup>
       {tr ? (
         <TechniqueTrace stepM={tr.step_m} driven={tr.driven} perfect={tr.perfect} realistic={tr.realistic}
           bands={bands} selected={selected} onSelect={onSelect} corners={corners} height={sideBySide ? 260 : 240}
@@ -439,9 +442,11 @@ function OnTheTrack({ answer, check, selected, onSelect, sideBySide, cursor, onC
           )}
         </View>
       )}
+      </ZoomGroup>
       <Text style={t.small}>
         {Platform.OS === 'web' ? 'Hover over' : 'Drag across'} a chart to read the speeds and inputs at that point on
-        every chart; tap a numbered band or a mistake above to see it on the map and close up.
+        every chart; tap a numbered band or a mistake above to see it on the map and close up. {ZOOM_HINT} The whole
+        lap&apos;s speed and the inputs zoom together.
       </Text>
     </View>
   );
