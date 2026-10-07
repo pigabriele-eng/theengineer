@@ -1,6 +1,8 @@
 import { Link, Stack, useRouter } from 'expo-router';
 import { Fragment, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, LayoutChangeEvent, Pressable, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
+import {
+  ActivityIndicator, LayoutChangeEvent, Pressable, ScrollView, StyleSheet, useWindowDimensions, View as Box,
+} from 'react-native';
 
 import PrintButton from '@/components/PrintButton';
 import {
@@ -17,7 +19,7 @@ import { Text, View } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
 import { formatLap } from '@/lib/api';
 import { noPrint } from '@/lib/print';
-import { dateRange } from '@/lib/events';
+import { dateRange, Folder } from '@/lib/events';
 import { RunNamer, runNamer } from '@/lib/runLabels';
 import { TrackShapeData } from '@/lib/trackshape';
 import {
@@ -80,11 +82,17 @@ const reportPhoto = (track: string | null | undefined): Photo => {
  * The report page (app/report.tsx) renders it as a whole page: the hero, the run switcher, the numbered sections and
  * the colophon, with the run switcher's pick in the page's address. With `embedded` it renders inside another page
  * (the race weekend's After tab): no hero, page title or colophon of its own and no scrolling of its own, and the run
- * switcher keeping its pick to itself. */
-export default function EventReport({ eventId, sessionId, embedded }: {
+ * switcher keeping its pick to itself. The page around it can number its sections on from its own (`firstNo`, and
+ * `onSections` says how many there are), hand it the event it has already read (`folder`), and scroll to the map when
+ * a section is tapped to see it there (`onShowMap`, with the map's place in the report). */
+export default function EventReport({ eventId, sessionId, embedded, firstNo = 1, onSections, folder: hostFolder, onShowMap }: {
   eventId?: number;
   sessionId?: number;
   embedded?: boolean;
+  firstNo?: number;
+  onSections?: (count: number) => void;
+  folder?: Folder | null;
+  onShowMap?: (y: number) => void;
 }) {
   const theme = useTheme();
   const styles = useStyles();
@@ -107,8 +115,10 @@ export default function EventReport({ eventId, sessionId, embedded }: {
   const router = useRouter();
   // the event's sessions, to switch between the whole event's report and one session's without going back; the page
   // keeps its place and the section picked on the map
-  const sessionEvent = useSessionEvent(scope && 'session' in scope ? scope.session : null);
-  const folder = useEventFolder(scope && 'event' in scope ? scope.event : sessionEvent);
+  // (embedded, the page around it has read the event already)
+  const sessionEvent = useSessionEvent(hostFolder === undefined && scope && 'session' in scope ? scope.session : null);
+  const read = useEventFolder(hostFolder !== undefined ? null : scope && 'event' in scope ? scope.event : sessionEvent);
+  const folder = hostFolder ?? read;
   const quick = useQuickLaps(scope);
   const [polls, setPolls] = useState(0); // bumped by Retry: the poll below starts again
 
@@ -153,10 +163,24 @@ export default function EventReport({ eventId, sessionId, embedded }: {
   const report = answer?.report ?? null;
   // every run by its own name ("FP1 stint 1", "Q1 · Gabriele Piana"), never a number
   const names = useMemo(() => runNamer(answer), [answer]);
+  const mapAt = useRef<Box>(null); // the map, embedded: on the web a DOM element to bring into view
   const showOnMap = (code: string) => {
     setFocus(code);
-    scroll.current?.scrollTo({ y: Math.max(topH + mapY - 12, 0), animated: true });
+    if (!embedded) {
+      scroll.current?.scrollTo({ y: Math.max(topH + mapY - 12, 0), animated: true });
+      return;
+    }
+    // embedded on the web, the browser brings the map into view in whatever scrolls the page around it (a section's
+    // place isn't measured again when what is above it grows); elsewhere the page scrolls to the map's place
+    const node = mapAt.current as unknown as { scrollIntoView?: (o: object) => void } | null;
+    if (node?.scrollIntoView) node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    else onShowMap?.(mapY);
   };
+  // how many numbered sections there are, for the page around it to number its own on from them
+  const count = useRef(0);
+  useEffect(() => {
+    onSections?.(count.current);
+  });
 
   if (!scope) {
     const none = <Text style={styles.note}>Open a report from an event on the Sessions page, or from a session.</Text>;
@@ -213,14 +237,14 @@ export default function EventReport({ eventId, sessionId, embedded }: {
       onLayout: (e) => setMapY(e.nativeEvent.layout.y),
       body: (
         <>
-          <View style={wide ? styles.mapWrap : styles.mapWrapPhone}>
+          <Box ref={mapAt} style={wide ? styles.mapWrap : styles.mapWrapPhone}>
             <View style={wide ? styles.mapSide : undefined}>{map}</View>
             {report && (
               <View style={wide ? styles.rankSide : undefined}>
                 <LostList report={report} tones={tones!} focus={highlight ?? null} onPick={setFocus} />
               </View>
             )}
-          </View>
+          </Box>
           {/* banked corners grip more than the tyres would on a flat road: say which, by number */}
           {shape?.banked_note ? <Text style={styles.note}>{shape.banked_note}</Text> : null}
         </>
@@ -303,6 +327,7 @@ export default function EventReport({ eventId, sessionId, embedded }: {
     ) });
   }
 
+  count.current = sections.length;
   const body = (
     <>
       {!embedded && <Stack.Screen options={{ title: answer ? `Report · ${answer.title}` : 'Report' }} />}
@@ -356,7 +381,7 @@ export default function EventReport({ eventId, sessionId, embedded }: {
       {/* The core report answers at once from the server's cache; the map and the other sections load themselves
           meanwhile (they take turns on the server's log lock), so nothing waits for anything else to paint. */}
       {sections.map((s, i) => (
-        <Section key={s.title} no={i + 1} title={s.title} dek={s.dek} onLayout={s.onLayout}>{s.body}</Section>
+        <Section key={s.title} no={firstNo + i} title={s.title} dek={s.dek} onLayout={s.onLayout}>{s.body}</Section>
       ))}
       {!embedded && (
         <Colophon left={`The Engineer · ${isEvent ? 'Event report' : 'Session report'}`}
