@@ -455,22 +455,23 @@ export function GripMap({ x, y, step, modes, labels, describe }: {
           <Svg width={width} height={height} pointerEvents="none">
             <Path d={base} fill="none" stroke={c.track} strokeWidth={10} strokeLinejoin="round" />
             {paths.map((d, k) => (d ? <Path key={k} d={d} stroke={ramp(md.ramp, (k + 0.5) / STEPS)} strokeWidth={6} strokeLinecap="round" /> : null))}
+            <Rect x={X(x[0]) - 4} y={Y(y[0]) - 4} width={8} height={8} fill={c.ink} transform={`rotate(45 ${X(x[0])} ${Y(y[0])})`} />
             {labels.map((l) => {
               const j = Math.max(0, Math.min(x.length - 1, Math.round(l.at / step)));
               if (X(x[j]) < 0 || X(x[j]) > width || Y(y[j]) < 0 || Y(y[j]) > height) return null; // zoomed out of sight
               const [lx, ly] = place(j);
               const half = l.code.length * 3.8 + 3;
-              // on a patch of the chart's paper, so a name over the coloured track still reads
+              // on a patch of the chart's paper, over the track and the start/finish mark, so a name reads whatever
+              // is under it
               return (
                 <G key={l.code}>
-                  <Rect x={lx - half} y={ly - 12} width={2 * half} height={16} fill={c.surface} fillOpacity={0.85} />
+                  <Rect x={lx - half} y={ly - 13} width={2 * half} height={18} fill={c.surface} />
                   <T x={lx} y={ly} fontSize={12} fontWeight="700" fill={c.ink} textAnchor="middle">
                     {l.code}
                   </T>
                 </G>
               );
             })}
-            <Rect x={X(x[0]) - 4} y={Y(y[0]) - 4} width={8} height={8} fill={c.ink} transform={`rotate(45 ${X(x[0])} ${Y(y[0])})`} />
             {hit >= 0 && <Circle cx={X(x[hit])} cy={Y(y[hit])} r={7} fill="none" stroke={c.ink} strokeWidth={2} />}
           </Svg>
         )}

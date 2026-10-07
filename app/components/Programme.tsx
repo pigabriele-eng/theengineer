@@ -210,16 +210,24 @@ export function Hero({ photo, tag, rest, restHref, title, deck, height, deckGap,
   const fit = (Math.min(width, 1240) - 2 * gutter) / (longest * 0.47);
   const size = Math.max(36, Math.floor(Math.min(wide ? 116 : 66, fit)));
   const restText = rest ? <Text style={styles.kickRestText} numberOfLines={1}>{rest}</Text> : null;
+  // The shade: from SHADE_FADE px above the words to the photo's foot, and never shorter than the lower half or two
+  // thirds of the photo. Behind every word it is at least SCRIM_UNDER_WORDS dark, so even a white photo leaves the
+  // headline and the deck their contrast; a low photo (the race weekend's) or a long headline can't rise above it.
+  const [copyH, setCopyH] = useState(0);
+  const bottom = wide ? 26 : 18;
+  const words = copyH + bottom;
+  const shadeH = Math.min(h, Math.max(h * (wide ? 0.56 : 0.66), words + SHADE_FADE));
+  const wordsAt = copyH ? Math.max(0, 1 - words / shadeH) : 0.3; // where the words start in the shade
   return (
     <View style={StyleSheet.flatten([styles.hero, { height: h }])}>
       <PhotoFill photo={photo} focus={wide ? photo.focus : photo.focusPhone ?? photo.focus} style={StyleSheet.absoluteFill as ViewStyle} />
-      <View pointerEvents="none" style={StyleSheet.flatten([styles.shade, { height: `${wide ? 56 : 66}%` }])}>
+      <View pointerEvents="none" style={StyleSheet.flatten([styles.shade, { height: shadeH }])}>
         <Svg width="100%" height="100%" preserveAspectRatio="none">
           <Defs>
             <LinearGradient id="heroShade" x1="0" y1="0" x2="0" y2="1">
-              <Stop offset="0" stopColor="#0a0a0a" stopOpacity={0} />
-              <Stop offset="0.3" stopColor="#0a0a0a" stopOpacity={0.5} />
-              <Stop offset="1" stopColor="#0a0a0a" stopOpacity={0.88} />
+              <Stop offset="0" stopColor={SCRIM} stopOpacity={0} />
+              <Stop offset={wordsAt} stopColor={SCRIM} stopOpacity={copyH ? SCRIM_UNDER_WORDS : 0.5} />
+              <Stop offset="1" stopColor={SCRIM} stopOpacity={0.88} />
             </LinearGradient>
           </Defs>
           <Rect x="0" y="0" width="100%" height="100%" fill="url(#heroShade)" />
@@ -227,7 +235,8 @@ export function Hero({ photo, tag, rest, restHref, title, deck, height, deckGap,
       </View>
       <Credit photo={photo} style={StyleSheet.flatten([styles.credit, wide ? null : styles.creditPhone])}
         box={styles.creditBox} textStyle={styles.creditText} />
-      <View style={StyleSheet.flatten([styles.copy, { left: gutter, right: gutter, bottom: wide ? 26 : 18 }])}>
+      <View onLayout={(e) => setCopyH(e.nativeEvent.layout.height)}
+        style={StyleSheet.flatten([styles.copy, { left: gutter, right: gutter, bottom }])}>
         <View style={styles.kicker}>
           {badge}
           <View style={styles.kickTag}><Text style={styles.kickTagText}>{tag}</Text></View>
@@ -461,6 +470,13 @@ export function Colophon({ left, right, links }: { left: string; right?: string;
 }
 
 const PHOTO_INK = '#F7F4EC'; // text on a photo, in both schemes
+// the photo's scrim: the near-black every word on a photo sits on (the hero's shade, the kicker's and the credit's boxes)
+const SCRIM = '#0a0a0a';
+const scrim = (a: number) => `rgba(10,10,10,${a})`;
+// the hero's shade behind its words, at the least: a white photo under it is then rgb(103,103,103), which gives the
+// headline 5:1 and the deck 4.7:1
+const SCRIM_UNDER_WORDS = 0.62;
+const SHADE_FADE = 44; // the shade's fade from clear, above the words
 
 const useStyles = themed((c) => ({
   // masthead
@@ -493,7 +509,7 @@ const useStyles = themed((c) => ({
   credit: { position: 'absolute', right: 0, top: 0, maxWidth: '70%', padding: 10, justifyContent: 'flex-start',
     alignItems: 'flex-end' },
   creditPhone: { maxWidth: '62%' },
-  creditBox: { backgroundColor: 'rgba(10,10,10,0.72)', paddingHorizontal: 6, paddingVertical: 2 },
+  creditBox: { backgroundColor: scrim(0.72), paddingHorizontal: 6, paddingVertical: 2 },
   creditText: { fontFamily: Fonts.label, fontSize: 12, letterSpacing: 0.6, color: PHOTO_INK, textAlign: 'right' },
   copy: { position: 'absolute' },
   kicker: { flexDirection: 'row', alignItems: 'stretch', marginBottom: 12, flexWrap: 'wrap' },
@@ -501,7 +517,7 @@ const useStyles = themed((c) => ({
   kickTagText: { ...Type.label, fontSize: 13, letterSpacing: 1.7, color: '#ffffff' },
   // its own dark scrim: the photo behind it can be anything
   kickRest: { borderWidth: 1, borderLeftWidth: 0, borderColor: 'rgba(247,244,236,0.85)', paddingHorizontal: 10, paddingTop: 5,
-    paddingBottom: 4, justifyContent: 'center', flexShrink: 1, backgroundColor: 'rgba(10,10,10,0.6)' },
+    paddingBottom: 4, justifyContent: 'center', flexShrink: 1, backgroundColor: scrim(0.6) },
   // the link back up: a full tap target around its box, which stays as drawn
   kickHit: { flexShrink: 1, ...tapRoom(8) },
   kickRestText: { ...Type.label, fontFamily: Fonts.label, fontSize: 13, letterSpacing: 1.7, color: PHOTO_INK },
