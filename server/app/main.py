@@ -15,7 +15,7 @@ from app.routers import event_naming, events, garage, planned, technique
 from app.routers import prep as prep_report
 from app.routers import stint as stint_tool
 from app.routers import track_grip, trackshape
-from app.routers import driver_style
+from app.routers import driver_style, habits
 from app.vehicle import tyre_store
 from app import results
 
@@ -76,6 +76,7 @@ app.include_router(planned.router, dependencies=signed_in)
 app.include_router(event_naming.router, dependencies=signed_in)
 app.include_router(stint_tool.router, dependencies=signed_in)
 app.include_router(driver_style.router, dependencies=signed_in)
+app.include_router(habits.router, dependencies=signed_in)
 app.include_router(prep_report.router, dependencies=signed_in)
 app.include_router(series_results.router, dependencies=signed_in)
 app.include_router(garage.router, dependencies=signed_in)
