@@ -2,6 +2,7 @@ import { Link, useFocusEffect, useNavigation, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
 
+import { DeletedNotice, DeleteEventAction } from '@/components/DeleteEvent';
 import { DriverLinks } from '@/components/DriverPicker';
 import { FilterBar, PlanForm, plannedLine, RemovePlanned } from '@/components/EventFilter';
 import { PrepButton, usePrepAvailability } from '@/components/PrepButton';
@@ -106,6 +107,7 @@ export default function SessionsScreen() {
         )}
         <DriverLinks />
         {error && <Text style={styles.error}>Can&apos;t reach the server: {error}</Text>}
+        <DeletedNotice />
         {!folders && !error && <ActivityIndicator />}
         {folders && folders.length === 0 && (
           <Text style={styles.empty}>
@@ -199,6 +201,7 @@ function FolderCard({ f, plan, prep, onRenamed, onChanged }: {
             <Text style={StyleSheet.flatten([styles.renameText, { color: tint }])}>✎ Rename</Text>
           </Pressable>
           {planned && <RemovePlanned f={f} plan={plan} onRemoved={onChanged} />}
+          {!planned && <DeleteEventAction id={f.id!} name={f.name} onDeleted={onChanged} />}
         </View>
       )}
       {f.id != null && <PrepButton eventId={f.id} info={prep} compact />}
