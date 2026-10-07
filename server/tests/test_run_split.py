@@ -292,7 +292,7 @@ def test_the_parts_are_named_after_the_official_sessions(client, fake_site):  # 
         (new,) = run_split.split_event(db, ev, _guess(s))
     with app_db.SessionLocal() as db:
         names = {i: db.get(models.RunSession, i).name for i in (s, new)}
-    assert names == {s: "Race 1 stint 1", new: "Race 1 stint 2"}
+    assert names == {s: "R1 stint 1", new: "R1 stint 2"}
 
 
 # ---------- a log two runs share ----------
