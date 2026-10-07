@@ -17,13 +17,12 @@ import { Text, View } from '@/components/Themed';
 import { CompareResult, compareLaps, encodePicks, formatLap, signedSeconds } from '@/lib/compare';
 import { dayLabel, eventsApi, Folder } from '@/lib/events';
 import { afterOthers } from '@/lib/loadLast';
+import { poll } from '@/lib/poll';
 import { fetchEventDebriefs } from '@/lib/weekend';
 import {
   debriefLines, DebriefLine, EventDebrief, LapRef, latestAgainstBest, latestByDriver, latestRun,
 } from '@/lib/weekendRuns';
 import { face, Fonts, themed, Type, useTheme } from '@/constants/Theme';
-
-const POLL_MS = 5000; // a debrief being transcribed is looked at again this often
 
 /** The During view of a race weekend. `folder`: the event as its page already has it (else it is read here);
  * `children`: the page's own sections, numbered on from duringSections(folder) (lib/weekendRuns.ts). */
@@ -226,33 +225,35 @@ const STATE: Record<DebriefLine['state'], string> = {
 };
 
 /** One line per run, the latest first, each to its debrief (or to record one), and a big button to record the latest
- * run's. Read again on coming back to the page, and every few seconds while one is being transcribed. */
+ * run's. Read again on coming back to the page, and while one is being transcribed (less and less often). */
 function Debriefs({ no, eventId, folder }: { no: number; eventId: number; folder: Folder | null }) {
   const styles = useStyles();
   const router = useRouter();
   const [debriefs, setDebriefs] = useState<EventDebrief[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const live = useRef(true);
+  const stopPoll = useRef<(() => void) | null>(null);
+  // read again while one is being transcribed (lib/poll.ts: less and less often, not while the page is hidden)
   const load = useCallback(() => {
-    fetchEventDebriefs(eventId).then((d) => {
-      if (!live.current) return;
+    stopPoll.current?.();
+    let working = false; // the last answer had one being transcribed
+    stopPoll.current = poll((wanted) => fetchEventDebriefs(eventId).then((d) => {
+      if (!wanted()) return false;
       setDebriefs(d);
       setError(null);
-    }, (e) => live.current && setError((e as Error).message));
+      working = d.some((x) => x.state === 'recorded');
+      return working;
+    }, (e) => {
+      if (wanted()) setError((e as Error).message);
+      return working;
+    }));
   }, [eventId]);
   useFocusEffect(useCallback(() => {
-    live.current = true;
     load();
     return () => {
-      live.current = false;
+      stopPoll.current?.();
+      stopPoll.current = null;
     };
   }, [load]));
-  const working = debriefs?.some((d) => d.state === 'recorded') ?? false;
-  useEffect(() => {
-    if (!working) return;
-    const t = setInterval(load, POLL_MS);
-    return () => clearInterval(t);
-  }, [working, load]);
 
   const latest = latestRun(folder);
   const lines = debriefLines(folder, debriefs ?? []);

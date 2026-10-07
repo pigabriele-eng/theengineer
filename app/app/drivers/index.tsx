@@ -11,9 +11,9 @@ import { Driver, driversApi } from '@/lib/drivers';
 import { DriverPrint, FingerprintDb, fingerprintsApi } from '@/lib/fingerprints';
 import { checkingWords } from '@/lib/habitView';
 import { HabitTracker as Habits } from '@/lib/habits';
+import { poll } from '@/lib/poll';
 import { themed, useTheme } from '@/constants/Theme';
 
-const POLL_MS = 5000;
 const SUMMARY = 3; // the clearest traits and lap time notes of each driver; the rest on the fingerprints page
 
 /** A driver on the page: their fingerprint, their habits, or both. */
@@ -46,20 +46,24 @@ export default function DriversScreen() {
   const [db, setDb] = useState<FingerprintDb | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [drivers, setDrivers] = useState<Driver[]>([]);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const live = useRef(true);
+  const stopPoll = useRef<(() => void) | null>(null);
+  const live = useRef(true); // false once the page is gone: an answer still on its way is dropped, not polled on
 
+  // read again while the latest uploads are still being added (lib/poll.ts: less and less often)
   const load = useCallback(() => {
-    fingerprintsApi.all().then(
+    stopPoll.current?.();
+    stopPoll.current = poll((wanted) => fingerprintsApi.all().then(
       (d) => {
-        if (!live.current) return;
+        if (!live.current || !wanted()) return false;
         setDb(d);
         setError(null);
-        if (timer.current) clearTimeout(timer.current);
-        if (d.updating) timer.current = setTimeout(load, POLL_MS); // the latest uploads are still being added
+        return !!d.updating;
       },
-      (e) => live.current && setError((e as Error).message),
-    );
+      (e) => {
+        if (live.current && wanted()) setError((e as Error).message);
+        return false;
+      },
+    ));
   }, []);
   const loadDrivers = useCallback(() => {
     driversApi.list().then((d) => live.current && setDrivers(d), () => live.current && setDrivers([]));
@@ -70,7 +74,7 @@ export default function DriversScreen() {
     loadDrivers();
     return () => {
       live.current = false;
-      if (timer.current) clearTimeout(timer.current);
+      stopPoll.current?.();
     };
   }, [load, loadDrivers]);
   const named = useCallback(() => {

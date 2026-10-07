@@ -3,46 +3,62 @@
 // (/report?event=<id>&part=<code>). During the weekend these are the main reports; the whole event's is for after it.
 // Self-contained: the page around it gives the section and its heading.
 import { Link, useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 
 import { ErrorLine, Note } from '@/components/Controls';
 import { Text, View } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
 import { dayLabel } from '@/lib/events';
+import { poll } from '@/lib/poll';
 import { EventParts, Part, partState, partSummary, partsInOrder } from '@/lib/sessionParts';
-import { fetchParts } from '@/lib/sessionReports';
+import { fetchPartReportProgress, fetchParts } from '@/lib/sessionReports';
 import { face, TAP, themed, Type, useTheme } from '@/constants/Theme';
 
-const POLL_MS = 5000; // while a session's report is being worked out, the list is read again this often
+const working = (status: string) => status === 'queued' || status === 'running';
 
 /** The event's official sessions (GET /reports/events/{id}/parts): read when the page comes into view, and again
- * every few seconds while a report is being worked out. */
+ * while a report is being worked out (lib/poll.ts: less and less often, not while the page is hidden). While one
+ * session's report is being worked out (the usual case: the latest run's), only how far it is is asked
+ * (?brief=true), and the list is read again once it is done. */
 export function useEventParts(eventId: number | null | undefined) {
   const [answer, setAnswer] = useState<EventParts | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const live = useRef(true);
+  const stopPoll = useRef<(() => void) | null>(null);
   const load = useCallback(() => {
+    stopPoll.current?.();
+    stopPoll.current = null;
     if (eventId == null) return;
-    fetchParts(eventId).then((a) => {
-      if (!live.current) return;
-      setAnswer(a);
-      setError(null);
-    }, (e) => live.current && setError((e as Error).message));
+    let busy = 0; // the sessions whose reports the last list said were being worked out
+    let one: string | null = null; // ... when there was only one, its code
+    stopPoll.current = poll(async (wanted) => {
+      try {
+        if (one != null) {
+          const h = await fetchPartReportProgress({ event: eventId, part: one }).catch(() => null); // else the list
+          if (!wanted()) return false;
+          if (h && working(h.status)) return true;
+        }
+        const a = await fetchParts(eventId);
+        if (!wanted()) return false;
+        setAnswer(a);
+        setError(null);
+        const codes = a.parts.filter((p) => working(p.status)).map((p) => p.code);
+        busy = codes.length;
+        one = busy === 1 ? codes[0] : null;
+        return busy > 0;
+      } catch (e) {
+        if (wanted()) setError((e as Error).message);
+        return busy > 0; // asked again only while something was being worked out
+      }
+    });
   }, [eventId]);
   useFocusEffect(useCallback(() => {
-    live.current = true;
     load();
     return () => {
-      live.current = false;
+      stopPoll.current?.();
+      stopPoll.current = null;
     };
   }, [load]));
-  const working = answer?.parts.some((p) => p.status === 'queued' || p.status === 'running') ?? false;
-  useEffect(() => {
-    if (!working) return;
-    const t = setInterval(load, POLL_MS);
-    return () => clearInterval(t);
-  }, [working, load]);
   return { answer: answer?.event_id === eventId ? answer : null, error };
 }
 
