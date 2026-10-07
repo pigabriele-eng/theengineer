@@ -8,7 +8,7 @@ import Svg, { Circle, Line, Path, Rect, Text as SvgText } from 'react-native-svg
 
 import { niceTicks, useChartColors } from '@/components/ReportCharts';
 import { Text, View } from '@/components/Themed';
-import { chartPlate, Fonts, Palette, phaseColor, Radius, themed, useTheme } from '@/constants/Theme';
+import { chartPlate, Fonts, Palette, phaseColor, themed, Type, useTheme } from '@/constants/Theme';
 
 export type Band = { n: number; start_m: number; end_m: number; label: string; phase?: string };
 
@@ -120,12 +120,12 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
           </View>
         ))}
         <View style={styles.legendItem}>
-          <View style={[styles.bandKey, { backgroundColor: c.grid, borderColor: c.axis }]} />
+          <View style={StyleSheet.flatten([styles.bandKey, { backgroundColor: c.grid }])} />
           <Text style={styles.legendText}>Mistake, numbered by cost, in its phase&apos;s colour:</Text>
         </View>
         {[...new Set(shown.map((b) => b.phase).filter((p): p is string => !!p))].map((p) => (
           <View key={p} style={styles.legendItem}>
-            <View style={[styles.bandKey, { backgroundColor: phaseColor(theme, p), borderColor: phaseColor(theme, p) }]} />
+            <View style={StyleSheet.flatten([styles.bandKey, { backgroundColor: phaseColor(theme, p) }])} />
             <Text style={styles.legendText}>{p}</Text>
           </View>
         ))}
@@ -155,10 +155,10 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
                 {Math.round(t)}
               </SvgText>
             ))}
-            <Line x1={PAD.left} x2={width - PAD.right} y1={PAD.top + h} y2={PAD.top + h} stroke={c.axis}
-              strokeWidth={1} strokeOpacity={0.6} />
+            <Line x1={PAD.left} x2={width - PAD.right} y1={PAD.top + h} y2={PAD.top + h} stroke={c.muted}
+              strokeWidth={1} />
             {ticksX.map((m) => (
-              <Line key={`m${m.label}`} x1={m.x} x2={m.x} y1={PAD.top + h} y2={PAD.top + h + 4} stroke={c.axis}
+              <Line key={`m${m.label}`} x1={m.x} x2={m.x} y1={PAD.top + h} y2={PAD.top + h + 4} stroke={c.muted}
                 strokeWidth={1} />
             ))}
             {ticksX.map((m) => (
@@ -182,18 +182,19 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
               <Path key={s.key} d={path(s.values)} stroke={s.color} strokeWidth={s.width} fill="none"
                 strokeDasharray={s.dash} strokeLinejoin="round" strokeLinecap="round" />
             ))}
+            {/* the mistake's number in a square block: ink when picked, grey otherwise */}
             {badges.map((b) => (
-              <Circle key={`c${b.n}`} cx={b.x} cy={PAD.top - 11} r={8} fill={b.n === selected ? c.text : c.axis}
-                stroke={c.surface} strokeWidth={1.5} />
+              <Rect key={`c${b.n}`} x={b.x - 8} y={PAD.top - 19} width={16} height={16}
+                fill={b.n === selected ? c.text : c.axis} stroke={c.surface} strokeWidth={1.5} />
             ))}
             {badges.map((b) => (
-              <SvgText key={`n${b.n}`} x={b.x} y={PAD.top - 7} fontSize={10} fontWeight="700" fill={c.surface}
+              <SvgText key={`n${b.n}`} x={b.x} y={PAD.top - 7} fontSize={11} fill={c.surface}
                 textAnchor="middle" fontFamily={SANS}>
                 {String(b.n)}
               </SvgText>
             ))}
             {cursor != null && (
-              <Line x1={px(x[cursor])} x2={px(x[cursor])} y1={PAD.top} y2={PAD.top + h} stroke={c.axis}
+              <Line x1={px(x[cursor])} x2={px(x[cursor])} y1={PAD.top} y2={PAD.top + h} stroke={c.text}
                 strokeWidth={1} />
             )}
             {cursor != null && series.map((s) => (
@@ -203,13 +204,12 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
           </Svg>
         )}
         {cursor != null && (
-          <View pointerEvents="none" style={StyleSheet.flatten([styles.tip, { borderColor: c.grid,
-            backgroundColor: c.surface, top: PAD.top },
+          <View pointerEvents="none" style={StyleSheet.flatten([styles.tip, { top: PAD.top },
           tipLeft ? { right: width - px(x[cursor]) + 10 } : { left: px(x[cursor]) + 10 }])}>
             <Text style={styles.tipHead}>{`${Math.round(x[cursor])} m`}</Text>
             {[...series].reverse().map((s) => (
               <View key={s.key} style={styles.tipRow}>
-                <View style={[styles.tipKey, { backgroundColor: s.color }]} />
+                <View style={StyleSheet.flatten([styles.tipKey, { backgroundColor: s.color }])} />
                 <Text style={styles.tipValue}>{`${s.values[cursor].toFixed(1)} km/h`}</Text>
                 <Text style={styles.tipLabel}>{s.key === 'driven' ? 'yours' : s.key}</Text>
               </View>
@@ -228,18 +228,18 @@ export function pointRange(stepM: number, last: number, from?: number, to?: numb
 }
 
 const useStyles = themed((c) => ({
-  chart: { gap: 6, ...chartPlate(c) },
-  title: { fontSize: 13, fontWeight: '600' },
-  legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, backgroundColor: 'transparent' },
+  chart: { gap: 8, ...chartPlate(c) },
+  title: { ...Type.label, fontSize: 12, color: c.text, borderBottomWidth: 1, borderColor: c.rule, paddingBottom: 5 },
+  legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, rowGap: 6, backgroundColor: 'transparent' },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },
-  legendText: { fontSize: 12, opacity: 0.75 },
-  bandKey: { width: 14, height: 10, borderWidth: StyleSheet.hairlineWidth },
-  tip: { position: 'absolute', borderWidth: 1, borderRadius: Radius.control, paddingHorizontal: 8, paddingVertical: 6, gap: 2,
-    minWidth: 130, maxWidth: 220 },
-  tipHead: { fontSize: 11, opacity: 0.7, fontVariant: ['tabular-nums'] },
+  legendText: { ...Type.label, fontFamily: Fonts.label, fontSize: 11, letterSpacing: 0.8, color: c.textSecondary },
+  bandKey: { width: 14, height: 10 },
+  tip: { position: 'absolute', borderWidth: 1, borderColor: c.rule, backgroundColor: c.background, paddingHorizontal: 8,
+    paddingVertical: 6, gap: 2, minWidth: 130, maxWidth: 220 },
+  tipHead: { ...Type.label, fontSize: 11, color: c.textMuted },
   tipRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },
-  tipKey: { width: 10, height: 2, borderRadius: 1 },
-  tipValue: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  tipLabel: { fontSize: 12, opacity: 0.7 },
-  tipBand: { fontSize: 12, fontWeight: '600', marginTop: 2 },
+  tipKey: { width: 10, height: 3 },
+  tipValue: { ...Type.number, fontSize: 13, color: c.text },
+  tipLabel: { fontFamily: Fonts.body, fontSize: 12, color: c.textSecondary },
+  tipBand: { fontFamily: Fonts.body, fontSize: 12, lineHeight: 16, color: c.text, marginTop: 2 },
 }));
