@@ -10,6 +10,7 @@ import { Fig, Label, Section, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { ErrorLine, Field, Note, Options, SubHead, Working } from '@/components/ToolForm';
 import { AxleCard, CurveChart, useAxleColors } from '@/components/TyreCurve';
+import { poll } from '@/lib/poll';
 import { eventLabel } from '@/lib/toolLists';
 import {
   Axle,
@@ -37,7 +38,6 @@ const day = (iso: string) => {
   const [y, m, d] = iso.split('-').map(Number);
   return `${d} ${MONTHS[m - 1]} ${y}`;
 };
-const POLL_MS = 5000;
 const ALL = '\u0000all'; // the "All tracks" option (no track has this name)
 
 export function TyreModelView({ from = 1 }: { from?: number }) {
@@ -60,6 +60,7 @@ export function TyreModelView({ from = 1 }: { from?: number }) {
     setCars(r.cars);
     setStatus(r.status);
     setCar((c) => (c && r.cars.some((x) => x.key === c) ? c : (r.cars[0]?.key ?? null)));
+    return r.status;
   }, []);
 
   // the tyre on view may have no session left (its events set to another tyre): back to the car's most used
@@ -76,13 +77,16 @@ export function TyreModelView({ from = 1 }: { from?: number }) {
     }, [loadCars]),
   );
 
-  // older logs are summarised in the background: follow it while it works
+  // older logs are summarised in the background: follow it while it works (lib/poll.ts: less and less often, not
+  // while the page is hidden)
   const working = !!status && (status.pending > 0 || status.running);
   useEffect(() => {
     if (!working) return;
-    const t = setTimeout(() => loadCars().catch(() => {}), POLL_MS);
-    return () => clearTimeout(t);
-  }, [working, status, loadCars]);
+    return poll(async () => {
+      const s = await loadCars();
+      return s.pending > 0 || s.running;
+    }, { now: false });
+  }, [working, loadCars]);
 
   const summarised = status?.summarised;
   useEffect(() => {

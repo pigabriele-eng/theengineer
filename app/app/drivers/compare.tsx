@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, TextInput, TextStyle } from 'react-native';
 
 import {
@@ -29,10 +29,10 @@ import {
   Side,
   SIDES,
 } from '@/lib/drivers';
+import { poll } from '@/lib/poll';
 import { face, Fonts, inkOn, themed, Type, useTheme } from '@/constants/Theme';
 
 type Mode = 'drivers' | 'sessions';
-const POLL_MS = 1000;
 const MAX_POLL_FAILURES = 20;
 
 // Two drivers (or two groups of sessions) at one track and car, over all their clean laps. ?event=<id> opens on the
@@ -52,7 +52,6 @@ export default function CompareDriversScreen() {
   const [job, setJob] = useState<CompareJob | null>(null);
   const [result, setResult] = useState<Comparison | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const failures = useRef(0);
   const series = useSeriesColors();
   const colors: Record<Side, string> = { a: series.reference, b: series.compare };
 
@@ -110,7 +109,6 @@ export default function CompareDriversScreen() {
     if (!sides || problem) return;
     setError(null);
     setResult(null);
-    failures.current = 0;
     try {
       setJob(await compareApi.start(sides.a, sides.b));
     } catch (e) {
@@ -118,27 +116,31 @@ export default function CompareDriversScreen() {
     }
   };
 
-  // Follow the comparison until it is done.
+  // Follow the comparison until it is done (lib/poll.ts: less and less often, not while the page is hidden).
+  const jobId = running ? job.id : null;
   useEffect(() => {
-    if (!job || !running) return;
-    const timer = setTimeout(async () => {
+    if (jobId == null) return;
+    let failures = 0;
+    return poll(async (live) => {
       try {
-        const next = await compareApi.job(job.id);
-        failures.current = 0;
+        const next = await compareApi.job(jobId);
+        if (!live()) return false;
+        failures = 0;
         setJob(next);
         if (next.status === 'done') setResult(next.result);
         if (next.status === 'failed') setError(next.error);
+        return next.status === 'queued' || next.status === 'running';
       } catch (e) {
-        failures.current += 1;
-        if (failures.current < MAX_POLL_FAILURES) setJob({ ...job });
-        else {
+        failures += 1;
+        if (failures < MAX_POLL_FAILURES) return true;
+        if (live()) {
           setError((e as Error).message);
-          setJob({ ...job, status: 'failed' });
+          setJob((j) => j && { ...j, status: 'failed' });
         }
+        return false;
       }
-    }, POLL_MS);
-    return () => clearTimeout(timer);
-  }, [job, running]);
+    }, { now: false });
+  }, [jobId]);
 
   return (
     <Page>
