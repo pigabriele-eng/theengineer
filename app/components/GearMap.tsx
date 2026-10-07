@@ -23,10 +23,41 @@ const unit = (x: number, y: number) => {
   return { x: x / l, y: y / l };
 };
 
-/** The gear's step of the speed ramp (slow near the paper, fast deep): the lowest gear used here takes the first step,
- * the highest the last, the ones between spread evenly. */
-function rampOf(lo: number, hi: number, steps: number) {
-  return (g: number) => (hi === lo ? Math.floor(steps / 2) : Math.round(((g - lo) / (hi - lo)) * (steps - 1)));
+/** CIE lightness (0–100) of a #rrggbb colour. */
+function lightness(hex: string) {
+  const [r, g, b] = [1, 3, 5].map((k) => {
+    const v = parseInt(hex.slice(k, k + 2), 16) / 255;
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return y > 216 / 24389 ? 116 * Math.cbrt(y) - 16 : (24389 / 27) * y;
+}
+
+/** The colours of the gears used here, lowest first, from the speed ramp (slow near the paper, fast deep): as many of
+ * its steps as there are gears, in order, picked so that neighbouring gears differ most in lightness (the ramp's
+ * deepest steps are close to each other, so two of them would read as one gear). */
+function gearColours(gears: number[], ramp: string[]): Map<number, string> {
+  const k = gears.length;
+  const out = new Map<number, string>();
+  if (!k) return out;
+  if (k === 1 || k > ramp.length) {
+    gears.forEach((g, i) => out.set(g, ramp[k === 1 ? Math.floor(ramp.length / 2)
+      : Math.round((i / (k - 1)) * (ramp.length - 1))]));
+    return out;
+  }
+  const l = ramp.map(lightness);
+  let best: number[] = [], score = -1;
+  const pick = (from: number, chosen: number[]) => {
+    if (chosen.length === k) {
+      const least = Math.min(...chosen.slice(1).map((s, i) => Math.abs(l[s] - l[chosen[i]])));
+      if (least > score) [best, score] = [chosen, least];
+      return;
+    }
+    for (let s = from; s <= ramp.length - (k - chosen.length); s++) pick(s + 1, [...chosen, s]);
+  };
+  pick(0, []);
+  gears.forEach((g, i) => out.set(g, ramp[best[i]]));
+  return out;
 }
 
 function layout(map: GuideMap, width: number, maxHeight: number, wide: boolean) {
@@ -123,8 +154,8 @@ export default function GearMap({ map, caption, asLogged }: { map: GuideMap; cap
   const g = useMemo(() => (width > 0 ? layout(map, width, wide ? 560 : 440, wide) : null), [map, width, wide]);
   const used = useMemo(() => [...new Set((map.gear ?? []).filter((x): x is number => x != null))].sort((a, b) => a - b),
     [map.gear]);
-  const step = rampOf(used[0] ?? 0, used[used.length - 1] ?? 0, c.speed.length);
-  const fill = (gear: number | null) => (gear == null ? c.muted : c.speed[step(gear)]);
+  const colours = useMemo(() => gearColours(used, c.speed), [used, c.speed]);
+  const fill = (gear: number | null) => (gear == null ? c.muted : colours.get(gear) ?? c.muted);
   const name = (gear: number) => (asLogged ? `gear ${gear}` : gearName(gear));
   const described = `Gear map of the best lap: ${map.corners.length
     ? map.corners.map((k) => `${k.code} ${k.gear != null ? name(k.gear) : 'no gear'}`).join(', ')
