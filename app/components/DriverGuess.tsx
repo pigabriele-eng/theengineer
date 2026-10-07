@@ -14,15 +14,23 @@ const POLL_MS = 4000;
 export function useDriverGuess(eventId: number | null, version: unknown) {
   const [guess, setGuess] = useState<EventGuess | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const live = useRef(true); // false once the page is gone: an answer still on its way is dropped, not polled on
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
+  }, []);
   const load = useCallback(() => {
     if (eventId == null) return;
     fingerprintsApi.event(eventId).then(
       (g) => {
+        if (!live.current) return;
         setGuess(g);
         if (timer.current) clearTimeout(timer.current);
         if (g.status === 'working') timer.current = setTimeout(load, POLL_MS);
       },
-      () => setGuess(null), // an older server, or no laps: the runs simply show no suggestion
+      () => live.current && setGuess(null), // an older server, or no laps: the runs simply show no suggestion
     );
   }, [eventId]);
   useEffect(() => {
