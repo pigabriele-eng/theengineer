@@ -1,0 +1,67 @@
+// The home page's events by year and championship, and what is open by default. Run with `npm test`.
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+
+import { byYear, champKey, eventKey, monthSpan, openByDefault, OTHER, shortName, yearKey } from './homeFolds.ts';
+
+const ev = (id, start, end, extra = {}) => ({
+  id, key: String(id), name: `Event ${id}`, series: null, track: null, start, end, dates_by_hand: false,
+  log_start: null, log_end: null, sessions: 1, clean_laps: 1, best_lap_s: 100, best_session_id: null,
+  best_session: null, season: null, ...extra,
+});
+const gt4 = (round) => ({ season: { id: 7, name: 'GT4 European Series 2026', year: 2026, round } });
+
+const folders = [
+  { ...ev(null, '2025-05-05', '2025-05-05'), key: 'none', name: 'Not in an event' },
+  ev(1, '2025-05-05', '2025-05-06'),
+  ev(2, '2026-09-18', '2026-09-20', gt4(5)),
+  ev(3, '2026-04-10', '2026-04-12', gt4(1)),
+  ev(4, '2026-06-02', '2026-06-02'),
+  ev(5, '2026-10-09', '2026-10-11', { ...gt4(6), sessions: 0 }),
+  ev(6, null, null, { sessions: 0 }),
+  ev(7, '2026-07-01', '2026-07-03', { series: 'ADAC GT4 Germany' }),
+];
+
+test('events by year, newest first, no date last; championships by name, the rest last; rounds in date order', () => {
+  const years = byYear(folders);
+  assert.deepEqual(years.map((y) => y.key), ['2026', '2025', 'none']);
+  const [y26, y25, none] = years;
+  assert.equal(y26.events, 5);
+  assert.deepEqual([y26.start, y26.end], ['2026-04-10', '2026-10-11']);
+  assert.deepEqual(y26.championships.map((c) => c.name), ['ADAC GT4 Germany', 'GT4 European Series 2026', OTHER]);
+  assert.deepEqual(y26.championships[1].events.map((f) => f.id), [3, 2, 5]);
+  assert.deepEqual(y25.championships.map((c) => [c.name, c.other, c.events.length]), [[OTHER, true, 1]]);
+  assert.deepEqual(none.championships[0].events.map((f) => f.id), [6]);
+  assert.equal(none.year, null);
+  // the runs in no event have their own line, not a year
+  assert.ok(!years.some((y) => y.championships.some((c) => c.events.some((f) => f.id == null))));
+});
+
+test('open by default: this year and the lead event\'s year, every championship, the lead event', () => {
+  const years = byYear(folders);
+  const lead = folders.find((f) => f.id === 2);
+  const open = openByDefault(years, lead, 2026);
+  assert.ok(open.has('y:2026') && !open.has('y:2025') && !open.has('y:none'));
+  assert.ok(open.has(champKey(years[0], years[0].championships[1])));
+  assert.ok(open.has(eventKey(lead)) && !open.has('e:3'));
+  // only last year's test: its year opens, with it
+  const old = byYear([ev(1, '2025-05-05', '2025-05-06')]);
+  assert.deepEqual([...openByDefault(old, old[0].championships[0].events[0], 2026)].sort(),
+    ['c:2025:other', 'e:1', 'y:2025']);
+  // no lead at all: the newest year
+  assert.ok(openByDefault(old, null, 2026).has(yearKey(old[0])));
+});
+
+test('a round\'s event reads without its championship\'s name under it', () => {
+  assert.equal(shortName(ev(1, null, null, { ...gt4(5), name: 'Zandvoort · GT4 European Series 2026' })), 'Zandvoort');
+  assert.equal(shortName(ev(1, null, null, { ...gt4(5), name: 'Zandvoort weekend' })), 'Zandvoort weekend');
+  assert.equal(shortName(ev(1, null, null, { name: 'Monza test · GT4 European Series 2026' })),
+    'Monza test · GT4 European Series 2026'); // in no championship: as it is
+});
+
+test('the months a year spans', () => {
+  assert.equal(monthSpan('2026-04-10', '2026-10-11'), 'Apr–Oct');
+  assert.equal(monthSpan('2025-05-05', '2025-05-06'), 'May');
+  assert.equal(monthSpan('2025-12-30', '2026-01-02'), 'Dec 2025–Jan 2026');
+  assert.equal(monthSpan(null, null), null);
+});
