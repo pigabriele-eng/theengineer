@@ -6,7 +6,7 @@ export type Trait = { kind: string; label: string; explain: string; value: numbe
 
 export type StyleGroup = {
   index: number;
-  label: string; // the driver's name, else "Style A", "Style B"
+  label: string; // the driver's name, else "New driver" (asked about: never a letter)
   driver_id: number | null;
   driver: string | null;
   // named after a tagged run here, a fingerprint from other events, the car's other driver, or not yet
@@ -55,10 +55,10 @@ export type DriverPrint = {
   driver: string;
   laps: number;
   events: { event_id: number; event: string | null; date: string | null; laps: number; best_s?: number;
-    typical_s?: number; teammates: string[]; gap_to_teammates_s: number | null }[];
+    typical_s?: number; teammates: string[]; gap_to_teammates_s: number | null; session_ids?: number[] }[];
   traits: Trait[];
   advice: Advice[];
-  also_found: { event_id: number; event: string | null; laps: number; match: number }[];
+  also_found: { event_id: number; event: string | null; laps: number; match: number; session_ids?: number[] }[];
 };
 
 export type LapLink = { kind: string; label: string; r: number; laps: number; outcome: boolean; words: string };
@@ -68,7 +68,8 @@ export type FingerprintDb = {
   events: number;
   drivers: DriverPrint[];
   links: LapLink[];
-  unnamed: { event_id: number; event: string | null; label: string; laps: number }[];
+  // a style the app can't name yet: label is its runs' names
+  unnamed: { event_id: number; event: string | null; label: string; laps: number; session_ids?: number[] }[];
   kinds: { kind: string; label: string; explain: string }[];
 };
 
@@ -99,6 +100,6 @@ export function guessLine(g: RunGuess | undefined, mode: EventGuess['mode'] | un
   if (g.driver_id != null) {
     return g.agrees === false ? `The driving style looks like ${s.label}` : null;
   }
-  const how = s.confidence === 'sure' ? 'Drives like' : 'Probably';
-  return s.driver ? `${how} ${s.driver}` : `${s.label}: same style as the other ${s.label} runs`;
+  if (s.driver) return `${s.confidence === 'sure' ? 'Drives like' : 'Probably'} ${s.driver}`;
+  return mode === 'groups' ? 'A driver the app doesn\'t know yet: name them once, above or here' : null;
 }
