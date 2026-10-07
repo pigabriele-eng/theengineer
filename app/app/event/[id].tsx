@@ -8,7 +8,6 @@ import { ErrorLine, FormActions, Input, MainButton, Note, Said, Tick } from '@/c
 import { EventCompare, Pick, RunKey } from '@/components/EventCompare';
 import { EventForm } from '@/components/EventForm';
 import { EventInfoCard } from '@/components/EventInfoCard';
-import { ImportLogs } from '@/components/ImportLogs';
 import { MoveSessions } from '@/components/MoveSessions';
 import { PrepButton, usePrepAvailability } from '@/components/PrepButton';
 import {
@@ -36,7 +35,7 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** One event as a race programme: its track on the photo with the event's facts under it, the links to its report and
  * analyses, then numbered sections: its runs by day (each with its best lap and the gap to the event's best), any two to
- * six runs side by side, what it was run with, its official results, and logs to upload into it. Runs are relabelled,
+ * six runs side by side, what it was run with, its official results, and a run to add by hand (logs are uploaded on the Upload page). Runs are relabelled,
  * tagged, ticked and moved here. /event/none holds the runs in no event. ?compare=3,12 keeps the runs side by side in
  * the address. */
 export default function EventScreen() {
@@ -266,7 +265,7 @@ export default function EventScreen() {
       {sessions.length === 0 && (
         <Note style={styles.empty}>
           {isEvent
-            ? 'No runs in this event yet. Upload its logs below, or move runs here from another event.'
+            ? 'No runs in this event yet. Upload its logs on the Upload page, or move runs here from another event.'
             : 'Every run is in an event.'}
         </Note>
       )}
@@ -309,10 +308,9 @@ export default function EventScreen() {
     </Section>
   );
 
-  const upload = folder && (
-    <Section no={++no} title={isEvent ? 'Upload' : 'Add a run'}
-      dek={isEvent ? `Logs dropped or picked here go into ${folder.name}.` : 'A run made by hand, to upload a log to later.'}>
-      {isEvent && eventId != null && <ImportLogs onProgress={load} into={{ id: eventId, name: folder.name }} />}
+  // logs are uploaded on the Upload page (Gabriele, 2026-10-07: "remove upload window in the event window")
+  const addRun = folder && (
+    <Section no={++no} title="Add a run" dek="A run made by hand, to upload a log to later or to hold a debrief.">
       <AddSession eventId={eventId} onAdded={load} />
     </Section>
   );
@@ -336,7 +334,7 @@ export default function EventScreen() {
         {sideBySide}
         {info}
         {results}
-        {upload}
+        {addRun}
         {folder && (
           <Colophon left={`The Engineer · ${isEvent ? 'Event' : 'Unfiled runs'}`} links={[
             { label: 'Sessions', href: '/' },
@@ -393,7 +391,7 @@ function headlineOf(f: Folder, isEvent: boolean) {
 function deckOf(f: Folder, isEvent: boolean) {
   if (!isEvent) return f.sessions ? 'Runs filed in no event: tick them and move them into one.' : 'Every run is in an event.';
   const named = shortTrack(f.track) ? `${f.name}: ` : '';
-  if (f.sessions === 0) return `${named}no runs yet. Upload its logs below.`;
+  if (f.sessions === 0) return `${named}no runs yet. Upload its logs on the Upload page.`;
   const days = f.days.filter((d) => d.date).length;
   const runs = `${inWords(f.sessions)} run${f.sessions === 1 ? '' : 's'}${days ? ` over ${inWords(days)} day${days === 1 ? '' : 's'}` : ''}`;
   const line = `${runs}, ${plural(f.clean_laps, 'clean lap')}.`;
