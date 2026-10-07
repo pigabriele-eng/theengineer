@@ -27,6 +27,7 @@ DEFAULT_CHANNEL_MAP: dict[str, tuple[str, ...]] = {
     "steer": ("aSteer", "Steered Angle", "Steering Angle", "Steering", "Steer Angle", "SteerAngle", "log_asteer"),
     "gear": ("nGear", "NGearPos", "Gear", "Gear Position", "Gear Pos", "ecu_gear"),
     "rpm": ("nEngine", "Engine Speed", "RPM", "Engine RPM", "ECU RPM", "ecu_nmot"),
+    "engine_torque": ("MEngine", "Engine Torque", "TqEngine"),
     "lat": ("GPS Latitude", "GPS Lat", "Latitude", "log_gps_lat"),
     "lon": ("GPS Longitude", "GPS Long", "GPS Lon", "Longitude", "log_gps_lon"),
     "g_lat": ("gLat", "aLat [m/s/s]", "G Force Lat", "Lateral Accel", "LateralAcc", "Lateral Acc",

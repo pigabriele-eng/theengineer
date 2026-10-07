@@ -169,10 +169,13 @@ def check_session(session_id: int) -> str | None:
 
 def remove_session(db: Session, s: models.RunSession) -> list[str]:
     """Delete the session with its laps and files, and every cached result made from it. Returns the storage keys
-    to delete once this is committed. Not committed."""
+    to delete once this is committed (not a log another run still reads: runs split from one log share it,
+    run_split.py). Not committed."""
     sid, eid = s.id, s.event_id
     file_ids = [f.id for f in s.files]
-    keys = [f.path for f in s.files]
+    shared = set(db.scalars(select(models.LoggerFile.path).where(
+        models.LoggerFile.path.in_([f.path for f in s.files]), models.LoggerFile.id.not_in(file_ids))))
+    keys = [f.path for f in s.files if f.path not in shared]
     for row in db.scalars(select(models.TyreData).where(or_(models.TyreData.session_id == sid,
                                                             models.TyreData.file_id.in_(file_ids)))):
         db.delete(row)

@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from app import heavy, models, storage
 from app.analysis import compact
+from app.analysis.shifts import ShiftModel
 from app.analysis.technique import INPUT_ROLES, check_lap, habits
 from app.db import SessionLocal, get_db
 from app.routers import reports
@@ -37,11 +38,12 @@ from app.routers.sessions import official_corners
 router = APIRouter(prefix="/technique")
 log = logging.getLogger(__name__)
 
-TECHNIQUE_VERSION = 7  # raise when the check changes, so every kept one is worked out again
+TECHNIQUE_VERSION = 8  # raise when the check changes, so every kept one is worked out again
 # 5: perfect driving on a lap's own line at limits never below that lap's own (local_limits.on_own_line)
 # 6: the driver's inputs and perfect driving's phases with each lap's speed trace
 # 7: the obvious mistakes (exit lifts, power stepped on, soft straight-line braking); the theoretical lap never quicker
 #    than the best real pass through a section; laps off the fastest lap's line left out of the targets
+# 8: early and late upshifts against the revs where the next gear drives harder (analysis.shifts)
 TRACES_WAIT_S = 3600  # longest the check waits for the logs to be read into lap traces
 HABITS_SHOWN = 12
 DETAILS_KEPT = 16  # laps' full checks kept in memory
@@ -405,6 +407,7 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
     if prepared is None:
         raise TechniqueError("No clean laps to check")
     prep, extras = prepared
+    shifts = ShiftModel.of([x.trace for x in prep.laps])  # the event's shift points, from its own logs
     row.done, row.total = 0, len(prep.laps)
     laps, blobs = [], {}
     for i, x in enumerate(prep.laps):
@@ -413,7 +416,7 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
             db.commit()
         out = reports._plain(check_lap(x.trace, prep.perfect, prep.held, prep.sections, lap_time=x.time,
                                        units=extras.units,
-                                       calibrations=(prep.calibration, prep.held_calibration)))
+                                       calibrations=(prep.calibration, prep.held_calibration), shifts=shifts))
         member = f"l{i}"
         laps.append({"key": x.key, "session_id": extras.session_of[x.key], "run": x.run, "number": x.number,
                      "time": x.time, "driver": x.driver, "perfect": out["perfect"], "realistic": out["realistic"],
@@ -433,6 +436,7 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
         "reference": {"key": prep.reference.key, "session_id": extras.session_of[prep.reference.key],
                       "number": prep.reference.number, "time": prep.reference.time},
         "theoretical": prep.sim.time,
+        "shift_points": shifts.to_dict() if shifts is not None else None,
         # the driver's inputs sent with every lap's trace: the logger channel each comes from and its unit
         "inputs": {r: {"channel": channels.get(r), "unit": extras.units.get(r)} for r in INPUT_ROLES},
         "laps": laps,

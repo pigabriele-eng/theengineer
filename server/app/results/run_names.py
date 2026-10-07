@@ -168,10 +168,13 @@ TEST = re.compile(r"\b(?:pts?|paid ?tests?)\s*(\d)?\b")
 
 
 def _hint(text: str | None) -> tuple[str | None, str | None]:
-    """'05_R1' -> ('race', 'R1'), '01_PTS' -> ('test', None), 'PTS2' -> ('test', 'T2'), 'FP' -> ('practice', None)."""
+    """'05_R1' -> ('race', 'R1'), '01_PTS' -> ('test', None), 'PTS2' -> ('test', 'T2'), 'FP' -> ('practice', None),
+    '04_PQ' -> ('practice', 'PQ')."""
     from app.results import summary  # the results' reading of a session name
 
     t = re.sub(r"[_\-.]+", " ", text or "").lower()
+    if re.search(r"\b(?:pq|pre ?q\w*)\b", t):  # pre-qualifying: a practice (FP2 where the series has no PQ)
+        return "practice", "PQ"
     kind, code = summary._hint(t)
     if kind:
         return kind, code
@@ -200,16 +203,19 @@ def hint(s: models.RunSession, mark: rm.RunNameMark | None) -> tuple[str | None,
 
 def _by_time(t: datetime, kind: str, table: list) -> list[str]:
     """The sessions a log of ``kind`` saved at ``t`` can hold: the last of that kind to start before ``t``, with the
-    ones of that kind just before it on the same day (no other session between)."""
+    ones of that kind running straight into it (Q1 then Q2: one download after both). FP1 hours before FP2 isn't."""
     out: list[str] = []
-    for code, t0, _ in sorted((x for x in table if x[1] <= t + SLACK), key=lambda x: x[1], reverse=True):
+    for code, _, t1 in sorted((x for x in table if x[1] <= t + SLACK), key=lambda x: x[1], reverse=True):
         if prefix(code) in WANT[kind]:
-            if out and t0.date() != table_start(table, out[-1]).date():
+            if out and table_start(table, out[-1]) - t1 > BACK_TO_BACK:
                 break
             out.append(code)
         elif out:
             break
     return out
+
+
+BACK_TO_BACK = timedelta(minutes=30)  # sessions this close are downloaded together
 
 
 def table_start(table: list, code: str) -> datetime:

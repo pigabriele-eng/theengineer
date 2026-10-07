@@ -2,10 +2,12 @@
 uploaded again) is kept once.
 
 Two runs are the same when their logs started at the same time of day and they have the same laps, every lap time
-equal to the logger's precision; anything different keeps both. The run kept is the one with what was set by hand (a
-typed name, a driver, debriefs, a setup, lap tags), else the older one; whatever the copy had of those that the kept
-run hasn't goes over to it. The copy then goes as a run deleted from the event's page does (run_delete.py): with its
-logs, stored files and everything kept for it.
+equal to the logger's precision; a run is a piece of another when two or more of its laps, in a row and each to the
+millisecond, are laps of the other's longer log (a log saved partway through a session). Anything else keeps both.
+The run kept is the most complete one, then the one with what was set by hand (a typed name, a driver, debriefs, a
+setup, lap tags), then the older; whatever the copy had of those that the kept run hasn't goes over to it. The copy
+then goes as a run deleted from the event's page does (run_delete.py): with its logs, stored files and everything
+kept for it.
 
 On every upload (routers/imports.py, once it is done) and for every event on server start and daily (before its runs
 are named from the timetable: results/sync.py).
@@ -38,6 +40,21 @@ def _same(a: models.RunSession, b: models.RunSession) -> bool:
     if wa is None or wb is None or wa[0] != wb[0] or not a.laps or len(a.laps) != len(b.laps):
         return False
     return all(abs(x.time_s - y.time_s) <= PRECISION_S for x, y in zip(a.laps, b.laps, strict=True))
+
+
+def _part_of(a: models.RunSession, b: models.RunSession) -> bool:
+    """Whether run a is the same run as b or a piece of it: a log saved partway through, whose laps (two or more,
+    each to the millisecond) run on in b's longer log (Misano 2026: three paid-test logs of 7, 5 and 3 laps whose
+    laps are all in the day's 30-lap log)."""
+    if len(a.laps) > len(b.laps) or not a.laps:
+        return False
+    if len(a.laps) == len(b.laps) and _same(a, b):
+        return True
+    if len(a.laps) < 2:
+        return False
+    x, y = [lap.time_s for lap in a.laps], [lap.time_s for lap in b.laps]
+    return any(all(abs(p - q) <= PRECISION_S for p, q in zip(x, y[i:i + len(x)], strict=True))
+               for i in range(len(y) - len(x) + 1))
 
 
 def _weight(db: Session, s: models.RunSession) -> tuple:
@@ -88,18 +105,16 @@ def merge_event(db: Session, event_id: int) -> list[int]:
     runs = db.scalars(select(models.RunSession).where(models.RunSession.event_id == event_id)
                       .order_by(models.RunSession.id)).all()
     copies: list[int] = []
-    left = list(runs)
-    while left:
-        first = left.pop(0)
-        same = [first, *(r for r in left if _same(first, r))]
-        if len(same) == 1:
-            continue
-        left = [r for r in left if r not in same]
-        keep = max(same, key=lambda r: (_weight(db, r), -r.id))
-        for copy in same:
-            if copy is not keep:
-                _move(db, copy, keep)
-                copies.append(copy.id)
+    # the most complete log first (then the one with what was set by hand, then the older): pieces go into it
+    weights = {r.id: _weight(db, r) for r in runs}
+    kept: list[models.RunSession] = []
+    for r in sorted(runs, key=lambda r: (-len(r.laps), tuple(not w for w in weights[r.id]), r.id)):
+        host = next((k for k in kept if _part_of(r, k)), None)
+        if host is None:
+            kept.append(r)
+        else:
+            _move(db, r, host)
+            copies.append(r.id)
     if copies:
         run_delete.delete_runs(ids=",".join(map(str, copies)), db=db)
         log.warning("event %s: %s duplicate runs removed (%s)", event_id, len(copies), copies)

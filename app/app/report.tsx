@@ -99,6 +99,7 @@ export default function ReportScreen() {
   const sessionEvent = useSessionEvent(scope && 'session' in scope ? scope.session : null);
   const folder = useEventFolder(scope && 'event' in scope ? scope.event : sessionEvent);
   const quick = useQuickLaps(scope);
+  const [polls, setPolls] = useState(0); // bumped by Retry: the poll below starts again
 
   // ask for the report; while the server works it out, ask again every couple of seconds
   useEffect(() => {
@@ -124,20 +125,14 @@ export default function ReportScreen() {
       if (timer) clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+  }, [key, polls]);
 
   const retry = useCallback(async () => {
     if (!scope) return;
     try {
       setAnswer(await refreshReport(scope));
       setError(null);
-      // the poll above has stopped; start it again through a fresh fetch loop
-      const again = async () => {
-        const a = await fetchReport(scope);
-        setAnswer(a);
-        if (a.status === 'queued' || a.status === 'running') setTimeout(again, POLL_MS);
-      };
-      setTimeout(again, POLL_MS);
+      setPolls((n) => n + 1); // the poll above has stopped; start it again
     } catch (e) {
       setError((e as Error).message);
     }

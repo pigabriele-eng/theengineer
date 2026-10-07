@@ -35,8 +35,13 @@ export function LapCompare({ sessionId, analysis, laps: allLaps, bare = false }:
 
   useEffect(() => {
     if (lap == null) return;
+    let live = true; // a lap picked since: this answer is for the old one
     setError(null);
-    api.compare(sessionId, lap, ref).then(setData, (e) => setError(e.message));
+    setData(null);
+    api.compare(sessionId, lap, ref).then((d) => live && setData(d), (e) => live && setError(e.message));
+    return () => {
+      live = false;
+    };
   }, [sessionId, lap, ref]);
 
   if (lap == null) return null;
