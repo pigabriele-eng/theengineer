@@ -85,7 +85,7 @@ type LineChartProps = {
   title?: string;
 };
 
-const PAD = { left: 44, right: 12, top: 10, bottom: 34 };
+const PAD = { left: 48, right: 12, top: 10, bottom: 34 };
 
 /** Lines against a shared x, with a crosshair: hover (web) or drag (touch) to read every series at that x. It zooms
  * along x (components/Zoom.tsx), the y axis fitting the part shown. */
@@ -142,7 +142,7 @@ export function LineChart({ x, series, legend, height = 180, formatX, formatY, u
     const mx = px(m.at);
     if (mx < PAD.left - 2 || mx > width - PAD.right + 2) continue;
     const prev = placed[placed.length - 1];
-    if (prev && mx - prev.x < (prev.label.length + m.label.length) * 3.6 + 6) continue;
+    if (prev && mx - prev.x < (prev.label.length + m.label.length) * 3.9 + 6) continue;
     placed.push({ ...m, x: mx });
   }
 
@@ -177,7 +177,7 @@ export function LineChart({ x, series, legend, height = 180, formatX, formatY, u
                 strokeWidth={1} />
             ))}
             {ticks.map((t) => (
-              <SvgText key={`t${t}`} x={PAD.left - 6} y={py(t) + 4} fontSize={11} fill={c.axis} textAnchor="end"
+              <SvgText key={`t${t}`} x={PAD.left - 6} y={py(t) + 4} fontSize={12} fill={c.axis} textAnchor="end"
                 fontFamily={SANS}>
                 {formatY(t)}
               </SvgText>
@@ -189,19 +189,19 @@ export function LineChart({ x, series, legend, height = 180, formatX, formatY, u
                 strokeWidth={1} />
             ))}
             {placed.map((m) => (
-              <SvgText key={`ml${m.label}`} x={m.x} y={PAD.top + h + 16} fontSize={11} fill={c.secondary}
+              <SvgText key={`ml${m.label}`} x={m.x} y={PAD.top + h + 16} fontSize={12} fill={c.secondary}
                 textAnchor="middle" fontFamily={SANS}>
                 {m.label}
               </SvgText>
             ))}
-            <SvgText x={PAD.left} y={height - 3} fontSize={11} fill={c.axis} fontFamily={SANS}>
+            <SvgText x={PAD.left} y={height - 3} fontSize={12} fill={c.axis} fontFamily={SANS}>
               {formatX(ends[0])}
             </SvgText>
-            <SvgText x={width - PAD.right} y={height - 3} fontSize={11} fill={c.axis} textAnchor="end"
+            <SvgText x={width - PAD.right} y={height - 3} fontSize={12} fill={c.axis} textAnchor="end"
               fontFamily={SANS}>
               {`${formatX(ends[1])}`}
             </SvgText>
-            <SvgText x={(PAD.left + width - PAD.right) / 2} y={height - 3} fontSize={11} fill={c.axis}
+            <SvgText x={(PAD.left + width - PAD.right) / 2} y={height - 3} fontSize={12} fill={c.axis}
               textAnchor="middle" fontFamily={SANS}>
               {unit}
             </SvgText>

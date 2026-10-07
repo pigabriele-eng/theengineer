@@ -20,7 +20,7 @@ import {
 import { noPrint } from '@/lib/print';
 
 import { ChartColors, Dumbbell, GgDiagram, GripMap, inkOn, LegendItem, ramp, Scatter, useChartColors } from './GripCharts';
-import { Fonts, legibleFill, themed, Type } from '@/constants/Theme';
+import { Fonts, legibleFill, TAP, tapRoom, themed, Type } from '@/constants/Theme';
 
 // bare: inside a report section that already names it, so without its own heading
 type Props = { session?: number; event?: number; bare?: boolean };
@@ -323,11 +323,13 @@ function GgBlock({ data, c, sectionAt }: { data: GripResult; c: ChartColors; sec
   return (
     <View style={styles.block}>
       <Text style={styles.h3}>The g-g diagram and the grip limit</Text>
-      <View style={styles.tabs}>
+      <View style={styles.tabs} accessibilityRole="tablist">
         {lim.bands_kmh.map((b, i) => (
-          <Pressable key={i} onPress={() => setBand(i)} {...(i === band ? null : noPrint)}
-            style={i === band ? [styles.tab, { borderColor: c.ink }] : styles.tab}>
-            <Text style={i === band ? styles.tabOn : styles.tabText}>{label(b)}</Text>
+          <Pressable key={i} onPress={() => setBand(i)} {...(i === band ? null : noPrint)} accessibilityRole="tab"
+            accessibilityState={{ selected: i === band }} style={styles.tabHit}>
+            <View style={i === band ? [styles.tab, { borderColor: c.ink }] : styles.tab}>
+              <Text style={i === band ? styles.tabOn : styles.tabText}>{label(b)}</Text>
+            </View>
           </Pressable>
         ))}
       </View>
@@ -589,8 +591,10 @@ const useStyles = themed((c) => ({
   legendRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 12 },
   legendText: { fontSize: 12, opacity: 0.75 },
   legendDot: { width: 18, height: 12 },
-  tabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  tab: { borderBottomWidth: 3, borderColor: 'transparent', paddingBottom: 2, marginRight: 8 },
+  // the speed bands: 44 px tap targets around their underlined names, the rows far enough apart not to overlap
+  tabs: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 6, rowGap: 22 },
+  tabHit: { minWidth: TAP, marginRight: 8, ...tapRoom(11) },
+  tab: { borderBottomWidth: 3, borderColor: 'transparent', paddingBottom: 2, backgroundColor: 'transparent' },
   tabText: { ...Type.label, fontSize: 13, color: c.textMuted },
   tabOn: { ...Type.label, fontSize: 13, color: c.text },
   trow: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderColor: c.separator, paddingVertical: 3 },

@@ -22,7 +22,7 @@ import {
 import { featureMid, featureSpan, TrackShapeData } from '@/lib/trackshape';
 import { noPrint } from '@/lib/print';
 import { Plane, Point, toFrame } from '@/lib/zoom';
-import { byScheme, Fonts, themed, Type } from '@/constants/Theme';
+import { byScheme, Fonts, TAP, themed, Type } from '@/constants/Theme';
 
 type Props = {
   session?: number; // draw this session's best clean lap
@@ -286,10 +286,12 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
               accessibilityState={{ selected: mode === m }}
               onPress={() => setMode(m)}
               {...(mode === m ? null : noPrint)}
-              style={StyleSheet.flatten([styles.toggleItem, mode === m && { borderColor: tint }])}>
-              <Text style={StyleSheet.flatten([styles.toggleText, mode !== m && styles.toggleOff])}>
-                {m === 'sections' ? 'Sections' : 'Speed'}
-              </Text>
+              style={styles.toggleHit}>
+              <View style={StyleSheet.flatten([styles.toggleItem, mode === m && { borderColor: tint }])}>
+                <Text style={StyleSheet.flatten([styles.toggleText, mode !== m && styles.toggleOff])}>
+                  {m === 'sections' ? 'Sections' : 'Speed'}
+                </Text>
+              </View>
             </Pressable>
           ))}
           <ResetZoom zoom={zoom} />
@@ -370,7 +372,7 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
                 <G key={`p-${k.n}`}>
                   <Circle cx={k.p.x} cy={k.p.y} r={k.n === selectedMark ? 10 : 8}
                     fill={k.n === selectedMark ? c.ink : c.secondary} stroke={surface} strokeWidth={1.5} />
-                  <SvgText x={k.p.x} y={k.p.y + 3.5} fontSize={10} fontFamily={SANS} fontWeight="700"
+                  <SvgText x={k.p.x} y={k.p.y + 4} fontSize={12} fontFamily={SANS} fontWeight="700"
                     textAnchor="middle" fill={surface}>
                     {String(k.n)}
                   </SvgText>
@@ -469,14 +471,16 @@ const useStyles = themed((c) => ({
     borderBottomWidth: 1, borderColor: c.rule, paddingBottom: 6 },
   title: { ...Type.label, color: c.text },
   toggle: { flexDirection: 'row', alignItems: 'flex-end', gap: 14 },
-  toggleItem: { borderBottomWidth: 3, borderColor: 'transparent', paddingBottom: 2 },
+  // each view's name a 44 px tap target: the room goes up, and down only as far as the head's rule
+  toggleHit: { minWidth: TAP, paddingTop: 16, marginTop: -16, paddingBottom: 6, marginBottom: -6 },
+  toggleItem: { borderBottomWidth: 3, borderColor: 'transparent', paddingBottom: 2, backgroundColor: 'transparent' },
   toggleText: { ...Type.label, fontSize: 13, color: c.text },
   toggleOff: { color: c.textMuted },
   legend: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
   ramp: { flexDirection: 'row', gap: 1 },
   rampStep: { width: 16, height: 8 },
   detail: { ...Type.dek, fontSize: 15, lineHeight: 21, color: c.textSecondary },
-  small: { fontFamily: Fonts.label, fontSize: 11, letterSpacing: 0.4, color: c.textMuted },
+  small: { fontFamily: Fonts.label, fontSize: 12, letterSpacing: 0.4, color: c.textMuted },
   note: { ...Type.dek, fontSize: 14, color: c.textMuted },
   strip: { marginTop: 8 },
   gone: { display: 'none' },

@@ -95,7 +95,7 @@ export function ShapeLegend({ shape }: { shape: TrackShapeData }) {
 }
 
 const PAD = { left: 38, right: 10, top: 14, bottom: 24 };
-const ROW = 13; // a second row of corner names
+const ROW = 14; // a second row of corner names
 
 /** Height along the lap: distance on x, metres above the lap's lowest point on y, the corners marked under the axis,
  * banked stretches shaded and crests and compressions marked on the line. Hover (web) or drag (touch) to read the
@@ -121,7 +121,7 @@ export function ElevationStrip({ shape, onCursor }: { shape: TrackShapeData; onC
   // corners are placed first, then those with a crest or a compression, and a name with no room on either row is
   // left out (the tooltip still names it)
   const marks: { code: string; x: number; row: number }[] = [];
-  const half = (code: string) => code.length * 3.4 + 2; // half a name's width at 11 px
+  const half = (code: string) => code.length * 3.7 + 2; // half a name's width at 12 px
   const rank = (code: string) => Math.max(0, ...shape.features.filter((f) => f.corner === code)
     .map((f) => (f.kind === 'banked' ? 2 : 1)));
   const order = [...shape.corners].sort((a, b) => rank(b.code) - rank(a.code));
@@ -203,7 +203,7 @@ export function ElevationStrip({ shape, onCursor }: { shape: TrackShapeData; onC
                 strokeWidth={1} />
             ))}
             {ticks.map((t) => (
-              <SvgText key={`t${t}`} x={PAD.left - 6} y={py(t) + 4} fontSize={11} fill={c.axis} textAnchor="end"
+              <SvgText key={`t${t}`} x={PAD.left - 6} y={py(t) + 4} fontSize={12} fill={c.axis} textAnchor="end"
                 fontFamily={SANS}>
                 {`${t} m`}
               </SvgText>
@@ -228,7 +228,7 @@ export function ElevationStrip({ shape, onCursor }: { shape: TrackShapeData; onC
                 stroke={c.axis} strokeWidth={1} />
             ))}
             {marks.map((m) => (
-              <SvgText key={`ml${m.code}`} x={m.x} y={PAD.top + h + 16 + m.row * ROW} fontSize={11} fontWeight="600"
+              <SvgText key={`ml${m.code}`} x={m.x} y={PAD.top + h + 16 + m.row * ROW} fontSize={12} fontWeight="600"
                 fill={c.secondary} textAnchor="middle" fontFamily={SANS}>
                 {m.code}
               </SvgText>

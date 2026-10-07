@@ -3,14 +3,13 @@ import {
   ActivityIndicator,
   LayoutChangeEvent,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   View,
 } from 'react-native';
 import Svg, { Circle, ClipPath, Defs, G, Line, Polyline, Rect, Text as SvgText } from 'react-native-svg';
 
-import { Fig, useWide } from '@/components/Programme';
+import { Fig, TextLink, useWide } from '@/components/Programme';
 import { Text, useThemeColor } from '@/components/Themed';
 import { useSeriesColors } from '@/components/TraceChart';
 import { ResetZoom, useZoom, ZoomArea } from '@/components/Zoom';
@@ -21,7 +20,7 @@ import { chartPlate, Fonts, themed, Type, useTheme } from '@/constants/Theme';
 
 const POLL_MS = 4000;
 const C = { left: 44, right: 12, top: 22, bottom: 44, height: 230 };
-const CHAR_W = 6; // rough width of one character at fontSize 10
+const CHAR_W = 7.2; // rough width of one character at fontSize 12
 // SVG text takes the browser's default (serif) face on web: give it the system sans the rest of the app uses
 const SVG_FONT = Fonts.sans;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -155,9 +154,7 @@ function Method({ result }: { result: TrackGripResult }) {
   const b = result.basis;
   return (
     <View style={styles.method}>
-      <Pressable accessibilityRole="button" onPress={() => setOpen(!open)}>
-        <Text style={styles.toggle}>{open ? 'Hide how this is worked out' : 'How this is worked out'}</Text>
-      </Pressable>
+      <TextLink label={open ? 'Hide how this is worked out' : 'How this is worked out'} small onPress={() => setOpen(!open)} />
       {open && result.method.map((m) => <Text key={m} style={styles.dim}>{m}</Text>)}
       {open && b && (
         <Text style={styles.dim}>
@@ -247,18 +244,18 @@ export function GripChart({ sessions, base, title }: { sessions: GripSession[]; 
                 strokeOpacity={v === 0 ? 0.35 : 0.08} strokeWidth={v === 0 ? 1.5 : 1} />
             ))}
             {ticks.map((v) => (
-              <SvgText fontFamily={SVG_FONT} key={`t${v}`} x={C.left - 6} y={y(v) + 4} fontSize={10} fill={MUTED}
+              <SvgText fontFamily={SVG_FONT} key={`t${v}`} x={C.left - 6} y={y(v) + 4} fontSize={12} fill={MUTED}
                 textAnchor="end">
                 {v === 0 ? '0' : `${v > 0 ? '+' : '−'}${Math.abs(v)}`}
               </SvgText>
             ))}
-            <SvgText fontFamily={SVG_FONT} x={12} y={C.top + h / 2} fontSize={10} fill={MUTED} textAnchor="middle"
+            <SvgText fontFamily={SVG_FONT} x={12} y={C.top + h / 2} fontSize={12} fill={MUTED} textAnchor="middle"
               transform={`rotate(-90 12 ${C.top + h / 2})`}>
               % grip
             </SvgText>
             <G clipPath={zoomed ? `url(#${clip})` : undefined}>
               {days > 1 && sessions.map((s, i) => newDay[i] && (
-                <SvgText fontFamily={SVG_FONT} key={`d${i}`} x={x(i) - col / 2 + 4} y={12} fontSize={10} fill={MUTED}>
+                <SvgText fontFamily={SVG_FONT} key={`d${i}`} x={x(i) - col / 2 + 4} y={12} fontSize={12} fill={MUTED}>
                   {dayLabel(s.start)}
                 </SvgText>
               ))}
@@ -283,25 +280,25 @@ export function GripChart({ sessions, base, title }: { sessions: GripSession[]; 
               ))}
               {sessions.map((s, i) => s.wet && (
                 <SvgText fontFamily={SVG_FONT} key={`w${i}`} x={x(i)} y={y(s.range ? s.range[1] : s.track) - 8}
-                  fontSize={10} fill={ink} fillOpacity={0.7} textAnchor="middle">
+                  fontSize={12} fill={ink} fillOpacity={0.7} textAnchor="middle">
                   wet
                 </SvgText>
               ))}
               {sessions.map((s, i) => i % every === 0 && (
-                <SvgText fontFamily={SVG_FONT} key={`n${i}`} x={x(i)} y={C.top + h + 14} fontSize={10} fill={ink}
+                <SvgText fontFamily={SVG_FONT} key={`n${i}`} x={x(i)} y={C.top + h + 14} fontSize={12} fill={ink}
                   fillOpacity={0.75} textAnchor="middle">
                   {s.name}
                 </SvgText>
               ))}
               {withAir && sessions.map((s, i) => i % every === 0 && s.ambient_c != null && (
-                <SvgText fontFamily={SVG_FONT} key={`a${i}`} x={x(i)} y={C.top + h + 28} fontSize={10} fill={MUTED}
+                <SvgText fontFamily={SVG_FONT} key={`a${i}`} x={x(i)} y={C.top + h + 28} fontSize={12} fill={MUTED}
                   textAnchor="middle">
                   {`${Math.round(s.ambient_c)}°`}
                 </SvgText>
               ))}
             </G>
             {withAir && (
-              <SvgText fontFamily={SVG_FONT} x={C.left - 6} y={C.top + h + 28} fontSize={10} fill={MUTED} textAnchor="end">
+              <SvgText fontFamily={SVG_FONT} x={C.left - 6} y={C.top + h + 28} fontSize={12} fill={MUTED} textAnchor="end">
                 air
               </SvgText>
             )}
@@ -312,9 +309,7 @@ export function GripChart({ sessions, base, title }: { sessions: GripSession[]; 
         Dots: the median of each session&apos;s quick laps; bars: its 90 % range (a hollow dot had too few quick laps
         for one).
       </Text>
-      <Pressable onPress={() => setAsTable(!asTable)} accessibilityRole="button">
-        <Text style={styles.toggle}>{asTable ? 'Hide the table' : 'Show the sessions as a table'}</Text>
-      </Pressable>
+      <TextLink label={asTable ? 'Hide the table' : 'Show the sessions as a table'} small onPress={() => setAsTable(!asTable)} />
       {asTable && <SessionsTable sessions={sessions} />}
     </View>
   );
@@ -393,7 +388,6 @@ const useStyles = themed((c) => ({
   chartTitle: { ...Type.label, color: c.text, flexShrink: 1 },
   readout: { fontSize: 13, minHeight: 36, fontVariant: ['tabular-nums'] },
   legend: { fontSize: 12, opacity: 0.6, lineHeight: 17 },
-  toggle: { fontSize: 13, fontWeight: '600', opacity: 0.75, paddingVertical: 4 },
   tRow: { flexDirection: 'row', borderBottomWidth: 1, borderColor: c.separator, paddingVertical: 3 },
   tHead: { ...Type.label, fontSize: 11, color: c.textSecondary, textAlign: 'right', paddingRight: 8 },
   tCell: { fontSize: 13, fontVariant: ['tabular-nums'], textAlign: 'right', paddingRight: 8 },

@@ -9,14 +9,15 @@ import { Newsreader_600SemiBold } from '@expo-google-fonts/newsreader/600SemiBol
 import { Newsreader_700Bold } from '@expo-google-fonts/newsreader/700Bold';
 import { useFonts } from 'expo-font';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
+import { HeaderBackButton } from 'expo-router/react-navigation';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect, useMemo } from 'react';
+import { ComponentProps, useEffect, useMemo } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 
 import { Masthead } from '@/components/Programme';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
-import { Fonts } from '@/constants/Theme';
+import { Fonts, TAP } from '@/constants/Theme';
 import { authEnabled, useAuthSession } from '@/lib/auth';
 import { installFocusRing } from '@/lib/focusRing';
 import { NoteLaunch } from '@/lib/openCurrent';
@@ -95,6 +96,11 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
     headerBackTitleStyle: { fontFamily: Fonts.label, fontSize: 14 },
     // "Back", read out as "Go back" (not the route group's name, "(tabs)")
     headerBackTitle: 'Back',
+    // on the web the back arrow is a 44 px tap target (the bar's own is 30 px)
+    ...(Platform.OS === 'web' ? {
+      headerLeft: ({ canGoBack, ...props }: ComponentProps<typeof HeaderBackButton> & { canGoBack?: boolean }) =>
+        canGoBack ? <HeaderBackButton {...props} style={styles.back} /> : null,
+    } : null),
     contentStyle: { backgroundColor: c.background },
   }), [c]);
   // the print styles (lib/print.ts), so a page prints right from the browser's own Print menu too
@@ -154,4 +160,5 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
+  back: { minWidth: TAP, minHeight: TAP, justifyContent: 'center' },
 });
