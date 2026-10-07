@@ -145,9 +145,10 @@ export type ReportSession = {
 };
 
 export type ReportAnswer = {
-  scope: 'event' | 'session';
+  scope: 'event' | 'session' | 'part'; // part: one official session of the event (id: the event's; lib/sessionReports.ts)
   id: number;
   title: string;
+  part?: string | null; // a part's code ("FP1", "Q1", "03_Q")
   track: string | null;
   status: ReportStatus;
   progress: { done: number; total: number; current: string | null } | null;
