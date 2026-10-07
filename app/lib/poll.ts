@@ -63,6 +63,7 @@ export type PollOptions = Partial<PollTimes> & {
   now?: boolean; // ask at once (the default), or only after the first wait
   page?: PageView;
   clock?: Clock;
+  onGiveUp?: () => void; // it stopped asking after stopAfterMs (it asks again when the page is back)
 };
 
 /** Asks now, and again after each wait while `ask` answers true (the server is still at it). Stops for good when
@@ -94,8 +95,10 @@ export function poll(ask: (live: () => boolean) => Promise<boolean> | boolean, o
   };
   const next = () => {
     wait = nextWait(wait, t);
-    if (clock.now() + wait - since > t.stopAfterMs) resting = true;
-    else timer = clock.later(run, wait);
+    if (clock.now() + wait - since > t.stopAfterMs) {
+      resting = true;
+      opts.onGiveUp?.();
+    } else timer = clock.later(run, wait);
   };
   const run = async () => {
     timer = null;

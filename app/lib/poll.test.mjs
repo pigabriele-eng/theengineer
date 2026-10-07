@@ -107,6 +107,22 @@ test('stops asking after a few minutes, and starts again at once when the page i
   assert.equal(asked.length, before + 2);
 });
 
+test('onGiveUp is told when it stops asking after a few minutes, not when the answer comes or it is stopped', async () => {
+  const w = world();
+  let gaveUp = 0;
+  poll(() => true, { clock: w.clock, page: w.page, onGiveUp: () => gaveUp++ });
+  await w.advance(20 * 60000);
+  assert.equal(gaveUp, 1);
+  const done = world();
+  let told = 0;
+  poll(() => false, { clock: done.clock, page: done.page, onGiveUp: () => told++ });
+  const stop = poll(() => true, { clock: done.clock, page: done.page, onGiveUp: () => told++ });
+  await done.advance(1000);
+  stop();
+  await done.advance(20 * 60000);
+  assert.equal(told, 0);
+});
+
 test("doesn't ask while the page is hidden; asks at once when it's shown again", async () => {
   const w = world();
   const asked = [];
