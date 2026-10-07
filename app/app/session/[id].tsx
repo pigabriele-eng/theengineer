@@ -25,7 +25,7 @@ import { poll } from '@/lib/poll';
 import { noPrint } from '@/lib/print';
 import { fetchReport, fetchReportProgress } from '@/lib/report';
 import { fetchStintView, StintLap, StintView } from '@/lib/stint';
-import { face, Fonts, Palette, photoFor, themed, Type, useTheme } from '@/constants/Theme';
+import { face, Fonts, Palette, photoFor, TAP, themed, Type, useTheme } from '@/constants/Theme';
 
 const SAME_S = 0.0015; // section times are kept to the millisecond: closer than this is the same time
 const CORNERS = ['fl', 'fr', 'rl', 'rr'] as const;
@@ -661,8 +661,8 @@ function ChartTable({ chart, fastest, ticked, onTick }: { chart: Chart; fastest:
           return (
             <Fragment key={l.number}>
               {s && <StintHead stint={s} wide />}
-              <View style={StyleSheet.flatten([styles.tr, off && styles.off])}>
-                {/* the tick and the lap's number, one target the row's height */}
+              <View style={StyleSheet.flatten([styles.tr, styles.lapRow, off && styles.off])}>
+                {/* the tick and the lap's number, one target the row's height (a tap target's) */}
                 <Pressable onPress={() => onTick(l.number)} disabled={full && !ticked.includes(l.number)}
                   accessibilityRole="checkbox" accessibilityLabel={`Compare lap ${l.number}`}
                   accessibilityState={{ checked: ticked.includes(l.number), disabled: full && !ticked.includes(l.number) }}
@@ -930,6 +930,8 @@ const useStyles = themed((c) => ({
   cellText: { ...Type.number, fontFamily: face500(), fontSize: 14, color: c.text },
   lapNo: { fontFamily: Fonts.display, fontSize: 20, lineHeight: 24, color: c.text },
   tickCell: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', gap: 10 },
+  // a lap's row: a tap target's height for its tick, over the row's 1 px rule
+  lapRow: { height: TAP + 1 },
   timeText: { ...Type.number, fontFamily: face700(), fontSize: 16, color: c.text },
   gapText: { ...Type.number, fontFamily: face600(), fontSize: 13, color: c.delta.loss },
   foot: { alignItems: 'stretch' },
