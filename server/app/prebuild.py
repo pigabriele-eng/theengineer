@@ -5,7 +5,7 @@ For each uploaded run and the event it is in, in this order (the pages that ask 
 1. the run's compact lap traces, one log at a time (Report, Technique, Track grip, the event's side by side);
 2. the event's report, track map and shape, track grip, grip use, balance and its main logs' stint view (Report; the
    session page's best section times);
-3. the run's lap analysis, stint view, track map and track shape (the session page);
+3. the run's lap analysis, the lap comparison it opens on, stint view, track map and track shape (the session page);
 4. the event's technique check, or the run's when it is in no event (Technique);
 5. the run's tyre prep (Quali), and its own report, grip use and balance (Report of one run);
 6. the prep report of each event at the venue that draws on this one (Prep), after the past events it uses;
@@ -105,7 +105,7 @@ def pieces(db: Session, session_ids: list[int], prep: bool = True) -> list[Piece
         out += [("report", ("event", e)), ("event map", (e,)), ("event shape", (e,)), ("track grip", (e,)),
                 ("grip", ("event", e)), ("balance", ("event", e)), ("event stint", (e,))]
     for sid in sids:
-        out += [("analysis", (sid,)), ("stint", (sid,)), ("map", (sid,)), ("shape", (sid,))]
+        out += [("analysis", (sid,)), ("compare", (sid,)), ("stint", (sid,)), ("map", (sid,)), ("shape", (sid,))]
     out += [("technique", ("event", e)) for e in events]
     out += [("technique", ("session", s.id)) for s in runs if s.event_id is None]
     for sid in sids:
@@ -184,6 +184,15 @@ def _session(db: Session, sid: int) -> models.RunSession | None:
 def _analysis(sid: int) -> None:
     from app.routers import sessions
     _with_db(lambda db: _quietly(sessions.session_analysis, sid, None, None, db))
+
+
+def _compare(sid: int) -> None:
+    from app.routers import sessions
+
+    def go(db: Session) -> None:
+        if (s := _session(db, sid)) is not None and (pair := sessions.default_compare(s)) is not None:
+            _quietly(sessions.session_compare, sid, *pair, None, 5.0, db)
+    _with_db(go)
 
 
 def _stint(sid: int) -> None:
@@ -297,7 +306,8 @@ def register(fn: Callable[[list[int]], None]) -> Callable[[list[int]], None]:
 
 
 RUN: dict[str, Callable] = {
-    "traces": _traces, "report": _report, "analysis": _analysis, "stint": _stint, "map": _map, "shape": _shape,
+    "traces": _traces, "report": _report, "analysis": _analysis, "compare": _compare, "stint": _stint, "map": _map,
+    "shape": _shape,
     "event map": _event_map, "event shape": _event_shape, "technique": _technique, "track grip": _track_grip,
     "tyre prep": _tyre_prep, "prep": _prep, "grip": _grip, "balance": _balance, "event stint": _event_stint,
     "warm": lambda sids: warm(list(sids)),

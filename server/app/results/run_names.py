@@ -1,4 +1,4 @@
-"""Our runs named after the official session they ran in: "FP1 stint 1", "FP1 stint 2", "Q1", "Race 1", "PT2 stint 1".
+"""Our runs named after the official session they ran in: "FP1 stint 2", "Q1", "R1 stint 1", "PT2 stint 1".
 
 Each run's log start and length (the logger's date, time of day and duration) are laid on the round's official
 timetable (results/: every session's start; its end is the next session's start or the usual length of its kind).
@@ -47,14 +47,15 @@ def prefix(code: str) -> str:
 
 
 def label(code: str) -> str:
-    """'FP1', 'Q2', 'Race 1', 'PT3' (a paid test), 'Pre-qualifying'."""
+    """'FP1', 'Q2', 'R1', 'PT3' (a paid test), 'Pre-qualifying'."""
     p, n = prefix(code), code[len(prefix(code)):]
-    return {"R": f"Race {n}".strip(), "T": f"PT{n}", "PQ": "Pre-qualifying"}.get(p, code)
+    return {"T": f"PT{n}", "PQ": "Pre-qualifying"}.get(p, code)
 
 
 def run_name(code: str, i: int, of: int) -> str:
-    """A practice or test run is always "FP1 stint 2", "PT1 stint 1"; quali or race run only with company."""
-    if of == 1 and prefix(code) in ("Q", "R"):
+    """A run is always "FP1 stint 2", "PT1 stint 1", "R1 stint 1" (a race it didn't finish too); a qualifying run
+    is "Q1", with a stint number only when it has company."""
+    if of == 1 and prefix(code) == "Q":
         return label(code)
     return f"{label(code)} stint {i}"
 
@@ -262,7 +263,7 @@ def _clashing(windows: dict[int, tuple[datetime, datetime]]) -> set[int]:
 
 
 def _by_driver(runs: list[models.RunSession], codes: dict[int, str], asks: dict[int, list[str]],
-               order: dict[int, datetime]) -> dict[int, str]:
+               order: dict[int, tuple]) -> dict[int, str]:
     """Qualifying runs the lap times can't tell apart (Q1 or Q2), told by who drove: the Q1 driver starts Race 1,
     so the run of the driver of Race 1's first stint is Q1 and a run of the other driver Q2."""
     open_q = [r for r in runs if r.id in asks and set(asks[r.id]) <= {"Q1", "Q2"} and r.driver_id]
@@ -292,13 +293,13 @@ def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | Non
     out["offset_h"] = h
     codes_in = {c for c, _, _ in table}
     codes: dict[int, str] = {}
-    order: dict[int, datetime] = {}
+    order: dict[int, tuple] = {}  # by the log's start, then by its first lap (runs split from one log)
     asks: dict[int, list[str]] = {}
     for r in runs:
         m = marks.get(r.id)
         # by when its first lap began: two runs split from one log (one per driver) keep their order
         first = min((lap.start_s for lap in r.laps), default=0.0)
-        order[r.id] = windows.get(r.id, (r.created_at.replace(tzinfo=None),))[0] + timedelta(seconds=first)
+        order[r.id] = (windows.get(r.id, (r.created_at.replace(tzinfo=None),))[0], first)
         if m is not None and m.answered and m.code:
             codes[r.id] = m.code
             continue
@@ -320,6 +321,14 @@ def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | Non
     for rid, code in _by_driver(runs, codes, asks, order).items():
         codes[rid] = code
         del asks[rid]
+    # paid tests numbered in the order they ran, whatever their folders' numbers: the earliest is PT1
+    tests: dict[str, list[int]] = {}
+    for r in runs:
+        if prefix(codes.get(r.id, "")) == "T" and not (marks.get(r.id) and marks[r.id].answered):
+            tests.setdefault(codes[r.id], []).append(r.id)
+    for i, (_, ids) in enumerate(sorted(tests.items(), key=lambda g: min(order[x] for x in g[1])), 1):
+        for rid in ids:
+            codes[rid] = f"T{i}"
     for r in runs:
         if r.id in asks:
             out["questions"].append({"session_id": r.id, "name": r.name,

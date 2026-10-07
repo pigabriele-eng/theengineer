@@ -21,11 +21,12 @@ import threading
 import time
 from dataclasses import dataclass, field
 
+import httpx
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from app import heavy, models, run_labels, storage
 from app.analysis import compact
@@ -98,9 +99,7 @@ def plan_for(db: Session, kind: str, id_: int) -> Plan:
         ev = db.get(models.Event, id_)
         if ev is None:
             raise HTTPException(404, "Event not found")
-        sessions = db.scalars(select(models.RunSession).where(models.RunSession.event_id == id_)
-                              .options(selectinload(models.RunSession.files), selectinload(models.RunSession.laps),
-                                       selectinload(models.RunSession.driver))).all()
+        sessions = db.scalars(select(models.RunSession).where(models.RunSession.event_id == id_)).all()
         labels = run_labels.label_runs(sessions)
         plan = Plan(f"event:{id_}", kind, id_, ev.name, ev.track, labels=labels)
     else:
@@ -140,13 +139,22 @@ def _used(plan: Plan) -> list[Item]:
 
 # ---------- the answer ----------
 
+def traces_of(db: Session, session_ids: list[int]) -> dict[int, models.SessionTraces]:
+    """The compact traces rows of these sessions, by session, in one query."""
+    if not session_ids:
+        return {}
+    rows = db.scalars(select(models.SessionTraces).where(models.SessionTraces.session_id.in_(session_ids)))
+    return {r.session_id: r for r in rows}
+
+
 def _sessions_out(db: Session, plan: Plan) -> list[dict]:
     out = []
     label_of = {lab.id: lab for lab in plan.labels}
+    traces = traces_of(db, [i.session.id for i in plan.items])
     for i in plan.items:
         s = i.session
         clean = [l.time_s for l in s.laps if l.clean and i.file is not None and l.file_id == i.file.id]
-        rec = db.scalar(select(models.SessionTraces).where(models.SessionTraces.session_id == s.id))
+        rec = traces.get(s.id)
         note = None
         if i.file is None:
             note = "No logger file"
@@ -425,6 +433,7 @@ def ensure_traces(db: Session, item: Item, track: models.Track | None) -> models
     rec = db.scalar(select(models.SessionTraces).where(models.SessionTraces.session_id == item.session.id))
     if rec is not None and rec.signature == item.signature:
         return rec
+    db.commit()  # hands the database connection back while this waits its turn: the pool is small
     with heavy.lock:
         # another job (the prebuild, a report, a technique check) may have made them while this one waited its turn
         rec = db.scalars(select(models.SessionTraces).where(models.SessionTraces.session_id == item.session.id)
@@ -445,7 +454,9 @@ def ensure_traces(db: Session, item: Item, track: models.Track | None) -> models
                 rec.path = storage.save(compact.to_bytes(cs), ".npz")
                 rec.laps = cs.n_laps
             del cs
-        except (FileNotFoundError, ValueError, storage.StorageError) as e:  # missing, or not a log it can read
+        except (storage.StorageError, httpx.HTTPError) as e:  # storage down or slow for a moment: tried again later
+            rec.error, rec.signature = f"Its log couldn't be downloaded: {e}", ""
+        except (FileNotFoundError, ValueError) as e:  # missing, or not a log it can read
             rec.error = f"Its log couldn't be read: {e}"
         except Exception as e:  # one log that trips the reduction leaves that session out, not the whole report
             log.exception("Reducing session %s failed", item.session.id)

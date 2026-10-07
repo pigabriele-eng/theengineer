@@ -57,6 +57,7 @@ def client(tmp_path, monkeypatch):
                 "ALLOWED_EMAILS"):
         monkeypatch.delenv(key, raising=False)  # sign-in off, files on the local disk
     monkeypatch.setenv("PREBUILD", "off")  # only its own tests turn it on (tests/test_prebuild.py)
+    monkeypatch.setenv("RUN_DUPES", "off")  # the same sample log is uploaded many times; tests/test_run_dupes.py on
     import importlib
 
     import app.db

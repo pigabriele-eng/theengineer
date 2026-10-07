@@ -168,6 +168,13 @@ def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]], event
         job.current = None
         job.finished_at = _now()
         db.commit()
+        if job.status == models.ImportStatus.done:  # the same run uploaded twice is kept once (app/run_dupes.py)
+            from app import run_dupes
+
+            gone = set(run_dupes.merge_runs(db, list(job.session_ids or [])))
+            if gone:
+                job.session_ids = [i for i in job.session_ids if i not in gone]
+                db.commit()
         try:  # work out the pages of what was imported now, in the background, so they are ready when opened
             if prebuild.enabled():
                 prebuild.after_upload(db, list(job.session_ids or []))

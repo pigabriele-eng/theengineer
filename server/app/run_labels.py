@@ -1,12 +1,13 @@
 """Each run's name as the report shows it: the run's own name, the one the event page shows ("FP1 stint 1", "Q1",
-"Race 1 stint 2", or the name the upload gave it until the official timetable names it), never a position.
+"R1 stint 2", or the name the upload gave it until the official timetable names it), never a position.
 
 - A run whose name is only a number ("1", "02", "1 (2)": the folder a zip held it in, like 01_PTS/1) takes the folder
   above it, else the logger's session name, in front: "PTS 1", "PTS 1 (2)".
 - Runs of the same name are told apart by what differs between them: the day ("Day 2 · FP2 stint 1"), then the driver
   ("Q1 · Piana"), then the time the log started ("FP1 stint 1 · 10:42"); only runs alike in all of these are numbered
   as the importer numbers them ("FP1 stint 1 (2)").
-- Each name has a short form for narrow places: "FP1 S1", "PT2 S1", "Q1", "R1 S2", "D2 FP2 S1", "Q1 PIA".
+- Each name has a short form for narrow places: "FP1 S1", "PT2 S1", "Q1", "R1 S2" (from "R1 stint 2" or "Race 1
+  stint 2"), "D2 FP2 S1", "Q1 PIA".
 - The runs come in the event page's order (routers/events.py, _days): by day, then by the time the log started.
 """
 from __future__ import annotations
@@ -17,7 +18,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from app import models
 
@@ -166,9 +167,7 @@ def event_runs(db: Session, s: models.RunSession) -> list[models.RunSession]:
     """The runs a run is labelled with: its event's, or itself when it is in no event."""
     if s.event_id is None:
         return [s]
-    return list(db.scalars(select(models.RunSession).where(models.RunSession.event_id == s.event_id)
-                           .options(selectinload(models.RunSession.files), selectinload(models.RunSession.driver)))
-                .all())
+    return list(db.scalars(select(models.RunSession).where(models.RunSession.event_id == s.event_id)).all())
 
 
 def labels_for(db: Session, sessions: list[models.RunSession]) -> dict[int, RunLabel]:

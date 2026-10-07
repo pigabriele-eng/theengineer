@@ -26,6 +26,24 @@ export type Mistake = {
   repeats: { laps: number; of: number } | null; // on how many of the session's clean laps
 };
 
+/** A mistake that is wrong whatever the target: a lift on the way out of a corner, the power stepped on so early or
+ * so hard that the car forced a lift or a steering correction, braking in a straight line below the car's limit, an
+ * upshift before or after the revs where the next gear drives harder (or held on the rev limiter).
+ * cost_s is what it alone cost: the speed the lift lost carried down the straight, the later braking point missed. */
+export type ObviousMistake = {
+  key: string;
+  kind: 'exit_lift' | 'power_step' | 'soft_straight_braking' | 'early_shift' | 'late_shift';
+  code: string;
+  phase: Phase;
+  start_m: number;
+  end_m: number;
+  at_m: number;
+  cost_s: number;
+  title: string;
+  what: string;
+  do: string;
+};
+
 export type Budget = {
   mistakes: number; // the named mistakes
   at_limit: number; // flat out, on the ABS or on the traction control, yet the car below its best
@@ -57,6 +75,7 @@ export type LapCheck = {
   pit_from_m: number | null;
   budget: Budget;
   mistakes: Mistake[];
+  obvious?: ObviousMistake[]; // most costly first; they may overlap the mistakes above
   trace: { step_m: number; driven: number[]; perfect: number[]; realistic: number[]; inputs?: Inputs;
     model_phases?: number[] } | null;
   // the event's fastest lap (the one the report measures from), its inputs to lay under this lap's; none when this

@@ -20,6 +20,7 @@ import {
   habitSize,
   LapCheck,
   Mistake,
+  ObviousMistake,
   refreshSessionTechnique,
   SessionTechnique,
   working,
@@ -223,6 +224,15 @@ export default function TechniqueScreen() {
 
       {check && answer && <LapSummary check={check} />}
 
+      {check && answer && !!check.obvious?.length && (
+        <Section no={next()} title="Obvious mistakes"
+          dek="Wrong whatever the target: what happened in each corner, what to do instead and what it alone cost.">
+          {check.obvious.map((m, i) => (
+            <ObviousRow key={`${m.key}-${m.start_m}`} m={m} first={i === 0} />
+          ))}
+        </Section>
+      )}
+
       {check && answer && (
         <Section no={next()} title="Mistakes on this lap"
           dek={check.mistakes.length
@@ -289,6 +299,17 @@ const METHOD = [
   'Where the pedals were at the limit (flat out, braking with the ABS working, driving out with the traction ' +
     'control working) and the car still fell short, that is the car on the day, not a mistake. ABS and traction ' +
     'control on their own aren\'t mistakes: the event\'s quicker laps use more of both.',
+  'Obvious mistakes are wrong whatever the target: a lift on the way out of a corner (not a lift for the next ' +
+    'corner, nor balancing the car at its grip limit), the power stepped on so early or so hard that the car forced ' +
+    'a lift or a steering correction, and braking in a straight line, with no cornering to share the grip, below ' +
+    'the deceleration the car has shown there. Each costs what it alone lost: the speed a lift took off, carried ' +
+    'down the straight, or the later braking point missed. Under 0.01 s they are left out.',
+  'Shift points come from the event\'s own logs: each gear\'s ratio (engine revs per km/h) and the engine\'s ' +
+    'torque at full throttle (the logger\'s engine torque channel), as the car\'s ratios and torque curve are not ' +
+    'published. Drive force is torque times the ratio, so the best upshift is where the next gear drives harder, or ' +
+    'just short of the rev limiter where it never does. An upshift 150 rpm or more before that is early; after it, ' +
+    'or held on the limiter, late. Each costs the drive it missed, carried down the straight.',
+  'The perfect lap is never quicker through a section than the best pass a lap has really made there.',
   'Corners are named by their official numbers only.',
 ];
 
@@ -454,6 +475,44 @@ function MistakeRow({ n, m, on, first, onPress }: { n: number; m: Mistake; on: b
         </Text>
       </View>
     </Pressable>
+  );
+}
+
+/** An obvious mistake, in the mistake rows' style: an exclamation in the ink block, what it is and where, its cost,
+ * then what happened and what to do instead. */
+function ObviousRow({ m, first }: { m: ObviousMistake; first: boolean }) {
+  const t = useText();
+  const theme = useTheme();
+  const wide = useWide();
+  const styles = useStyles();
+  return (
+    <View style={StyleSheet.flatten([styles.mistake, !first && styles.mistakeRule])}>
+      <View style={styles.mistakeHead}>
+        <View style={StyleSheet.flatten([styles.no, styles.noOn])}>
+          <Text style={styles.noText}>!</Text>
+        </View>
+        <View style={styles.flex}>
+          <Text style={styles.mistakeTitle}>{m.title}</Text>
+          <View style={styles.meta}>
+            <View style={StyleSheet.flatten([styles.phaseKey, { backgroundColor: phaseColor(theme, m.phase) }])} />
+            <Text style={styles.metaText}>
+              {m.code} · {m.phase} · {Math.round(m.start_m)}–{m0(m.end_m)}
+            </Text>
+          </View>
+        </View>
+        <Text style={StyleSheet.flatten([styles.cost, { color: deltaColor(theme, m.cost_s) ?? theme.text }])}>
+          {m.cost_s.toFixed(2)}
+          <Text style={StyleSheet.flatten([styles.costUnit, { color: deltaColor(theme, m.cost_s) ?? theme.text }])}> s</Text>
+        </Text>
+      </View>
+      <View style={wide ? styles.mistakeBody : styles.mistakeBodyPhone}>
+        <Text style={t.body}>{m.what}</Text>
+        <Text style={t.body}>
+          <Text style={t.strong}>Instead: </Text>
+          {m.do}
+        </Text>
+      </View>
+    </View>
   );
 }
 

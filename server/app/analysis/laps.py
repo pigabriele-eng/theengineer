@@ -27,6 +27,7 @@ DEFAULT_CHANNEL_MAP: dict[str, tuple[str, ...]] = {
     "steer": ("aSteer", "Steered Angle", "Steering Angle", "Steering", "Steer Angle", "SteerAngle", "log_asteer"),
     "gear": ("nGear", "NGearPos", "Gear", "Gear Position", "Gear Pos", "ecu_gear"),
     "rpm": ("nEngine", "Engine Speed", "RPM", "Engine RPM", "ECU RPM", "ecu_nmot"),
+    "engine_torque": ("MEngine", "Engine Torque", "TqEngine"),
     "lat": ("GPS Latitude", "GPS Lat", "Latitude", "log_gps_lat"),
     "lon": ("GPS Longitude", "GPS Long", "GPS Lon", "Longitude", "log_gps_lon"),
     "g_lat": ("gLat", "aLat [m/s/s]", "G Force Lat", "Lateral Accel", "LateralAcc", "Lateral Acc",
@@ -380,6 +381,7 @@ class Section:
     end: int
     apex: int | None  # slowest point, or None for a section without a real corner
     corners: list[str] = field(default_factory=list)  # the official numbers inside it
+    at: list[int] = field(default_factory=list)  # their official positions (metres), in order
 
     def to_dict(self) -> dict:
         return {"code": self.code, "start_m": self.start, "end_m": self.end, "apex_m": self.apex}
@@ -427,14 +429,14 @@ def make_sections(ref: dict[str, np.ndarray], corners: list[CornerSpec] | None =
         cuts = [(a + b) // 2 for a, b in pairwise([*(x[1] for x in before), first])]
         ends = [(a + b) // 2 for a, b in pairwise([last, *(x[1] for x in after)])]
         for x, s0, e0 in zip(before, [c.start, *cuts], cuts, strict=False):
-            secs.append(Section(x[0], s0, e0, None, [x[0]]))
+            secs.append(Section(x[0], s0, e0, None, [x[0]], [x[1]]))
         start, end = (cuts[-1] if cuts else c.start), (ends[0] if ends else c.end)
         if near:
             secs += _by_sector(near, start, end, c.apex, sector)
         else:
             secs.append(Section(f"C{len(secs) + 1}", start, end, c.apex))
         for x, s0, e0 in zip(after, ends, [*ends[1:], c.end], strict=False):
-            secs.append(Section(x[0], s0, e0, None, [x[0]]))
+            secs.append(Section(x[0], s0, e0, None, [x[0]], [x[1]]))
     secs[0].start, secs[-1].end = 0, n - 1
     for a, b in pairwise(secs):
         b.start = a.end
@@ -453,7 +455,8 @@ def _by_sector(near: list[tuple[str, int]], start: int, end: int, apex: int,
             runs.append([x])
     cuts = [(a[-1][1] + b[0][1]) // 2 for a, b in pairwise(runs)]
     nearest = min(range(len(runs)), key=lambda i: min(abs(a - apex) for _, a in runs[i]))
-    return [Section(_label([x[0] for x in run]), s0, e0, apex if i == nearest else None, [x[0] for x in run])
+    return [Section(_label([x[0] for x in run]), s0, e0, apex if i == nearest else None, [x[0] for x in run],
+                    [x[1] for x in run])
             for i, (run, s0, e0) in enumerate(zip(runs, [start, *cuts], [*cuts, end], strict=True))]
 
 
@@ -476,7 +479,8 @@ def _join_sectors(secs: list[Section], sector: dict[str, str], speed: np.ndarray
             joined = [*out[j:], s]
             apexes = [x.apex for x in joined if x.apex is not None]
             apex = min(apexes, key=lambda a: speed[a]) if apexes else None
-            out[j:] = [Section("", joined[0].start, s.end, apex, [code for x in joined for code in x.corners])]
+            out[j:] = [Section("", joined[0].start, s.end, apex, [code for x in joined for code in x.corners],
+                               [m for x in joined for m in x.at])]
         else:
             out.append(s)
     for s in out:

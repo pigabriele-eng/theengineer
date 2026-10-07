@@ -19,9 +19,9 @@ def _run(id_, name, date="10/04/2026", at="10:00:00", driver=None, folder=None, 
 
 
 def test_short_forms_and_driver_codes():
-    assert [short_name(n) for n in ("FP1 stint 1", "PT2 stint 1", "Q1", "Race 1 stint 2", "Race 2",
+    assert [short_name(n) for n in ("FP1 stint 1", "PT2 stint 1", "Q1", "R1 stint 2", "Race 1 stint 2", "Race 2",
                                     "Pre-qualifying", "01_D1S1")] == \
-        ["FP1 S1", "PT2 S1", "Q1", "R1 S2", "R2", "PQ", "01_D1S1"]
+        ["FP1 S1", "PT2 S1", "Q1", "R1 S2", "R1 S2", "R2", "PQ", "01_D1S1"]
     assert (driver_code("Gabriele Piana"), driver_code("Rackl"), driver_code("PIA")) == ("PIA", "RAC", "PIA")
 
 
