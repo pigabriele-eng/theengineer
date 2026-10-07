@@ -3,7 +3,8 @@
 GET /events/folders lists every event with its dates (set by hand, else its logs' first and last day), its track, how
 many sessions it holds and its best lap; sessions in no event make a folder of their own (key "none"). GET
 /events/{key} is one folder with its sessions grouped by the day their logs were recorded. Events are made, renamed,
-re-dated and deleted here (deleting one keeps its sessions), and sessions are moved in and out, several at once.
+re-dated and deleted here (deleting one keeps its sessions, unless asked to delete them too: event_delete.py), and
+sessions are moved in and out, several at once.
 PATCH /sessions/{id} renames a session, changes its kind or moves it.
 
 GET /events/{key}/compare?sessions=1,2 puts sessions of one folder side by side from the report's compact lap traces
@@ -20,6 +21,7 @@ import re
 import threading
 from collections import OrderedDict
 from datetime import date
+from typing import Annotated, Literal
 
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -27,7 +29,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session, selectinload
 
-from app import models, storage
+from app import event_delete, models, storage
 from app.analysis import compact
 from app.analysis.insights import consistency
 from app.analysis.side_by_side import Reference, best_index, reference_of, summarise
@@ -251,8 +253,12 @@ def update_folder(event_id: int, body: FolderPatch, db: Session = Depends(get_db
 
 
 @router.delete("/events/{event_id}")
-def delete_folder(event_id: int, db: Session = Depends(get_db)):
-    """Delete the event, not its sessions: they go to the sessions in no event."""
+def delete_folder(event_id: int, db: Session = Depends(get_db),
+                  runs: Annotated[Literal["keep", "delete"], Query()] = "keep"):
+    """Delete the event, not its sessions: they go to the sessions in no event. With runs=delete the event goes with
+    its sessions, their logs and everything kept for them (event_delete.py)."""
+    if runs == "delete":
+        return event_delete.delete_event(db, event_id)
     ev = _event(db, event_id)
     sessions = _sessions(db, event_id)
     for s in sessions:
