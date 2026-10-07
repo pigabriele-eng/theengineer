@@ -23,9 +23,17 @@ it takes the heavy-work lock only when no request or other job is waiting for it
 one is. A page opened meanwhile waits at most for the one piece already running (the longest is an event's technique
 check), and a page whose answer is kept doesn't wait at all.
 
+The hosted server has a tenth of a CPU, so the pages' requests and the prebuild also share very little processor
+time: a piece running beside a page made the page two to four times slower. So a piece starts only after a quiet
+moment, no request for QUIET_S seconds (a few seconds for an upload's pieces, which the pages just opened are about
+to ask for; longer for the start-up pass, which nobody is waiting for), and the prebuild's thread runs at the lowest
+CPU priority (nice 19): while a request is being worked out, the piece in hand gets the CPU only when the request
+doesn't want it.
+
 On server start (Render starts it again after each deploy, and when it wakes from sleep), once the start-up checks
-are done, every event (newest first), then the runs in no event and the prep reports, go through the same pieces at
-the lowest priority: whatever is missing or out of date (after a new version of a page, say) is worked out again.
+are done and the server has had a quiet moment (the first pages after a wake-up come first), every event (newest
+first), then the runs in no event and the prep reports, go through the same pieces at the lowest priority: whatever
+is missing or out of date (after a new version of a page, say) is worked out again.
 
 PREBUILD=off turns it off (the tests do, except their own): an import then queues only its reports, as before.
 """
@@ -35,6 +43,7 @@ import itertools
 import logging
 import os
 import queue
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -49,7 +58,9 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/prebuild")
 
 UPLOAD, START = 0, 1  # priorities: the pieces for an upload go before the start-up's
-START_DELAY_S = 15  # after start-up before the start-up pass looks for work (the first requests go first)
+START_DELAY_S = 60  # after start-up before the start-up pass looks for work (the first requests go first)
+QUIET_S = {UPLOAD: 3.0, START: 20.0}  # no request for this long before a piece of that priority starts
+NICE = 19  # the prebuild thread's CPU priority (Linux): the lowest
 SETTLE_WAIT_S = 900  # longest the start-up pass waits for the start-up checks (re-timing, empty runs) to finish
 RECENT = 50  # pieces remembered for GET /prebuild
 
@@ -305,18 +316,40 @@ def _put(priority: int, items: list[Piece]) -> None:
 
 
 def _work() -> None:
+    _lowest_priority()
     with heavy.background():
         while True:
             priority, _, piece = _queue.get()
             with _lock:
                 _queued.discard((priority, piece))
             try:
+                wait_for_quiet(QUIET_S[priority])  # the pages being opened go first
                 heavy.lock.wait_for_others()  # a request or job waiting for the heavy-work lock goes first
                 run(piece)
             except Exception:
                 log.exception("Prebuild %s failed", piece)
             finally:
                 _queue.task_done()
+
+
+def _lowest_priority() -> None:
+    """This thread (the prebuild's) gets the CPU only when the requests and the other jobs don't want it. Linux
+    keeps a nice value per thread (a thread it starts, a report's worker say, starts with it too: background work
+    as well); elsewhere nothing changes."""
+    if not sys.platform.startswith("linux"):
+        return
+    try:
+        os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), NICE)
+    except (OSError, AttributeError):
+        log.info("Prebuild: couldn't lower its CPU priority")
+
+
+def wait_for_quiet(quiet_s: float) -> None:
+    """Until no request has been served for quiet_s seconds (none being served now)."""
+    from app.vehicle import tyre_store  # it counts the requests (its middleware)
+
+    while (idle := tyre_store.idle_s()) < quiet_s:
+        time.sleep(min(max(quiet_s - idle, 0.1), 1.0))
 
 
 def run(piece: Piece) -> None:
@@ -373,6 +406,7 @@ def _start_pass() -> None:
     deadline = time.monotonic() + SETTLE_WAIT_S
     while not _settled() and time.monotonic() < deadline:
         time.sleep(2)
+    wait_for_quiet(QUIET_S[START])  # looking for work reads every event: after the pages being opened
     try:
         from app.db import SessionLocal
 

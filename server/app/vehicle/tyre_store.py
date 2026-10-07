@@ -166,9 +166,14 @@ def kick() -> None:
     _wake.set()
 
 
+NOT_TRAFFIC = ("/health", "/prebuild")  # Render's health checks and the prebuild's own status: nobody waiting
+
+
 async def track_requests(request: Request, call_next):
-    """HTTP middleware: counts the requests in flight, so the job waits for a quiet moment, and wakes the job
-    after a log upload."""
+    """HTTP middleware: counts the requests in flight, so the job (and the prebuild, app/prebuild.py) waits for a
+    quiet moment, and wakes the job after a log upload."""
+    if request.url.path in NOT_TRAFFIC:
+        return await call_next(request)
     _traffic["in_flight"] += 1
     try:
         return await call_next(request)
@@ -177,6 +182,11 @@ async def track_requests(request: Request, call_next):
         _traffic["last"] = time.monotonic()
         if request.method == "POST" and request.url.path.endswith("/files"):
             kick()
+
+
+def idle_s() -> float:
+    """Seconds since the last request was answered; 0 while one is being served."""
+    return 0.0 if _traffic["in_flight"] > 0 else time.monotonic() - _traffic["last"]
 
 
 def _wait_for_quiet() -> None:

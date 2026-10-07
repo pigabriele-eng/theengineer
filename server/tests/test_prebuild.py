@@ -1,14 +1,25 @@
 """The pages' answers kept in the database (app/page_cache.py), the prebuild that works them out in the background
 after an upload (app/prebuild.py), and background work giving the heavy-work lock to requests first (app/heavy.py)."""
+import os
+import sys
 import threading
 import time
 
+import pytest
 from sqlalchemy import select
 
 from tests.synthetic import simulate, write_ld
 from tests.test_imports import log_bytes, make_zip, upload
 
 PAGES = ("analysis", "map", "shape", "insights")
+
+
+@pytest.fixture(autouse=True)
+def _no_quiet_wait(monkeypatch):
+    """The tests' own requests don't hold the prebuild up (test_a_piece_starts_after_a_quiet_moment checks that)."""
+    from app import prebuild
+
+    monkeypatch.setattr(prebuild, "QUIET_S", {prebuild.UPLOAD: 0.0, prebuild.START: 0.0})
 
 
 def _session(client, name="Run 1", paces=(0.95, 0.97, 0.96, 0.975)) -> tuple[int, int]:
@@ -278,3 +289,37 @@ def test_background_work_takes_the_lock_only_after_requests_waiting_for_it(monke
     t.join(5)
     assert prebuild.wait_idle(10)
     assert order == ["piece 1", "request", "piece 2"]
+
+
+def test_a_piece_starts_after_a_quiet_moment_at_the_lowest_cpu_priority(monkeypatch):
+    from app import prebuild
+    from app.vehicle import tyre_store
+
+    ran = []
+    monkeypatch.setitem(prebuild.RUN, "test", lambda name: ran.append(
+        (name, os.getpriority(os.PRIO_PROCESS, threading.get_native_id()) if sys.platform.startswith("linux")
+         else None)))
+    monkeypatch.setattr(prebuild, "QUIET_S", {prebuild.UPLOAD: 0.3, prebuild.START: 0.6})
+    monkeypatch.setitem(tyre_store._traffic, "in_flight", 1)  # a page is being answered
+    prebuild._put(prebuild.START, [("test", ("start",))])
+    prebuild._put(prebuild.UPLOAD, [("test", ("upload",))])
+    time.sleep(0.5)
+    assert ran == []  # not while a request is being served
+    tyre_store._traffic["in_flight"] = 0
+    t0 = tyre_store._traffic["last"] = time.monotonic()  # ... and answered now
+    assert prebuild.wait_idle(10)
+    took = time.monotonic() - t0
+    assert [name for name, _ in ran] == ["upload", "start"] and took >= 0.6
+    if sys.platform.startswith("linux"):
+        assert {nice for _, nice in ran} == {prebuild.NICE}
+
+
+def test_health_checks_are_not_traffic(client, monkeypatch):
+    from app.vehicle import tyre_store
+
+    monkeypatch.setitem(tyre_store._traffic, "last", time.monotonic() - 100)
+    assert client.get("/health").status_code == 200
+    assert client.get("/prebuild").status_code == 200
+    assert tyre_store.idle_s() > 99  # Render's health checks don't hold the background work up
+    client.get("/events")
+    assert tyre_store.idle_s() < 5
