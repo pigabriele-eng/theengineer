@@ -73,8 +73,8 @@ export function useHabits(): { data: Habits | null; error: string | null } {
 type Col = { id: number; code: string; name: string; color: string };
 
 /** One driver's habits, with a teammate beside them when there is one (the one they shared most events with, or the
- * one picked). */
-export default function HabitTracker({ driverId }: { driverId: number }) {
+ * one picked). `hideChecking`: the page says once that the technique check is still at work (the Drivers page). */
+export default function HabitTracker({ driverId, hideChecking }: { driverId: number; hideChecking?: boolean }) {
   const styles = useStyles();
   const t = useText();
   const theme = useTheme();
@@ -85,7 +85,7 @@ export default function HabitTracker({ driverId }: { driverId: number }) {
   if (data == null) {
     return error ? <Text style={t.error}>{error}</Text> : <ActivityIndicator color={theme.text} style={styles.spin} />;
   }
-  const busy = data.status === 'checking' ? (
+  const busy = data.status === 'checking' && !hideChecking ? (
     <Notice busy><Text style={t.note}>{checkingWords(data.checking)}</Text></Notice>
   ) : null;
   const me = data.drivers.find((d) => d.id === driverId);

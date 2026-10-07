@@ -24,6 +24,7 @@ import { RunNameQuestions } from '@/components/RunNames';
 import { SeasonMatch } from '@/components/SeasonMatch';
 import { filledNote, localPick, PickerKind, RunChips, RunNameEditor, RunPicker, useGarage } from '@/components/RunChips';
 import { Text, View } from '@/components/Themed';
+import CoachingDay from '@/components/coaching/CoachingDay';
 import WeekendBefore from '@/components/weekend/Before';
 import WeekendDuring from '@/components/weekend/During';
 import { formatLap } from '@/lib/api';
@@ -39,6 +40,7 @@ import { defaultStage, duringSections, Stage } from '@/lib/weekendRuns';
 import { driverTag } from '@/lib/driverTag';
 import { driverState } from '@/lib/runDriver';
 import { encodePicks } from '@/lib/compare';
+import { COACHING_SECTIONS } from '@/lib/coachingDay';
 import { EventMode, fetchMode, setMode as saveMode } from '@/lib/eventModes';
 import { noPrint } from '@/lib/print';
 import { face, Fonts, PHOTOS, photoFor, themed, Type, useTheme } from '@/constants/Theme';
@@ -85,7 +87,8 @@ export default function EventScreen() {
   useEffect(() => {
     if (key === NO_EVENT) return;
     let live = true;
-    fetchMode(Number(key)).then((m) => live && setModeState(m), () => {});
+    // unknown (an older server): a race weekend, the default
+    fetchMode(Number(key)).then((m) => live && setModeState(m), () => live && setModeState('weekend'));
     return () => {
       live = false;
     };
@@ -205,16 +208,19 @@ export default function EventScreen() {
     ? params.stage : null;
   const stage: Stage = asked ?? defaultStage(folder, todayIso());
   const pickStage = (s: Stage) => router.setParams({ stage: s });
-  const during = isEvent && stage === 'during';
-  const after = isEvent && stage === 'after';
-  const showRuns = !isEvent || during || after; // the runs by day are part of During and After
+  // a coaching day opens on its own answers (components/coaching/CoachingDay.tsx): no Before, During and After
+  const coaching = isEvent && mode === 'coaching';
+  const during = isEvent && !coaching && stage === 'during';
+  const after = isEvent && !coaching && stage === 'after';
+  // the runs by day are part of During and After, and follow a coaching day's answers
+  const showRuns = !isEvent || during || after || coaching;
 
   // ---------- the photo and the folio ----------
 
   const top = folder ? (
     <View onLayout={(e) => (topH.current = e.nativeEvent.layout.height)}>
       <Hero photo={isEvent ? photoFor(folder.track) : PHOTOS.dusk} tag={isEvent ? TAG[whenOf(folder, todayIso())] : 'Unfiled'}
-        rest="Weekend" restHref="/" title={headlineOf(folder, isEvent)} deck={deckOf(folder, isEvent)}
+        rest={coaching ? 'Coaching' : 'Weekend'} restHref={coaching ? '/coaching' : '/'} title={headlineOf(folder, isEvent)} deck={deckOf(folder, isEvent)}
         // a lower photo than other pages: the weekend page is read for its answers, which start under it
         height={wide ? 320 : 290} badge={country ? <HeroCountry country={country} /> : undefined} />
       <Folio items={isEvent ? [
@@ -231,8 +237,8 @@ export default function EventScreen() {
   // ---------- the stage tabs, and the band under them ----------
 
   // Before | During | After, and print: nothing else to choose from first (every analysis is in the
-  // section it belongs to, or in the More line at the end)
-  const stageBar = isEvent && eventId != null && folder && (
+  // section it belongs to, or in the More line at the end); a coaching day has none of them
+  const stageBar = isEvent && mode != null && !coaching && eventId != null && folder && (
     <View style={wide ? styles.links : styles.linksPhone}>
       <Tabs big value={stage} onChange={pickStage} items={[
         { key: 'before', label: 'Before', sub: 'Prep' },
@@ -251,7 +257,7 @@ export default function EventScreen() {
     <View style={styles.more} {...noPrint}>
       <Label>More</Label>
       <View style={styles.moreLinks}>
-        {after && timed && <TextLink href={{ pathname: '/report', params: { event: eventId } }} label="Full report" arrow small />}
+        {(after || coaching) && timed && <TextLink href={{ pathname: '/report', params: { event: eventId } }} label="Full report" arrow small />}
         {timed && <TextLink href={{ pathname: '/technique', params: { event: eventId } }} label="Technique check" arrow small />}
         {timed && <TextLink href={{ pathname: '/quali', params: { event: eventId } }} label="Quali prep" arrow small />}
         {timed && <TextLink href={{ pathname: '/tools/stint', params: { event: eventId } }} label="Stint analysis" arrow small />}
@@ -272,7 +278,7 @@ export default function EventScreen() {
   );
 
   // Before the weekend: the prep report itself (the lap to aim for, corner by corner, grip, the setup to start with)
-  const before = isEvent && eventId != null && folder && !during && (
+  const before = isEvent && mode != null && eventId != null && folder && !during && !coaching && (
     <WeekendBefore eventId={eventId} car={params.car ?? null} />
   );
 
@@ -339,9 +345,9 @@ export default function EventScreen() {
     : wide ? styles.days : styles.daysPhone;
   const dayStyle = cols === 'across' ? styles.dayAcross : cols === 'half' ? styles.dayHalf : wide ? styles.day : undefined;
 
-  // During's own sections come first (lib/weekendRuns.ts duringSections); Before is the prep report alone; After
-  // opens on the runs
-  let no = during ? duringSections(folder) : 0;
+  // During's own sections come first (lib/weekendRuns.ts duringSections), a coaching day's answers likewise
+  // (lib/coachingDay.ts COACHING_SECTIONS); Before is the prep report alone; After opens on the runs
+  let no = coaching ? COACHING_SECTIONS : during ? duringSections(folder) : 0;
   const runs = folder && showRuns && (
     <Section no={++no} title="Runs" dek={isEvent
       ? 'Day by day, each with its driver and best lap. Tick two to six, then Compare laps at the foot of the screen; tap a name to rename it, a best lap to open the run.'
@@ -449,7 +455,16 @@ export default function EventScreen() {
         {notice && <View style={styles.notice}><Said text={notice} onPress={() => setNotice(null)} /></View>}
         {seasonQuestion}
         {runNameQuestion}
-        {during && eventId != null ? (
+        {/* the mode decides what the page opens on: nothing until it is known, so a coaching day never shows a weekend first */}
+        {folder && isEvent && mode == null ? <ActivityIndicator style={styles.loading} /> : coaching && eventId != null ? (
+          <CoachingDay eventId={eventId} folder={folder}>
+            {runs}
+            {sideBySide}
+            {info}
+            {results}
+            {addRun}
+          </CoachingDay>
+        ) : during && eventId != null ? (
           <WeekendDuring eventId={eventId} folder={folder}>
             {runs}
             {sideBySide}
