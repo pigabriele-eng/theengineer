@@ -1,9 +1,16 @@
-"""Our runs named after the official session they ran in: "FP1 run 1", "FP1 run 2", "Q1", "Race 1", "Test 3".
+"""Our runs named after the official session they ran in: "FP1 run 1", "FP1 run 2", "Q1", "Race 1", "PT2 run 1".
 
 Each run's log start and length (the logger's date, time of day and duration) are laid on the round's official
 timetable (results/: every session's start; its end is the next session's start or the usual length of its kind).
 The logger's clock can be off or set to another time zone, so the whole event is tried at whole-hour offsets of up
 to three hours and the one that puts the most runs squarely in a session is kept (no offset on a tie).
+
+What the run's names say comes first: its folders ("05_R1", "01_PTS/02") and the logger's session name ("R1",
+"PTS"). A name that gives the session ("R1", "FP2") names the run; a paid test is numbered by its folder ("01_PTS/02",
+"02_PTS2": PT2) even when the official timetable lists fewer tests than were run. A name that gives only the kind ("FP",
+"Q") leaves the time to tell: logs whose times overlap another's were saved or downloaded after the session, so the
+session is the last one of that kind to start before the log's time (with any earlier one of that kind the same day,
+told apart by our car's official best lap: Q1 or Q2).
 
 A run that sits squarely in one session is named after it; one that overlaps two, or barely touches one, becomes a
 question ("if you are not sure, ask"): GET /results/events/{id}/run-names lists them, POST /results/run-names/{id}
@@ -40,9 +47,16 @@ def prefix(code: str) -> str:
 
 
 def label(code: str) -> str:
-    """'FP1', 'Q2', 'Race 1', 'Test 3', 'Pre-qualifying'."""
+    """'FP1', 'Q2', 'Race 1', 'PT3' (a paid test), 'Pre-qualifying'."""
     p, n = prefix(code), code[len(prefix(code)):]
-    return {"R": f"Race {n}".strip(), "T": f"Test {n}".strip(), "PQ": "Pre-qualifying"}.get(p, code)
+    return {"R": f"Race {n}".strip(), "T": f"PT{n}", "PQ": "Pre-qualifying"}.get(p, code)
+
+
+def run_name(code: str, i: int, of: int) -> str:
+    """A practice or test run is always "FP1 run 2", "PT1 run 1"; a qualifying or race run only when it has company."""
+    if of == 1 and prefix(code) in ("Q", "R"):
+        return label(code)
+    return f"{label(code)} run {i}"
 
 
 # ---------- times ----------
@@ -111,12 +125,16 @@ def _verdict(shares: list[tuple[float, str]]) -> tuple[str | None, list[str]]:
     return None, [c for _, c in shares[:3]]
 
 
-def place(runs: list[tuple[int, tuple[datetime, datetime]]], table: list) -> tuple[int, dict[int, tuple]]:
-    """The clock offset (hours) that puts the most runs squarely in a session, and each run's verdict."""
+def place(runs: list[tuple[int, tuple[datetime, datetime]]], table: list, kinds: dict[int, tuple] | None = None
+          ) -> tuple[int, dict[int, tuple]]:
+    """The clock offset (hours) that puts the most runs squarely in a session, and each run's verdict. ``kinds``: the
+    sessions (codes, or kinds as prefixes) a run's names allow; a run put in another counts against the offset."""
+    kinds = kinds or {}
     best_h, best, best_n = 0, {}, -1
     for h in OFFSETS_H:
         verdicts = {rid: _verdict(_shares(win, table, timedelta(hours=h))) for rid, win in runs}
-        n = sum(1 for v in verdicts.values() if v[0] not in (None, NONE))
+        n = sum((1 if not kinds.get(rid) or v[0] in kinds[rid] or prefix(v[0]) in kinds[rid] else -1)
+                for rid, v in verdicts.items() if v[0] not in (None, NONE))
         if n > best_n:
             best_h, best, best_n = h, verdicts, n
     return best_h, best
@@ -141,33 +159,89 @@ def looks_given(s: models.RunSession, mark: rm.RunNameMark | None) -> bool:
         session = (meta.get("event_session") or "").strip()
         if name in {stem, session} or (session and re.fullmatch(rf"\d{{1,3}}[ _-]+{re.escape(session)}", name)):
             return True
-    return bool(re.fullmatch(r"\d{1,3}[ _-]+\S+", name))  # a numbered folder: "01_D1S1", "03_Q"
+    return bool(re.fullmatch(r"\d{1,3}([ _-]+\S+)?", name))  # a numbered folder: "01_D1S1", "03_Q", "02"
 
 
-def _hinted(s: models.RunSession, table: list, rnd: rm.ResultRound, number: str | None
-            ) -> tuple[str | None, list[str]]:
-    """For a run whose log time can't be trusted: the session its names say (the logger's session name "R1", a
-    folder "03_Q"), told apart by our car's official best lap when they say only the kind (Q: Q1 or Q2)."""
+WANT = {"practice": ("FP", "PQ"), "qualifying": ("Q",), "race": ("R",), "test": ("T",)}
+TEST = re.compile(r"\b(?:pts?|paid ?tests?)\s*(\d)?\b")
+
+
+def _hint(text: str | None) -> tuple[str | None, str | None]:
+    """'05_R1' -> ('race', 'R1'), '01_PTS' -> ('test', None), 'PTS2' -> ('test', 'T2'), 'FP' -> ('practice', None)."""
     from app.results import summary  # the results' reading of a session name
 
+    t = re.sub(r"[_\-.]+", " ", text or "").lower()
+    kind, code = summary._hint(t)
+    if kind:
+        return kind, code
+    m = TEST.search(t)
+    return ("test", f"T{m.group(1)}" if m.group(1) else None) if m else (None, None)
+
+
+def _folders(s: models.RunSession) -> list[str]:
+    return next(((f.meta or {}).get("folder") or "" for f in s.files if (f.meta or {}).get("folder")), "").split("/")
+
+
+def hint(s: models.RunSession, mark: rm.RunNameMark | None) -> tuple[str | None, str | None]:
+    """What the run's names say it was: (kind, session code or None). Its folders first, innermost out, then the
+    logger's session name, then its own name while that is still the upload's (not one given here)."""
+    own = _plain_name(s.name)
+    mine = not (mark is not None and mark.auto_name and own == _plain_name(mark.auto_name))
+    texts = [*reversed(_folders(s)), *((f.meta or {}).get("event_session") for f in s.files),
+             *([own] if mine and looks_given(s, mark) else [])]
+    kind, code = next((h for h in map(_hint, texts) if h[0]), (None, None))
+    if kind == "test" and code is None:  # a test's folder numbered inside a test folder: "01_PTS/02" is PT2
+        folders = [x for x in _folders(s) if x] or ([own] if mine else [])
+        if folders and re.fullmatch(r"\d{1,2}", folders[-1]) and int(folders[-1]) > 0:
+            code = f"T{int(folders[-1])}"
+    return kind, code
+
+
+def _by_time(t: datetime, kind: str, table: list) -> list[str]:
+    """The sessions a log of ``kind`` saved at ``t`` can hold: the last of that kind to start before ``t``, with the
+    ones of that kind just before it on the same day (no other session between)."""
+    out: list[str] = []
+    for code, t0, _ in sorted((x for x in table if x[1] <= t + SLACK), key=lambda x: x[1], reverse=True):
+        if prefix(code) in WANT[kind]:
+            if out and t0.date() != table_start(table, out[-1]).date():
+                break
+            out.append(code)
+        elif out:
+            break
+    return out
+
+
+def table_start(table: list, code: str) -> datetime:
+    return next(t0 for c, t0, _ in table if c == code)
+
+
+def _by_lap(s: models.RunSession, cands: list[str], rnd: rm.ResultRound, number: str | None) -> str | None:
+    """The one session among ``cands`` whose official best lap for our car is our logged best lap."""
+    from app.results import summary
+
+    best = min((lap.time_s for lap in s.laps if lap.clean), default=None)
+    if not (best and number):
+        return None
+    near = []
+    for sess in rnd.sessions:
+        car = summary.find_car(sess, number) if sess.code in cands else None
+        if car is not None and car.best_lap_s and abs(car.best_lap_s - best) <= MATCH_S:
+            near.append(sess.code)
+    return near[0] if len(near) == 1 else None
+
+
+def _hinted(s: models.RunSession, kind: str | None, t: datetime | None, table: list, rnd: rm.ResultRound,
+            number: str | None) -> tuple[str | None, list[str]]:
+    """For a run whose log time isn't when the car ran: the session of the kind its names say, by when the log was
+    saved, else by our car's official best lap (Q: Q1 or Q2); else the sessions to ask between."""
     codes = [c for c, _, _ in table]
-    names = [(f.meta or {}).get("event_session") for f in s.files] + [s.name]
-    kind, code = next((h for h in map(summary._hint, names) if h[0]), (None, None))
-    if code in codes:
-        return code, []
-    want = {"practice": ("FP", "PQ"), "qualifying": ("Q",), "race": ("R",), "test": ("T",)}.get(kind or "", ())
-    cands = [c for c in codes if prefix(c) in want]
+    cands = [c for c in codes if prefix(c) in WANT.get(kind or "", ())]
+    if t is not None and kind in WANT:
+        cands = _by_time(t, kind, table) or cands
     if len(cands) == 1:
         return cands[0], []
-    best = min((lap.time_s for lap in s.laps if lap.clean), default=None)
-    if best and number:
-        near = []
-        for sess in rnd.sessions:
-            car = summary.find_car(sess, number) if sess.code in cands else None
-            if car is not None and car.best_lap_s and abs(car.best_lap_s - best) <= MATCH_S:
-                near.append(sess.code)
-        if len(near) == 1:
-            return near[0], []
+    if (code := _by_lap(s, cands, rnd, number)) is not None:
+        return code, []
     return None, cands
 
 
@@ -199,9 +273,12 @@ def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | Non
     out: dict = {"offset_h": 0, "named": [], "questions": []}
     if not table or not runs:
         return out
+    hints = {r.id: hint(r, marks.get(r.id)) for r in runs}
     timed = {k: w for k, w in windows.items() if k not in _clashing(windows)}
-    h, verdicts = place(list(timed.items()), table) if timed else (0, {})
+    allowed = {k: (hints[k][1],) if hints[k][1] else WANT.get(hints[k][0] or "", ()) for k in timed}
+    h, verdicts = place(list(timed.items()), table, allowed) if timed else (0, {})
     out["offset_h"] = h
+    codes_in = {c for c, _, _ in table}
     codes: dict[int, str] = {}
     order: dict[int, datetime] = {}
     for r in runs:
@@ -210,7 +287,17 @@ def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | Non
         if m is not None and m.answered and m.code:
             codes[r.id] = m.code
             continue
-        code, ask = verdicts[r.id] if r.id in verdicts else _hinted(r, table, rnd, number)
+        kind, said = hints[r.id]
+        verdict = verdicts.get(r.id)
+        if said and (said in codes_in or kind == "test"):  # its names say which session (a test: which test)
+            code, ask = said, []
+        elif verdict and verdict[0] and (kind is None or verdict[0] == NONE or prefix(verdict[0]) in WANT[kind]):
+            code, ask = verdict
+        elif kind is None and verdict:
+            code, ask = verdict
+        else:
+            t = windows[r.id][0] + timedelta(hours=h) if r.id in windows else None
+            code, ask = _hinted(r, kind, t, table, rnd, number)
         if code is not None:
             codes[r.id] = code
         elif ask and looks_given(r, m):
@@ -226,13 +313,16 @@ def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | Non
     for code, group in by_code.items():
         group.sort(key=lambda r: (order[r.id], r.id))
         for i, r in enumerate(group, 1):
-            want = label(code) if len(group) == 1 else f"{label(code)} run {i}"
+            want = run_name(code, i, len(group))
             m = marks.get(r.id)
             if not looks_given(r, m):
                 continue
             if m is None:
                 m = marks[r.id] = rm.RunNameMark(session_id=r.id)
                 db.add(m)
+            if r.name != want and not _folders(r)[0] and re.fullmatch(r"\d{1,3}([ _-]+\S+)?", _plain_name(r.name)):
+                for f in r.files:  # the folder it came in goes with the name: what the run was, on later namings
+                    f.meta = {**(f.meta or {}), "folder": _plain_name(r.name)}
             m.code, m.auto_name = code, want
             kind = KINDS.get(prefix(code))
             if r.name != want or (kind and r.kind != kind):
