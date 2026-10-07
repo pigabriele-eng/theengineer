@@ -56,7 +56,6 @@ export type Folder = FolderSummary & { days: Day[] };
 export type ComparedSession = FolderSession & {
   state: 'ready' | 'working' | 'failed' | 'no laps';
   note: string | null;
-  ideal_s: number | null; // its best sections added up
   top_speed_kmh: number | null;
   tyres: { pressure?: Record<string, number>; temp?: Record<string, number> };
   tyre_units: { pressure?: string; temp?: string };

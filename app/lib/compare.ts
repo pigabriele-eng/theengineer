@@ -52,7 +52,6 @@ export type ComparedLap = {
   time: number;
   clean: boolean;
   sections_best: number;
-  to_ideal: number;
 };
 
 export type TraceRole = 'speed' | 'throttle' | 'brake' | 'steer' | 'gear';
@@ -78,10 +77,9 @@ export type CompareResult = {
   sections: CompareSection[];
   corners: { code: string; apex_m: number }[]; // one per section
   track_corners: { code: string; apex_m: number }[]; // every official corner
-  ideal: { time: number; from: number[] };
-  opportunities: { to_ideal: number; sections: Opportunity[] }[];
+  opportunities: { sections: Opportunity[] }[];
   channels: Partial<Record<TraceRole, string>>;
-  traces: { step_m: number; distance: number[]; laps: LapTrace[]; ideal: LapTrace; roles: TraceRole[] };
+  traces: { step_m: number; distance: number[]; laps: LapTrace[]; roles: TraceRole[] };
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -107,8 +105,6 @@ export const compareLaps = (laps: { session_id: number; lap: number }[]) =>
 // Categorical slots 1-6 of the validated chart palette (light and dark steps). A lap keeps its slot while it is
 // picked, so removing one lap never repaints the others.
 export const LAP_COLORS = byScheme((c) => c.chart.series.slice(0, 6));
-// The ideal lap is made of several laps, so it wears neutral ink rather than a lap's colour.
-export const IDEAL_COLOR = byScheme((c) => c.chart.ideal);
 
 export const lapLabel = (l: { session: string; lap: number; driver: string | null }) =>
   `${l.session} · L${l.lap}${l.driver ? ` · ${l.driver}` : ''}`;

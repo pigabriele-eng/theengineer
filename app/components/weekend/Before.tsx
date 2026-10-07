@@ -370,9 +370,9 @@ function Briefing({ no, report, weather }: { no: number; report: PrepReport; wea
   );
 }
 
-/** The lap to aim for in big figures, then the best lap here, the latest ideal lap and the theoretical lap. The lap to
- * aim for is the briefing's own (server/app/prep/brief.py): the latest realistic lap, or the best lap here when that is
- * quicker. */
+/** The lap to aim for in big figures, then the latest event's typical lap, race pace and quali lap. The lap to aim for
+ * is the briefing's own (server/app/prep/brief.py): the best real lap here, never a lap stitched from sections or
+ * simulated. */
 function AimFigures({ rows }: { rows: PerfRow[] }) {
   const styles = useStyles();
   const theme = useTheme();
@@ -380,23 +380,21 @@ function AimFigures({ rows }: { rows: PerfRow[] }) {
   if (!rows.length) return null;
   const last = rows[rows.length - 1];
   const best = rows.reduce((a, b) => (b.best.time < a.best.time ? b : a));
-  const target = Math.min(last.realistic ?? last.best.time, best.best.time);
-  const fromRealistic = last.realistic != null && target === last.realistic;
-  const who = [best.best.session, best.best.driver].filter(Boolean).join(', ');
+  const who = [best.year, best.best.session, best.best.driver].filter(Boolean).join(', ');
   const small = wide ? 48 : 28;
   return (
     <View style={wide ? styles.aim : styles.aimPhone}>
-      <Fig label="Lap time to aim for" value={formatLap(target)} size={wide ? 104 : 84} bar={theme.mark}
-        note={fromRealistic ? `${last.year}'s realistic lap: a quick lap's usual grip at each place` : 'the best lap here'}
-        style={wide ? styles.aimMain : undefined} />
+      <Fig label="Lap time to aim for" value={formatLap(best.best.time)} size={wide ? 104 : 84} bar={theme.mark}
+        note={`the best lap here${who ? ` (${who})` : ''}`} style={wide ? styles.aimMain : undefined} />
       <Cells cols={3} phoneCols={3} style={wide ? styles.aimSide : styles.aimSidePhone}>
         {[
-          <Fig key="best" label={`${wide ? 'Best here' : 'Best'} · ${best.year}`} value={formatLap(best.best.time)} size={small}
-            bar={theme.timing.best} barHeight={6} note={who || undefined} />,
-          last.ideal != null && <Fig key="ideal" label={`Ideal · ${last.year}`} value={formatLap(last.ideal)} size={small}
-            note="the best pass of every section" />,
-          last.theoretical != null && <Fig key="theo" label="Theoretical" value={formatLap(last.theoretical)} size={small}
-            note="the car's best at every place" />,
+          last.typical != null && <Fig key="typical" label={`Typical · ${last.year}`} value={formatLap(last.typical)}
+            size={small} note="the median clean lap" />,
+          last.race_pace != null && <Fig key="race" label={`Race pace · ${last.year}`}
+            value={formatLap(last.race_pace.time)} size={small}
+            note={last.race_pace.basis === 'race' ? 'the median race lap' : 'the median lap of the long runs'} />,
+          last.quali != null && <Fig key="quali" label={`Quali · ${last.year}`} value={formatLap(last.quali.time)}
+            size={small} note={last.quali.basis === 'qualifying' ? 'the best qualifying lap' : 'the best quali-style run'} />,
         ]}
       </Cells>
     </View>
@@ -439,7 +437,7 @@ function Performance({ rows, weather, official, openEvent }: { rows: PerfRow[]; 
     ? ` · ${r.drivers.map((d) => `${d.name} ${formatLap(d.best)}`).join(', ')}` : '');
 
   if (wide) {
-    const cols = ['Event', 'Best', 'Ideal', 'Theoretical', 'Race pace', 'Quali', 'vs year before'];
+    const cols = ['Event', 'Best', 'Typical', 'Race pace', 'Quali', 'vs year before'];
     return (
       <View>
         <View style={styles.thRow}>
@@ -460,8 +458,7 @@ function Performance({ rows, weather, official, openEvent }: { rows: PerfRow[]; 
                 <Text style={StyleSheet.flatten([type.small, styles.right])} numberOfLines={1}>
                   {r.best.driver ?? r.best.session}</Text>
               </View>
-              <View style={styles.cNum}><Text style={styles.td}>{formatLap(r.ideal)}</Text></View>
-              <View style={styles.cNum}><Text style={styles.td}>{formatLap(r.theoretical)}</Text></View>
+              <View style={styles.cNum}><Text style={styles.td}>{formatLap(r.typical)}</Text></View>
               <View style={styles.cNum}><Text style={styles.td}>{race(r)}</Text></View>
               <View style={styles.cNum}><Text style={styles.td}>{quali(r)}</Text></View>
               <View style={styles.cNum}><DeltaBlock seconds={r.change?.best} /></View>
@@ -487,8 +484,7 @@ function Performance({ rows, weather, official, openEvent }: { rows: PerfRow[]; 
               <Text style={type.small} numberOfLines={1}>{r.best.driver ?? r.best.session}</Text>
             </View>
           </View>
-          <SpecLine label="Ideal" value={formatLap(r.ideal)} />
-          <SpecLine label="Theoretical" value={formatLap(r.theoretical)} />
+          <SpecLine label="Typical" value={formatLap(r.typical)} />
           <SpecLine label="Race pace" value={race(r)} />
           <SpecLine label="Quali" value={quali(r)} />
           <Text style={StyleSheet.flatten([type.small, styles.cond])}>{conditions(r) || 'No conditions recorded'}
@@ -580,8 +576,8 @@ function Corners({ no, corners, guide }: { no: number; corners: PrepReport['corn
     : guide?.status === 'none' ? guide.reason : guide?.status === 'ready' ? ZOOM_HINT : null;
   return (
     <Section no={no} title="Corner by corner"
-      dek={`In lap order. The ideal pass is what the quickest passes did; its graph is the best pass here against a ` +
-        `typical one. Most time to find: ${top.join(', ')}.`}>
+      dek={`In lap order. Quick passes: what the quickest tenth of the passes did; the graph is the best pass here ` +
+        `against a typical one. Most time to find: ${top.join(', ')}.`}>
       {corners.changes && <Text style={StyleSheet.flatten([wide ? type.read : type.readPhone, styles.before])}>
         {corners.changes}</Text>}
       {corners.note && <Text style={StyleSheet.flatten([type.note, styles.before])}>{corners.note}</Text>}
@@ -616,7 +612,7 @@ function Corner({ r, guide, top }: { r: CornerRow; guide: Guide | null; top: boo
           </View>
         </View>
         <View style={styles.cornerMain}>
-          {r.ideal && <Text style={read}><Text style={type.inLabel}>Ideal pass  </Text>{r.ideal}</Text>}
+          {r.ideal && <Text style={read}><Text style={type.inLabel}>Quick passes  </Text>{r.ideal}</Text>}
           {r.why && <Text style={read}><Text style={type.inLabel}>Why  </Text>{r.why}</Text>}
           {r.advice.length > 0 && (
             <Text style={read}><Text style={type.inLabel}>To change  </Text>{r.advice.join('. ')}.</Text>

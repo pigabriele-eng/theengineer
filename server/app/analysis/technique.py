@@ -1774,6 +1774,19 @@ def check_lap(tr: dict[str, np.ndarray], perfect: PlaceLimits, held: PlaceLimits
     return out
 
 
+def mistakes_total(obvious: list[dict]) -> float:
+    """What the obvious mistakes cost the lap together, each counted once: mistakes in the same corner that overlap
+    (a lift and the speed stalling it causes) are one loss, at the most any of them costs."""
+    total, run = 0.0, None  # run: the corner, end and cost of the overlapping mistakes being added up
+    for o in sorted(obvious, key=lambda o: (o["code"], o["start_m"])):
+        if run is not None and o["code"] == run[0] and o["start_m"] <= run[1]:
+            run = (run[0], max(run[1], o["end_m"]), max(run[2], o["cost_s"]))
+            continue
+        total += run[2] if run else 0.0
+        run = (o["code"], o["end_m"], o["cost_s"])
+    return round(total + (run[2] if run else 0.0), 3)
+
+
 # ---------- the mistakes that repeat ----------
 
 HABITS = {
@@ -1792,6 +1805,14 @@ HABITS = {
     "slow_throttle": "Slow to full throttle",
     "lift": "Lifting off full throttle",
     "steering": "Steering corrections",
+    "exit_stall": "Speed stalling on the way out",
+    "on_off_throttle": "Throttle on and off through the corner",
+    "power_step": "Stepping on the power",
+    "power_oversteer": "Oversteer on the power",
+    "soft_straight_braking": "Soft braking in a straight line",
+    "braking_unused": "Braking grip left unused",
+    "early_shift": "Shifting up early",
+    "late_shift": "Shifting up late",
 }
 
 
@@ -1806,9 +1827,9 @@ def habits(laps: list[list[dict]], min_laps: int = 2) -> list[dict]:
         for m in items:
             h = by.setdefault(m["key"], {"key": m["key"], "kind": m["kind"], "code": m["code"], "phases": {},
                                          "laps": 0, "cost": 0.0, "cost_perfect": 0.0, "values": [],
-                                         "unit": m["unit"]})
+                                         "unit": m.get("unit", "")})
             h["cost"] += m["cost_s"]
-            h["cost_perfect"] += m["cost_perfect_s"]
+            h["cost_perfect"] += m.get("cost_perfect_s", m["cost_s"])
             h["phases"][m["phase"]] = h["phases"].get(m["phase"], 0) + 1
             if m["key"] not in seen:
                 seen.add(m["key"])

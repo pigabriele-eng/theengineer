@@ -182,6 +182,8 @@ def remove_session(db: Session, s: models.RunSession) -> list[str]:
     summaries = setup_models.SetupRunSummary
     for row in db.scalars(select(summaries).where(summaries.session_id == sid)):
         db.delete(row)
+    for row in db.scalars(select(models.RunTyres).where(models.RunTyres.session_id == sid)):
+        db.delete(row)
     for model in (models.SessionTraces, models.LapPackFile):
         for row in db.scalars(select(model).where(model.session_id == sid)):
             keys += [row.path] if row.path else []

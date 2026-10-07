@@ -24,7 +24,7 @@ LOSS_WORTH_S = 0.02  # a phase losing less than this is not worth a word
 SIGNIFICANT_CHANGE_S = 0.05  # a section this much quicker or slower than the year before is worth a word
 SECTION_KEYS = ("code", "corners", "flat", "start_m", "end_m", "apex_m", "times", "gain_s", "where", "main_phase",
                 "headline", "advice", "loss_line")
-HABIT_KEYS = ("key", "label", "unit", "phase", "typical", "quick", "theoretical", "link", "used", "worth_s")
+HABIT_KEYS = ("key", "label", "unit", "phase", "typical", "quick", "link", "used", "worth_s")
 WHY = {  # what the time in each part of a corner comes from, in plain words
     "braking": "Time under braking comes from braking later and harder: the quick passes stop the car in less "
                "distance, so they stay at full speed longer on the way in.",
@@ -128,7 +128,6 @@ def performance(events: list[dict]) -> list[dict]:
             "event_id": ev["id"], "name": ev["name"], "year": ev["year"], "start": ev["start"], "end": ev["end"],
             "sessions": len(sess), "clean_laps": sum(s["clean_laps"] for s in sess), "other_cars": ev["other_cars"],
             "best": {"time": best["best"], "session": best["name"], "session_id": best["id"], "driver": best["driver"]},
-            "ideal": head.get("ideal"), "realistic": head.get("realistic"), "theoretical": head.get("theoretical"),
             "typical": head.get("typical"), "quali": quali, "race_pace": race,
             "drivers": sorted(drivers.values(), key=lambda d: d["best"]),
             "conditions": {"ambient_c": [min(ambient), max(ambient)] if ambient else None,
@@ -139,7 +138,6 @@ def performance(events: list[dict]) -> list[dict]:
         if prev is not None:
             row["change"] = {k: _r(a - b) for k, a, b in (
                 ("best", row["best"]["time"], prev["best"]["time"]),
-                ("ideal", row["ideal"], prev["ideal"]),
                 ("race_pace", (row["race_pace"] or {}).get("time"), (prev["race_pace"] or {}).get("time")),
                 ("quali", (row["quali"] or {}).get("time"), (prev["quali"] or {}).get("time")))
                 if a is not None and b is not None}
@@ -155,8 +153,6 @@ def trend_text(rows: list[dict]) -> str | None:
     a, b = rows[-2], rows[-1]
     ch = b["change"] or {}
     parts = [f"best lap {_quicker(ch['best'])} ({lap_text(b['best']['time'])} against {lap_text(a['best']['time'])})"]
-    if ch.get("ideal") is not None:
-        parts.append(f"ideal lap {_quicker(ch['ideal'])}")
     if ch.get("race_pace") is not None:
         parts.append(f"race pace {_quicker(ch['race_pace'])}")
     if ch.get("quali") is not None:
@@ -180,20 +176,14 @@ def _fmt_value(h: dict, v: float) -> str:
 
 
 def ideal_pass(sec: dict, corner_at: dict[str, float] | None = None) -> str | None:
-    """The quickest passes through a section in one sentence, in the order things happen along the track, with the
-    theoretical lap's value where it shows the car can do clearly more. corner_at: where each corner number sits
-    (metres from the line), so the speeds at a long section's corners fall in their place."""
+    """The quickest passes through a section in one sentence, in the order things happen along the track.
+    corner_at: where each corner number sits (metres from the line), so the speeds at a long section's corners fall
+    in their place."""
     hs = {h["key"]: h for h in sec.get("habits") or [] if h.get("quick") is not None}
     corner_at = corner_at or {}
     start = sec.get("start_m") or 0.0
     end = sec.get("end_m") if sec.get("end_m") is not None else start
     steps: list[tuple[float, str]] = []  # (metres, words): sorted by where it happens
-
-    def theo(h: dict, more: float) -> str:
-        t = h.get("theoretical")
-        if t is None or abs(t - h["quick"]) < more:
-            return ""
-        return f" (the car can do {_fmt_value(h, t)})"
 
     if sec.get("flat"):
         if "entry_speed" in hs:
@@ -203,9 +193,7 @@ def ideal_pass(sec: dict, corner_at: dict[str, float] | None = None) -> str | No
         if "brake_point" in hs:
             h = hs["brake_point"]
             brake = h["quick"]
-            t = h.get("theoretical")
-            later = f" (perfect driving brakes at {t:.0f} m)" if t is not None and t - h["quick"] >= 3 else ""
-            steps.append((brake, f"brake at {h['quick']:.0f} m{later}"))
+            steps.append((brake, f"brake at {h['quick']:.0f} m"))
         if "peak_brake" in hs and hs["peak_brake"]["unit"]:
             steps.append((brake + 0.1, f"up to {_fmt_value(hs['peak_brake'], hs['peak_brake']['quick'])}"))
         release = brake + 0.2
@@ -215,8 +203,7 @@ def ideal_pass(sec: dict, corner_at: dict[str, float] | None = None) -> str | No
             steps.append((release, f"off the brake at {release:.0f} m{at}"))
         if "min_speed" in hs:  # the slowest point comes between letting the brake go and the throttle going down
             apex = hs["throttle_on"]["quick"] - 0.1 if "throttle_on" in hs else release + 0.1
-            steps.append((apex, f"{hs['min_speed']['quick']:.0f} km/h at the slowest point"
-                                f"{theo(hs['min_speed'], 1.0)}"))
+            steps.append((apex, f"{hs['min_speed']['quick']:.0f} km/h at the slowest point"))
         for key, h in hs.items():
             if key.startswith("corner_speed_"):
                 code = key[len("corner_speed_"):]
@@ -231,8 +218,7 @@ def ideal_pass(sec: dict, corner_at: dict[str, float] | None = None) -> str | No
     if "full_throttle" in hs:
         steps.append((hs["full_throttle"]["quick"], f"full throttle at {hs['full_throttle']['quick']:.0f} m"))
     if "exit_speed" in hs:
-        steps.append((end + 1, f"{hs['exit_speed']['quick']:.0f} km/h at the end of the section"
-                               f"{theo(hs['exit_speed'], 1.0)}"))
+        steps.append((end + 1, f"{hs['exit_speed']['quick']:.0f} km/h at the end of the section"))
     if not steps:
         return None
     text = ", ".join(words for _, words in sorted(steps, key=lambda s: s[0]))
@@ -276,7 +262,7 @@ def corners(events: list[dict], technique_rows: list[dict]) -> dict:
             row = by_code[code]
             t = sec.get("times") or {}
             row["per_event"][str(ev["id"])] = {"year": ev["year"], "best": t.get("best"), "typical": t.get("typical"),
-                                               "theoretical": t.get("theoretical"), "gain": sec.get("gain_s"),
+                                               "gain": sec.get("gain_s"),
                                                "main_phase": sec.get("main_phase")}
             if code in top:
                 row["top_in"].append(ev["year"])
@@ -303,7 +289,7 @@ def corners(events: list[dict], technique_rows: list[dict]) -> dict:
         rows.append({
             "code": code, "corners": sec.get("corners") or [], "flat": bool(sec.get("flat")),
             "gain_s": sec.get("gain_s"), "main_phase": sec.get("main_phase"), "year": ev["year"],
-            "best": (sec.get("times") or {}).get("best"), "theoretical": (sec.get("times") or {}).get("theoretical"),
+            "best": (sec.get("times") or {}).get("best"),
             "best_by": {"session": best_lap or None, "driver": best_by.get("driver")},
             "per_event": row["per_event"], "top_in": row["top_in"], "change": change,
             "ideal": ideal_pass(sec, corner_at), "why": why_text(sec), "advice": sec.get("advice") or [],
@@ -518,9 +504,11 @@ def technique(events: list[dict]) -> list[dict]:
             if per_lap < 0.005:
                 continue
             years = sorted(set(it["years"]))
+            # only the first letter lowered: an obvious mistake's title names its corner ("Lifted on the exit of T10")
+            what = it["title"][:1].lower() + it["title"][1:]
             items.append({"code": it["code"], "phase": it["phase"], "title": it["title"], "laps": it["laps"], "of": n,
                           "cost_per_lap_s": round(per_lap, 3), "years": years,
-                          "text": f"{it['code']}: {it['title'].lower()} on {it['laps']} of {n} laps, "
+                          "text": f"{it['code']}: {what} on {it['laps']} of {n} laps, "
                                   f"{per_lap:.2f} s a lap" + (f" ({', '.join(years)})" if len(row['years']) > 1
                                                               else "")})
         items.sort(key=lambda x: -x["cost_per_lap_s"])
@@ -540,15 +528,8 @@ def briefing(perf: list[dict], corner: dict, q: dict | None, press: dict | None,
         last = perf[-1]
         best = min(perf, key=lambda r: r["best"]["time"])
         who = ", ".join(x for x in (best["best"]["session"], best["best"]["driver"]) if x)
-        target = last["realistic"] if last["realistic"] is not None else last["best"]["time"]
-        target = min(target, best["best"]["time"])
-        text = (f"Aim for {lap_text(target)}: the best lap here is {lap_text(best['best']['time'])} ({best['year']}, "
-                f"{who})")
-        if last["ideal"] is not None:
-            text += f", the best sections of {last['year']} add up to {lap_text(last['ideal'])}"
-        if last["theoretical"] is not None:
-            text += f" and the car's theoretical lap is {lap_text(last['theoretical'])}"
-        text += "."
+        # the lap to aim for is the best real lap here, never one stitched from sections or simulated
+        text = f"Aim for {lap_text(best['best']['time'])}: the best lap here ({best['year']}, {who})."
         if last["race_pace"]:
             text += (f" Race pace in {last['year']}: {lap_text(last['race_pace']['time'])} "
                      f"({'race' if last['race_pace']['basis'] == 'race' else 'long runs'}).")
@@ -643,7 +624,7 @@ def build(target: dict, car: dict, events: list[dict], tyre_model: dict | None, 
             if ev.get(key):
                 notes.append(f"{ev['name']} ({ev['year']}): its {what} is left out: {ev[key]}")
         if ev["other_cars"]:
-            notes.append(f"{ev['name']} ({ev['year']}) also holds other cars' runs: its ideal, theoretical and "
+            notes.append(f"{ev['name']} ({ev['year']}) also holds other cars' runs: its lap and "
                          "corner times include their laps.")
     return {
         "target": target, "car": car,
@@ -659,16 +640,16 @@ def build(target: dict, car: dict, events: list[dict], tyre_model: dict | None, 
 METHOD = [
     "Past events: every event at this track that started before this one, with clean laps. The same car: the car a "
     "session is linked to; a session without one counts for the car whose logger recorded it (the dash serial).",
-    "Lap times: best is the quickest clean lap; ideal, realistic and theoretical laps come from each event's report; "
+    "Lap times: best is the quickest clean lap; typical is the median clean lap of each event's report; "
     "race pace is the median clean lap of the race sessions (else of the long runs); quali is the best qualifying "
     "lap (else the peak of the best quali-style run).",
-    "Corners: each event's report sections, by the track's official corner numbers. The ideal pass is what the "
-    "quickest tenth of the passes did, with the theoretical lap's value where the car can clearly do more.",
+    "Corners: each event's report sections, by the track's official corner numbers. The quick passes are what the "
+    "quickest tenth of the passes did.",
     "Quali prep and pressures: the tyre prep report of each event (TPMS warm-up, push temperatures, peak lap, the "
     "cold pressures that land in the fast laps' window).",
     "Setups and balance: each run's setup sheet and the balance from its log, against what the drivers said in "
     "their debriefs. The opening setup is the quickest past run with a sheet, with the setup tool's ranked changes "
     "for what both the drivers and the data kept showing.",
-    "Driver technique: the technique check's mistakes that repeat on each driver's laps, costed against the "
-    "realistic target.",
+    "Driver technique: the technique check's obvious mistakes that repeat on each driver's laps, each with the "
+    "time it cost.",
 ]

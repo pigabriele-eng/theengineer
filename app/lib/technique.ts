@@ -1,30 +1,12 @@
-// Client for the technique check (GET /technique/sessions/{id}?lap=N, GET /technique/events/{id}): one lap's
-// driving mistakes against perfect driving, what each costs, and the ones that repeat across the session and the event.
+// Client for the technique check (GET /technique/sessions/{id}?lap=N, GET /technique/events/{id}): one lap's obvious
+// driving mistakes, what each cost, what the lap would have been without them, and the ones that repeat across the
+// session and the event. Every lap is compared only with laps on the same tyres (PUT .../tyres sets a run's).
 // The server works it out in the background for every clean lap of an event (or of a session in no event).
 import { apiFetch } from '@/lib/api';
 
 export type TechniqueStatus = 'ready' | 'queued' | 'running' | 'failed' | 'empty';
 
 export type Phase = 'braking' | 'entry' | 'mid-corner' | 'exit' | 'full throttle';
-
-export type Mistake = {
-  key: string; // "<code>:<kind>", the same mistake on every lap
-  kind: string;
-  code: string; // official corner number or section ("T2-T5")
-  phase: Phase;
-  start_m: number; // the stretch of the lap it covers, metres from the line
-  end_m: number;
-  at_m: number; // where to mark it
-  cost_s: number; // against the realistic target (a quick lap's usual grip at each place): time a driver can find
-  cost_perfect_s: number; // against perfect driving (the car at 100%)
-  carried_s: number; // of cost_s, what it carries on past its stretch (a slow exit, all down the next straight)
-  title: string;
-  what: string; // what the driver did against what perfect driving does, with the numbers
-  do: string; // what to do instead
-  value: number | null;
-  unit: string;
-  repeats: { laps: number; of: number } | null; // on how many of the session's clean laps
-};
 
 /** A mistake that is wrong whatever the target: a lift on the way out of a corner, the power stepped on so early or
  * so hard that the car forced a lift or a steering correction, braking in a straight line below the car's limit, an
@@ -53,28 +35,21 @@ export type ObviousMistake = {
   what: string;
   do: string;
   measured?: MeasuredCost | null;
+  repeats?: { laps: number; of: number } | null; // on how many of the session's clean laps
 };
 
-export type Budget = {
-  mistakes: number; // the named mistakes and every obvious one, each at its own cost
-  in_targets?: number; // zero or less: the part of them perfect driving already carries from this lap
-  at_limit: number; // flat out, on the ABS or on the traction control, yet the car below its best
-  optimism: number; // the perfect lap's optimism: the car's best at every place rather than a quick lap's usual
-  pit_lane: number; // the lap ends in the pit lane
-  other: number; // small losses no single mistake explains, less the places the lap beat the target
-  other_losses: number;
-  other_gains: number;
-};
+export type Tyres = 'new' | 'used';
+/** A run's tyres: the driver's (sure), or guessed from its laps until the driver confirms (qualifying is new, a race
+ * used, for sure); with how many of the event's clean laps are on them. */
+export type RunTyres = { tyres: Tyres; sure: boolean; why: string; laps?: number | null };
 
 export type InputRole = 'speed' | 'throttle' | 'brake' | 'steer' | 'gear' | 'rpm';
 /** The driver's inputs at the speed trace's points (every step_m metres): throttle %, brake pressure, steering,
  * gear and revs as the log's channels for those roles have them; null (or missing, from an older check) where the log
  * has no such channel. */
 export type Inputs = Partial<Record<InputRole, number[] | null>>;
-/** Perfect driving's and the realistic target's inputs at the same points, to lay over the driver's: what their
- * speed asks of the car (throttle as a share of full drive, brake in the driver's own pressure per g, the gear and
- * revs of the ideal shift points). No steering: the model has none. */
-export type ModelInputs = { perfect: Inputs; realistic: Inputs; fixed?: Inputs; best?: BestTechnique };
+/** What to lay over the driver's inputs: their best real passes on the same tyres. */
+export type ModelInputs = { best?: BestTechnique };
 /** Where each section of the best-technique lap comes from: the driver's own quickest clean pass of the event (its
  * run and lap), this lap's pass with its obvious mistakes taken out (built), or this lap's own pass, already the
  * best clean one (own); and what it finds over this lap there. */
@@ -82,8 +57,8 @@ export type BestSource = { code: string; start_m: number; end_m: number; kind: '
   run?: string; number?: number; gain_s: number; put_right?: ObviousMistake['kind'][] };
 /** The driver's best technique through every section, blended at the joins; speed among its inputs. */
 export type BestTechnique = Inputs & { time: number; sources: BestSource[] };
-/** Perfect driving's own phases (trace.model_phases indexes these). Its model has no pedal positions and never
- * coasts: it brakes, drives at the grip limit (part throttle) or at full throttle. */
+/** A model's own phases (an index into these at each point): it brakes, drives at the grip limit or at full
+ * throttle. */
 export const MODEL_PHASES = ['braking', 'at the grip limit', 'full throttle'] as const;
 
 export type LapCheck = {
@@ -93,15 +68,12 @@ export type LapCheck = {
   number: number;
   time: number;
   driver: string | null;
-  perfect: number; // this lap's line at the car's limits
-  realistic: number; // the same at the grip a quick lap usually shows at each place
-  gap: number; // to perfect
+  tyres?: Tyres;
+  mistakes_s: number; // what the obvious mistakes cost together, each counted once
+  without_mistakes: number; // the lap's time less that
   pit_from_m: number | null;
-  budget: Budget;
-  mistakes: Mistake[];
-  obvious?: ObviousMistake[]; // most costly first; they may overlap the mistakes above
-  trace: { step_m: number; driven: number[]; perfect: number[]; realistic: number[]; inputs?: Inputs;
-    model_phases?: number[]; model?: ModelInputs } | null;
+  obvious: ObviousMistake[]; // most costly first
+  trace: { step_m: number; driven: number[]; inputs?: Inputs; model?: ModelInputs } | null;
   // the event's fastest lap (the one the report measures from), its inputs to lay under this lap's; none when this
   // lap is that one
   fastest?: { session_id: number; run: string; number: number; time: number; this_lap: boolean;
@@ -111,8 +83,9 @@ export type LapCheck = {
 export type LapRow = {
   number: number;
   time: number;
-  gap_s: number;
+  tyres?: Tyres;
   mistakes_s: number;
+  without_mistakes: number;
   count: number;
   top: string | null;
   top_code: string | null;
@@ -130,7 +103,6 @@ export type Habit = {
   share: number;
   cost_per_lap_s: number; // averaged over every lap checked
   cost_when_s: number; // averaged over the laps with it
-  cost_perfect_per_lap_s: number;
   value: number | null; // its usual size
   unit: string;
 };
@@ -153,6 +125,7 @@ export type SessionTechnique = Head & {
   laps: LapRow[];
   best_lap?: number | null;
   lap: LapCheck | null;
+  tyres?: RunTyres | null;
   measured?: MeasuredCost[] | null; // the obvious mistakes, most expensive first as measured
   lap_note: string | null;
   habits: { session: Habit[]; session_laps: number; event: Habit[] | null; event_laps: number | null } | null;
@@ -165,7 +138,7 @@ export type SessionTechnique = Head & {
 
 export type EventTechnique = Head & {
   sessions: { id: number; name: string; driver: string | null; laps: number;
-    best: { number: number; time: number; gap_s: number } | null }[];
+    best: { number: number; time: number; without_mistakes: number } | null; tyres?: RunTyres | null }[];
   best: { session_id: number; number: number; time: number } | null;
   habits: Habit[] | null;
   laps_checked: number;
@@ -190,6 +163,11 @@ export const fetchTechniqueProgress = (of: { session: number } | { event: number
     : `/technique/events/${of.event}?brief=true`);
 export const refreshSessionTechnique = (session: number) =>
   call<SessionTechnique>(`/technique/sessions/${session}/refresh`, { method: 'POST' });
+
+/** The run's tyres as the driver says: the check is worked out again, every lap against laps on the same tyres. */
+export const setSessionTyres = (session: number, tyres: Tyres) =>
+  call<{ tyres: Tyres; status: TechniqueStatus }>(`/technique/sessions/${session}/tyres`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tyres }) });
 
 export const working = (s: TechniqueStatus | undefined) => s === 'queued' || s === 'running';
 

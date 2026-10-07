@@ -186,7 +186,7 @@ function LatestAgainstBest({ no, pair }: { no: number; pair: ReturnType<typeof l
       {data ? (
         <>
           <WhereTheTimeIs no={no + 1} data={data} colors={colors} focus={focus} onFocus={setFocus} onShow={show} />
-          <CompareTraces no={no + 2} data={data} colors={colors} ideal={false} zoom={zoom} onZoom={setZoom}
+          <CompareTraces no={no + 2} data={data} colors={colors} zoom={zoom} onZoom={setZoom}
             cursor={cursor} onCursor={setCursor} />
         </>
       ) : (

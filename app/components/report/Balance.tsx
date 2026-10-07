@@ -1,24 +1,19 @@
 // The report's car balance and setup direction section, advice first: the setup changes to try (each with its
-// reason and expected effect), where the car rather than the driver limits the lap and by how much, then the
-// balance per section on entry, mid-corner and exit. For one session or a whole event.
-import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
+// reason and expected effect), then the balance per section on entry, mid-corner and exit. For one session or a whole
+// event.
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Pressable } from 'react-native';
 
 import { TextLink } from '@/components/Programme';
 import { Text, View, useThemeColor } from '@/components/Themed';
-import { TraceChart } from '@/components/TraceChart';
 import { useColorScheme } from '@/components/useColorScheme';
-import { ResetZoom, ZOOM_HINT, ZoomGroup } from '@/components/Zoom';
 import {
   BalanceCell,
   BalanceReport,
   balanceWords,
   BarModel,
-  CarLimitRow,
   degrees,
   fetchBalance,
-  Focus,
-  lapName,
   Recommendation,
   SPEED_LABEL,
   Strength,
@@ -30,12 +25,9 @@ import { byScheme, Fonts, TAP, tapRoom, themed, Type } from '@/constants/Theme';
 // bare: inside a report section that already names it, so without its own heading
 type Props = { session?: number; event?: number; bare?: boolean };
 
-// Validated chart palette: categorical slots 1-3 (driving, car, theoretical; and the three laps in the focus charts),
-// and the diverging pair for balance (blue: understeer, red: oversteer, grey: normal), light and dark steps.
-const PALETTE = byScheme((c) => ({
-  reference: c.chart.series[0], compare: c.chart.series[1], third: c.chart.series[2],
-  under: c.balance.under, over: c.balance.over, neutral: c.chart.mid,
-}));
+// Validated chart palette: the diverging pair for balance (blue: understeer, red: oversteer, grey: normal), light
+// and dark steps.
+const PALETTE = byScheme((c) => ({ under: c.balance.under, over: c.balance.over, neutral: c.chart.mid }));
 const WASH: Record<NonNullable<Strength>, string> = { slight: '2e', clear: '5c', strong: '8f' }; // alpha by strength
 
 function usePalette() {
@@ -120,8 +112,6 @@ function ReportView({ r }: { r: BalanceReport }) {
         </Text>
       ))}
 
-      <CarLimits r={r} />
-      {r.focus && <FocusView focus={r.focus} />}
       <BalanceTable r={r} />
 
       {r.checks.length > 0 && (
@@ -186,185 +176,6 @@ function ModelLine({ model }: { model: BarModel }) {
       </Text>
       <Text style={styles.small}>{nb(model.note)}</Text>
       <TextLink href="/tools/vehicle" label="Open the vehicle model" arrow small />
-    </View>
-  );
-}
-
-// ---------- where the car limits the lap ----------
-
-type Part = { label: string; seconds: number; color: string };
-
-/** Seconds split into parts as one bar; the legend (with values) is left out where the parts are listed below it. */
-function SplitBar({ parts, legend = true }: { parts: Part[]; legend?: boolean }) {
-  const styles = useStyles();
-  const shown = parts.filter((p) => p.seconds > 0);
-  const total = shown.reduce((s, p) => s + p.seconds, 0);
-  return (
-    <View>
-      <View style={styles.split}>
-        {shown.map((p) => (
-          // flex shares summing to under 1 would leave the bar short, so they are per cent of the total
-          <View key={p.label} style={{ flex: (100 * p.seconds) / total, backgroundColor: p.color }} />
-        ))}
-      </View>
-      {legend && (
-        <View style={styles.legend}>
-          {parts.map((p) => (
-            <View key={p.label} style={styles.keyed}>
-              <View style={[styles.key, { backgroundColor: p.color }]} />
-              <Text style={styles.legendItem}>{p.label} {p.seconds.toFixed(2)} s</Text>
-            </View>
-          ))}
-        </View>
-      )}
-    </View>
-  );
-}
-
-function CarLimits({ r }: { r: BalanceReport }) {
-  const styles = useStyles();
-  const pal = usePalette();
-  const { lap, sections, total_car } = r.car_limits;
-  const rows = sections.filter((s) => s.car >= 0.03).sort((a, b) => b.car - a.car);
-  const max = Math.max(...rows.map((s) => s.car), 0.01);
-  const small = sections.length - rows.length;
-  return (
-    <View style={styles.section}>
-      <Text style={styles.h2}>Where the car limits the lap</Text>
-      <Text style={styles.body}>
-        Fastest lap {formatTime(lap.reference)} against the theoretical {formatTime(lap.theoretical)}:{' '}
-        {(lap.reference - lap.theoretical).toFixed(2)} s.
-      </Text>
-      <SplitBar
-        parts={[
-          { label: 'Driving', seconds: lap.driving, color: pal.reference },
-          { label: 'Car', seconds: lap.car, color: pal.compare },
-          { label: 'Theoretical', seconds: lap.optimism, color: pal.third },
-        ]}
-      />
-      <Text style={styles.small}>{nb(r.car_limits.text)}</Text>
-
-      {rows.length > 0 && (
-        <>
-          <Text style={styles.h3}>
-            The car's share per section: {total_car.toFixed(2)} s in all
-          </Text>
-          {rows.map((s) => (
-            <CarRow key={s.code} row={s} max={max} color={pal.compare} />
-          ))}
-          {small > 0 && (
-            <Text style={styles.small}>
-              {small} other section{small === 1 ? '' : 's'} under 0.03 s each, or already beating the realistic target.
-            </Text>
-          )}
-        </>
-      )}
-    </View>
-  );
-}
-
-function CarRow({ row, max, color }: { row: CarLimitRow; max: number; color: string }) {
-  const styles = useStyles();
-  return (
-    <View style={styles.barRow}>
-      <Text style={styles.barCode}>{row.code}</Text>
-      <View style={styles.barTrack}>
-        <View style={[styles.bar, { width: `${(row.car / max) * 100}%`, backgroundColor: color }]} />
-        {row.where && <Text style={styles.barWhere}>{row.where}</Text>}
-      </View>
-      <Text style={styles.barValue}>{row.car.toFixed(2)} s</Text>
-    </View>
-  );
-}
-
-function FocusView({ focus }: { focus: Focus }) {
-  const styles = useStyles();
-  const pal = usePalette();
-  const [cursor, setCursor] = useState<number | null>(null);
-  const t = focus.trace;
-  const distance = useMemo(() => t.distance_m.map((d) => d - focus.start_m), [t, focus.start_m]);
-  const markers = useMemo(() => t.corners.map((c) => ({ at: c.at_m - focus.start_m, label: c.code })),
-    [t, focus.start_m]);
-  // the lines, kept from one move of the cursor to the next (zooming redraws only the part shown)
-  const speed = useMemo(() => [
-    { values: t.reference_speed, color: pal.reference },
-    { values: t.best_speed, color: pal.compare },
-    { values: t.held_speed, color: pal.third },
-  ], [t, pal]);
-  const corneringG = useMemo(() => [
-    { values: t.reference_g, color: pal.reference },
-    { values: t.best_g, color: pal.compare },
-    { values: t.held_g, color: pal.third },
-  ], [t, pal]);
-  const colors = { driving: pal.reference, car: pal.compare, theoretical: pal.third };
-  const laps = [
-    { label: `Fastest lap (${lapName(focus.reference.lap)})`, color: pal.reference },
-    { label: `Quickest pass (${lapName(focus.best.lap)})`, color: pal.compare },
-    { label: 'Realistic target', color: pal.third },
-  ];
-  const gMax = Math.max(...t.reference_g, ...t.best_g, ...t.held_g);
-  return (
-    <View style={styles.section}>
-      <Text style={styles.h2}>
-        Why {focus.code} is {focus.total.toFixed(2)} s off the theoretical lap
-      </Text>
-      <SplitBar
-        parts={[
-          { label: 'Driving', seconds: focus.driving, color: pal.reference },
-          { label: 'Car', seconds: focus.car, color: pal.compare },
-          { label: 'Theoretical', seconds: focus.optimism, color: pal.third },
-        ]}
-        legend={false}
-      />
-      {focus.explain.map((e) => (
-        <View key={e.part} style={styles.explain}>
-          <View style={styles.keyed}>
-            <View style={[styles.key, { backgroundColor: colors[e.part] }]} />
-            <Text style={styles.explainHead}>
-              {e.part[0].toUpperCase() + e.part.slice(1)} {e.seconds.toFixed(2)} s
-            </Text>
-          </View>
-          <Text style={styles.body}>{nb(e.text)}</Text>
-        </View>
-      ))}
-      <ZoomGroup reset={focus.code}>
-        <View style={styles.legendRow}>
-          <View style={styles.legend}>
-            {laps.map((l) => (
-              <View key={l.label} style={styles.keyed}>
-                <View style={[styles.keyLine, { backgroundColor: l.color }]} />
-                <Text style={styles.legendItem}>{l.label}</Text>
-              </View>
-            ))}
-          </View>
-          <ResetZoom reserve />
-        </View>
-        <TraceChart
-          title={`Speed through ${focus.code}`}
-          unit="km/h"
-          distance={distance}
-          series={speed}
-          cursor={cursor}
-          onCursor={setCursor}
-          markers={markers}
-          height={160}
-        />
-        <TraceChart
-          title="Cornering g"
-          unit="g"
-          distance={distance}
-          series={corneringG}
-          cursor={cursor}
-          onCursor={setCursor}
-          markers={markers}
-          domain={[0, Math.ceil(gMax * 10) / 10]}
-          height={140}
-        />
-      </ZoomGroup>
-      <Text style={styles.small}>
-        Distance from the start of {focus.code}, {Math.round(focus.end_m - focus.start_m)} m in all. Hover over or
-        touch a chart to read the values. {ZOOM_HINT}
-      </Text>
     </View>
   );
 }
@@ -553,12 +364,6 @@ function Fact({ label, value, reads, source, estimate }: {
   );
 }
 
-function formatTime(s: number): string {
-  const m = Math.floor(s / 60);
-  const rest = s - 60 * m;
-  return m ? `${m}:${rest.toFixed(3).padStart(6, '0')}` : rest.toFixed(3);
-}
-
 const useStyles = themed((c) => ({
   root: { gap: 12 },
   busy: { flexDirection: 'row', gap: 8, alignItems: 'center' },
@@ -580,23 +385,6 @@ const useStyles = themed((c) => ({
   labelled: { gap: 2 },
   label: { ...Type.label, fontSize: 11, color: c.textSecondary },
   model: { gap: 4, borderTopWidth: 1, borderColor: c.separator, paddingTop: 8 },
-  split: { flexDirection: 'row', height: 14, gap: 2, overflow: 'hidden' },
-  legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, rowGap: 4, marginTop: 6, flexShrink: 1 },
-  legendRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'flex-end',
-    gap: 8 },
-  legendItem: { fontSize: 13, fontVariant: ['tabular-nums'] },
-  // a legend's colour key: a flat square (a short line for a line), its words in the text's own ink beside it
-  keyed: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },
-  key: { width: 10, height: 10 },
-  keyLine: { width: 16, height: 3 },
-  barRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  barCode: { width: 64, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  barTrack: { flex: 1, gap: 2 },
-  bar: { height: 10 },
-  barWhere: { fontSize: 11, opacity: 0.6 },
-  barValue: { width: 52, textAlign: 'right', fontVariant: ['tabular-nums'] },
-  explain: { gap: 2 },
-  explainHead: { fontWeight: '600', fontVariant: ['tabular-nums'] },
   // the two views: 44 px tap targets around their underlined names, the one not shown in the caption grey
   toggle: { flexDirection: 'row', gap: 8 },
   toggleHit: { minWidth: TAP, marginRight: 6, ...tapRoom(13) },

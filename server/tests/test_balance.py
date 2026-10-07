@@ -158,7 +158,7 @@ def test_power_oversteer_asks_for_a_softer_rear_bar_first():
     assert keys[-1] == "front_grip_slow"  # the slow corners push mid-corner: camber or toe, not the front bar
     rear = adv["recommendations"][0]
     assert rear["sections"][0] == "T6"
-    assert "0.47 s on the throttle" in rear["expect"]
+    assert "against its own grip" not in rear["expect"]  # no cost against the realistic target
     model = rear["model"]
     assert (model["from"], model["to"]) == (3, 2)
     assert model["llt_front_share"][1] > model["llt_front_share"][0]  # softer rear: load transfer moves forward
@@ -189,12 +189,11 @@ def test_braking_where_the_quickest_passes_brake_harder_is_no_setup_change():
                    _row("T6", 49, car=0.13, where="trail", brake=brake)],
                   [("slow", 0.1, 0.2, 0.0), ("medium", None, None, None), ("fast", None, None, None)])
     notes = advise(a, bar_model(None))["notes"]
-    assert notes == ["Brakes need no setup change. Into T2-T5 and T6 the car's share is in the braking, but the "
-                     "quickest passes there use 7 bar more pressure: the time is in how hard the pedal goes on. ABS "
-                     "works in 30 % of all braking."]
+    assert notes == ["Brakes need no setup change. Into T2-T5 and T6 the quickest passes use 7 bar more pressure: "
+                     "the time is in how hard the pedal goes on. ABS works in 30 % of all braking."]
 
 
-def test_no_balance_still_gives_the_time_split():
+def test_no_balance_says_so():
     a = _analysis([_row("T1", 80)], [])
     a["gradient"] = None
     adv = advise(a, bar_model(None))

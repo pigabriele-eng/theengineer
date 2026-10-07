@@ -39,63 +39,6 @@ export type Recommendation = {
   sections: string[] | null;
 };
 
-export type LapSplit = {
-  reference: number;
-  ideal: number;
-  held: number;
-  theoretical: number;
-  driving: number;
-  car: number;
-  optimism: number;
-};
-
-export type CarLimitRow = {
-  code: string;
-  car: number; // s the quickest pass leaves against the realistic target (0 where it beats it)
-  driving: number;
-  optimism: number;
-  where: string | null; // braking, mid-corner or on the throttle
-  tc_s: number | null;
-  rear_slip_exit: number | null;
-  held_grip: number | null;
-};
-
-export type LapThrough = {
-  lap: string; // "<run>#<lap number>"
-  time: number;
-  min_speed_kmh: number;
-  exit_speed_kmh: number;
-  throttle_lifts?: number;
-  tc_s?: number;
-  rear_slip_p98?: number;
-  balance_low?: number;
-};
-
-export type Focus = {
-  code: string;
-  start_m: number;
-  end_m: number;
-  total: number;
-  driving: number;
-  car: number;
-  optimism: number;
-  reference: LapThrough;
-  best: LapThrough;
-  theoretical_peak_g: number;
-  held_time: number;
-  trace: {
-    distance_m: number[];
-    reference_speed: number[];
-    best_speed: number[];
-    held_speed: number[];
-    reference_g: number[];
-    best_g: number[];
-    held_g: number[];
-    corners: { code: string; at_m: number }[];
-  };
-  explain: { part: 'driving' | 'car' | 'theoretical'; seconds: number; text: string }[];
-};
-
 export type SpeedRow = {
   speed: 'slow' | 'medium' | 'fast';
   range_kmh: [number, number];
@@ -127,8 +70,6 @@ export type BalanceReport = {
   headline: string;
   recommendations: Recommendation[];
   notes: string[];
-  car_limits: { lap: LapSplit; total_car: number; sections: CarLimitRow[]; text: string };
-  focus: Focus | null;
   balance: {
     sections: BalanceRow[];
     by_speed: SpeedRow[];

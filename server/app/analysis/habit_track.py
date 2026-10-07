@@ -2,10 +2,10 @@
 side by side.
 
 The mistakes are the technique check's (analysis/technique.py, worked out per event by routers/technique.py): every
-clean lap's named mistakes and its obvious ones, each at a corner (its official number) with the time it cost. A
-habit is a kind of mistake (lifting on the way out, braking early...). How often a driver makes it is the share of
-the corners they drove where it was flagged (a lap through a track of 12 corners drives 12), so tracks with more or
-fewer corners compare. What it costs is the time it cost a lap, on average.
+clean lap's obvious mistakes (never the pieces of its gap to the perfect lap), each at a corner (its official
+number) with the time it cost. A habit is a kind of mistake (lifting on the way out, braking early...). How often a
+driver makes it is the share of the corners they drove where it was flagged (a lap through a track of 12 corners
+drives 12), so tracks with more or fewer corners compare. What it costs is the time it cost a lap, on average.
 
 A habit is getting better or worse by its share of corners at the driver's earlier events against their recent ones
 (the first half of their events against the rest, by date); a change smaller than a quarter of it, than two corners
@@ -157,9 +157,10 @@ class Tally:
 
 def tally_event(result: dict, driver_of: dict[int, int], types: dict[str, str]) -> dict[int, Tally]:
     """Every driver's Tally at an event, from its technique check (result) and who drove each run now (driver_of:
-    session id -> driver id; runs nobody is named for are left out). A mistake both named and obvious at the same
-    corner of a lap counts once, at the larger cost; the mistakes of one group (or anything at all, for the corner
-    types) at the same corner of a lap count once too, so overlapping findings never add up."""
+    session id -> driver id; runs nobody is named for are left out). Only the obvious mistakes count, each at the
+    time it really cost: never the pieces of the gap to the perfect lap. The same kind at the same corner of a lap
+    counts once, at the larger cost; the mistakes of one group (or anything at all, for the corner types) at the same
+    corner of a lap count once too, so overlapping findings never add up."""
     codes = [s["code"] for s in result.get("sections") or []]
     if not codes:
         return {}
@@ -174,7 +175,7 @@ def tally_event(result: dict, driver_of: dict[int, int], types: dict[str, str]) 
         t.passes += len(codes)
         t.type_passes.update(n_type)
         found: dict[tuple[str, str], tuple[float, str | None]] = {}
-        for m in (lap.get("mistakes") or []) + (lap.get("obvious") or []):
+        for m in lap.get("obvious") or []:
             k = (m["kind"], m["code"])
             cost = float(m.get("cost_s") or 0.0)
             if k not in found or cost > found[k][0]:

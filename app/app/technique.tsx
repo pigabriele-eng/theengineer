@@ -5,7 +5,6 @@ import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, useWind
 import { Choice, FigRow, Meter, Notice, PageHead, Tabs, useText } from '@/components/Picks';
 import PrintButton from '@/components/PrintButton';
 import { Colophon, Fig, Label, Page, Section, TextLink, useGutter, useWide } from '@/components/Programme';
-import { Bars } from '@/components/ReportCharts';
 import { SessionSwitcher, useEventFolder, useSessionEvent } from '@/components/SessionSwitcher';
 import { TechniqueInputs } from '@/components/TechniqueInputs';
 import { TechniqueTrace } from '@/components/TechniqueTrace';
@@ -25,10 +24,12 @@ import {
   Habit,
   habitSize,
   LapCheck,
-  Mistake,
   ObviousMistake,
   refreshSessionTechnique,
+  RunTyres,
   SessionTechnique,
+  setSessionTyres,
+  Tyres,
   working,
 } from '@/lib/technique';
 import { deltaColor, face, Fonts, inkOn, phaseColor, themed, Type, useTheme } from '@/constants/Theme';
@@ -41,9 +42,9 @@ const m0 = (v: number) => `${Math.round(v)} m`;
 const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 const HABITS_SHOWN = 6;
 
-/** One lap's driving mistakes against perfect driving, most costly first, what to do instead and what each costs;
- * then how the gap to the perfect lap adds up, the mistakes that repeat across the session and the event, and the
- * lap on the track map and against perfect driving's speed. Opened from a session (?session=) or an event's report
+/** One lap's obvious driving mistakes, most costly first, what to do instead and what each cost, and what the lap
+ * would have been without them; then the mistakes that repeat across the session and the event, and the lap on the
+ * track map and against the driver's best real passes on the same tyres. Opened from a session (?session=) or an event's report
  * (?event=, at the event's quickest lap); ?lap= picks the lap. A page of the race programme: the headline, the lap's
  * big figures, then numbered sections. */
 export default function TechniqueScreen() {
@@ -161,7 +162,7 @@ export default function TechniqueScreen() {
   }, [eventId, nonce, evRound]);
 
   const check = answer?.lap ?? null;
-  useEffect(() => setSelected(check?.mistakes.length ? 1 : null), [check?.key]);
+  useEffect(() => setSelected(check?.obvious.length ? 1 : null), [check?.key]);
 
   const pickLap = (n: number) => {
     setLap(n);
@@ -183,6 +184,16 @@ export default function TechniqueScreen() {
       setError((e as Error).message);
     }
   }, [sessionId]);
+  // the driver says which tyres the run was on: the check is worked out again, every lap against the same tyres
+  const pickTyres = useCallback(async (tyres: Tyres) => {
+    if (sessionId == null) return;
+    try {
+      await setSessionTyres(sessionId, tyres);
+      setNonce((k) => k + 1);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [sessionId]);
 
   if (sessionId == null && eventParam == null) {
     return (
@@ -196,21 +207,21 @@ export default function TechniqueScreen() {
   const sessions = ev?.sessions.filter((s) => s.laps > 0) ?? [];
   const dek = answer
     ? [answer.session.name, answer.session.driver, answer.event?.name, answer.track].filter(Boolean).join(' · ')
-    : 'Every mistake on a lap against perfect driving, and what each costs.';
+    : 'Every obvious mistake on a lap, what each cost, and the lap without them.';
   // the sections are numbered in the order they are shown
   let no = 0;
   const next = () => ++no;
 
   // the map stays in view while the page scrolls: a column of its own on a computer, pinned on top on a phone. It
   // lights the corner last tapped (or the picked mistake's) and follows the charts' cursor with a dot
-  const picked = check?.mistakes[(selected ?? 0) - 1] ?? null;
+  const picked = check?.obvious[(selected ?? 0) - 1] ?? null;
   const pick = (n: number) => {
     setSelected(n);
-    setFocus(check?.mistakes[n - 1]?.code ?? null);
+    setFocus(check?.obvious[n - 1]?.code ?? null);
   };
   const map = answer && check ? (
     <TrackMap {...answer.map} highlight={focus ?? picked?.code} compact={!side}
-      marks={check.mistakes.map((m, i) => ({ n: i + 1, at_m: m.at_m, from_m: m.start_m, to_m: m.end_m }))}
+      marks={check.obvious.map((m, i) => ({ n: i + 1, at_m: m.at_m, from_m: m.start_m, to_m: m.end_m }))}
       selectedMark={selected} marksLengthM={answer.length_m}
       cursorM={cursor != null && check.trace ? cursor * check.trace.step_m : null}
       maxHeight={side ? Math.max(180, height - 220) : Math.max(110, Math.min(200, Math.round(height / 3) - 64))} />
@@ -242,9 +253,9 @@ export default function TechniqueScreen() {
         <PrintButton title={['Technique check', answer?.session.name].filter(Boolean).join(' · ')} />
       </PageHead>
       <Text style={StyleSheet.flatten([t.note, styles.intro])}>
-        Every mistake on the lap against perfect driving: the lap&apos;s own line driven at the best the car has shown
-        at every place of the track, across the {answer?.scope === 'session' ? 'session' : 'whole event'}. Each costs
-        what a driver can find: the time against the realistic target, the grip a quick lap usually shows at each place.
+        Every obvious mistake on the lap (a lift on the way out, the speed stalling, the throttle on and off, braking
+        grip left unused, an early or late upshift, oversteer on the power), where it happened and what it cost, and
+        what the lap would have been without them. Each lap is compared only with laps on the same tyres.
       </Text>
 
       <View style={styles.states}>
@@ -302,38 +313,21 @@ export default function TechniqueScreen() {
           </View>
         )}
         {answer?.lap_note && <Text style={t.note}>{answer.lap_note}</Text>}
+        {answer?.tyres && <TyresLine tyres={answer.tyres} onPick={pickTyres} />}
       </View>
 
       {check && answer && <LapSummary check={check} room={width - (side ? sideWidth : 0)} />}
 
-      {check && answer && !!check.obvious?.length && (
-        <Section no={next()} title="Obvious mistakes"
-          dek="Wrong whatever the target: what happened in each corner, what to do instead and what it alone cost.">
-          {check.obvious.map((m, i) => (
-            <ObviousRow key={`${m.key}-${m.start_m}`} m={m} first={i === 0} on={focus === m.code}
-              onPress={() => setFocus(m.code)} />
-          ))}
-        </Section>
-      )}
-
       {check && answer && (
         <Section no={next()} title="Mistakes on this lap"
-          dek={check.mistakes.length
-            ? 'Most costly first: what happened, what to do instead and what it costs. Tap one to find it on the map.'
+          dek={check.obvious.length
+            ? 'Most costly first: what happened in each corner, what to do instead and what it cost. Tap one to find it on the map.'
             : undefined}>
-          {check.mistakes.length === 0 && (
-            <Text style={t.note}>No single mistake costs more than 0.02 s on this lap against the realistic target.</Text>
-          )}
-          {check.mistakes.map((m, i) => (
+          {check.obvious.length === 0 && <Text style={t.note}>No obvious mistake on this lap.</Text>}
+          {check.obvious.map((m, i) => (
             <MistakeRow key={`${m.key}-${m.start_m}`} n={i + 1} m={m} on={selected === i + 1} first={i === 0}
               onPress={() => pick(i + 1)} />
           ))}
-        </Section>
-      )}
-
-      {check && answer && (
-        <Section no={next()} title="The gap" dek={`How the ${s2(check.gap)} to perfect driving adds up.`}>
-          <BudgetView check={check} />
         </Section>
       )}
 
@@ -343,7 +337,7 @@ export default function TechniqueScreen() {
 
       {check && answer && (
         <Section no={next()} title="On the track"
-          dek="The lap against perfect driving's speed, the picked mistake close up, then the driver's inputs.">
+          dek="The lap against your best real passes on the same tyres, the picked mistake close up, then the driver's inputs.">
           <OnTheTrack answer={answer} check={check} selected={selected} onSelect={pick} sideBySide={sideBySide}
             cursor={cursor} onCursor={setCursor} />
         </Section>
@@ -374,41 +368,32 @@ export default function TechniqueScreen() {
 
 
 const METHOD = [
-  'Perfect driving is the theoretical lap on this lap\'s own line. At every place of the track (every 5 m) it ' +
-    'takes the most cornering the car has shown there across the event, and the hardest braking and drive it ' +
-    'showed there while cornering that hard (the 90th percentile of the quick laps, never less than the fastest ' +
-    'lap), braking at the last moment and back to full throttle as soon as the grip allows. A banked corner keeps ' +
-    'its own grip and lends it to no other. Where this lap\'s line asks for more cornering than the quick laps ' +
-    'showed (moving across the road to pass or take a tow), it takes what this lap itself showed there. Like ' +
-    'the report\'s targets it is measured from the fastest lap: the ' +
-    'simulation\'s own error, found by driving the fastest lap at its own limits, is taken out at every metre.',
-  'The lap is cut where the driver\'s actions change (lift, brake point, release, slowest point, throttle ' +
-    'pick-up, full throttle, any lift on a straight). Each piece costs the time lost from its start to its end, ' +
-    'with perfect driving taking over from wherever the driver left the car: so a slow exit is charged with the ' +
-    'time it costs all the way down the next straight. The pieces add up to the whole gap.',
-  'No lap puts the best of every place together, as the perfect lap does, so each cost is the time against the ' +
-    'realistic target (the same lap at the grip a quick lap usually shows at each place, as in the report): the ' +
-    'time a driver can find. The rest of the gap, the perfect lap\'s optimism, is shown on its own.',
-  'Where the pedals were at the limit (flat out, braking with the ABS working, driving out with the traction ' +
-    'control working) and the car still fell short, that is the car on the day, not a mistake. ABS and traction ' +
-    'control on their own aren\'t mistakes: the event\'s quicker laps use more of both.',
-  'Obvious mistakes are wrong whatever the target: a lift on the way out of a corner (not a lift for the next ' +
+  'Obvious mistakes are wrong whatever the lap: a lift on the way out of a corner (not a lift for the next ' +
     'corner), the throttle on and off through a corner, the speed that stops climbing or drops on the way out ' +
-    '(whatever the pedal shows), the power stepped on so early or so hard that the car forced ' +
-    'a lift or a steering correction, and braking in a straight line, with no cornering to share the grip, below ' +
-    'the deceleration the car has shown there. Each costs what it alone lost: the speed a lift took off, carried ' +
-    'down the straight, or the later braking point missed. Under 0.01 s they are left out.',
+    '(whatever the pedal shows), the power stepped on so early or so hard that the car forced a lift or a steering ' +
+    'correction, oversteer on the power while still turning, braking in a straight line below the deceleration the ' +
+    'car has shown there, braking grip left unused up to the turn-in against the best braking there on the other ' +
+    'laps, and an upshift early or late. Every lift counts, however small; a gearshift cut or the lift for the next ' +
+    'braking zone does not.',
+  'Each costs what it alone lost: the speed a lift took off, carried down the straight, the later braking point ' +
+    'missed, or the drive an early upshift missed. Where enough laps have it and enough do not, its cost is also ' +
+    'measured on the laps themselves, driver by driver, every event at this track pooled.',
+  'The lap without mistakes is the lap\'s own time less what its obvious mistakes cost. Mistakes in the same corner ' +
+    'that overlap (a lift and the speed stalling it causes) are one loss, counted once at the most any of them cost.',
+  'Qualifying runs on new tyres with low fuel; the races run on the qualifying set; tests and practice on new tyres ' +
+    'sometimes. So a lap is only ever compared with laps on the same tyres: the best braking at a corner, the best ' +
+    'real passes laid over the lap and the targets the check works from all come from those laps alone. A test or ' +
+    'practice run\'s tyres are guessed from its laps (a short run as quick as qualifying is on new tyres) until you ' +
+    'say which.',
   'Shift points come from the event\'s own logs: each gear\'s ratio (engine revs per km/h) and the engine\'s ' +
     'torque at full throttle (the logger\'s engine torque channel), as the car\'s ratios and torque curve are not ' +
     'published. Drive force is torque times the ratio, so the best upshift is where the next gear drives harder, or ' +
     'just short of the rev limiter where it never does. An upshift 150 rpm or more before that is early; after it, ' +
-    'or held on the limiter, late. Each costs the drive it missed, carried down the straight.',
-  'The perfect lap is never quicker through a section than the best pass a lap has really made there. A flat-out ' +
-    'section is only as quick as the speed carried into it, so a pass with more (a tow) sets no floor there.',
+    'or held on the limiter, late.',
   'Corners are named by their official numbers only.',
 ];
 
-/** The lap on the map and against perfect driving's speed (a close-up of the picked mistake, then the whole lap), with
+/** The lap on the map and against the best real passes' speed (a close-up of the picked mistake, then the whole lap), with
  * the driver's inputs under the whole lap's speed. One cursor runs through every chart. */
 function OnTheTrack({ answer, check, selected, onSelect, sideBySide, cursor, onCursor: setCursor }: {
   answer: SessionTechnique; check: LapCheck; selected: number | null; onSelect: (n: number) => void;
@@ -416,9 +401,9 @@ function OnTheTrack({ answer, check, selected, onSelect, sideBySide, cursor, onC
   const t = useText();
   const styles = useStyles();
   const [picked, setOverlay] = useState<Overlay | null>(null);
-  const overlay: Overlay = picked ?? (check.trace?.model?.best ? 'best' : 'perfect');
   const best = check.trace?.model?.best ?? null;
-  const mistake = check.mistakes[(selected ?? 0) - 1] ?? null;
+  const overlay: Overlay = best ? picked ?? 'best' : 'off';
+  const mistake = check.obvious[(selected ?? 0) - 1] ?? null;
   const bands = useMemo(() => bandsOf(check), [check]);
   const tr = check.trace;
   const corners = answer.corners ?? [];
@@ -427,7 +412,7 @@ function OnTheTrack({ answer, check, selected, onSelect, sideBySide, cursor, onC
   return (
     <View style={styles.track}>
       {tr && mistake && (
-        <TechniqueTrace stepM={tr.step_m} driven={tr.driven} perfect={tr.perfect} realistic={tr.realistic}
+        <TechniqueTrace stepM={tr.step_m} driven={tr.driven} best={best?.speed}
           bands={bands} selected={selected} onSelect={onSelect} corners={corners}
           from={mistake.start_m - CLOSE_UP_M} to={mistake.end_m + CLOSE_UP_M}
           title={`Close-up of ${selected}. ${mistake.title} (${mistake.code})`} cursor={cursor} onCursor={setCursor} />
@@ -435,7 +420,7 @@ function OnTheTrack({ answer, check, selected, onSelect, sideBySide, cursor, onC
       {/* the whole lap's speed and the inputs under it zoom together; the close-up zooms on its own */}
       <ZoomGroup>
       {tr ? (
-        <TechniqueTrace stepM={tr.step_m} driven={tr.driven} perfect={tr.perfect} realistic={tr.realistic}
+        <TechniqueTrace stepM={tr.step_m} driven={tr.driven} best={best?.speed}
           bands={bands} selected={selected} onSelect={onSelect} corners={corners} height={sideBySide ? 260 : 240}
           title="Speed over the whole lap" cursor={cursor} onCursor={setCursor} />
       ) : (
@@ -450,29 +435,20 @@ function OnTheTrack({ answer, check, selected, onSelect, sideBySide, cursor, onC
               under it.
             </Text>
           )}
-          {tr.inputs && tr.model && (
-            <Tabs label="Laid over the driver's inputs, dashed" value={overlay} onChange={setOverlay}
-              items={OVERLAYS.filter((o) => o.key !== 'best' || best)} />
+          {tr.inputs && best && (
+            <Tabs label="Laid over the driver's inputs, dashed" value={overlay} onChange={setOverlay} items={OVERLAYS} />
           )}
-          {tr.inputs && overlay === 'best' && best && <BestSources best={best} lapTime={check.time} />}
-          {tr.inputs && tr.model && overlay !== 'off' && overlay !== 'best' && (
-            <Text style={t.note}>
-              The dashed line is what the {overlay === 'perfect' ? 'perfect lap' : 'realistic target'}&apos;s speed asks
-              of the car: throttle as a share of the car&apos;s full drive, brake pressure at this driver&apos;s own
-              pressure per g on this lap, and the gear and revs of the ideal shift points. The model has no pedals or
-              steering; ! marks each obvious mistake.
-            </Text>
-          )}
+          {tr.inputs && overlay === 'best' && best && <BestSources best={best} />}
           {tr.inputs ? (
             <TechniqueInputs stepM={tr.step_m} points={tr.driven.length}
               inputs={overlay === 'best' && best ? { ...tr.inputs, speed: tr.driven } : tr.inputs}
               fastest={fastest && !fastest.this_lap ? fastest.inputs : null}
               fastestLabel={fastest && !fastest.this_lap
                 ? `Fastest lap: ${fastest.run} L${fastest.number} · ${formatLap(fastest.time)}` : null}
-              model={overlay === 'off' ? null : overlay === 'best' ? best : tr.model?.[overlay] ?? null}
+              model={overlay === 'best' ? best : null}
               modelLabel={OVERLAYS.find((o) => o.key === overlay)?.legend ?? null}
-              marks={(check.obvious ?? []).map((m) => ({ at_m: m.at_m, code: m.code }))}
-              phases={tr.model_phases} channels={answer.inputs} bands={bands} selected={selected} onSelect={onSelect}
+              marks={check.obvious.map((m) => ({ at_m: m.at_m, code: m.code }))}
+              channels={answer.inputs} bands={bands} selected={selected} onSelect={onSelect}
               corners={corners} cursor={cursor} onCursor={setCursor} tall={sideBySide} />
           ) : (
             <Text style={t.note}>This lap&apos;s inputs come with the new check, worked out in the background.</Text>
@@ -489,11 +465,9 @@ function OnTheTrack({ answer, check, selected, onSelect, sideBySide, cursor, onC
   );
 }
 
-type Overlay = 'best' | 'perfect' | 'realistic' | 'off';
+type Overlay = 'best' | 'off';
 const OVERLAYS: { key: Overlay; label: string; legend: string | null }[] = [
-  { key: 'best', label: 'Best', legend: 'Best technique' },
-  { key: 'perfect', label: 'Perfect', legend: 'Perfect driving' },
-  { key: 'realistic', label: 'Realistic', legend: 'Realistic target' },
+  { key: 'best', label: 'Best real passes', legend: 'Best real passes' },
   { key: 'off', label: 'Off', legend: null },
 ];
 
@@ -503,8 +477,8 @@ const PUT_RIGHT: Partial<Record<ObviousMistake['kind'], string>> = {
   early_shift: 'early upshift', late_shift: 'late upshift',
 };
 
-/** Where the best-technique lap comes from, section by section, and what it finds over this lap. */
-function BestSources({ best, lapTime }: { best: BestTechnique; lapTime: number }) {
+/** Where the dashed line comes from, section by section, and what each pass finds over this lap there. */
+function BestSources({ best }: { best: BestTechnique }) {
   const t = useText();
   const fixed = (x: BestSource) => (x.put_right?.length
     ? `, ${x.put_right.map((k) => PUT_RIGHT[k] ?? k).join(' and ')} put right` : '');
@@ -513,11 +487,10 @@ function BestSources({ best, lapTime }: { best: BestTechnique; lapTime: number }
   return (
     <View style={{ gap: 4 }}>
       <Text style={t.note}>
-        The dashed line through each corner is the driver&apos;s own quickest clean pass of the event (no obvious
-        mistake in it) where it beats this lap&apos;s; where none does, this lap&apos;s own pass with its obvious
-        mistakes taken out (built). Every upshift is at the ideal revs, so an early or late one is put right and its
-        time counted; the gear and revs show the ideal shift points. Joined smoothly: {formatLap(best.time)},{' '}
-        {s2(lapTime - best.time)} quicker.
+        The dashed line through each corner is the driver&apos;s own quickest clean pass of the event on the same
+        tyres (no obvious mistake in it) where it beats this lap&apos;s; where none does, this lap&apos;s own pass with
+        its obvious mistakes taken out (built). Every upshift is at the ideal revs; the gear and revs show the ideal
+        shift points.
       </Text>
       {best.sources.map((x) => (
         <Text key={`${x.code}${x.start_m}`} style={t.small}>
@@ -529,7 +502,7 @@ function BestSources({ best, lapTime }: { best: BestTechnique; lapTime: number }
 }
 
 const bandsOf = (check: LapCheck) =>
-  check.mistakes.map((m, i) => ({ n: i + 1, start_m: m.start_m, end_m: m.end_m, label: `${m.title} (${m.code})`,
+  check.obvious.map((m, i) => ({ n: i + 1, start_m: m.start_m, end_m: m.end_m, label: `${m.title} (${m.code})`,
     phase: m.phase }));
 
 function Progress({ head }: { head: SessionTechnique | EventTechnique }) {
@@ -554,8 +527,8 @@ function LapSummary({ check, room }: { check: LapCheck; room: number }) {
   const wide = useWide();
   const gutter = useGutter();
   const styles = useStyles();
-  const named = check.budget.mistakes;
-  // the three lap times share the page's column (beside the map on a computer): as big as fits on one line each
+  const ob = check.obvious;
+  // the three figures share the page's column (beside the map on a computer): as big as fits on one line each
   const cell = (Math.min(room, 1240) - 2 * gutter) / (wide ? 3 : 2) - (wide ? 36 : 18);
   const size = Math.floor(Math.min(wide ? 76 : 44, cell / 3.6));
   return (
@@ -564,28 +537,50 @@ function LapSummary({ check, room }: { check: LapCheck; room: number }) {
         {[
           <Fig key="lap" label={`Lap ${check.number}`} value={formatLap(check.time)} size={size} bar={theme.rule}
             note={check.run} />,
-          <Fig key="real" label="Realistic target" value={formatLap(check.realistic)} size={size}
-            bar={theme.timing.personal}
-            note={`${s2(check.time - check.realistic)} to find · a quick lap's usual grip at each place`} />,
-          <Fig key="perfect" label="Perfect driving" value={formatLap(check.perfect)} size={size} bar={theme.timing.best}
-            note={`${s2(check.gap)} away · the car's best at every place`} />,
+          <Fig key="without" label="Without the mistakes" value={formatLap(check.without_mistakes)} size={size}
+            bar={theme.timing.personal} note="the lap's own time less what its mistakes cost" />,
+          <Fig key="lost" label="Lost to mistakes" value={s2(check.mistakes_s)} size={size} bar={theme.delta.loss}
+            note={`${ob.length} mistake${ob.length === 1 ? '' : 's'}, overlaps counted once`} />,
         ]}
       </FigRow>
       <Text style={StyleSheet.flatten([t.lead, styles.measure])}>
-        {check.mistakes.length
-          ? `${check.mistakes.length} mistake${check.mistakes.length === 1 ? '' : 's'} on this lap cost ${s2(named)} ` +
-            `against the realistic target; the biggest: ${lower(check.mistakes[0].title)} in ` +
-            `${check.mistakes[0].code} (${s2(check.mistakes[0].cost_s)}).`
-          : 'No mistake on this lap costs more than 0.02 s against the realistic target.'}
+        {ob.length
+          ? `${ob.length} mistake${ob.length === 1 ? '' : 's'} on this lap cost ${s2(check.mistakes_s)}; the biggest: ` +
+            `${lower(ob[0].title)} (${s2(ob[0].cost_s)}).`
+          : 'No obvious mistake on this lap.'}
         {check.pit_from_m != null ? ` The lap ends in the pit lane from ${m0(check.pit_from_m)}.` : ''}
       </Text>
     </View>
   );
 }
 
-/** A mistake: its number in an ink block (red when picked), what it is, where and in which phase, its cost as a
- * figure, then what happened and what to do instead. */
-function MistakeRow({ n, m, on, first, onPress }: { n: number; m: Mistake; on: boolean; first: boolean;
+/** The run's tyres (new or used): the driver's, or guessed from its laps with a tap to confirm or change. */
+function TyresLine({ tyres, onPick }: { tyres: RunTyres; onPick: (t: Tyres) => void }) {
+  const t = useText();
+  const styles = useStyles();
+  const word = tyres.tyres === 'new' ? 'New tyres' : 'Used tyres';
+  return (
+    <View style={styles.lapBlock}>
+      <View style={styles.lapHead}>
+        <Label small>Tyres</Label>
+      </View>
+      <Text style={t.body}>
+        {tyres.sure ? `${word} (${tyres.why}).` : `${word}, guessed (${tyres.why}). Is that right?`}
+        {tyres.laps != null ? ` Compared with the event's ${tyres.laps} clean laps on ${tyres.tyres} tyres.` : ''}
+      </Text>
+      <View style={styles.laps}>
+        {(['new', 'used'] as Tyres[]).map((k) => (
+          <Choice key={k} on={tyres.sure && tyres.tyres === k} onPress={() => onPick(k)}
+            label={k === 'new' ? 'New' : 'Used'} accessibilityLabel={`This run was on ${k} tyres`} />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+/** A mistake: its number in an ink block (red when picked), what it is, where and in which phase, what it cost as a
+ * figure, then what happened, what to do instead, what the laps measure it at and how often it repeats. */
+function MistakeRow({ n, m, on, first, onPress }: { n: number; m: ObviousMistake; on: boolean; first: boolean;
   onPress: () => void }) {
   const t = useText();
   const theme = useTheme();
@@ -608,7 +603,7 @@ function MistakeRow({ n, m, on, first, onPress }: { n: number; m: Mistake; on: b
           </View>
         </View>
         <Text style={StyleSheet.flatten([styles.cost, { color: deltaColor(theme, m.cost_s) ?? theme.text }])}>
-          {m.cost_s.toFixed(2)}
+          {m.cost_s < 0.005 ? '<0.01' : m.cost_s.toFixed(2)}
           <Text style={StyleSheet.flatten([styles.costUnit, { color: deltaColor(theme, m.cost_s) ?? theme.text }])}> s</Text>
         </Text>
       </View>
@@ -618,52 +613,12 @@ function MistakeRow({ n, m, on, first, onPress }: { n: number; m: Mistake; on: b
           <Text style={t.strong}>Instead: </Text>
           {m.do}
         </Text>
-        <Text style={t.small}>
-          {s2(m.cost_s)} against the realistic target, {s2(m.cost_perfect_s)} against perfect driving
-          {m.carried_s >= 0.01 ? `; ${s2(m.carried_s)} of it carried on past ${m0(m.end_m)}` : ''}
-          {m.repeats ? ` · on ${m.repeats.laps} of the session's ${m.repeats.of} clean laps` : ''}
-        </Text>
-      </View>
-    </Pressable>
-  );
-}
-
-/** An obvious mistake, in the mistake rows' style: an exclamation in the ink block, what it is and where, its cost,
- * then what happened and what to do instead. */
-function ObviousRow({ m, first, on, onPress }: { m: ObviousMistake; first: boolean; on: boolean;
-  onPress: () => void }) {
-  const t = useText();
-  const theme = useTheme();
-  const wide = useWide();
-  const styles = useStyles();
-  return (
-    <Pressable accessibilityRole="button" accessibilityState={{ selected: on }} onPress={onPress}
-      style={StyleSheet.flatten([styles.mistake, !first && styles.mistakeRule, on && styles.mistakeOn])}>
-      <View style={styles.mistakeHead}>
-        <View style={StyleSheet.flatten([styles.no, styles.noOn])}>
-          <Text style={StyleSheet.flatten([styles.noText, styles.noOnText])}>!</Text>
-        </View>
-        <View style={styles.flex}>
-          <Text style={styles.mistakeTitle}>{m.title}</Text>
-          <View style={styles.meta}>
-            <View style={StyleSheet.flatten([styles.phaseKey, { backgroundColor: phaseColor(theme, m.phase) }])} />
-            <Text style={styles.metaText}>
-              {m.code} · {m.phase} · {Math.round(m.start_m)}–{m0(m.end_m)}
-            </Text>
-          </View>
-        </View>
-        <Text style={StyleSheet.flatten([styles.cost, { color: deltaColor(theme, m.cost_s) ?? theme.text }])}>
-          {m.cost_s.toFixed(2)}
-          <Text style={StyleSheet.flatten([styles.costUnit, { color: deltaColor(theme, m.cost_s) ?? theme.text }])}> s</Text>
-        </Text>
-      </View>
-      <View style={wide ? styles.mistakeBody : styles.mistakeBodyPhone}>
-        <Text style={t.body}>{m.what}</Text>
-        <Text style={t.body}>
-          <Text style={t.strong}>Instead: </Text>
-          {m.do}
-        </Text>
-        {m.measured && <Text style={t.small}>{measuredLine(m.measured)}</Text>}
+        {(m.measured || m.repeats) && (
+          <Text style={t.small}>
+            {m.measured ? measuredLine(m.measured) : ''}
+            {m.repeats ? `${m.measured ? ' · ' : ''}On ${m.repeats.laps} of the session's ${m.repeats.of} clean laps.` : ''}
+          </Text>
+        )}
       </View>
     </Pressable>
   );
@@ -700,59 +655,6 @@ function MeasuredCosts({ list, no }: { list: MeasuredCost[]; no: number }) {
         </View>
       ))}
     </Section>
-  );
-}
-
-function BudgetView({ check }: { check: LapCheck }) {
-  const t = useText();
-  const styles = useStyles();
-  const wide = useWide();
-  const b = check.budget;
-  const copied = b.in_targets ?? 0;
-  const rows = [
-    { label: 'Mistakes', value: b.mistakes },
-    ...(copied < 0 ? [{ label: 'In perfect lap', value: copied }] : []),
-    { label: 'At the limit', value: b.at_limit },
-    { label: 'Optimism', value: b.optimism },
-    ...(b.pit_lane > 0 ? [{ label: 'Pit lane', value: b.pit_lane }] : []),
-    { label: 'Unexplained', value: b.other },
-  ];
-  const words: { label: string; value: number; text: string }[] = [
-    { label: 'Mistakes', value: b.mistakes,
-      text: 'every mistake above, each at what it alone costs.' },
-    ...(copied < 0 ? [{ label: 'In perfect lap', value: copied,
-      text: 'perfect driving is built on the quickest laps, this one included, so it repeats part of these mistakes: ' +
-        'that part is no gap to it, though it is still time to find.' }] : []),
-    { label: 'At the limit', value: b.at_limit,
-      text: 'flat out, braking with the ABS working or driving out on the traction control, yet slower than perfect ' +
-        'driving. The car on the day (tyres, tow, wind), not the pedals.' },
-    { label: 'Optimism', value: b.optimism,
-      text: 'perfect driving takes the best the car has shown at every place, which no single lap puts together; the ' +
-        'realistic target takes what a quick lap usually shows there.' },
-    ...(b.pit_lane > 0 ? [{ label: 'Pit lane', value: b.pit_lane,
-      text: `the lap ends in the pit lane, from ${m0(check.pit_from_m ?? 0)}.` }] : []),
-    { label: 'Unexplained', value: b.other,
-      text: `losses too small to name or with no clear cause (${s2(b.other_losses)}), less the places this lap beat ` +
-        `the realistic target (${s2(b.other_gains)}).` },
-  ];
-  return (
-    <View style={wide ? styles.budget : styles.budgetPhone}>
-      <View style={wide ? styles.budgetBars : undefined}>
-        <Text style={styles.subhead}>Time against perfect driving, s</Text>
-        <Bars rows={rows} max={Math.max(...rows.map((r) => r.value), 0.001)} />
-      </View>
-      <View style={wide ? styles.budgetWords : undefined}>
-        {words.map((w, i) => (
-          <View key={w.label} style={StyleSheet.flatten([styles.term, i === 0 && styles.termFirst])}>
-            <View style={styles.termHead}>
-              <Text style={t.label}>{w.label}</Text>
-              <Text style={styles.termValue}>{s2(w.value)}</Text>
-            </View>
-            <Text style={t.note}>{w.text.charAt(0).toUpperCase() + w.text.slice(1)}</Text>
-          </View>
-        ))}
-      </View>
-    </View>
   );
 }
 
@@ -842,10 +744,6 @@ const useStyles = themed((c) => ({
   costUnit: { fontFamily: Fonts.display, fontSize: 15 },
   mistakeBody: { marginLeft: 42, gap: 6, maxWidth: 780 },
   mistakeBodyPhone: { gap: 6 },
-  budget: { flexDirection: 'row', gap: 32, alignItems: 'flex-start' },
-  budgetPhone: { gap: 18 },
-  budgetBars: { flex: 5, minWidth: 0 },
-  budgetWords: { flex: 6, minWidth: 0 },
   subhead: { ...Type.label, color: c.text, borderBottomWidth: 1, borderColor: c.rule, paddingBottom: 5, marginBottom: 8 },
   term: { paddingVertical: 9, borderTopWidth: 1, borderColor: c.separator, gap: 3 },
   termFirst: { borderTopWidth: 1, borderColor: c.rule },

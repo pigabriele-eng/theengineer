@@ -33,7 +33,7 @@ def test_three_things_one_per_corner_most_costly_first():
 def test_did_we_fix_it_compares_the_previous_runs_three_things():
     before = FakeRun([_habit("T1:brake_early", 0.30), _habit("T4:exit_lift", 0.20), _habit("T2:late_throttle", 0.10)])
     # T1 gone, T4 halved, T2 the same; a one-lap T1 slip still counts against it
-    after_laps = [{"mistakes": [{"key": "T1:brake_early", "cost_s": 0.06}]}, {"mistakes": []}, {"mistakes": []}]
+    after_laps = [{"obvious": [{"key": "T1:brake_early", "cost_s": 0.06}]}, {"obvious": []}, {"obvious": []}]
     after = FakeRun([_habit("T4:exit_lift", 0.10, laps=2), _habit("T2:late_throttle", 0.10)], after_laps)
     out = {t["code"]: t for t in coaching.fixed_things(before, after)}
     assert out["T1"]["verdict"] == "fixed" and out["T1"]["after"] == {"cost_s": 0.02, "laps": 1, "of": 3,

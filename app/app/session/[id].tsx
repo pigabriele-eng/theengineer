@@ -117,8 +117,8 @@ function buildChart(session: SessionDetail, analysis: Analysis | null, stints: S
   };
 }
 
-/** One run as a race programme's lap chart: the photo and the run's name, its four figures (best lap, theoretical
- * best, what is left on the table, laps), then every lap in numbers (section times against the run's and the event's
+/** One run as a race programme's lap chart: the photo and the run's name, its four figures (best lap, typical clean
+ * lap, the spread between the two, laps), then every lap in numbers (section times against the run's and the event's
  * best, hot pressure and TPMS temperature at each corner) by stint; then the track, corner by corner, lap against lap,
  * the setup and the debriefs. */
 export default function SessionScreen() {
@@ -308,7 +308,7 @@ export default function SessionScreen() {
   if (chart && laps.length) {
     sections.push({ title: 'The run',
       dek: 'The best lap against the best of each section, from this run and from the whole event.',
-      body: <RunFigures chart={chart} analysis={analysis} cleanCount={cleanCount} offCount={offCount} /> });
+      body: <RunFigures chart={chart} cleanCount={cleanCount} offCount={offCount} /> });
     sections.push({ title: 'Lap chart',
       dek: (chart.tyres ? 'Every lap in numbers: section times, then hot pressure and TPMS temperature at each corner.'
         : 'Every lap in numbers: its time and the time of each section.') +
@@ -442,9 +442,8 @@ export default function SessionScreen() {
 
 // ---------- 01 the run ----------
 
-function RunFigures({ chart, analysis, cleanCount, offCount }: {
+function RunFigures({ chart, cleanCount, offCount }: {
   chart: Chart;
-  analysis: Analysis | null;
   cleanCount: number;
   offCount: number;
 }) {
@@ -454,8 +453,9 @@ function RunFigures({ chart, analysis, cleanCount, offCount }: {
   const gutter = useGutter();
   const { width } = useWindowDimensions();
   const fastest = chart.laps.find((l) => l.status === 'fastest');
-  const theo = analysis?.corners.length ? analysis.theoretical_best : null;
-  const left = chart.best != null && theo != null ? Math.max(chart.best - theo, 0) : null;
+  // The typical lap is the middle of the run's clean laps: real laps only, never a lap stitched or simulated.
+  const typical = median(chart.laps.filter((l) => l.clean).map((l) => l.time));
+  const spread = chart.best != null && typical != null ? Math.max(typical - chart.best, 0) : null;
   // the four figures share the column: as big as the mockup's, smaller when a lap time would not fit
   const cell = (Math.min(width, 1240) - 2 * gutter) / (wide ? 4 : 2) - (wide ? 36 : 12);
   const size = Math.floor(Math.min(wide ? 76 : 50, cell / 3.6));
@@ -463,10 +463,10 @@ function RunFigures({ chart, analysis, cleanCount, offCount }: {
     <Fig key="best" label={fastest ? `Best lap · L${fastest.number}` : 'Best lap'} value={formatLap(chart.best)} size={size}
       bar={chart.bestIsEvent ? c.timing.best : c.timing.personal}
       note={chart.bestIsEvent ? 'quickest of the event' : 'quickest of this run'} />,
-    <Fig key="theo" label="Theoretical best" value={formatLap(theo)} size={size} bar={c.timing.personal}
-      note="this run’s best sections added up" />,
-    <Fig key="left" label="Left on the table" value={left != null ? left.toFixed(2) : '–'} unit={left != null ? 's' : undefined}
-      size={size} color={left != null ? c.delta.loss : undefined} bar={c.delta.loss} note="between the two" />,
+    <Fig key="typical" label="Typical lap" value={formatLap(typical)} size={size} bar={c.timing.personal}
+      note="the middle of this run’s clean laps" />,
+    <Fig key="spread" label="Best to typical" value={spread != null ? spread.toFixed(2) : '–'} unit={spread != null ? 's' : undefined}
+      size={size} color={spread != null ? c.delta.loss : undefined} bar={c.delta.loss} note="between the two" />,
     <Fig key="laps" label="Laps" value={String(chart.laps.length)} size={size} bar={c.rule}
       note={`${cleanCount} clean · ${offCount} out, in or pit`} />,
   ];
@@ -509,7 +509,6 @@ function tyreTone(c: Palette, chart: Chart, lap: ChartLap, v: number | null, m: 
 
 const pText = (v: number | null) => (v == null ? '–' : v.toFixed(2));
 const tText = (v: number | null) => (v == null ? '–' : String(Math.round(v)));
-const sum = (vs: (number | null)[]) => (vs.every((v) => v != null) ? (vs as number[]).reduce((a, b) => a + b, 0) : null);
 
 function LapChart({ chart, runs, ticked, onTick }: { chart: Chart; runs: number; ticked: number[];
   onTick: (lap: number) => void }) {
@@ -617,7 +616,6 @@ function ChartTable({ chart, fastest, ticked, onTick }: { chart: Chart; fastest:
     <View style={StyleSheet.flatten([styles.tr, styles.foot, first && styles.footFirst])}>
       <View style={StyleSheet.flatten([styles.footLabel, { width: lapW }])}>
         <Text style={styles.footName}>{label}</Text>
-        <Text style={styles.footTime}>{formatLap(sum(values))}</Text>
       </View>
       {values.map((v, i) => (
         <Cell key={i} w={W.sec} bg={v != null ? color : undefined} fg={c.timing.onBest} bold>{v != null ? v.toFixed(2) : '–'}</Cell>
@@ -760,7 +758,6 @@ function ChartBlocks({ chart, fastest, ticked, onTick }: { chart: Chart; fastest
     <View style={styles.pFoot}>
       <View style={styles.pTop}>
         <Label>{label}</Label>
-        <Text style={StyleSheet.flatten([styles.pTime, styles.pushRight])}>{formatLap(sum(values))}</Text>
       </View>
       {strip((i) => (
         <View style={StyleSheet.flatten([styles.sCell, values[i] != null ? { backgroundColor: color } : null])}>
@@ -828,7 +825,7 @@ function ChartBlocks({ chart, fastest, ticked, onTick }: { chart: Chart; fastest
       {chart.codes.length > 0 && (
         <View style={styles.pFootRule}>
           {footBlock('Best of this run', chart.runBest, c.timing.personal)}
-          {chart.eventBest && footBlock('Best of the event · ideal', chart.eventBest, c.timing.best)}
+          {chart.eventBest && footBlock('Best of the event', chart.eventBest, c.timing.best)}
         </View>
       )}
     </View>
@@ -938,7 +935,6 @@ const useStyles = themed((c) => ({
   footFirst: { borderTopWidth: 3, borderTopColor: c.rule },
   footLabel: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: 5 },
   footName: { ...Type.label, fontSize: 12, color: c.text },
-  footTime: { fontFamily: Fonts.display, fontSize: 20, lineHeight: 24, color: c.text },
   stint: { paddingTop: 14, paddingBottom: 6, borderBottomWidth: 3, borderColor: c.rule, gap: 3 },
   stintLine: { flexDirection: 'row', alignItems: 'baseline', gap: 12 },
   stintName: { fontFamily: Fonts.display, fontSize: 22, lineHeight: 24, textTransform: 'uppercase', color: c.text },

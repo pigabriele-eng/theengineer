@@ -1,7 +1,7 @@
-// The technique check's speed trace: the lap's speed against perfect driving's and the realistic target's, with the
-// lap's mistakes marked as numbered bands. Series colours are slots 1 and 3 of the validated chart palette (as in
-// the report), the realistic target a dashed neutral line; each band wears the colour of its driving phase, as
-// the phase strip and the report do, with the phase named in the legend.
+// The technique check's speed trace: the lap's speed against the driver's best real passes on the same tyres, with
+// the lap's mistakes marked as numbered bands. Series colours are slots 1 and 3 of the validated chart palette (as in
+// the report), the best passes dashed; each band wears the colour of its driving phase, as the phase strip and the
+// report do, with the phase named in the legend.
 import { useId, useMemo, useState } from 'react';
 import { LayoutChangeEvent, Platform, StyleSheet } from 'react-native';
 import Svg, { Circle, ClipPath, Defs, G, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
@@ -23,8 +23,7 @@ export function bandFill(theme: Palette, b: Band, picked: boolean, grid: string,
 type Props = {
   stepM: number;
   driven: number[];
-  perfect: number[];
-  realistic: number[];
+  best?: number[] | null; // the best real passes' speed, laid over the lap's
   bands: Band[]; // numbered in order of cost
   selected: number | null;
   onSelect?: (n: number) => void;
@@ -42,7 +41,7 @@ const PAD = { left: 40, right: 10, top: 22, bottom: 34 };
 export const TRACE_PAD_X = { left: PAD.left, right: PAD.right }; // charts under this one line up with it
 const SANS = Fonts.sans;
 
-export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selected, onSelect, corners, from, to,
+export function TechniqueTrace({ stepM, driven, best, bands, selected, onSelect, corners, from, to,
   height = 220, title, cursor: sharedCursor, onCursor }: Props) {
   const theme = useTheme();
   const styles = useStyles();
@@ -63,10 +62,10 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
   const setCursor = (k: number | null) => (onCursor ?? setOwn)(k == null ? null : k + i0);
   const x = useMemo(() => Array.from({ length: i1 - i0 + 1 }, (_, k) => (i0 + k) * stepM), [i0, i1, stepM]);
   const series = [
-    { key: 'realistic', label: 'Realistic target', values: realistic.slice(i0, i1 + 1), color: c.axis,
-      dash: '5,4', width: 1.5 },
-    { key: 'perfect', label: 'Perfect driving', values: perfect.slice(i0, i1 + 1), color: c.s3, width: 2 },
-    { key: 'driven', label: 'Your lap', values: driven.slice(i0, i1 + 1), color: c.s1, width: 2 },
+    ...(best && best.length === driven.length ? [{ key: 'best', label: 'Best real passes', tip: 'best',
+      values: best.slice(i0, i1 + 1), color: c.s3, dash: '6,4', width: 2 }] : []),
+    { key: 'driven', label: 'Your lap', tip: 'yours', values: driven.slice(i0, i1 + 1), color: c.s1, width: 2,
+      dash: undefined },
   ];
   const all = series.flatMap((s) => s.values);
   let lo = Math.min(...all), hi = Math.max(...all);
@@ -148,7 +147,7 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
         onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}>
         {width > 0 && (
           <Svg width={width} height={height} pointerEvents="none"
-            accessibilityLabel={`${title}: your lap against perfect driving, ${shown.length} mistakes marked`}>
+            accessibilityLabel={`${title}: your lap${series.length > 1 ? ' against your best real passes' : ''}, ${shown.length} mistakes marked`}>
             {zoomed && (
               <Defs>
                 <ClipPath id={clip}>
@@ -228,7 +227,7 @@ export function TechniqueTrace({ stepM, driven, perfect, realistic, bands, selec
               <View key={s.key} style={styles.tipRow}>
                 <View style={StyleSheet.flatten([styles.tipKey, { backgroundColor: s.color }])} />
                 <Text style={styles.tipValue}>{`${s.values[cursor].toFixed(1)} km/h`}</Text>
-                <Text style={styles.tipLabel}>{s.key === 'driven' ? 'yours' : s.key}</Text>
+                <Text style={styles.tipLabel}>{s.tip}</Text>
               </View>
             ))}
             {under && <Text style={styles.tipBand}>{`${under.n}. ${under.label}`}</Text>}

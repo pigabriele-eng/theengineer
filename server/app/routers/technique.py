@@ -22,13 +22,17 @@ import time
 from collections import OrderedDict
 
 import numpy as np
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import heavy, models, storage
+from app import heavy, models, run_tyres, storage
 from app.analysis import compact
+from app.analysis.insights import targets
 from app.analysis.shifts import ShiftModel
 from app.analysis.technique import (
     INPUT_ROLES,
@@ -37,6 +41,7 @@ from app.analysis.technique import (
     check_lap,
     habits,
     mistake_stats,
+    mistakes_total,
     pool_stats,
     relative_braking,
     section_times,
@@ -48,7 +53,7 @@ from app.routers.sessions import official_corners
 router = APIRouter(prefix="/technique")
 log = logging.getLogger(__name__)
 
-TECHNIQUE_VERSION = 15  # raise when the check changes, so every kept one is worked out again
+TECHNIQUE_VERSION = 16  # raise when the check changes, so every kept one is worked out again
 # 5: perfect driving on a lap's own line at limits never below that lap's own (local_limits.on_own_line)
 # 6: the driver's inputs and perfect driving's phases with each lap's speed trace
 # 7: the obvious mistakes (exit lifts, power stepped on, soft straight-line braking); the theoretical lap never quicker
@@ -68,6 +73,8 @@ TECHNIQUE_VERSION = 15  # raise when the check changes, so every kept one is wor
 #     lifts the comparison with the target names are obvious ones too; every obvious mistake counts in the budget
 # 14: every lift and on/off throttle counts, however small (10 points off the pedal for 0.08 s), whatever it costs
 # 15: perfect driving takes only section passes timed as their own speed says (insights.consistent_passes)
+# 16: no perfect lap shown: every lap against laps on the same tyres (run_tyres), the mistakes that repeat are the
+#     obvious ones, and each lap's time without its mistakes
 TRACES_WAIT_S = 3600  # longest the check waits for the logs to be read into lap traces
 HABITS_SHOWN = 12
 DETAILS_KEPT = 16  # laps' full checks kept in memory
@@ -90,6 +97,10 @@ class TechniqueError(Exception):
 
 def _plan(db: Session, kind: str, id_: int) -> tuple[reports.Plan, str]:
     plan = reports.plan_for(db, kind, id_)
+    # the tyres the driver set on its runs are part of what the check is made from
+    tyres = run_tyres.stored(db, [i.session.id for i in plan.items])
+    if tyres:
+        plan.signature = reports._hash([plan.signature, sorted(tyres.items())])
     return plan, reports._hash([TECHNIQUE_VERSION, plan.signature])
 
 
@@ -175,15 +186,16 @@ def _detail(row: models.TechniqueCache, member: str) -> dict | None:
 
 
 def _lap_row(x: dict) -> dict:
-    return {"number": x["number"], "time": x["time"], "gap_s": x["gap"], "mistakes_s": x["budget"]["mistakes"],
-            "count": len(x["mistakes"]), "top": x["mistakes"][0]["title"] if x["mistakes"] else None,
-            "top_code": x["mistakes"][0]["code"] if x["mistakes"] else None, "in_lap": x.get("pit_from_m") is not None}
+    ob = x["obvious"]
+    return {"number": x["number"], "time": x["time"], "tyres": x.get("tyres"), "mistakes_s": x["mistakes_s"],
+            "without_mistakes": x["without_mistakes"], "count": len(ob), "top": ob[0]["title"] if ob else None,
+            "top_code": ob[0]["code"] if ob else None, "in_lap": x.get("pit_from_m") is not None}
 
 
 def _fastest(row: models.TechniqueCache, res: dict, x: dict) -> dict | None:
     """The scope's fastest lap (the reference the report uses), with its inputs to lay over lap x's; none when x is
     that lap."""
-    ref = res.get("reference")
+    ref = ((res.get("tyres") or {}).get(x.get("tyres")) or {}).get("reference") or res.get("reference")  # same tyres
     lap = next((y for y in res["laps"] if y["key"] == ref["key"]), None) if ref else None
     if lap is None:
         return None
@@ -222,13 +234,48 @@ def _measured(db: Session, row: models.TechniqueCache, res: dict) -> dict[str, d
 
 def _lap_out(row: models.TechniqueCache, res: dict, x: dict, session_habits: list[dict],
              measured: dict[str, dict] | None = None) -> dict:
+    """One lap's check as the page shows it: its obvious mistakes (each with how often it repeats and what it
+    measures on the laps), what the lap would have been without them, and its speed and inputs with the driver's best
+    real passes on the same tyres to lay over them. No perfect lap: the targets the check works from stay inside."""
     detail = _detail(row, x["detail"]) or {}
     repeats = {h["key"]: {"laps": h["laps"], "of": h["of"]} for h in session_habits}
-    mistakes = [{**m, "repeats": repeats.get(m["key"])} for m in detail.get("mistakes", x["mistakes"])]
-    out = {k: v for k, v in x.items() if k not in ("detail", "mistakes")}
-    if measured:  # each obvious mistake with its cost measured on the laps, where there are enough of them
-        out["obvious"] = [{**m, "measured": measured.get(f"{m['code']}:{m['kind']}")} for m in x.get("obvious", [])]
-    return {**out, "mistakes": mistakes, "trace": detail.get("trace"), "fastest": _fastest(row, res, x)}
+    out = {k: v for k, v in x.items() if k not in HIDDEN}
+    out["obvious"] = [{**m, "repeats": repeats.get(m["key"]),
+                       "measured": (measured or {}).get(f"{m['code']}:{m['kind']}")} for m in x.get("obvious", [])]
+    trace = detail.get("trace")
+    if trace:
+        trace = {k: v for k, v in trace.items() if k not in ("perfect", "realistic", "model_phases")}
+        trace["model"] = {k: v for k, v in (trace.get("model") or {}).items() if k in ("best",)}
+    return {**out, "trace": trace, "fastest": _fastest(row, res, x)}
+
+
+HIDDEN = ("detail", "mistakes", "perfect", "realistic", "gap", "budget")  # a lap's parts the page never shows
+
+
+def _tyres_out(res: dict | None, session_id: int) -> dict | None:
+    """A run's tyres (run_tyres: the driver's, or guessed and to confirm) and how many laps of the event are on them."""
+    t = ((res or {}).get("run_tyres") or {}).get(str(session_id))
+    if t is None:
+        return None
+    on = ((res or {}).get("tyres") or {}).get(t["tyres"]) or {}
+    return {**t, "laps": on.get("laps")}
+
+
+class TyresIn(BaseModel):
+    tyres: Literal["new", "used"]
+
+
+@router.put("/sessions/{session_id}/tyres")
+def set_session_tyres(session_id: int, body: TyresIn, db: Session = Depends(get_db)):
+    """The run's tyres as the driver says (new or used): the check is worked out again with every lap against
+    perfect driving on the same tyres."""
+    s = db.get(models.RunSession, session_id)
+    if s is None:
+        raise HTTPException(404, "Session not found")
+    run_tyres.set_tyres(db, s.id, body.tyres)
+    kind, id_ = _scope_of(s)
+    _, _, status = _state(db, kind, id_)
+    return {"tyres": body.tyres, "status": status}
 
 
 @router.get("/sessions/{session_id}")
@@ -254,6 +301,7 @@ def session_technique(session_id: int, lap: int | None = None, db: Session = Dep
     laps = sorted((x for x in res["laps"] if x["session_id"] == s.id), key=lambda x: x["number"])
     session_habits = res["habits"]["sessions"].get(str(s.id), [])
     out["laps"] = [_lap_row(x) for x in laps]
+    out["tyres"] = _tyres_out(res, s.id)
     out["best_lap"] = min(laps, key=lambda x: x["time"])["number"] if laps else None
     chosen = next((x for x in laps if x["number"] == lap), None) if lap is not None else None
     if lap is not None and chosen is None:
@@ -287,9 +335,10 @@ def event_technique(event_id: int, db: Session = Depends(get_db), brief: bool = 
     for item in plan.items:
         laps = [x for x in (res["laps"] if res else []) if x["session_id"] == item.session.id]
         best = min(laps, key=lambda x: x["time"]) if laps else None
-        sessions.append({"id": item.session.id, "name": item.name,
+        sessions.append({"id": item.session.id, "name": item.name, "tyres": _tyres_out(res, item.session.id),
                          "driver": item.session.driver.name if item.session.driver else None, "laps": len(laps),
-                         "best": {"number": best["number"], "time": best["time"], "gap_s": best["gap"]}
+                         "best": {"number": best["number"], "time": best["time"],
+                                  "without_mistakes": best["without_mistakes"]}
                          if best else None})
     out["sessions"] = sessions
     quickest = min(res["laps"], key=lambda x: x["time"]) if res and res["laps"] else None
@@ -473,17 +522,41 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
         raise TechniqueError("No clean laps to check")
     prep, extras = prepared
     shifts = ShiftModel.of([x.trace for x in prep.laps])  # the event's shift points, from its own logs
+    # like with like: every lap against perfect driving on the same tyres (run_tyres), never qualifying's grip for a
+    # race lap
+    runs = {i.session.id: i.session for i in reports._used(plan)}
+    times: dict[int, list[float]] = {}
+    for x in prep.laps:
+        times.setdefault(extras.session_of[x.key], []).append(x.time)
+    tyres = run_tyres.resolve(db, [run_tyres.RunLaps(sid, runs[sid].kind.value if sid in runs else "test",
+                                                     runs[sid].name if sid in runs else None, ts)
+                                   for sid, ts in times.items()])
+    tyres_of = {x.key: tyres[extras.session_of[x.key]]["tyres"] for x in prep.laps}
+    groups = {}
+    for g in (run_tyres.NEW, run_tyres.USED):
+        xs = [x for x in prep.laps if tyres_of[x.key] == g]
+        if not xs:
+            continue
+        ref = min(xs, key=lambda x: x.time)
+        if len(xs) == len(prep.laps):
+            groups[g] = (prep.perfect, prep.held, prep.calibration, prep.held_calibration, prep.sim.time, ref)
+        else:
+            row.current = f"Perfect driving on {g} tyres"
+            db.commit()
+            t = targets(xs, ref.trace, ref.time, prep.sections)
+            groups[g] = (t.perfect, t.held, t.calibration, t.held_calibration, t.sim.time, ref)
     row.done, row.total = 0, len(prep.laps)
     laps, details, passes = [], {}, []
     for i, x in enumerate(prep.laps):
         if i % 10 == 0:
             row.done, row.current = i, f"Checking lap {i + 1} of {len(prep.laps)}"
             db.commit()
-        out = reports._plain(check_lap(x.trace, prep.perfect, prep.held, prep.sections, lap_time=x.time,
-                                       units=extras.units,
-                                       calibrations=(prep.calibration, prep.held_calibration), shifts=shifts))
+        perfect, held, cal, held_cal, _, _ = groups[tyres_of[x.key]]
+        out = reports._plain(check_lap(x.trace, perfect, held, prep.sections, lap_time=x.time, units=extras.units,
+                                       calibrations=(cal, held_cal), shifts=shifts))
         member = f"l{i}"
         laps.append({"key": x.key, "session_id": extras.session_of[x.key], "run": x.run, "number": x.number,
+                     "tyres": tyres_of[x.key],
                      "time": x.time, "driver": x.driver, "perfect": out["perfect"], "realistic": out["realistic"],
                      "gap": out["gap"], "pit_from_m": out["pit_from_m"], "budget": out["budget"],
                      "mistakes": [{k: m[k] for k in SUMMARY_KEYS} for m in out["mistakes"]],
@@ -491,18 +564,27 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
         details[member] = {"mistakes": out["mistakes"], "trace": out["trace"]}
         passes.append(Pass(x.run, x.number, x.time, x.driver, section_times(x.trace, prep.sections), out["obvious"],
                            out["trace"], out["braking"]))
-    # braking left unused at a corner is a mistake against the best braking there on the other laps
-    relative_braking([p.braking for p in passes], [p.obvious for p in passes])
+    # braking left unused at a corner is a mistake against the best braking there on the other laps on the same tyres
+    for g in groups:
+        on = [(p, x) for p, x in zip(passes, prep.laps, strict=True) if tyres_of[x.key] == g]
+        relative_braking([p.braking for p, _ in on], [p.obvious for p, _ in on])
+    # what the lap would have been without its mistakes: its time less what the obvious mistakes cost, each once
+    for x in laps:
+        x["obvious"].sort(key=lambda o: -o["cost_s"])
+        x["mistakes_s"] = mistakes_total(x["obvious"])
+        x["without_mistakes"] = round(x["time"] - x["mistakes_s"], 3)
     # every lap's best technique: the driver's quickest clean pass of the event through each section, or built
     blobs = {}
-    for i, p in enumerate(passes):
+    same = {g: [p for p, x in zip(passes, prep.laps, strict=True) if tyres_of[x.key] == g] for g in groups}
+    for i, (p, x) in enumerate(zip(passes, prep.laps, strict=True)):
         member = f"l{i}"
-        details[member]["trace"]["model"]["best"] = reports._plain(best_technique(p, passes, prep.sections, shifts))
+        details[member]["trace"]["model"]["best"] = reports._plain(best_technique(p, same[tyres_of[x.key]],
+                                                                                  prep.sections, shifts))
         blobs[member] = np.frombuffer(json.dumps(details[member]).encode(), np.uint8)
     del details
     by_session: dict[int, list[list[dict]]] = {}
-    for x in laps:
-        by_session.setdefault(x["session_id"], []).append(x["mistakes"])
+    for x in laps:  # the mistakes that repeat: the obvious ones
+        by_session.setdefault(x["session_id"], []).append(x["obvious"])
     result = {
         "length_m": prep.length - 1,  # metres: the trace has a point at both ends
         "numbering": prep.numbering,
@@ -510,12 +592,16 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
         "corners": [{"code": c[0], "at_m": c[1]} for c in corners or []],
         "reference": {"key": prep.reference.key, "session_id": extras.session_of[prep.reference.key],
                       "number": prep.reference.number, "time": prep.reference.time},
-        "theoretical": prep.sim.time,
+        # the laps on each tyres and the quickest of them (each lap is compared only with laps on the same tyres)
+        "tyres": {g: {"laps": sum(1 for x in prep.laps if tyres_of[x.key] == g),
+                      "reference": {"key": v[5].key, "session_id": extras.session_of[v[5].key],
+                                    "number": v[5].number, "time": v[5].time}} for g, v in groups.items()},
+        "run_tyres": {str(sid): v for sid, v in tyres.items()},
         "shift_points": shifts.to_dict() if shifts is not None else None,
         # the driver's inputs sent with every lap's trace: the logger channel each comes from and its unit
         "inputs": {r: {"channel": channels.get(r), "unit": extras.units.get(r)} for r in INPUT_ROLES},
         "laps": laps,
-        "habits": {"event": habits([x["mistakes"] for x in laps]),
+        "habits": {"event": habits([x["obvious"] for x in laps]),
                    "sessions": {str(sid): habits(m) for sid, m in by_session.items()}},
         "laps_left_out": left_out,
         # what each obvious mistake really cost on these laps, per driver, pooled with the track's other events

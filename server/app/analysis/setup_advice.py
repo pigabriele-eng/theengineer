@@ -149,16 +149,12 @@ def _power_oversteer(a: dict, model: ModelFn, recs: list[Recommendation]) -> str
         evidence.append(f"the rear tyres running about {temps['front_minus_rear']:.0f} °C cooler than the fronts")
     on_power = [s for s in secs if s["car"] >= CAR_SHARE_MIN and where_car_loses(s) == "on the throttle"]
     on_power.sort(key=lambda s: -s["car"])
-    cost = sum(s["car"] for s in on_power)
     out_of = [c for c, _ in swings[:4]] or [c for c, _ in loose]
 
     expect = f"Less oversteer on the throttle out of {listed(out_of)}"
     if tc_secs and (tc or 0) >= TC_PER_LAP:
         expect += f" and less traction control, most of all in {tc_secs[0]['code']}"
     expect += "."
-    if on_power:
-        expect += (f" The car leaves {cost:.2f} s on the throttle against its own grip in "
-                   f"{listed([s['code'] for s in on_power])}: that is what this change goes after.")
     pushes = sorted(((s["code"], _bal(s, "mid")) for s in secs if s["min_speed_kmh"] < SLOW_KMH
                      and (_bal(s, "mid") or 0) >= NOTABLE), key=lambda x: -x[1])
     watch = ("Mid-corner understeer. The car already needs more steering than normal in the middle of "
@@ -301,8 +297,8 @@ def _braking_note(a: dict) -> str | None:
         return None
     abs_share = a["diagnostics"].get("abs_share_of_braking")
     more = _span([m for _, m in found], ".0f").replace(DASH, " to ")
-    text = (f"Brakes need no setup change. Into {listed([c for c, _ in found])} the car's share is in the braking, "
-            f"but the quickest passes there use {more} bar more pressure: the time is in how hard the pedal goes on")
+    text = (f"Brakes need no setup change. Into {listed([c for c, _ in found])} the quickest passes use {more} bar "
+            "more pressure: the time is in how hard the pedal goes on")
     if abs_share is not None:
         text += f". ABS works in {abs_share * 100:.0f} % of all braking"
     return text + "."
@@ -351,8 +347,7 @@ def advise(a: dict, model: ModelFn) -> dict:
     _aero(a, recs)
     notes = [n for n in (_braking_note(a),) if n]
     if a.get("gradient") is None:
-        headline = ("This log has no usable steering or yaw rate channel, so the balance can't be read. The time "
-                    "split below still shows where the car, not the driver, limits the lap.")
+        headline = "This log has no usable steering or yaw rate channel, so the balance can't be read."
     else:
         headline = next((h for h in heads if h), None) or (
             "No part of the corner stands out from the car's normal balance by more than the usual lap-to-lap "
@@ -524,11 +519,6 @@ def method(a: dict, geometry: dict, sessions: list[dict], preset: str | None) ->
                      "turning, all above 0.5 g. Values are the median over the clean laps; quick is the quickest "
                      "tenth of passes. Within ±0.3° is normal, slight to 0.8°, clear to 1.5°, strong beyond. "
                      f"Differences under {g['spread']:.1f}° are within the usual lap-to-lap scatter.")
-    notes.append("Driving, car and theoretical: in each section the fastest lap against the quickest pass is "
-                 "driving, since the car has shown it can do better. The quickest pass against the realistic target "
-                 "(the grip a quick lap usually shows at each place, used without a mistake) is the car's share. The "
-                 "rest, down to the theoretical lap (the best the car has shown at each place), is the theoretical "
-                 "asking for the best of every place at once.")
     notes += coverage_notes(a.get("coverage") or {})
     if preset in PRESETS:
         notes.append(f"Bar changes are run through the steady-state vehicle model on the {PRESETS[preset][0]} "
