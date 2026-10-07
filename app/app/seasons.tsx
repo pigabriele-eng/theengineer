@@ -6,12 +6,14 @@ import {
   Choice, Choices, ErrorLine, Field, FormActions, Input, MainButton, Note, PageTitle, Said,
 } from '@/components/Controls';
 import { EntryFields, Lists, useLists } from '@/components/EventInfoForm';
+import { CountryTag } from '@/components/Flag';
 import { FoldHead } from '@/components/Fold';
 import { SeasonMatch } from '@/components/SeasonMatch';
 import PrintButton from '@/components/PrintButton';
 import { Block, Colophon, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { todayIso } from '@/lib/calendar';
+import { countryOfAny } from '@/lib/countries';
 import { carLong } from '@/lib/garage';
 import { dateRange, parseDay } from '@/lib/events';
 import { noPrint } from '@/lib/print';
@@ -538,17 +540,24 @@ function RoundRow({ r, season, entries }: { r: SeasonRound; season: Season; entr
   const state = r.event_id == null ? 'its event was deleted'
     : r.has_data ? 'has data' : (r.end ?? r.start ?? today) < today ? 'no data' : 'planned';
   const name: ReactNode = <Text style={wide ? styles.roundName : styles.roundNamePhone} numberOfLines={2}>{r.name}</Text>;
+  const linked = r.event_id != null ? (
+    // Link asChild hands its child's style to a web anchor, which can't take a style array: one object
+    <Link href={{ pathname: '/event/[id]', params: { id: r.event_id } }} asChild>
+      <Pressable accessibilityRole="link" style={styles.roundLink}>{name}</Pressable>
+    </Link>
+  ) : name;
+  const country = countryOfAny([r.venue, r.name]); // the flag and three letters before the round's name
   return (
     <View style={styles.round}>
       <View style={styles.roundHead}>
         <View style={styles.roundCode}><Text style={styles.roundCodeText}>R{r.order}</Text></View>
         <View style={styles.roundText}>
-          {r.event_id != null ? (
-            // Link asChild hands its child's style to a web anchor, which can't take a style array: one object
-            <Link href={{ pathname: '/event/[id]', params: { id: r.event_id } }} asChild>
-              <Pressable accessibilityRole="link" style={styles.roundLink}>{name}</Pressable>
-            </Link>
-          ) : name}
+          {country ? (
+            <View style={styles.roundNameLine}>
+              <CountryTag country={country} />
+              <View style={styles.roundNameShrink}>{linked}</View>
+            </View>
+          ) : linked}
           <Text style={styles.roundSub} numberOfLines={2}>
             {[dateRange(r.start, r.end) ?? 'days not known', state].join(' · ')}
           </Text>
@@ -716,6 +725,8 @@ const useStyles = themed((c) => ({
   roundCodeText: { fontFamily: Fonts.display, fontSize: 20, lineHeight: 22, color: c.background },
   roundText: { flex: 1, minWidth: 0, gap: 2 },
   roundLink: { alignSelf: 'flex-start' },
+  roundNameLine: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  roundNameShrink: { flexShrink: 1, minWidth: 0 },
   roundName: { fontFamily: Fonts.display, fontSize: 26, lineHeight: 29, textTransform: 'uppercase', color: c.text },
   roundNamePhone: { fontFamily: Fonts.display, fontSize: 21, lineHeight: 24, textTransform: 'uppercase', color: c.text },
   roundSub: { fontFamily: Fonts.body, fontSize: 15, lineHeight: 20, color: c.textSecondary },

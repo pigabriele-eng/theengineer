@@ -10,6 +10,7 @@ import { ErrorLine, FormActions, Input, MainButton, Note, Said, Tick } from '@/c
 import { EventCompare, Pick, RunKey } from '@/components/EventCompare';
 import { EventForm } from '@/components/EventForm';
 import { EventInfoCard } from '@/components/EventInfoCard';
+import { HeroCountry } from '@/components/Flag';
 import { MoveSessions } from '@/components/MoveSessions';
 import { PrepButton, usePrepAvailability } from '@/components/PrepButton';
 import {
@@ -18,12 +19,14 @@ import {
 import PrintButton from '@/components/PrintButton';
 import { RenameEvent } from '@/components/RenameEvent';
 import { ResultsPanel } from '@/components/ResultsPanel';
+import { RunNameQuestions } from '@/components/RunNames';
 import { SeasonMatch } from '@/components/SeasonMatch';
 import { filledNote, localPick, PickerKind, RunChips, RunNameEditor, RunPicker, useGarage } from '@/components/RunChips';
 import { Text, View } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
 import { todayIso, When, whenOf } from '@/lib/calendar';
 import { MAX_LAPS } from '@/lib/compare';
+import { countryOfAny } from '@/lib/countries';
 import { RunsDeleted } from '@/lib/deleteRuns';
 import { dateRange, dayLabel, eventsApi, Folder, FolderSession, KIND_NAMES, NO_EVENT } from '@/lib/events';
 import { EventGuess } from '@/lib/fingerprints';
@@ -162,6 +165,8 @@ export default function EventScreen() {
   const eventId = isEvent ? Number(key) : null;
   const title = folder?.name ?? (isEvent ? 'Event' : 'Not in an event');
   const timed = sessions.some((s) => s.best_lap_s != null);
+  // its country (the flag and three letters in the hero's kicker), from its track, else its name ("Monza test")
+  const country = isEvent && folder ? countryOfAny([folder.track, folder.name]) : null;
 
   // ---------- the photo and the folio ----------
 
@@ -169,14 +174,14 @@ export default function EventScreen() {
     <View onLayout={(e) => (topH.current = e.nativeEvent.layout.height)}>
       <Hero photo={isEvent ? photoFor(folder.track) : PHOTOS.dusk} tag={isEvent ? TAG[whenOf(folder, todayIso())] : 'Unfiled'}
         rest="Sessions" restHref="/" title={headlineOf(folder, isEvent)} deck={deckOf(folder, isEvent)}
-        height={wide ? 380 : 400} />
+        height={wide ? 380 : 400} badge={country ? <HeroCountry country={country} /> : undefined} />
       <Folio items={isEvent ? [
         folder.track,
         dateRange(folder.start, folder.end),
         !folder.dates_by_hand && folder.log_start ? 'Dates from the logs' : null,
         folder.sessions > 0 ? <><B>{folder.sessions}</B> runs · <B>{folder.clean_laps}</B> clean laps</> : 'No runs yet',
         folder.best_lap_s != null ? <>Best <B>{formatLap(folder.best_lap_s)}</B></> : null,
-      ] : [<><B>{folder.sessions}</B> runs in no event</>]} />
+      ] : [<><B>{folder.sessions}</B> run{folder.sessions === 1 ? '' : 's'} in no event</>]} />
     </View>
   ) : undefined;
 
@@ -255,6 +260,8 @@ export default function EventScreen() {
   // The questions about the event's season (or who drove it), when the server isn't sure: under the band, above the
   // runs. Nothing when there are none.
   const seasonQuestion = eventId != null && <SeasonMatch eventId={eventId} onChanged={load} style={styles.season} />;
+  // runs the official timetable can't place by itself: "Which session was 03_Q?"
+  const runNameQuestion = eventId != null && <RunNameQuestions eventId={eventId} folder={folder} onChanged={load} style={styles.season} />;
 
   // ---------- the sections ----------
 
@@ -357,6 +364,7 @@ export default function EventScreen() {
         {band}
         {notice && <View style={styles.notice}><Said text={notice} onPress={() => setNotice(null)} /></View>}
         {seasonQuestion}
+        {runNameQuestion}
         {runs}
         {sideBySide}
         {info}

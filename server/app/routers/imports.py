@@ -218,6 +218,8 @@ class _Run:
             db.add(s)
             db.flush()
             rec = add_log(db, s, path, item.name, beacons)
+            if item.where and "/" in item.where:  # the folders it came in ("01_PTS/02"): which session it was
+                rec.meta = {**(rec.meta or {}), "folder": item.where.split("/", 1)[1]}
             # no event picked: a planned event at the log's venue on its day, if there is one
             target = db.get(models.Event, self.target) if self.target is not None else plans.planned_for(db, rec.meta)
             if target is not None and target.id != self.target:

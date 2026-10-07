@@ -110,13 +110,16 @@ function Question({ q, showEvent, onDone }: { q: SeasonQuestion; showEvent: bool
   const needsNumber = q.needs.includes('car_number');
   const single = q.options.length === 1;
   const driver = q.kind === 'driver';
+  // our drivers are on several cars of the round's entry list: each one a tap, the likeliest first
+  const cars = single && needsNumber ? q.options[0].numbers ?? [] : [];
 
-  const send = async (key: string, driverId?: number) => {
-    setBusy(driverId != null ? `driver:${driverId}` : key);
+  const send = async (key: string, { carNumber = number, driverId, busyKey }:
+    { carNumber?: string; driverId?: number; busyKey?: string } = {}) => {
+    setBusy(busyKey ?? (driverId != null ? `driver:${driverId}` : key));
     setError(null);
     try {
       const pick = key !== 'other' ? undefined : driverId != null ? { id: driverId } : { name };
-      const r = await seasonMatchApi.answer(q.id, key, number, pick);
+      const r = await seasonMatchApi.answer(q.id, key, carNumber, pick);
       onDone(r.done);
     } catch (e) {
       setError((e as Error).message);
@@ -136,8 +139,16 @@ function Question({ q, showEvent, onDone }: { q: SeasonQuestion; showEvent: bool
       <Label style={styles.kind}>{LABEL[q.kind]}{showEvent && q.event_name ? ` · ${q.event_name}` : ''}</Label>
       <Text style={wide ? styles.prompt : styles.promptPhone}>{q.prompt}</Text>
       {q.why ? <Note>{q.why}</Note> : null}
+      {cars.length > 0 && (
+        <FormActions style={styles.answers}>
+          {cars.map((c) => (
+            <MainButton key={`car-${c.car_number}`} label={c.label} sub={c.why} busy={busy === `car-${c.car_number}`}
+              disabled={busy != null} onPress={() => send(q.options[0].key, { carNumber: c.car_number, busyKey: `car-${c.car_number}` })} />
+          ))}
+        </FormActions>
+      )}
       {needsNumber && (
-        <Field label="Car number" style={styles.number}>
+        <Field label={cars.length ? 'Another number' : 'Car number'} style={styles.number}>
           <Input value={number} onChangeText={setNumber} placeholder={`Your car's number in ${q.series_name ?? 'the series'}`}
             maxLength={8} editable={busy == null} accessibilityLabel="Car number" box
             onSubmitEditing={() => number.trim() && send(q.options[0].key)} returnKeyType="done" />
@@ -155,7 +166,7 @@ function Question({ q, showEvent, onDone }: { q: SeasonQuestion; showEvent: bool
           <Choices>
             {q.drivers!.map((d) => (
               <Choice key={d.id} label={d.name} on={busy === `driver:${d.id}`} disabled={busy != null}
-                onPress={() => send('other', d.id)} />
+                onPress={() => send('other', { driverId: d.id })} />
             ))}
           </Choices>
         </View>

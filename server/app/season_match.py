@@ -15,12 +15,14 @@ change, every event with data and no season is matched against the rounds of the
   isn't recognised. A question is kept (SeasonMatch, "pending") for the app to ask, with one option per round.
 - No season of ours matches, but a round on a series' published calendar (results module: result_calendar) does, at
   the same track on its days: the question is whether to add that series' season (made from its calendar, our entry
-  from its entry list when our car number is known, else the answer gives the number).
+  from its entry list when our car number is known, else the answer gives the number). An unknown number is looked
+  for on the round's entry list (else in its results) by our drivers' names (_our_drivers): when they are on one car,
+  its number is the answer's; on several, those numbers are one-tap answers; on none, the number is asked for.
 - After a link, runs whose driver can't be told (two drivers or more, and the log names none of them) are left to
   the driving style (driver_prints.settle; Gabriele, 2026-10-07: "fully automatic based on fingerprinting", "I want
   the app to ask me"): runs whose style is a driver the app knows get their driver by themselves, and a style it
-  doesn't know is asked about ("driver": "New driver found in Q2 and Race 2 run 1: who is this?", the likely names
-  as answers, or a name typed in; ask_new_driver). One answer names every run of that style.
+  doesn't know is asked about ("driver": "New driver found in Q2 and Race 2 stint 1: who is this?", the likely
+  names, any driver of the garage, or a new one; ask_new_driver). One answer names every run of that style.
 A "no" is kept, so the same question isn't asked again; a link made by itself can be undone the same way. Nothing
 set by hand changes: an event with a season (set on it, or a round linked to it) isn't matched again, and a run keeps
 the car and driver it has. Nothing here reads a log: the headers' venue, date, driver and logger serial are in the
@@ -54,6 +56,10 @@ NEAR_BEFORE = timedelta(days=14)  # the same track this close to a round, on oth
 NEAR_AFTER = timedelta(days=7)
 MAX_OPTIONS = 4
 MAX_RUNS = 500
+MAX_CARS = 120  # cars read from a round's entry list or results
+MAX_LINKS = 10  # earlier result links read for our car's crew
+MAX_GARAGE = 200  # garage drivers read when nothing else says who our drivers are
+MAX_CREW = 6
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
@@ -243,20 +249,118 @@ def _round_cands(db: Session, f: _Facts) -> list[_Cand]:
     return out
 
 
-def _known_number(db: Session, series: str, event_id: int) -> str | None:
-    """Our car's number in a series: as the results module has it for this event, else in a season of ours of the
-    same series, else as set by hand on another event's results."""
+def _known_number(db: Session, series: str, year: int, event_id: int) -> str | None:
+    """Our car's number in a series' season: as the results module has it for this event (or as set by hand on it),
+    else in our season of the same series and year, else as set by hand on another event's results of that year. Never
+    from another year: numbers change from season to season (Gabriele, 2026-10-07), so then our car is looked for on
+    the round's entry list by our drivers (_numbers_of)."""
     link = db.scalar(select(rm.EventResultLink).where(rm.EventResultLink.event_id == event_id))
-    if link is not None and link.series == series and link.car_number:
+    if link is not None and link.car_number and (link.series == series or link.by_hand):
         return link.car_number
     number = db.scalar(select(seasons.Season.car_number).where(seasons.Season.series == series,
+                                                               seasons.Season.year == year,
                                                                seasons.Season.car_number.is_not(None))
-                       .order_by(seasons.Season.year.desc(), seasons.Season.id.desc()).limit(1))
+                       .order_by(seasons.Season.id.desc()).limit(1))
     if number:
         return number
     return db.scalar(select(rm.EventResultLink.car_number).where(
-        rm.EventResultLink.series == series, rm.EventResultLink.by_hand == 1,
+        rm.EventResultLink.series == series, rm.EventResultLink.year == year, rm.EventResultLink.by_hand == 1,
         rm.EventResultLink.car_number.is_not(None)).order_by(rm.EventResultLink.updated_at.desc()).limit(1))
+
+
+def _round_cars(db: Session, series: str, year: int, round_id: str | None) -> list[dict]:
+    """The cars of a series' round: its published entry list, else the cars in its official results (each car's
+    crew over all its sessions). Read only."""
+    if not round_id:
+        return []
+    cal = db.scalar(select(rm.ResultCalendarRound).where(rm.ResultCalendarRound.series == series,
+                                                         rm.ResultCalendarRound.year == year,
+                                                         rm.ResultCalendarRound.round_id == round_id)
+                    .options(selectinload(rm.ResultCalendarRound.entries)))
+    if cal is not None and cal.entries:
+        return [{"car_number": e.car_number, "drivers": [d for d in e.drivers or [] if isinstance(d, str)],
+                 "team": e.team, "car_model": e.car_model} for e in cal.entries[:MAX_CARS]]
+    rows = db.scalars(select(rm.ResultRow).join(rm.ResultSession, rm.ResultSession.id == rm.ResultRow.session_pk)
+                      .join(rm.ResultRound, rm.ResultRound.id == rm.ResultSession.round_pk)
+                      .where(rm.ResultRound.series == series, rm.ResultRound.year == year,
+                             rm.ResultRound.round_id == round_id).order_by(rm.ResultRow.id)
+                      .limit(MAX_CARS * 8)).all()
+    cars: dict[str, dict] = {}
+    for r in rows:
+        car = cars.setdefault(r.car_number, {"car_number": r.car_number, "drivers": [], "team": None,
+                                             "car_model": None})
+        car["drivers"] += [d for d in r.drivers or [] if isinstance(d, str) and d not in car["drivers"]]
+        car["team"], car["car_model"] = car["team"] or r.team, car["car_model"] or r.car_model
+    return list(cars.values())
+
+
+def _driver_names(db: Session, ids) -> list[str]:
+    ids = list(dict.fromkeys(i for i in ids if i is not None))
+    return list(db.scalars(select(models.Driver.name).where(models.Driver.id.in_(ids)))) if ids else []
+
+
+def _our_drivers(db: Session, ev: models.Event, series: str) -> tuple[list[str], bool]:
+    """Who our drivers are, to find our car on an entry list, and whether that is sure: the drivers on the event's
+    runs, else those who have run with its runs' car (the garage's), else the series' drivers known from before (our
+    seasons of it, and our car's crew in its rounds our events were matched to). Else every driver in the garage,
+    which is only a guess (it is asked)."""
+    on_runs = db.scalars(select(models.RunSession.driver_id).where(models.RunSession.event_id == ev.id,
+                                                                   models.RunSession.driver_id.is_not(None))).all()
+    if names := _driver_names(db, on_runs):
+        return names, True
+    cars = set(db.scalars(select(models.RunSession.car_id).where(models.RunSession.event_id == ev.id,
+                                                                 models.RunSession.car_id.is_not(None))).all())
+    if cars:
+        ids = [*db.scalars(select(garage.DriverCar.driver_id).where(garage.DriverCar.car_id.in_(cars))).all(),
+               *db.scalars(select(models.RunSession.driver_id).where(models.RunSession.car_id.in_(cars))
+                           .limit(MAX_RUNS)).all()]
+        if names := _driver_names(db, ids):
+            return names, True
+    ids = [i for s in db.scalars(select(seasons.Season).where(seasons.Season.series == series)).all()
+           for i in seasons.entry_row(s.entry)["drivers"]]
+    names = _driver_names(db, ids)
+    links = db.scalars(select(rm.EventResultLink).where(rm.EventResultLink.series == series,
+                                                        rm.EventResultLink.event_id != ev.id,
+                                                        rm.EventResultLink.car_number.is_not(None),
+                                                        rm.EventResultLink.round_id.is_not(None))
+                       .order_by(rm.EventResultLink.updated_at.desc()).limit(MAX_LINKS)).all()
+    for link in links:
+        for car in _round_cars(db, series, link.year, link.round_id):
+            if car["car_number"] == link.car_number:
+                names += [d for d in car["drivers"] if d not in names]
+    if names:
+        return names, True
+    return list(db.scalars(select(models.Driver.name).order_by(models.Driver.id).limit(MAX_GARAGE))), False
+
+
+def _car_words(car: dict) -> str:
+    """"#12 Borusan Otomotiv Motorsport, BMW M4 GT4 EVO (Gabriele Piana, Michael Rackl)"."""
+    what = ", ".join(x for x in (car.get("team"), car.get("car_model")) if x)
+    crew = ", ".join(car.get("drivers") or [])
+    return f"#{car['car_number']}" + (f" {what}" if what else "") + (f" ({crew})" if crew else "")
+
+
+def _numbers_of(db: Session, ev: models.Event, series: str, year: int,
+                round_id: str | None) -> tuple[list[dict], bool]:
+    """Our car on the round's entry list (or in its results): the cars our drivers are on, the likeliest first (more
+    of our drivers on it, then a number or team of ours from before), and whether our drivers are sure ones."""
+    cars = _round_cars(db, series, year, round_id)
+    if not cars:
+        return [], False
+    names, sure = _our_drivers(db, ev, series)
+    found = []
+    for car in cars:
+        hit = [n for n in names if any(same_person(d, n) for d in car["drivers"])]
+        if hit:
+            found.append({**car, "matched": hit[:MAX_CREW]})
+    if len(found) > 1:
+        numbers = {n.strip().lstrip("#") for n in [
+            *db.scalars(select(garage.CarInfo.number).where(garage.CarInfo.number.is_not(None))).all(),
+            *db.scalars(select(seasons.Season.car_number).where(seasons.Season.car_number.is_not(None))).all()] if n}
+        teams = {p for t in db.scalars(select(garage.Team.name)).all() if (p := plans._plain(t))}
+        found.sort(key=lambda c: (-len(c["matched"]), c["car_number"] not in numbers,
+                                  plans._plain(c.get("team")) not in teams))
+    return found, sure
 
 
 def _official_cands(db: Session, f: _Facts) -> list[_Cand]:
@@ -281,11 +385,17 @@ def _official_cands(db: Session, f: _Facts) -> list[_Cand]:
             continue
         key = f"official:{r.series}:{r.year}:{r.round_id}"
         name = _series_name(r.series)
-        out.append(_Cand(key, True, {
-            "key": key, "label": f"{name} {r.year}, round {r.order} {r.name} ({days_text(r.start, r.end)})",
-            "why": f"Same track, {_when_words(f, r.start, r.end)}.", "series": r.series, "series_name": name,
-            "year": r.year, "round_id": r.round_id, "order": r.order, "name": r.name,
-            "car_number": _known_number(db, r.series, f.ev.id)}))
+        opt = {"key": key, "label": f"{name} {r.year}, round {r.order} {r.name} ({days_text(r.start, r.end)})",
+               "why": f"Same track, {_when_words(f, r.start, r.end)}.", "series": r.series, "series_name": name,
+               "year": r.year, "round_id": r.round_id, "order": r.order, "name": r.name,
+               "car_number": _known_number(db, r.series, r.year, f.ev.id)}
+        if not opt["car_number"]:  # our drivers on the round's entry list: one car is ours, several are asked
+            found, sure = _numbers_of(db, f.ev, r.series, r.year, r.round_id)
+            if len(found) == 1 and sure:
+                opt["car_number"], opt["entry"] = found[0]["car_number"], found[0]
+            elif found:
+                opt["numbers"] = found[:MAX_OPTIONS]
+        out.append(_Cand(key, True, opt))
     return out
 
 
@@ -594,6 +704,13 @@ def consider(db: Session, ev: models.Event, new_runs: list[int] | None = None) -
             prompt = f"Which series was {ev.name} ({days_text(f.start, f.end)}, {f.where})?"
         why = (f"{ev.name} was at {f.where} on {days_text(f.start, f.end)}, when the series raced there. Yes makes "
                "the season from the series' calendar, with your entry from its entry list.")
+        if len(official) == 1 and opt.get("entry"):
+            why += f" Your car there: {_car_words(opt['entry'])}."
+        elif len(official) == 1 and opt.get("numbers"):
+            names, cars = sorted({n for c in opt["numbers"] for n in c["matched"]}), opt["numbers"]
+            why += (f" {' and '.join(names)} {'is' if len(names) == 1 else 'are'} on "
+                    + (f"car #{cars[0]['car_number']} of its entry list: is it yours?" if len(cars) == 1
+                       else f"{len(cars)} cars of its entry list: which is yours?"))
         return _ask(db, ev, "official", prompt, why, [c.option for c in official])
     _drop_pending(db, ev.id, ("round", "official"))
     return None
@@ -703,6 +820,11 @@ def _season_from_calendar(db: Session, ev: models.Event, opt: dict, number: str)
         if len(cars) == 1:
             season.entry = {**entry, "car_id": cars.pop()}
     ours = _entry_row(db, series, year, opt.get("round_id"), number)
+    if ours is None:  # no entry list: our car as the round's results have it, when the question found it there
+        known = next((c for c in [opt.get("entry"), *(opt.get("numbers") or [])]
+                      if c and c.get("car_number") == number), None)
+        ours = rm.ResultEntry(car_number=number, drivers=known["drivers"], team=known.get("team"),
+                              car_model=known.get("car_model")) if known else None
     if ours is not None:
         numbered = select(garage.CarInfo.id).where(garage.CarInfo.number == number).limit(1)
         if seasons.entry_row(season.entry)["car_id"] is None and db.scalar(numbered) is None:
@@ -860,11 +982,22 @@ def _still_open(db: Session, row: SeasonMatch) -> bool:
     return True
 
 
+def _option_json(o: dict) -> dict:
+    """An answer; a series' round whose number isn't known yet has the cars our drivers are on as one-tap numbers."""
+    out = {"key": o["key"], "label": o.get("label"), "why": o.get("why")}
+    if o.get("numbers") and not o.get("car_number"):
+        out["numbers"] = [{"car_number": c["car_number"],
+                           "label": " ".join(x for x in (f"#{c['car_number']}", c.get("team")) if x),
+                           "why": " · ".join(x for x in (c.get("car_model"), ", ".join(c.get("drivers") or [])) if x)
+                           or None} for c in o["numbers"]]
+    return out
+
+
 def _json(db: Session, row: SeasonMatch, ev: models.Event | None = None) -> dict:
     ev = ev or db.get(models.Event, row.event_id)
     out = {"id": row.id, "event_id": row.event_id, "event_name": ev.name if ev else None, "kind": row.kind,
            "status": row.status, "prompt": row.prompt, "why": row.why,
-           "options": [{"key": o["key"], "label": o.get("label"), "why": o.get("why")} for o in row.options or []],
+           "options": [_option_json(o) for o in row.options or []],
            "needs": [], "created_at": row.created_at.isoformat() if row.created_at else None}
     if row.kind == "official" and row.status == "pending" and not any(o.get("car_number") for o in row.options):
         out["needs"] = ["car_number"]

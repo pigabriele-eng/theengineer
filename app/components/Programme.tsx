@@ -176,7 +176,7 @@ export function Credit({ photo, style, textStyle }: { photo: Photo; style?: View
 
 /** The full-bleed photo at the top of a page: the photo, a dark gradient only behind the headline, the credit in the top
  * right corner, then the kicker (a red tag and the rest, which can link back up), the huge headline and an italic deck. */
-export function Hero({ photo, tag, rest, restHref, title, deck, height, deckGap }: {
+export function Hero({ photo, tag, rest, restHref, title, deck, height, deckGap, badge }: {
   photo: Photo;
   tag: string;
   rest?: string;
@@ -185,6 +185,7 @@ export function Hero({ photo, tag, rest, restHref, title, deck, height, deckGap 
   deck?: string;
   height?: number;
   deckGap?: number; // room between the headline and the deck: more under a name with an underscore (06_D2S1)
+  badge?: ReactNode; // set first in the kicker: an event's country (components/Flag.tsx HeroCountry)
 }) {
   const styles = useStyles();
   const { width } = useWindowDimensions();
@@ -216,6 +217,7 @@ export function Hero({ photo, tag, rest, restHref, title, deck, height, deckGap 
         textStyle={styles.creditText} />
       <View style={StyleSheet.flatten([styles.copy, { left: gutter, right: gutter, bottom: wide ? 26 : 18 }])}>
         <View style={styles.kicker}>
+          {badge}
           <View style={styles.kickTag}><Text style={styles.kickTagText}>{tag}</Text></View>
           {rest && restHref ? (
             <Link href={restHref} asChild>
