@@ -244,7 +244,7 @@ def event_prediction(event_id: int, db: Session = Depends(get_db)):
     number = overview["car_number"]
     out: dict = {"event_id": ev.id, "series": series, "series_name": getattr(sync.ADAPTERS.get(series), "NAME", series),
                  "year": year, "venue": venue, "track": overview["track"], "round": overview["round"],
-                 "car_number": number, "car_number_from": overview["car_number_from"], "team": None,
+                 "car_number": number, "car_number_from": overview["car_number_from"], "team": None, "driver": None,
                  "finished": False, "prediction": None, "line": None, "trust": None, "comparison": None, "note": None}
     if year is None or venue is None:
         out["note"] = "This event has no circuit or date yet, so there is nothing to predict."
@@ -263,20 +263,22 @@ def event_prediction(event_id: int, db: Session = Depends(get_db)):
         venue = rnd.venue or venue
     order = rnd.order if rnd is not None else None
     team, _ = summary.team_of(summary._rounds(db, series), number, year)
-    out["team"] = team
+    driver = summary.our_driver(db, series, number, year)  # earlier seasons: wherever our driver raced
+    out["team"], out["driver"] = team, driver
     out["finished"] = order is not None and any(
         s["venue"] == venue and int(s["year"]) == year and s["order"] == order for s in sessions)
     bests = [] if out["finished"] else [r["best_lap_s"] for r in _event_facts(db, ev)["rows"] if r["best_lap_s"]]
     try:
         pred = predict.predict_round(sessions, venue, year, car_number=number, team=team, before_order=order,
-                                     logged_best_s=min(bests) if bests else None)
+                                     logged_best_s=min(bests) if bests else None, driver=driver)
         pred["line"] = out["line"] = prediction_line(pred)
         pred["logged_best"] = {"time_s": min(bests), "event": ev.name} if bests else None
         out["prediction"] = pred
         if out["finished"]:
-            actual = predict.actual_round(sessions, venue, year, car_number=number, team=team, order=order)
+            actual = predict.actual_round(sessions, venue, year, car_number=number, team=team, order=order,
+                                          driver=driver)
             out["comparison"] = predict.compare(pred, actual)
-        out["trust"] = backtest_verdict(db, sessions, number, team)
+        out["trust"] = backtest_verdict(db, sessions, number, team, driver)
     except Exception:  # what was worked out above still stands
         log.exception("prediction for event %s failed", ev.id)
         out["note"] = out["note"] or "The prediction could not be worked out from the results loaded."
@@ -356,6 +358,7 @@ def prediction(venue: str, year: int, car_number: str | None = None, team: str |
     sessions = summary.model_sessions(db, _series(series))
     if not sessions:
         raise HTTPException(409, "No official results loaded yet")
+    driver = driver or summary.our_driver(db, series, car_number, year)  # numbers change between seasons
     return predict.predict_round(sessions, venue_key(venue), year, car_number=car_number, team=team,
                                  logged_best_s=logged_best_s, driver=driver)
 
@@ -370,7 +373,8 @@ def backtest(car_number: str = "12", team: str | None = None, series: str = sync
         raise HTTPException(409, "No official results loaded yet")
     if team is None and not driver:
         rounds = summary._rounds(db, series)
-        team, _ = summary.team_of(rounds, car_number, None)
+        team, year = summary.team_of(rounds, car_number, None)
+        driver = summary.our_driver(db, series, car_number, year)  # our driver, followed through every number
     years = range(max(2023, sync.first_year(series) + 1), date.today().year + 1)
     return predict.backtest(sessions, car_number=car_number, team=team, driver=driver, years=years)
 

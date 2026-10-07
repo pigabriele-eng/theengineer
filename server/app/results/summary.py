@@ -1,16 +1,17 @@
 """What the official results say about us: per session (position, gaps, our best lap against the fastest and the
 class best, where our logged best would have placed), per event, and across years and circuits for the prep report.
 
-"Us" is a car number in one season. Numbers change hands between seasons, so earlier seasons find us by the team
-that ran that number (the same number in that team when it ran one, else the team's best-placed car).
+"Us" is a car number in one season. Numbers change hands between seasons (and a driver changes team), so earlier
+seasons find us by our driver (``our_driver``: the one of the car's crew who drove our own logged runs, else who raced
+the most seasons); without one, by the team that ran that number.
 """
 from __future__ import annotations
 
 import re
 import statistics
-from collections import defaultdict
+from collections import Counter, defaultdict
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.results import models as rm
@@ -219,22 +220,69 @@ def our_row(s: rm.ResultSession, team: str | None, car_number: str | None, same_
     return min(placed, key=lambda r: r.position) if placed else (mine[0] if mine else None)
 
 
+def our_driver(db: Session, series: str, car_number: str | None, year: int | None) -> str | None:
+    """The driver who follows our car across seasons, as a surname ('piana'): of the drivers of this car number in
+    ``year`` (its results, else its entry list), the one who drove the most of our own runs (the garage's drivers),
+    else the one who raced the most seasons of the series. None when the number is unknown that year."""
+    from app import models  # the app's runs and drivers
+
+    n = _num(car_number)
+    if not n or year is None:
+        return None
+    rounds = _rounds(db, series)
+    crew: Counter[str] = Counter()
+    for rnd in rounds:
+        if rnd.year == year:
+            for sess in rnd.sessions:
+                for r in sess.rows:
+                    if _num(r.car_number) == n:
+                        crew.update(predict._surname(d) for d in r.drivers or [])
+    if not crew:
+        entries = db.scalars(select(rm.ResultEntry).join(rm.ResultCalendarRound)
+                             .where(rm.ResultCalendarRound.series == series, rm.ResultCalendarRound.year == year)).all()
+        for e in entries:
+            if _num(e.car_number) == n:
+                crew.update(predict._surname(d) for d in e.drivers or [])
+    crew.pop("", None)
+    if not crew:
+        return None
+    seasons: dict[str, set[int]] = defaultdict(set)
+    for rnd in rounds:
+        for sess in rnd.sessions:
+            for r in sess.rows:
+                for d in r.drivers or []:
+                    if (sn := predict._surname(d)) in crew:
+                        seasons[sn].add(rnd.year)
+    runs = Counter({predict._surname(name): k for name, k in db.execute(
+        select(models.Driver.name, func.count(models.RunSession.id))
+        .join(models.RunSession, models.RunSession.driver_id == models.Driver.id).group_by(models.Driver.name))})
+    return max(crew, key=lambda sn: (runs.get(sn, 0), len(seasons[sn]), crew[sn]))
+
+
+def _driver_row(s: rm.ResultSession, driver: str) -> rm.ResultRow | None:
+    mine = [r for r in s.rows if driver in {predict._surname(d) for d in r.drivers or []}]
+    return mine[0] if mine else None
+
+
 def _dry(s: rm.ResultSession) -> bool:
     """Dry at the start: the best laps of a session that turns wet later were set before it did."""
     return "wet" not in ((s.weather or {}).get("conditions_start") or "").lower()
 
 
 def history(db: Session, venue: str | None = None, series: str = "gt4-europe", car_number: str | None = None,
-            year: int | None = None, team: str | None = None) -> dict:
+            year: int | None = None, team: str | None = None, driver: str | None = None) -> dict:
     """Past results at a circuit by year, our strong and weak circuits across all years, and makes compared.
 
-    venue: a venues.venue_key ("zandvoort"); car_number + year find our team; team overrides it.
+    venue: a venues.venue_key ("zandvoort"); car_number + year find our team; team overrides it. Other seasons find
+    our car by our driver (a surname; found from the car number when not given), else by the team.
     """
     rounds = _rounds(db, series)
+    if driver is None and car_number and year is not None:
+        driver = our_driver(db, series, car_number, year)
     found_year = None
     if team is None and car_number:
         team, found_year = team_of(rounds, car_number, year)
-    out: dict = {"series": series, "venue": venue, "team": team, "car_number": car_number,
+    out: dict = {"series": series, "venue": venue, "team": team, "car_number": car_number, "driver": driver,
                  "team_from_year": found_year, "years": [], "circuits": [], "brands": []}
     if not rounds:
         out["note"] = "No official results loaded yet"
@@ -245,9 +293,12 @@ def history(db: Session, venue: str | None = None, series: str = "gt4-europe", c
         same = found_year is None or rnd.year == found_year
         sessions = []
         for s in sorted((x for x in rnd.sessions if is_classification(x.code)), key=lambda x: x.code):
-            car = our_row(s, team, car_number, same_number=True) if team or car_number else None
-            if car is None and not same:
-                car = our_row(s, team, None, same_number=False)
+            if driver and (year is None or rnd.year != year):  # another season: wherever our driver raced
+                car = _driver_row(s, driver)
+            else:
+                car = our_row(s, team, car_number, same_number=True) if team or car_number else None
+                if car is None and not same:
+                    car = our_row(s, team, None, same_number=False)
             fastest = _best(s.rows)
             sessions.append({"code": s.code, "title": s.title, "starts_at": s.starts_at, "dry": _dry(s),
                              "weather": s.weather or {}, "cars": len(s.rows),

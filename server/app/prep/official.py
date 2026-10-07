@@ -314,9 +314,10 @@ def _loaded(db: Session) -> tuple:
     return tuple(db.execute(select(func.count(rm.ResultSession.id), func.max(rm.ResultSession.fetched_at))).one())
 
 
-def backtest_verdict(db: Session, sessions: list[dict], number: str, team: str | None) -> dict | None:
+def backtest_verdict(db: Session, sessions: list[dict], number: str, team: str | None,
+                     driver: str | None = None) -> dict | None:
     """The backtest's overall verdict, worked out once per car and set of loaded results (it predicts every round)."""
-    key = (number, team, len(sessions), _loaded(db))
+    key = (number, team, driver, len(sessions), _loaded(db))
     with _trust_lock:
         if key in _trust:
             return _trust[key]
@@ -324,7 +325,7 @@ def backtest_verdict(db: Session, sessions: list[dict], number: str, team: str |
     years = [y for y in years if y >= years[0] + 1][-4:] if years else []
     if not years:
         return None
-    bt = predict.backtest(sessions, car_number=number, team=team, years=years)
+    bt = predict.backtest(sessions, car_number=number, team=team, years=years, driver=driver)
     out = {"years": years, "overall": {"all": bt["overall"]["all"]}, "summary": bt["summary"]}
     out["text"] = trust_line({**out, "years": years})
     with _trust_lock:
@@ -375,14 +376,15 @@ def official(db: Session, p: Plan, today: date | None = None) -> dict:
         out["lines"].append(out["track_verdict"]["text"])
     sessions = summary.model_sessions(db, series)
     try:
-        pred = predict.predict_round(sessions, venue, year, car_number=number, team=out["team"], logged_best_s=best)
+        pred = predict.predict_round(sessions, venue, year, car_number=number, team=out["team"], logged_best_s=best,
+                                     driver=h.get("driver"))
         pred["logged_best"] = {"time_s": best, "event": best_from} if best else None
         pred["line"] = prediction_line(pred)
         if not out["brand"] and pred.get("brand"):  # no past result here to tell our make: the prediction's
             out["brand"] = pred["brand"]
             out["makes"] = makes(h, pred["brand"])
         out["prediction"] = pred
-        out["trust"] = backtest_verdict(db, sessions, number, out["team"])
+        out["trust"] = backtest_verdict(db, sessions, number, out["team"], h.get("driver"))
     except Exception:  # the results and places above still stand
         log.exception("prediction for %s %s failed", venue, year)
         out["note"] = "The prediction could not be worked out from the results loaded."

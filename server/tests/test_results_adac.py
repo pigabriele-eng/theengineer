@@ -322,3 +322,31 @@ def test_a_round_matches_only_on_the_events_days():
                                      starts_at="2025-10-04T10:00:00")]
     assert not _same_weekend(rnd, "2025-05-05", "2025-05-06")  # a test in May is not October's round
     assert _same_weekend(rnd, "2025-10-03", "2025-10-05") and _same_weekend(rnd, None, None)
+
+
+def test_our_car_in_past_seasons_is_found_by_our_driver(client):
+    from app import db as app_db
+    from app.results import models as rm
+    from app.results import summary
+
+    def round_(year, cars):
+        rnd = rm.ResultRound(series="adac-gt4-germany", year=year, round_id=f"{year}-05-01", name="Hockenheim",
+                             venue="hockenheim", order=1)
+        s = rm.ResultSession(code="Q1", title="Qualifying 1", kind="qualifying", source_url="u",
+                             starts_at=f"{year}-05-02T10:00:00")
+        s.rows = [rm.ResultRow(position=i + 1, status="classified", car_number=n, drivers=d, team=t, best_lap_s=100 + i)
+                  for i, (n, d, t) in enumerate(cars)]
+        rnd.sessions = [s]
+        return rnd
+
+    with app_db.SessionLocal() as db:
+        db.add_all([
+            round_(2024, [("51", ["Other ONE"], "FK Performance Motorsport"), ("2", ["Gabriele PIANA", "Max BONK"], "Hofor")]),
+            round_(2025, [("21", ["Gabriele PIANA", "Kai BESLER"], "FK Performance Motorsport"), ("2", ["Max BONK"], "Hofor")]),
+            round_(2026, [("7", ["Kai BESLER"], "Other"), ("51", ["Gabriele PIANA", "Ole SYLVESTERSSON"], "FK Performance Motorsport")]),
+        ])
+        db.commit()
+        assert summary.our_driver(db, "adac-gt4-germany", "51", 2026) == "piana"  # three seasons, not one
+        h = summary.history(db, venue="hockenheim", series="adac-gt4-germany", car_number="51", year=2026)
+        ours = {y["year"]: y["sessions"][0]["us"]["car_number"] for y in h["years"]}
+        assert ours == {2026: "51", 2025: "21", 2024: "2"}  # not #51 of 2024, which was another car
