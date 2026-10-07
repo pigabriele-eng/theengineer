@@ -261,7 +261,7 @@ def test_our_finishes_for_the_home_list(client, fake_site):
     assert set(body["events"]) == {str(done["id"])}  # no results, not listed
     r1 = body["events"][str(done["id"])][0]
     assert (r1["code"], r1["label"], r1["position"], r1["status"], r1["car_number"]) == \
-        ("R1", "Race 1", 1, "classified", "911")
+        ("R1", "R1", 1, "classified", "911")
     assert body["qualifying"][str(done["id"])][0]["position"] == 2
     assert client.get("/results/finishes", params={"event_ids": str(other["id"])}).json()["events"] == {}
     assert client.get("/results/finishes", params={"event_ids": "x"}).status_code == 422

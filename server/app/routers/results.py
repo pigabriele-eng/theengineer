@@ -213,7 +213,7 @@ def event_overview(db: Session, ev: models.Event) -> dict:
         db.add(seen)
     seen.series, seen.year, seen.round_id, seen.car_number = series, rnd.year, rnd.round_id, number
     db.commit()
-    try:  # our runs named after the official session each ran in (FP1 stint 2, Q1, Race 1)
+    try:  # our runs named after the official session each ran in (FP1 stint 2, Q1, R1 stint 1)
         out["run_names"] = run_names.name_runs(db, ev.id, rnd, number)
         facts = _event_facts(db, ev)
     except Exception:
