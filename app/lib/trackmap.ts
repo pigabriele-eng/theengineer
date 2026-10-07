@@ -1,6 +1,6 @@
 // Client for the track map (GET /sessions/{id}/map and /events/{id}/map), and the geometry that lays it out:
 // the track fitted to the screen and the corner labels placed off the track and clear of each other.
-import { apiFetch } from '@/lib/api';
+import { apiFetchAgain } from '@/lib/retry';
 
 export type MapPoint = { x: number; y: number };
 
@@ -51,7 +51,7 @@ export class NoTrackMap extends Error {}
 
 export async function fetchTrackMap(target: { session?: number; event?: number }): Promise<TrackMapData> {
   const path = target.event != null ? `/events/${target.event}/map` : `/sessions/${target.session}/map`;
-  const res = await apiFetch(path);
+  const res = await apiFetchAgain(path);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     const message = body.detail ?? `Request failed (${res.status})`;
