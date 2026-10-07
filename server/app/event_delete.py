@@ -57,8 +57,9 @@ KEEP: dict[tuple[str, str], dict] = {
 }
 STORED = {"logger_files": ("path",), "debriefs": ("audio_path",), "session_traces": ("path",),
           "lap_packs": ("path",), "technique_cache": ("details",)}  # columns holding storage keys
-SCOPES = ("event", "session")  # scope parts naming an event or a run: "event:3", "session:12", "event:3|car:..."
-SCOPE_TABLES = {"event": "events", "session": "run_sessions"}
+# scope parts naming an event or a run: "event:3", "session:12", "event:3|car:...", "part:3:FP1" (an event's session)
+SCOPES = ("event", "session", "part")
+SCOPE_TABLES = {"event": "events", "session": "run_sessions", "part": "events"}
 MENTION_KEYS = {"event_id": "events", "session_id": "run_sessions", "file_id": "logger_files"}
 CHUNK = 500  # ids per IN (...)
 SWEEP_WAIT_S = 1800  # longest the sweep waits for running analysis jobs
@@ -117,6 +118,7 @@ def scope_named(scope: str | None, doomed: dict[str, set[int]]) -> bool:
     """Whether a cache scope names an event or a run that goes: "event:3", "session:12", "event:3|car:logger:7"."""
     for part in (scope or "").split("|"):
         kind, _, value = part.partition(":")
+        value = value.split(":", 1)[0] if kind == "part" else value  # "part:3:FP1": event 3's FP1
         if kind in SCOPE_TABLES and value.isdigit() and int(value) in doomed.get(SCOPE_TABLES[kind], ()):
             return True
     return False

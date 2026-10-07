@@ -1,11 +1,13 @@
 // Charts for the report screen. Colours are slots of the validated chart palette (categorical slots 1-3, light and
 // dark steps), the chrome is neutral ink; values and labels always use text colours, never the series colour.
-import { useState } from 'react';
-import { GestureResponderEvent, LayoutChangeEvent, Platform, StyleSheet } from 'react-native';
-import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
+import { useId, useMemo, useState } from 'react';
+import { LayoutChangeEvent, Platform, StyleSheet } from 'react-native';
+import Svg, { Circle, ClipPath, Defs, G, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
 
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
+import { ResetZoom, useZoom, ZoomArea } from '@/components/Zoom';
+import { extent, indexWindow, isZoomed, nearestIndex, pixelOf, Range, shownRange, valueAt } from '@/lib/zoom';
 import { byScheme, chartPlate, Fonts, PLATE_PAD, themed, Type } from '@/constants/Theme';
 
 const PALETTE = byScheme((c) => ({
@@ -85,53 +87,55 @@ type LineChartProps = {
 
 const PAD = { left: 44, right: 12, top: 10, bottom: 34 };
 
-/** Lines against a shared x, with a crosshair: hover (web) or drag (touch) to read every series at that x. */
+/** Lines against a shared x, with a crosshair: hover (web) or drag (touch) to read every series at that x. It zooms
+ * along x (components/Zoom.tsx), the y axis fitting the part shown. */
 export function LineChart({ x, series, legend, height = 180, formatX, formatY, unit, markers = [], readout,
   title }: LineChartProps) {
   const styles = useStyles();
   const c = useChartColors();
+  const zoom = useZoom();
+  const clip = `clip${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
   const [width, setWidth] = useState(0);
   const [cursor, setCursor] = useState<number | null>(null);
   const n = x.length;
-  const all = series.flatMap((s) => s.values.filter((v): v is number => v != null && Number.isFinite(v)));
-  if (n < 2 || all.length === 0) return null;
-  let lo = Math.min(...all), hi = Math.max(...all);
+  const x0 = x[0] ?? 0, x1 = x[n - 1] ?? 1;
+  const full: Range = [x0, x1];
+  const minSpan = n > 1 ? (2 * (x1 - x0)) / (n - 1) : undefined; // no closer than two points apart
+  const view = shownRange(zoom.view, full, minSpan);
+  const zoomed = isZoomed(view, full);
+  const [i0, i1] = useMemo(() => indexWindow(x, view), [x, view[0], view[1]]); // eslint-disable-line react-hooks/exhaustive-deps
+  const fit = useMemo(() => extent(series.map((s) => s.values), i0, i1), [series, i0, i1]);
+  if (n < 2 || !fit) return null;
+  let [lo, hi] = fit;
   const span = hi - lo || 1;
   lo -= span * 0.06;
   hi += span * 0.06;
   const ticks = niceTicks(lo, hi, 4);
   const w = Math.max(width - PAD.left - PAD.right, 1);
   const h = height - PAD.top - PAD.bottom;
-  const x0 = x[0], x1 = x[n - 1];
-  const px = (v: number) => PAD.left + ((v - x0) / (x1 - x0 || 1)) * w;
+  const px = (v: number) => pixelOf(v, view, PAD.left, w);
   const py = (v: number) => PAD.top + (1 - (v - lo) / (hi - lo)) * h;
+  // the line through the points shown (and one either side, clipped at the edges); a gap lifts the pen
   const path = (vals: (number | null)[]) => {
     let d = '', pen = false;
-    vals.forEach((v, i) => {
+    for (let i = i0; i <= i1; i++) {
+      const v = vals[i];
       if (v == null || !Number.isFinite(v)) {
         pen = false;
-        return;
+        continue;
       }
       d += `${pen ? 'L' : 'M'}${px(x[i]).toFixed(1)},${py(v).toFixed(1)}`;
       pen = true;
-    });
+    }
     return d;
   };
-  const indexAt = (sx: number) => {
-    const v = x0 + ((sx - PAD.left) / w) * (x1 - x0);
-    let best = 0;
-    for (let i = 1; i < n; i++) if (Math.abs(x[i] - v) < Math.abs(x[best] - v)) best = i;
-    return best;
-  };
-  const scrub = (e: GestureResponderEvent) => setCursor(indexAt(e.nativeEvent.locationX));
-  const hover = Platform.OS === 'web'
-    ? {
-        onMouseMove: (e: any) => setCursor(indexAt(e.nativeEvent.offsetX ?? e.nativeEvent.locationX)),
-        onMouseLeave: () => setCursor(null),
-      }
-    : {};
-  const rows = cursor != null && readout ? readout(cursor) : [];
-  const tipLeft = cursor != null && px(x[cursor]) > width / 2;
+  const cursorAt = (sx: number) => setCursor(nearestIndex(x, valueAt(sx, view, PAD.left, w)));
+  const inView = cursor != null && cursor < n && px(x[cursor]) >= PAD.left - 0.5 && px(x[cursor]) <= PAD.left + w + 0.5;
+  const rows = inView && readout ? readout(cursor) : [];
+  const tipLeft = inView && px(x[cursor]) > width / 2;
+  // the ends of the x axis: the view's; on an axis of whole numbers (laps) the first and last shown
+  const whole = x.every(Number.isInteger);
+  const ends = whole ? [Math.ceil(view[0] - 1e-9), Math.floor(view[1] + 1e-9)] : view;
   // x labels: the markers, each kept only where it clears the one before it
   const placed: { at: number; label: string; x: number }[] = [];
   for (const m of [...markers].sort((a, b) => a.at - b.at)) {
@@ -144,7 +148,10 @@ export function LineChart({ x, series, legend, height = 180, formatX, formatY, u
 
   return (
     <View style={styles.chart}>
-      {title ? <Text style={styles.chartTitle}>{title}</Text> : null}
+      <View style={styles.head}>
+        {title ? <Text style={styles.chartTitle}>{title}</Text> : <View />}
+        {!zoom.shared && <ResetZoom zoom={zoom} reserve />}
+      </View>
       <View style={styles.legend}>
         {legend.map((l) => (
           <View key={l.label} style={styles.legendItem}>
@@ -153,15 +160,18 @@ export function LineChart({ x, series, legend, height = 180, formatX, formatY, u
           </View>
         ))}
       </View>
-      <View
-        onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}
-        onStartShouldSetResponder={() => true}
-        onResponderGrant={scrub}
-        onResponderMove={scrub}
-        onResponderRelease={() => Platform.OS !== 'web' && setCursor(null)}
-        {...hover}>
+      <ZoomArea zoom={zoom} full={full} left={PAD.left} width={w} minSpan={minSpan} onCursor={cursorAt}
+        onLeave={() => setCursor(null)} onRelease={() => Platform.OS !== 'web' && setCursor(null)}
+        onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}>
         {width > 0 && (
           <Svg width={width} height={height} pointerEvents="none">
+            {zoomed && (
+              <Defs>
+                <ClipPath id={clip}>
+                  <Rect x={PAD.left} y={0} width={w} height={height} />
+                </ClipPath>
+              </Defs>
+            )}
             {ticks.map((t) => (
               <Line key={`g${t}`} x1={PAD.left} x2={width - PAD.right} y1={py(t)} y2={py(t)} stroke={c.grid}
                 strokeWidth={1} />
@@ -185,29 +195,31 @@ export function LineChart({ x, series, legend, height = 180, formatX, formatY, u
               </SvgText>
             ))}
             <SvgText x={PAD.left} y={height - 3} fontSize={11} fill={c.axis} fontFamily={SANS}>
-              {formatX(x0)}
+              {formatX(ends[0])}
             </SvgText>
             <SvgText x={width - PAD.right} y={height - 3} fontSize={11} fill={c.axis} textAnchor="end"
               fontFamily={SANS}>
-              {`${formatX(x1)}`}
+              {`${formatX(ends[1])}`}
             </SvgText>
             <SvgText x={(PAD.left + width - PAD.right) / 2} y={height - 3} fontSize={11} fill={c.axis}
               textAnchor="middle" fontFamily={SANS}>
               {unit}
             </SvgText>
-            {series.filter((s) => s.muted).map((s) => (
-              <Path key={s.key} d={path(s.values)} stroke={s.color} strokeWidth={s.width ?? 1} fill="none"
-                strokeLinejoin="round" strokeLinecap="round" />
-            ))}
-            {series.filter((s) => !s.muted).map((s) => (
-              <Path key={s.key} d={path(s.values)} stroke={s.color} strokeWidth={s.width ?? 2} fill="none"
-                strokeLinejoin="round" strokeLinecap="round" />
-            ))}
-            {cursor != null && (
+            <G clipPath={zoomed ? `url(#${clip})` : undefined}>
+              {series.filter((s) => s.muted).map((s) => (
+                <Path key={s.key} d={path(s.values)} stroke={s.color} strokeWidth={s.width ?? 1} fill="none"
+                  strokeLinejoin="round" strokeLinecap="round" />
+              ))}
+              {series.filter((s) => !s.muted).map((s) => (
+                <Path key={s.key} d={path(s.values)} stroke={s.color} strokeWidth={s.width ?? 2} fill="none"
+                  strokeLinejoin="round" strokeLinecap="round" />
+              ))}
+            </G>
+            {inView && (
               <Line x1={px(x[cursor])} x2={px(x[cursor])} y1={PAD.top} y2={PAD.top + h} stroke={c.axis}
                 strokeWidth={1} />
             )}
-            {cursor != null && series.filter((s) => !s.muted).map((s) => {
+            {inView && series.filter((s) => !s.muted).map((s) => {
               const v = s.values[cursor];
               return v == null || !Number.isFinite(v) ? null : (
                 <Circle key={`d${s.key}`} cx={px(x[cursor])} cy={py(v)} r={4} fill={s.color} stroke={c.surface}
@@ -216,7 +228,7 @@ export function LineChart({ x, series, legend, height = 180, formatX, formatY, u
             })}
           </Svg>
         )}
-        {cursor != null && rows.length > 0 && (
+        {inView && rows.length > 0 && (
           <View pointerEvents="none" style={StyleSheet.flatten([styles.tip, { borderColor: c.grid,
             backgroundColor: c.surface, top: PAD.top },
           tipLeft ? { right: width - px(x[cursor]) + 10 } : { left: px(x[cursor]) + 10 }])}>
@@ -230,7 +242,7 @@ export function LineChart({ x, series, legend, height = 180, formatX, formatY, u
             ))}
           </View>
         )}
-      </View>
+      </ZoomArea>
     </View>
   );
 }
@@ -248,7 +260,9 @@ export function niceTicks(lo: number, hi: number, count: number) {
 const useStyles = themed((c) => ({
   chart: { gap: 6, ...chartPlate(c) },
   plate: chartPlate(c),
-  chartTitle: { ...Type.label, color: c.text },
+  head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8,
+    backgroundColor: 'transparent' },
+  chartTitle: { ...Type.label, color: c.text, flexShrink: 1 },
   legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, backgroundColor: 'transparent' },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },
   legendKey: { width: 14, height: 3 },

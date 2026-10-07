@@ -145,8 +145,11 @@ export function PlanForm({ onCancel, onMade }: { onCancel: () => void; onMade: (
 const useStyles = themed((c) => ({
   tabs: { flexDirection: 'row', alignItems: 'flex-end', gap: 26, paddingTop: 18, paddingBottom: 12 },
   tabsPhone: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', paddingTop: 14, paddingBottom: 10 },
-  tab: { flexDirection: 'row', alignItems: 'flex-start', paddingBottom: 6, borderBottomWidth: 6, borderColor: 'transparent' },
-  tabPhone: { flexDirection: 'row', alignItems: 'flex-start', paddingBottom: 6, borderBottomWidth: 5, borderColor: 'transparent' },
+  tab: { flexDirection: 'row', alignItems: 'flex-start', paddingBottom: 6, borderBottomWidth: 6, borderColor: 'transparent',
+    minWidth: 44 },
+  // 44 px tall on a phone too: 7 px of room above the word (in the row's own top margin), the underline stays put
+  tabPhone: { flexDirection: 'row', alignItems: 'flex-start', paddingBottom: 6, borderBottomWidth: 5, borderColor: 'transparent',
+    paddingTop: 7, marginTop: -7, minWidth: 44 },
   tabOn: { borderColor: c.mark },
   tabText: { fontFamily: Fonts.display, fontSize: 30, lineHeight: 32, textTransform: 'uppercase', color: c.textMuted },
   tabTextPhone: { fontFamily: Fonts.display, fontSize: 24, lineHeight: 26, textTransform: 'uppercase', color: c.textMuted },

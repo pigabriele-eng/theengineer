@@ -357,6 +357,7 @@ def delete_folder(event_id: int, db: Session = Depends(get_db),
     event_modes.forget(db, event_id)
     scope = f"event:{event_id}"
     db.execute(delete(models.ReportCache).where(models.ReportCache.scope == scope))
+    db.execute(delete(models.ReportCache).where(models.ReportCache.scope.like(f"part:{event_id}:%")))  # its sessions'
     db.execute(delete(models.TechniqueCache).where(models.TechniqueCache.scope == scope))
     db.delete(ev)
     db.commit()

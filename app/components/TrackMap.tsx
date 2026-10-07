@@ -5,6 +5,7 @@ import Svg, { Circle, G, Line, Path, Rect, Text as SvgText } from 'react-native-
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
 import { glyph, ShapeLegend, ShapePanel, useShapeColors, useTrackShape } from '@/components/TrackShape';
+import { ResetZoom, usePlaneZoom, ZoomPlane } from '@/components/Zoom';
 import { formatLap } from '@/lib/api';
 import {
   Box,
@@ -14,11 +15,13 @@ import {
   leaderEnd,
   MapPoint,
   NoTrackMap,
+  Placed,
   placeLabels,
   TrackMapData,
 } from '@/lib/trackmap';
 import { featureMid, featureSpan, TrackShapeData } from '@/lib/trackshape';
 import { noPrint } from '@/lib/print';
+import { Plane, Point, toFrame } from '@/lib/zoom';
 import { byScheme, Fonts, themed, Type } from '@/constants/Theme';
 
 type Props = {
@@ -68,11 +71,14 @@ const unit = (x: number, y: number) => {
 };
 const line = (pts: MapPoint[]) => pts.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join('');
 
-function layout(map: TrackMapData, width: number, maxHeight?: number) {
+// The drawing, zoomed by `view` (both ways, keeping the track's shape: lib/zoom.ts) when it is given. The lines and
+// marks keep their size; the corner labels are placed once, on the whole map, and move with their corners.
+function layout(map: TrackMapData, width: number, maxHeight?: number, view: Plane | null = null) {
   const z = sizes(width);
   const usual = Math.min(460, Math.max(280, width * 0.72));
   const fit = fitTrack(map, width, maxHeight == null ? usual : Math.min(usual, maxHeight), PAD);
-  const { pts } = fit;
+  const T = (p: MapPoint) => toFrame(view, fit.width, fit.height, p);
+  const pts = view ? fit.pts.map(T) : fit.pts;
   const n = pts.length;
   const at = (m: number) => Math.min(Math.round(m / map.step_m), n);
   const pt = (i: number) => pts[((i % n) + n) % n];
@@ -110,7 +116,7 @@ function layout(map: TrackMapData, width: number, maxHeight?: number) {
   const obstacles = [box([s0], 2.5 * z.check), box([a0, a1, head(0.5), head(-0.5)], 2)];
 
   const anchors = map.sections.filter((s) => s.apex).map((s) => ({ code: s.code, anchor: fit.px(s.apex!) }));
-  const labels = placeLabels(anchors, pts, fit, { fontSize: z.font, clearance: z.strong / 2 + 3, obstacles });
+  const labels = view ? [] : placeLabels(anchors, pts, fit, { fontSize: z.font, clearance: z.strong / 2 + 3, obstacles });
 
   // speed: the lap cut into runs of one colour, each run sharing its end point with the next
   const lo = Math.min(...map.speed), hi = Math.max(...map.speed);
@@ -125,7 +131,13 @@ function layout(map: TrackMapData, width: number, maxHeight?: number) {
       start = i;
     }
   }
-  return { ...fit, z, sections, boundaries, labels, s0, dir, arrow, runs, lo, hi, loop: line([...pts, pts[0]]) };
+  return { ...fit, pts, z, sections, boundaries, labels, s0, dir, arrow, runs, lo, hi, loop: line([...pts, pts[0]]) };
+}
+
+/** A corner label placed on the whole map, moved with its corner on the zoomed one (`at`: where a point is drawn). */
+function moveLabel(l: Placed, at: (p: Point) => Point): Placed {
+  const a = at(l.anchor);
+  return { ...l, anchor: a, box: { ...l.box, x: l.box.x + a.x - l.anchor.x, y: l.box.y + a.y - l.anchor.y } };
 }
 
 /** The track drawn from a session's or an event's reference lap, with its corners and sections numbered as
@@ -168,7 +180,16 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, event]);
 
-  const g = useMemo(() => (map && width > 0 ? layout(map, width, maxHeight) : null), [map, width, maxHeight]);
+  // the map zooms both ways: the wheel or a pinch, a box dragged across it, a drag once zoomed (components/Zoom.tsx);
+  // another track, or another width, starts on the whole map
+  const zoom = usePlaneZoom(`${session}:${event}:${width}:${maxHeight}`);
+  const whole = useMemo(() => (map && width > 0 ? layout(map, width, maxHeight) : null), [map, width, maxHeight]);
+  const g = useMemo(() => {
+    if (!whole || !map || !zoom.view) return whole;
+    const zoomed = layout(map, width, maxHeight, zoom.view);
+    const at = (p: Point) => toFrame(zoom.view, whole.width, whole.height, p);
+    return { ...zoomed, labels: whole.labels.map((l) => moveLabel(l, at)) };
+  }, [whole, map, width, maxHeight, zoom.view]);
   const pins = useMemo(() => {
     if (!g || !map || !marks?.length) return [];
     const n = g.pts.length;
@@ -230,13 +251,6 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
     const m = best * map.step_m;
     return map.sections.find((s) => m >= s.start_m && m < s.end_m)?.code ?? map.sections[map.sections.length - 1].code;
   };
-  const hover = Platform.OS === 'web'
-    ? {
-        onMouseMove: (e: any) => setActive(sectionAt(e.nativeEvent.offsetX ?? e.nativeEvent.locationX,
-          e.nativeEvent.offsetY ?? e.nativeEvent.locationY)),
-        onMouseLeave: () => setActive(null),
-      }
-    : {};
 
   const detail = (() => {
     const ss = map?.sections.filter((x) => focus.includes(x.code)) ?? [];
@@ -278,17 +292,17 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
               </Text>
             </Pressable>
           ))}
+          <ResetZoom zoom={zoom} />
         </View>
       </View>
-      <View onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)} {...hover}>
+      <View onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}>
         {!g && <Text style={styles.note}>Loading the track map…</Text>}
         {g && map && (
-          <Pressable
-            onPress={(e: any) => {
-              const code = sectionAt(e.nativeEvent.locationX ?? e.nativeEvent.offsetX,
-                e.nativeEvent.locationY ?? e.nativeEvent.offsetY);
-              setActive(code); // a tap off the track clears it
-            }}>
+          <ZoomPlane zoom={zoom} width={g.width} height={g.height}
+            // the mouse over a section shows it; a tap or a click picks it, and one off the track clears it
+            onCursor={(x, y) => Platform.OS === 'web' && setActive(sectionAt(x, y))}
+            onLeave={() => setActive(null)}
+            onRelease={(_, x, y) => setActive(sectionAt(x, y))}>
             <Svg width={g.width} height={g.height} pointerEvents="none"
               accessibilityLabel={`Track map from lap ${map.reference_lap}: ${map.sections.map((s) => s.code).join(', ')}`}>
               {relief?.banked.map((d, i) => (
@@ -381,7 +395,7 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
               <Path d={g.arrow} stroke={c.ink} strokeWidth={1.5} fill="none" strokeLinecap="round"
                 strokeLinejoin="round" />
             </Svg>
-          </Pressable>
+          </ZoomPlane>
         )}
       </View>
       {g && map && !compact && (
@@ -398,7 +412,9 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
             </View>
           ) : null}
           <Text style={styles.detail}>
-            {detail ?? `${Platform.OS === 'web' ? 'Hover or tap' : 'Tap'} a section for where it starts and ends.`}
+            {detail ?? (Platform.OS === 'web'
+              ? 'Hover or tap a section for where it starts and ends; scroll or pinch on the map to zoom in.'
+              : 'Tap a section for where it starts and ends; pinch the map to zoom in.')}
           </Text>
           {mode === 'sections' && sectionKey ? <Text style={styles.small}>{sectionKey}</Text> : null}
           <View style={styles.legend}>
@@ -452,7 +468,7 @@ const useStyles = themed((c) => ({
   head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 8,
     borderBottomWidth: 1, borderColor: c.rule, paddingBottom: 6 },
   title: { ...Type.label, color: c.text },
-  toggle: { flexDirection: 'row', gap: 14 },
+  toggle: { flexDirection: 'row', alignItems: 'flex-end', gap: 14 },
   toggleItem: { borderBottomWidth: 3, borderColor: 'transparent', paddingBottom: 2 },
   toggleText: { ...Type.label, fontSize: 13, color: c.text },
   toggleOff: { color: c.textMuted },

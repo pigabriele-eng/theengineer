@@ -20,7 +20,7 @@ import {
 import { noPrint } from '@/lib/print';
 
 import { ChartColors, Dumbbell, GgDiagram, GripMap, inkOn, LegendItem, ramp, Scatter, useChartColors } from './GripCharts';
-import { Fonts, themed, Type } from '@/constants/Theme';
+import { Fonts, legibleFill, themed, Type } from '@/constants/Theme';
 
 // bare: inside a report section that already names it, so without its own heading
 type Props = { session?: number; event?: number; bare?: boolean };
@@ -252,7 +252,8 @@ function SectionTable({ sections, c }: { sections: GripSection[]; c: ChartColors
                   </View>
                 );
               }
-              const bg = fill(ph.grip_use);
+              // the number on it reads at 4.5:1: the middle of the ramp is nudged to where one ink does
+              const bg = legibleFill(fill(ph.grip_use));
               const gap = ph.fast != null && ph.slow != null ? ph.fast - ph.slow : null;
               return (
                 <View key={p.key} style={[styles.tcell, styles.cell, { backgroundColor: bg }]}>

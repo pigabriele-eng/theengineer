@@ -93,6 +93,8 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
     headerTintColor: c.text,
     headerTitleStyle: { fontFamily: Fonts.label, fontSize: 15, color: c.text },
     headerBackTitleStyle: { fontFamily: Fonts.label, fontSize: 14 },
+    // "Back", read out as "Go back" (not the route group's name, "(tabs)")
+    headerBackTitle: 'Back',
     contentStyle: { backgroundColor: c.background },
   }), [c]);
   // the print styles (lib/print.ts), so a page prints right from the browser's own Print menu too

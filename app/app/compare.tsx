@@ -210,7 +210,7 @@ export default function CompareScreen() {
                     )}
                   </View>
                 </View>
-                <Pressable onPress={() => remove(p)} hitSlop={10} style={styles.removeCol} accessibilityRole="button"
+                <Pressable onPress={() => remove(p)} style={styles.removeHit} accessibilityRole="button"
                   accessibilityLabel="Remove lap" {...noPrint}>
                   <Text style={styles.removeText}>✕</Text>
                 </Pressable>
@@ -333,8 +333,10 @@ const useStyles = themed((c) => ({
   right: { alignItems: 'flex-end', backgroundColor: 'transparent' },
   time: { ...Type.number, fontFamily: face('label', 700), fontSize: 18, color: c.text },
   gap: { ...Type.number, fontSize: 13, color: c.delta.loss },
-  gapBest: { ...Type.label, fontSize: 11, color: c.timing.best },
+  gapBest: { ...Type.label, fontSize: 13, color: c.timing.bestInk },
   removeCol: { width: 28, alignItems: 'center' },
+  // the ✕: a 44 px tap target in its 28 px column, the row laid out as drawn
+  removeHit: { width: 44, marginHorizontal: -8, paddingVertical: 12, marginVertical: -12, alignItems: 'center' },
   removeText: { fontFamily: Fonts.label, fontSize: 15, color: c.textMuted },
   lapChoices: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 10, paddingLeft: 26 },
   addSame: { paddingVertical: 6 },
