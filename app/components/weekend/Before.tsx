@@ -13,6 +13,7 @@ import { Text, View } from '@/components/Themed';
 import { ZOOM_HINT } from '@/components/Zoom';
 import { formatLap } from '@/lib/api';
 import { fetchGuide, gearName, Guide, GuideCorner } from '@/lib/guide';
+import { poll } from '@/lib/poll';
 import { cornersOf } from '@/lib/trackmap';
 import {
   CornerRow,
@@ -31,7 +32,6 @@ import { deltaColor, face, Fonts, themed, Type, useTheme } from '@/constants/The
 import { pct } from '@/lib/trackGrip';
 
 const POLL_MS = 2000;
-const GUIDE_POLL_MS = 3000; // the gear map and corner graphs, while the past events' laps are read
 const RUNS_SHOWN = 6;
 const VERDICT: Record<string, string> = {
   agree: 'data agrees', slight: 'data leans the same way', normal: 'data reads normal', disagree: 'data says the opposite',
@@ -118,27 +118,27 @@ export default function WeekendBefore({ eventId, car: carParam, onAnswer }: { ev
   const reloadOfficial = useCallback(() => setOfficialRound((n) => n + 1), []);
 
   // the gear map and the corner graphs: from the past events' lap traces, ready at once when they are kept, else
-  // asked again while the server reads them
+  // asked again while the server reads them or while it doesn't answer (lib/poll.ts: less and less often, for a few
+  // minutes; again when the page is back in view). Still no answer after that: a plain line says so
   const [guide, setGuide] = useState<Guide | null>(null);
   useEffect(() => {
-    let live = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     setGuide(null);
-    const poll = async () => {
+    let failed: string | null = null; // why the last ask got no answer
+    return poll(async (live) => {
       try {
         const g = await fetchGuide(eventId, car);
-        if (!live) return;
+        if (!live()) return false;
+        failed = null;
         setGuide(g);
-        if (g.status === 'working') timer = setTimeout(poll, GUIDE_POLL_MS);
-      } catch {
-        if (live) timer = setTimeout(poll, GUIDE_POLL_MS * 3);
+        return g.status === 'working';
+      } catch (e) {
+        failed = (e as Error).message;
+        return true;
       }
-    };
-    poll();
-    return () => {
-      live = false;
-      if (timer) clearTimeout(timer);
-    };
+    }, {
+      onGiveUp: () => failed != null && setGuide({ status: 'none', car: null,
+        reason: `The gear map couldn’t be loaded (${failed}). It is asked for again when you come back to this page.` }),
+    });
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps -- the key holds the event and the car
 
   const retry = useCallback(async () => {

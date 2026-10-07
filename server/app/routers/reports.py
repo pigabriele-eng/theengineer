@@ -220,10 +220,10 @@ def _sessions_out(db: Session, plan: Plan) -> list[dict]:
     return out
 
 
-def _answer(db: Session, plan: Plan, row: models.ReportCache | None, status: str) -> dict:
+def _answer(db: Session, plan: Plan, row: models.ReportCache | None, status: str, brief: bool = False) -> dict:
     fresh = row is not None and row.result is not None and row.result_signature == plan.signature
     working = status in ("queued", "running")
-    return {
+    head = {
         "scope": plan.kind, "id": plan.id, "title": plan.title,
         "part": plan.part,  # a part's report: the official session's code ("FP1", "Q1", "03_Q")
         "track": plan.track.name if plan.track else None,
@@ -231,6 +231,11 @@ def _answer(db: Session, plan: Plan, row: models.ReportCache | None, status: str
         "progress": {"done": row.done, "total": row.total, "current": row.current} if working and row else None,
         "error": (plan.error or (row.error if row else None)) if status == "failed" else None,
         "stale": row is not None and row.result is not None and not fresh,
+    }
+    if brief:  # how far it is, without the report: what a page waiting for it asks for again and again
+        return head
+    return {
+        **head,
         "report": row.result if row is not None else None,
         "sessions": _sessions_out(db, plan),
         # every run of the event (for one run's report too) by its label, in the event page's order: what the
@@ -258,14 +263,14 @@ def _status(plan: Plan, row: models.ReportCache | None) -> str | None:
     return None
 
 
-def report_for(db: Session, kind: str, id_: int, part: str | None = None) -> dict:
+def report_for(db: Session, kind: str, id_: int, part: str | None = None, brief: bool = False) -> dict:
     plan = plan_for(db, kind, id_, part)
     row = db.scalar(select(models.ReportCache).where(models.ReportCache.scope == plan.scope))
     status = _status(plan, row)
     if status is None:
         row = _queue(db, plan, row)
         status = "queued"
-    return _answer(db, plan, row, status)
+    return _answer(db, plan, row, status, brief)
 
 
 def _queue(db: Session, plan: Plan, row: models.ReportCache | None) -> models.ReportCache:
@@ -286,11 +291,12 @@ def _queue(db: Session, plan: Plan, row: models.ReportCache | None) -> models.Re
 
 
 @router.get("/events/{event_id}")
-def event_report(event_id: int, db: Session = Depends(get_db)):
+def event_report(event_id: int, brief: bool = False, db: Session = Depends(get_db)):
     """How to go faster across every session of an event (a test): the report when it is up to date, otherwise the
     progress of the one being worked out (and the last report, marked stale). Written out as JSON here: FastAPI's own
-    encoder took twice as long over the report's 80 kB (app/page_cache.py RawJSON)."""
-    return page_cache.RawJSON(page_cache.as_json(report_for(db, "event", event_id)))
+    encoder took twice as long over the report's 80 kB (app/page_cache.py RawJSON). ?brief=true: only the status and
+    progress, without the report and its runs, for a page that asks again until the report is ready."""
+    return page_cache.RawJSON(page_cache.as_json(report_for(db, "event", event_id, brief=brief)))
 
 
 @router.get("/events/{event_id}/sessions/{code:path}")
@@ -301,9 +307,9 @@ def event_part_report(event_id: int, code: str, db: Session = Depends(get_db)):
 
 
 @router.get("/sessions/{session_id}")
-def session_report(session_id: int, db: Session = Depends(get_db)):
+def session_report(session_id: int, brief: bool = False, db: Session = Depends(get_db)):
     """The same for one session's laps."""
-    return page_cache.RawJSON(page_cache.as_json(report_for(db, "session", session_id)))
+    return page_cache.RawJSON(page_cache.as_json(report_for(db, "session", session_id, brief=brief)))
 
 
 def _refresh(db: Session, kind: str, id_: int, part: str | None = None) -> dict:

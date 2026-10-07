@@ -182,6 +182,9 @@ async function call<T>(p: string, init?: RequestInit): Promise<T> {
 }
 
 export const fetchReport = (scope: ReportScope) => call<ReportAnswer>(path(scope));
+/** How far the report is, without the report itself (?brief): what a page waiting for it asks again and again. */
+export type ReportProgress = Pick<ReportAnswer, 'status' | 'progress' | 'error' | 'stale'>;
+export const fetchReportProgress = (scope: ReportScope) => call<ReportProgress>(`${path(scope)}?brief=true`);
 export const refreshReport = (scope: ReportScope) => call<ReportAnswer>(`${path(scope)}/refresh`, { method: 'POST' });
 
 // The Sessions tab groups sessions by event, with a report for each event.

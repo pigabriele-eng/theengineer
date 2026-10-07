@@ -6,8 +6,37 @@ const baseUrl = (process.env.EXPO_PUBLIC_API_URL ?? '').trim() || 'http://localh
 export const API_URL = (/^https?:\/\//i.test(baseUrl) ? baseUrl : `https://${baseUrl}`).replace(/\/+$/, '');
 
 // Every call to the server goes through here. It adds the signed-in user's token, and a 401 (the session is gone)
-// signs out, which brings back the sign-in screen.
+// signs out, which brings back the sign-in screen. A read asked for ahead (prefetch below) is answered from there.
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  if (init.method && init.method !== 'GET') {
+    ahead.clear(); // a change: what was read ahead may no longer be so
+  } else {
+    const early = ahead.get(path);
+    if (early) {
+      ahead.delete(path);
+      if (Date.now() - early.at < AHEAD_MS) return early.res.catch(() => send(path, init)); // failed: ask again
+    }
+  }
+  return send(path, init);
+}
+
+// Reads a page asks for ahead, before the part that shows them is drawn (that part waits on another answer first):
+// each is handed, once, to the first apiFetch of the same path within AHEAD_MS, and dropped after that.
+const AHEAD_MS = 30_000;
+const ahead = new Map<string, { at: number; res: Promise<Response> }>();
+
+/** Asks for these GET paths now, for parts of the page that will ask for them in a moment. */
+export function prefetch(...paths: string[]) {
+  for (const path of paths) {
+    if (ahead.has(path)) continue;
+    const entry = { at: Date.now(), res: send(path, {}) };
+    entry.res.catch(() => undefined); // (the part that takes it asks again)
+    ahead.set(path, entry);
+    setTimeout(() => ahead.get(path) === entry && ahead.delete(path), AHEAD_MS);
+  }
+}
+
+async function send(path: string, init: RequestInit): Promise<Response> {
   const token = await accessToken();
   const headers = { ...(init.headers as Record<string, string> | undefined) };
   if (token) headers.Authorization = `Bearer ${token}`;
