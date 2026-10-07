@@ -21,7 +21,9 @@ fingerprint learned elsewhere that matches well (SURE_MATCH), or, of two drivers
 style nobody is known by is asked about (season_match: "New driver found in Q2 and Race 2 run 1: who is this?"), the
 likely names first: the driver it is somewhat like, the car's entry list, the garage's drivers of the car and the
 official results' crew (which list both drivers in every session, so they say who could have driven, not who drove
-which). One answer names every run of that style and teaches the fingerprint. An event splits into at most as many
+which). One answer names every run of that style and teaches the fingerprint. A run in which the driver changed at a
+stop is split into one run per driver first (run_split.py: "when in a single run the driver changes multiple times,
+split the runs automatically"). An event splits into at most as many
 styles as its car has drivers (two when that isn't known), so a third style is never a third driver of a pair.
 
 The season's drivers (Gabriele, 2026-10-07: "for a season, the app can automatically revert to the drivers of the
@@ -572,12 +574,18 @@ def settle(db: Session, event_id: int, ep: ds.EventPrint | None, learned: dict) 
     """Every run of the event whose driving style is a driver the app knows gets that driver by itself (StyleTag:
     shown as set from the style, with a way to change it), whether the style was named after a tagged run here, a
     fingerprint learned elsewhere (SURE_MATCH), the car's other driver, or which way round the car's two drivers fit.
-    A person's tag, change or clear stands.
+    A person's tag, change or clear stands. A run whose driver changed at a stop is first split into one run per
+    driver (run_split.py); its parts are settled on a later pass.
     A style nobody knows is then asked about (season_match.ask_new_driver), with the likely names. Commits. How
     many runs were set."""
     n = 0
     entry = entry_drivers(db, event_id)
     g = guess_for(db, event_id, ep, learned, entry) if ep is not None else None
+    if g is not None:
+        from app import run_split  # here: it uses this module
+        db.commit()  # nothing of this pass pending: a split commits run by run
+        if run_split.split_event(db, event_id, g):
+            return 0  # the parts are settled on a later pass, once the report has made their lap traces
     now = dict(db.execute(select(models.RunSession.id, models.RunSession.driver_id)
                           .where(models.RunSession.event_id == event_id)).all())
     auto = set_by_style(db, list(now))

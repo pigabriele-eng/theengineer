@@ -561,8 +561,10 @@ def same_person(said: str | None, name: str | None) -> bool:
 
 def _driver_for(s: models.RunSession, drivers: list[models.Driver]) -> models.Driver | None:
     """The season's driver of a run: the one its log names, else the season's only driver (when the log names
-    nobody)."""
-    named = {n.strip() for f in s.files if isinstance(n := (f.meta or {}).get("driver"), str) and n.strip()}
+    nobody). A part of a log split at a driver change (meta "window": run_split.py) names nobody: its header names
+    one driver for the whole log."""
+    named = {n.strip() for f in s.files if isinstance(n := (f.meta or {}).get("driver"), str) and n.strip()
+             and not (f.meta or {}).get("window")}
     if named:
         hits = {d.id: d for d in drivers for n in named if same_person(n, d.name)}
         return next(iter(hits.values())) if len(hits) == 1 else None

@@ -392,27 +392,28 @@ def test_the_style_finds_the_change_and_the_parts_are_one_style_each(client):
         log = style_log(paces, f"1{i + 3}:00:00", sharp)
         assert client.post(f"/sessions/{s}/files", files={"file": ("run.ld", log)}).status_code == 201
 
-    def guess():
+    def settled() -> ds.Guess:
+        """The event's guess once nothing is left to do: the report and the background passes (which split runs and
+        start the report again) are done."""
         t0 = time.monotonic()
-        while client.get(f"/events/{ev}/driver-guess").json()["status"] == "working" and time.monotonic() - t0 < 120:
+        while True:
+            assert time.monotonic() - t0 < 180
+            client.get(f"/events/{ev}/driver-guess")  # starts the report for lap traces still missing
+            assert reports.wait_idle()
+            driver_prints.wait_idle()
+            with app_db.SessionLocal() as db:
+                ep, pending = driver_prints.refresh(db, ev)
+                if not pending and not reports._pending and not driver_prints.busy():
+                    return driver_prints.guess_for(db, ev, ep, driver_prints.learned(db))
             time.sleep(0.2)
-        assert reports.wait_idle()
-        driver_prints.wait_idle()
-        with app_db.SessionLocal() as db:
-            ep, pending = driver_prints.refresh(db, ev)
-            assert pending == 0
-            return driver_prints.guess_for(db, ev, ep, driver_prints.learned(db))
 
-    g = guess()
-    assert g.mode == "groups"
-    (run,) = [x for x in g.sessions if x.session_id == both]
-    assert len(run.stints) == 2 and run.stints[0].group != run.stints[1].group
+    # the background pass finds the change and splits the run by itself
+    g = settled()
     with app_db.SessionLocal() as db:
-        (new,) = run_split.split_event(db, ev, g)
+        (new,) = [r.id for r in db.scalars(select(models.RunSession).where(models.RunSession.event_id == ev))
+                  if any((f.meta or {}).get("split_from") == both for f in r.files) and r.id != both]
         assert [l.number for l in db.get(models.RunSession, new).laps] == [1, 2, 3, 4, 5]
-
-    g = guess()
     stints = {x.session_id: x.stints for x in g.sessions}
     assert len(stints[both]) == len(stints[new]) == 1 and stints[both][0].group != stints[new][0].group
     with app_db.SessionLocal() as db:
-        assert run_split.split_event(db, ev, g) == []
+        assert run_split.split_event(db, ev, g) == []  # one style in each part: never split again
