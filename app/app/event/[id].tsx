@@ -28,6 +28,7 @@ import { Text, View } from '@/components/Themed';
 import CoachingDay from '@/components/coaching/CoachingDay';
 import WeekendBefore from '@/components/weekend/Before';
 import WeekendDuring from '@/components/weekend/During';
+import WeekendLaps from '@/components/weekend/Laps';
 import SessionReports, { useEventParts } from '@/components/weekend/SessionReports';
 import EventReport from '@/components/report/EventReport';
 import { formatLap, prefetch } from '@/lib/api';
@@ -39,7 +40,8 @@ import { RunsDeleted } from '@/lib/deleteRuns';
 import { dateRange, dayLabel, eventsApi, Folder, FolderSession, KIND_NAMES, NO_EVENT } from '@/lib/events';
 import { EventGuess } from '@/lib/fingerprints';
 import { Garage, garageApi, RunFields } from '@/lib/garage';
-import { defaultStage, duringSections, Stage } from '@/lib/weekendRuns';
+import { defaultStage, duringSections } from '@/lib/weekendRuns';
+import { askedTab, openingTab, WeekendTab } from '@/lib/lapsFirst';
 import { driverTag } from '@/lib/driverTag';
 import { driverState } from '@/lib/runDriver';
 import { encodePicks } from '@/lib/compare';
@@ -106,6 +108,7 @@ export default function EventScreen() {
   const topH = useRef(0); // the photo and its folio, above the page's body
   const compareY = useRef(0); // where Side by side starts in the body
   const reportY = useRef(0); // where the report starts in the body (After)
+  const lapsY = useRef(0); // where the Laps tab starts in the body
   const [reportSections, setReportSections] = useState(0); // how many numbered sections the report has
   // how many times the event came from the server (not counting the chips' changes made here at once): what's
   // worked out from its runs is asked for again with it. 1 from the start, and still 1 once the event is first read
@@ -215,22 +218,24 @@ export default function EventScreen() {
   const timed = sessions.some((s) => s.best_lap_s != null);
   // its country (the flag and three letters in the hero's kicker), from its track, else its name ("Monza test")
   const country = isEvent && folder ? countryOfAny([folder.track, folder.name]) : null;
-  // a weekend opens on Before while it has no runs, During while it is on, After once it is over
-  // (lib/weekendRuns.ts defaultStage); a tap keeps the pick in the address
-  const asked: Stage | null = params.stage === 'before' || params.stage === 'during' || params.stage === 'after'
-    ? params.stage : null;
-  const stage: Stage = asked ?? defaultStage(folder, todayIso());
+  // a weekend opens on Laps while it is on (Gabriele, 2026-10-07: "Compare laps, during the weekend, should be the
+  // standard function that opens when clicking on the event"), Before while it has no runs, After once it is over
+  // (lib/weekendRuns.ts defaultStage, lib/lapsFirst.ts openingTab); a tap keeps the pick in the address
+  const asked = askedTab(params.stage);
+  const stage: WeekendTab = asked ?? openingTab(defaultStage(folder, todayIso()));
   // the stage is known once the event is read, or at once when the address asks for one
   const stageKnown = asked != null || folder != null;
   // Opened on no stage, the page waits for the event's runs to know which; meanwhile the reads that During and After
   // both make and that need only the event's number start (prefetch, lib/api.ts), so they don't wait for it too.
   useEffect(() => {
     if (!isEvent || asked != null || folder != null) return;
-    prefetch(`/events/${key}/info`, `/results/events/${key}`, `/events/${key}/debriefs`, `/reports/events/${key}/parts`);
+    prefetch(`/events/${key}/info`, `/results/events/${key}`, `/events/${key}/debriefs`, `/reports/events/${key}/parts`,
+      `/events/${key}/compare/suggestions`);
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps -- once a visit, on opening
-  const pickStage = (s: Stage) => router.setParams({ stage: s });
-  // a coaching day opens on its own answers (components/coaching/CoachingDay.tsx): no Before, During and After
+  const pickStage = (s: WeekendTab) => router.setParams({ stage: s });
+  // a coaching day opens on its own answers (components/coaching/CoachingDay.tsx): no Laps, Before, During and After
   const coaching = isEvent && mode === 'coaching';
+  const laps = isEvent && !coaching && stage === 'laps';
   const during = isEvent && !coaching && stage === 'during';
   const after = isEvent && !coaching && stage === 'after';
   // the runs by day are part of During and After, and follow a coaching day's answers
@@ -259,11 +264,12 @@ export default function EventScreen() {
 
   // ---------- the stage tabs, and the band under them ----------
 
-  // Before | During | After, and print: nothing else to choose from first (every analysis is in the
+  // Laps | Before | During | After, and print: nothing else to choose from first (every analysis is in the
   // section it belongs to, or in the More line at the end); a coaching day has none of them
   const stageBar = isEvent && mode != null && !coaching && eventId != null && folder && (
     <View style={wide ? styles.links : styles.linksPhone}>
       <Tabs big value={stage} onChange={pickStage} items={[
+        { key: 'laps', label: 'Laps', sub: 'Compare' },
         { key: 'before', label: 'Before', sub: 'Prep' },
         { key: 'during', label: 'During', sub: sessions.length ? plural(sessions.length, 'run') : 'No runs yet' },
         { key: 'after', label: 'After', sub: 'Compare, report' },
@@ -302,8 +308,17 @@ export default function EventScreen() {
 
   // Before the weekend: the prep report itself (the lap to aim for, corner by corner, grip, the setup to start with),
   // at once when the address asks for Before
-  const before = isEvent && mode != null && eventId != null && stageKnown && !during && !coaching && (
+  const before = isEvent && mode != null && eventId != null && stageKnown && !during && !laps && !coaching && (
     <WeekendBefore eventId={eventId} car={params.car ?? null} />
+  );
+
+  // While the weekend is on: the laps to compare first, the first suggestion already open, every lap to pick by hand
+  // (components/weekend/Laps.tsx). A suggestion tapped scrolls down to its comparison.
+  const lapsTab = laps && eventId != null && (
+    <View onLayout={(e) => (lapsY.current = e.nativeEvent.layout.y)}>
+      <WeekendLaps eventId={eventId}
+        onShow={(y) => scroll.current?.scrollTo({ y: Math.max(topH.current + lapsY.current + y - 12, 0), animated: true })} />
+    </View>
   );
 
   // One panel at a time in a ruled band under the links: rename, change the dates, delete the event, move or delete
@@ -521,7 +536,7 @@ export default function EventScreen() {
             {results}
             {addRun}
           </>
-        ) : isEvent ? before : (
+        ) : laps ? lapsTab : isEvent ? before : (
           <>
             {runs}
             {sideBySide}
