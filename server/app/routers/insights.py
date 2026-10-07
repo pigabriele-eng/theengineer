@@ -62,8 +62,9 @@ def session_insights(session_id: int, db: Session = Depends(get_db)):
         runs, track = _runs(db, [s.id])
         return analyze_runs(runs, official_corners(track), drop_channels=True)
 
-    return page_cache.cached(db, f"session:{s.id}|insights",
-                             lambda: page_cache.session_signature(db, "insights", s, main_file(s)), work)
+    return page_cache.RawJSON(page_cache.cached(
+        db, f"session:{s.id}|insights", lambda: page_cache.session_signature(db, "insights", s, main_file(s)), work,
+        raw=True))
 
 
 class InsightsIn(BaseModel):

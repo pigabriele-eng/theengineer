@@ -115,6 +115,7 @@ def client(tmp_path, monkeypatch):
         monkeypatch.delenv(key, raising=False)  # sign-in off, files on the local disk
     monkeypatch.setenv("PREBUILD", "off")  # only its own tests turn it on (tests/test_prebuild.py)
     monkeypatch.setenv("RUN_DUPES", "off")  # the same sample log is uploaded many times; tests/test_run_dupes.py on
+    monkeypatch.setenv("UPLOAD_DUPES", "off")  # likewise; tests/test_upload_dupes.py on
     import importlib
 
     import app.db
@@ -145,6 +146,8 @@ def client(tmp_path, monkeypatch):
     importlib.reload(app.routers.reports)
     import app.lappacks
     importlib.reload(app.lappacks)
+    import app.upload_dupes
+    importlib.reload(app.upload_dupes)  # its table on the fresh database's metadata
     importlib.reload(app.routers.imports)
     importlib.reload(app.routers.debriefs)
     importlib.reload(app.routers.drivers)

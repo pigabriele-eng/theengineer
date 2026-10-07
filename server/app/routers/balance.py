@@ -20,7 +20,7 @@ from app.vehicle.presets import PRESETS, preset_detail
 router = APIRouter()
 
 CACHE_SIZE = 8
-_cache: OrderedDict[tuple, dict] = OrderedDict()
+_cache: OrderedDict[tuple, bytes] = OrderedDict()  # the report's JSON text, as sent
 _cache_lock = threading.Lock()  # guards the cache only; the work itself runs under app.heavy.lock
 
 # Words in a car's name that pick its vehicle preset. A session with no car is taken to be the team's car, the one
@@ -84,19 +84,19 @@ def balance_report(session: int | None = None, event: int | None = None, db: Ses
     with _cache_lock:
         if key in _cache:
             _cache.move_to_end(key)
-            return _cache[key]
+            return page_cache.RawJSON(_cache[key])
     # kept in the database too (app/page_cache.py); else built under heavy.lock, one log-reading job at a time across
     # the server (each holds a whole log while it reads it): a request that waited its turn may find it built meanwhile
     result = page_cache.cached(
         db, f"{kind}:{sid}|balance",
         lambda: page_cache.signature("balance", name, page_cache.sessions_part(db, usable),
                                      *run_labels.renamed(labels[s.id] for s in usable)),
-        lambda: _build(db, kind, sid, name, usable, names))
+        lambda: _build(db, kind, sid, name, usable, names), raw=True)
     with _cache_lock:
         _cache[key] = result
         while len(_cache) > CACHE_SIZE:
             _cache.popitem(last=False)
-    return result
+    return page_cache.RawJSON(result)
 
 
 def _build(db: Session, kind: str, sid: int, name: str, sessions: list[models.RunSession],

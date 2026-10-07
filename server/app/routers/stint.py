@@ -116,26 +116,28 @@ def reduced(db: Session, f: models.LoggerFile) -> tuple[LogSummary, models.Track
     return log, track
 
 
-def stint_view(db: Session, file_ids: list[int]) -> dict:
+def stint_view(db: Session, file_ids: list[int]) -> dict | page_cache.RawJSON:
     """The stints of the logs. Two views are kept once worked out (app/page_cache.py), with their lap tags in their
-    signature: one log's (the session page's) and an event's main logs together (the report's quick laps). The
-    event's view reads every main log, however many: a race weekend has twenty or more, and its logs are read one
-    at a time and kept reduced (about 1 MB each), so the number of logs doesn't add to the memory a read takes."""
+    signature, and sent as the JSON they are kept as: one log's (the session page's) and an event's main logs together
+    (the report's quick laps). The event's view reads every main log, however many: a race weekend has twenty or
+    more, and its logs are read one at a time and kept reduced (about 1 MB each), so the number of logs doesn't add to
+    the memory a read takes."""
     ids = list(dict.fromkeys(file_ids))
     files = [db.get(models.LoggerFile, i) for i in ids]
     if ids and None not in files:
         if len(files) == 1:
             f = files[0]
-            return page_cache.cached(db, f"session:{f.session_id}|stint|file:{f.id}",
-                                     lambda: _view_signature(db, f), lambda: _stint_view(db, ids), locked=False)
+            return page_cache.RawJSON(page_cache.cached(
+                db, f"session:{f.session_id}|stint|file:{f.id}", lambda: _view_signature(db, f),
+                lambda: _stint_view(db, ids), locked=False, raw=True))
         events = {f.session.event_id for f in files}
         if len(events) == 1 and None not in events:
             mains = event_files(db, (eid := events.pop()))
             if sorted(ids) == mains:
-                return page_cache.cached(
+                return page_cache.RawJSON(page_cache.cached(
                     db, f"event:{eid}|stint",
                     lambda: page_cache.signature("stint", sorted(_view_signature(db, f) for f in files), EVENT_VIEW),
-                    lambda: _stint_view(db, ids, limit=False), locked=False)
+                    lambda: _stint_view(db, ids, limit=False), locked=False, raw=True))
             if set(ids) <= set(mains):  # some of them: the report's list of an event a moment old, say
                 return _stint_view(db, ids, limit=False)
     return _stint_view(db, ids)

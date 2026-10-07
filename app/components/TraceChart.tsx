@@ -1,16 +1,19 @@
-import { useState } from 'react';
-import { GestureResponderEvent, LayoutChangeEvent, Platform, StyleSheet } from 'react-native';
-import Svg, { Line, Path, Text as SvgText } from 'react-native-svg';
+import { useId, useMemo, useState } from 'react';
+import { LayoutChangeEvent, StyleSheet } from 'react-native';
+import Svg, { ClipPath, Defs, G, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
 
 import { Text, View } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
+import { ResetZoom, useZoom, ZoomArea } from '@/components/Zoom';
+import { extent, indexWindow, isZoomed, nearestIndex, pixelOf, Range, shownRange, valueAt } from '@/lib/zoom';
 import { byScheme, chartPlate, Fonts, themed, Type, useTheme } from '@/constants/Theme';
 
 // Categorical slots 1 and 2 of the validated chart palette, light and dark steps.
 export const SERIES = byScheme((c) => ({ reference: c.chart.series[0], compare: c.chart.series[1] }));
 export const useSeriesColors = () => SERIES[useColorScheme() === 'dark' ? 'dark' : 'light'];
 
-type Series = { values: number[]; color: string };
+// `dash`: an SVG dash pattern ("5,4") for a line drawn dashed; the zoom and the y axis's fit take in every series
+export type Series = { values: number[]; color: string; dash?: string };
 
 type Props = {
   title: string;
@@ -52,17 +55,24 @@ function placeLabels(markers: Marker[], xAt: (at: number) => number) {
   return out;
 }
 
-/** One channel against distance. Charts on a screen share `cursor` so scrubbing one moves all. The chrome is the
- * programme's: the title in Archivo capitals over a thin ink rule, hairline grid, ink baseline and cursor, values in
- * ink beside a flat key of each line's colour. */
+/** One channel against distance. Charts on a screen share `cursor` so scrubbing one moves all, and zoom together
+ * inside a ZoomGroup (components/Zoom.tsx): the y axis fits what is shown, unless a fixed `domain` is given. The
+ * chrome is the programme's: the title in Archivo capitals over a thin ink rule, hairline grid, ink baseline and
+ * cursor, values in ink beside a flat key of each line's colour. */
 export function TraceChart({ title, unit, distance, series, cursor, onCursor, markers = [], domain, zeroLine,
   height = 140 }: Props) {
   const styles = useStyles();
   const c = useTheme().chart;
+  const zoom = useZoom();
+  const clip = `clip${useId().replace(/[^a-zA-Z0-9]/g, '')}`;
   const [width, setWidth] = useState(0);
   const n = distance.length;
-  const all = series.flatMap((s) => s.values);
-  let [lo, hi] = domain ?? [Math.min(...all), Math.max(...all)];
+  const full: Range = [distance[0] ?? 0, distance[n - 1] ?? 1];
+  const view = shownRange(zoom.view, full);
+  const zoomed = isZoomed(view, full);
+  const [i0, i1] = useMemo(() => indexWindow(distance, view), [distance, view[0], view[1]]); // eslint-disable-line react-hooks/exhaustive-deps
+  const fit = useMemo(() => extent(series.map((s) => s.values), i0, i1) ?? [0, 1], [series, i0, i1]);
+  let [lo, hi] = domain ?? fit;
   if (zeroLine) {
     const m = Math.max(Math.abs(lo), Math.abs(hi), 0.05);
     [lo, hi] = [-m, m];
@@ -70,24 +80,32 @@ export function TraceChart({ title, unit, distance, series, cursor, onCursor, ma
   if (hi === lo) hi = lo + 1;
   const w = Math.max(width - PAD.left - PAD.right, 1);
   const h = height - PAD.top - PAD.bottom;
-  const x = (i: number) => PAD.left + (distance[i] / distance[n - 1]) * w;
+  const x = (d: number) => pixelOf(d, view, PAD.left, w);
   const y = (v: number) => PAD.top + (1 - (v - lo) / (hi - lo)) * h;
-  const path = (vals: number[]) => vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join('');
+  // the lines through the points shown (and one either side, clipped at the edges); a gap in the log lifts the pen
+  const paths = useMemo(() => series.map((s) => {
+    let d = '';
+    let pen = false;
+    for (let i = i0; i <= i1; i++) {
+      const v = s.values[i];
+      if (!Number.isFinite(v)) {
+        pen = false;
+        continue;
+      }
+      d += `${pen ? 'L' : 'M'}${x(distance[i]).toFixed(1)},${y(v).toFixed(1)}`;
+      pen = true;
+    }
+    return d;
+  }), [series, distance, i0, i1, view[0], view[1], w, lo, hi, h]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const indexAt = (px: number) => {
-    const d = ((px - PAD.left) / w) * distance[n - 1];
-    return Math.max(0, Math.min(n - 1, Math.round((d / distance[n - 1]) * (n - 1))));
-  };
-  const scrub = (e: GestureResponderEvent) => onCursor(indexAt(e.nativeEvent.locationX));
-  const hover = Platform.OS === 'web'
-    ? { onMouseMove: (e: any) => onCursor(indexAt(e.nativeEvent.offsetX ?? e.nativeEvent.locationX)) }
-    : {};
+  const cursorAt = (px: number) => onCursor(nearestIndex(distance, valueAt(px, view, PAD.left, w)));
 
   const fmt = (v: number) => (Math.abs(hi - lo) < 5 ? v.toFixed(2) : Math.round(v).toString());
-  const labels = width > 0 && n > 1
-    ? placeLabels(markers, (at) => x(Math.round((at / distance[n - 1]) * (n - 1))))
-    : [];
+  // the corners in the part shown, placed where they fall in it
+  const labels = width > 0 && n > 1 ? placeLabels(markers.filter((m) => m.at >= view[0] && m.at <= view[1]), x) : [];
   const svgHeight = height + Math.max(0, ...labels.map((m) => m.row)) * LABEL_ROW;
+  const cx = cursor != null && cursor >= i0 && cursor <= i1 ? x(distance[cursor]) : null;
+  const showCursor = cx != null && cx >= PAD.left - 0.5 && cx <= PAD.left + w + 0.5;
 
   return (
     <View style={styles.wrap}>
@@ -104,15 +122,19 @@ export function TraceChart({ title, unit, distance, series, cursor, onCursor, ma
             {unit ? <Text style={styles.unit}>{unit}</Text> : null}
           </View>
         )}
+        {!zoom.shared && <ResetZoom zoom={zoom} />}
       </View>
-      <View
-        onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}
-        onStartShouldSetResponder={() => true}
-        onResponderGrant={scrub}
-        onResponderMove={scrub}
-        {...hover}>
+      <ZoomArea zoom={zoom} full={full} view={view} left={PAD.left} width={w} onCursor={cursorAt}
+        onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}>
         {width > 0 && n > 1 && (
           <Svg width={width} height={svgHeight} pointerEvents="none">
+            {zoomed && (
+              <Defs>
+                <ClipPath id={clip}>
+                  <Rect x={PAD.left} y={0} width={w} height={height} />
+                </ClipPath>
+              </Defs>
+            )}
             <Line x1={PAD.left} x2={width - PAD.right} y1={PAD.top} y2={PAD.top} stroke={c.grid} strokeWidth={1} />
             <Line x1={PAD.left} x2={width - PAD.right} y1={y(lo)} y2={y(lo)} stroke={c.axis} strokeWidth={1} />
             {zeroLine && (
@@ -131,16 +153,18 @@ export function TraceChart({ title, unit, distance, series, cursor, onCursor, ma
                 {m.label}
               </SvgText>
             ))}
-            {series.map((s, i) => (
-              <Path key={i} d={path(s.values)} stroke={s.color} strokeWidth={2} fill="none" strokeLinejoin="round"
-                strokeLinecap="round" />
-            ))}
-            {cursor != null && (
-              <Line x1={x(cursor)} x2={x(cursor)} y1={PAD.top} y2={PAD.top + h} stroke={c.ink} strokeWidth={1} />
+            <G clipPath={zoomed ? `url(#${clip})` : undefined}>
+              {series.map((s, i) => (
+                <Path key={i} d={paths[i]} stroke={s.color} strokeWidth={2} fill="none" strokeLinejoin="round"
+                  strokeLinecap={s.dash ? 'butt' : 'round'} strokeDasharray={s.dash} />
+              ))}
+            </G>
+            {showCursor && (
+              <Line x1={cx} x2={cx} y1={PAD.top} y2={PAD.top + h} stroke={c.ink} strokeWidth={1} />
             )}
           </Svg>
         )}
-      </View>
+      </ZoomArea>
     </View>
   );
 }

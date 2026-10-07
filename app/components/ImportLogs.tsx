@@ -290,7 +290,10 @@ function UploadStatus({ sending, job }: { sending: Sending | null; job: ImportJo
 function Summary({ job, onHide }: { job: ImportJob; onHide: () => void }) {
   const styles = useStyles();
   const byReason = new Map<string, string[]>();
-  for (const s of job.skipped) byReason.set(s.reason, [...(byReason.get(s.reason) ?? []), shortName(s.file)]);
+  for (const s of job.skipped.filter((x) => !x.already)) {
+    byReason.set(s.reason, [...(byReason.get(s.reason) ?? []), shortName(s.file)]);
+  }
+  const already = job.skipped.filter((x) => x.already).length;
   const untimed = untimedRuns(job);
 
   return (
@@ -300,6 +303,9 @@ function Summary({ job, onHide }: { job: ImportJob; onHide: () => void }) {
         <ErrorLine key={i}>{shortName(e.file)}: {e.error}</ErrorLine>
       ))}
       {job.errors.length > 10 && <ErrorLine>and {job.errors.length - 10} more</ErrorLine>}
+      {already > 0 && (
+        <Note>{already} already uploaded, skipped · {job.session_ids.length} new added</Note>
+      )}
       {[...byReason].map(([reason, names]) => (
         <Note key={reason}>Skipped {plural(names.length, 'file')} ({reason}): {list(names)}</Note>
       ))}

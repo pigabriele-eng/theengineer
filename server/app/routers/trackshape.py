@@ -32,7 +32,7 @@ EVENT_LAPS = 6  # an event's shape is learned from at least this many of its qui
 EVENT_SESSIONS = 3  # reading at most this many logs (the quickest laps' sessions)
 NO_SHAPE = "The logs can't tell the track's shape here"
 
-_cache: OrderedDict[tuple, dict | str] = OrderedDict()
+_cache: OrderedDict[tuple, bytes | str] = OrderedDict()  # a shape's JSON text, or why there is none
 _cache_lock = threading.Lock()
 
 
@@ -189,7 +189,7 @@ def _work_out(db: Session, uses: list[_Use]) -> dict | str:
 
 
 def shape_for(db: Session, kind: str, id_: int, sessions: list[models.RunSession], max_sessions: int,
-              enough: int) -> dict:
+              enough: int) -> page_cache.RawJSON:
     uses = _plan(sessions, max_sessions, enough)
     if not uses:
         raise HTTPException(404, "No clean lap to learn the track's shape from")
@@ -204,7 +204,7 @@ def shape_for(db: Session, kind: str, id_: int, sessions: list[models.RunSession
         try:
             out = page_cache.cached(db, f"{kind}:{id_}|shape",
                                     lambda: page_cache.signature("shape", _key(db, kind, id_, uses)),
-                                    lambda: _shape_or_404(db, uses))
+                                    lambda: _shape_or_404(db, uses), raw=True)
         except HTTPException as e:
             if e.status_code != 404:
                 raise
@@ -215,7 +215,7 @@ def shape_for(db: Session, kind: str, id_: int, sessions: list[models.RunSession
                 _cache.popitem(last=False)
     if isinstance(out, str):
         raise HTTPException(404, out)
-    return out
+    return page_cache.RawJSON(out)
 
 
 def _shape_or_404(db: Session, uses: list[_Use]) -> dict:

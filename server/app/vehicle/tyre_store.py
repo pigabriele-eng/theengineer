@@ -191,7 +191,7 @@ def idle_s() -> float:
 
 def _wait_for_quiet() -> None:
     while not _stop.is_set() and (_traffic["in_flight"] > 0 or time.monotonic() - _traffic["last"] < QUIET_S):
-        time.sleep(0.5)
+        _stop.wait(0.5)  # not a plain sleep: stop() (server shut-down, the end of each test) needn't wait for it
 
 
 def start() -> None:
