@@ -435,6 +435,29 @@ def test_a_page_that_keeps_polling_holds_a_piece_up_only_so_long(monkeypatch):
     assert 0.5 <= ran[0][1] - t0 < 3 and ran[1][1] - ran[0][1] >= 1.0
 
 
+def test_an_answer_kept_meanwhile_by_another_request_keeps_the_rest_of_this_one(client):
+    """Two requests work out the same page: the second to keep it overwrites the first's row, and what else it has
+    pending (here a track made for a log that named it) is committed with it, not rolled back."""
+    from app import db as app_db
+    from app import models, page_cache
+
+    with app_db.SessionLocal() as other:
+        page_cache.store(other, "session:1|analysis", "old", {"by": "the other request"})
+    with app_db.SessionLocal() as db:
+        db.add(models.Track(name="Made in work()"))
+        real, calls = db.scalar, []
+
+        def scalar(*args, **kwargs):  # the other request's row isn't there yet when this one looks
+            calls.append(1)
+            return None if len(calls) == 1 else real(*args, **kwargs)
+
+        db.scalar = scalar
+        page_cache.store(db, "session:1|analysis", "new", {"by": "this request"})
+    with app_db.SessionLocal() as db:
+        assert db.scalar(select(models.Track.name).where(models.Track.name == "Made in work()")) is not None
+        assert page_cache.lookup(db, "session:1|analysis", "new") == (200, {"by": "this request"})
+
+
 def test_a_kept_answer_has_no_nan():
     from app import page_cache
 

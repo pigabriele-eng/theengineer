@@ -317,3 +317,31 @@ def test_vehicle_tool_per_garage_vehicle(client):
     assert r.status_code == 404 and "Other GT4 has no" in r.json()["detail"]
     r = client.get(f"/sessions/{s['id']}/setup/suggestions", params={"vehicle_model_id": other["id"]})
     assert r.status_code == 200
+
+
+def test_tyre_fit_reads_one_log_at_a_time(client, bicycle, monkeypatch):
+    """Each log takes 100 to 300 MB: the next one is read only once the last is let go, and a session asked for
+    twice is read once and named right when it is skipped."""
+    import dataclasses
+    import gc
+    import weakref
+
+    import app.routers.vehicle as vehicle_router
+
+    good, bad = (client.post("/sessions", json={}).json()["id"] for _ in range(2))
+    alive, read = [], []
+
+    def load(db, s, file_id=None):
+        gc.collect()
+        assert all(r() is None for r in alive), "the last log is still held"
+        read.append(s.id)
+        channels = {k: v for k, v in bicycle.channels.items() if s.id == good or k != "yaw"}
+        data = dataclasses.replace(bicycle, channels=channels)
+        alive.append(weakref.ref(data))
+        return None, data, None
+
+    monkeypatch.setattr(vehicle_router, "load_main_file", load)
+    r = client.post("/vehicle/tyre-fit", json={"session_ids": [good, good, bad], "vehicle": CAR, "steering_ratio": 15})
+    assert r.status_code == 200, r.text
+    assert read == [good, bad]
+    assert [s["session_id"] for s in r.json()["skipped"]] == [bad]

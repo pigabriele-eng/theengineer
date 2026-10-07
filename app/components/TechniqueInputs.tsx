@@ -1,8 +1,9 @@
-// The driver's inputs under the technique check's speed trace: throttle, brake, steering and gear on the same distance
-// axis (the same margins as TechniqueTrace, so the cursor lines up), with the fastest lap's laid under them as a
-// quieter line, the same mistake bands, and perfect driving's own phases as a thin strip above. This lap is slot 1 of
-// the validated chart palette, as in the speed trace; the fastest lap, the bands and the phases are neutral ink, so
-// colour keeps meaning one thing.
+// The driver's inputs under the technique check's speed trace: throttle, brake, steering, gear and revs on the same
+// distance axis (the same margins as TechniqueTrace, so the cursor lines up), with the fastest lap's laid under them as
+// a quieter line, perfect driving's (or the realistic target's) laid over them dashed, the same mistake bands, the
+// obvious mistakes marked where they happen, and perfect driving's own phases as a thin strip above. This lap is slot
+// 1 of the validated chart palette and perfect driving slot 3, as in the speed trace; the fastest lap, the bands and
+// the phases are neutral ink, so colour keeps meaning one thing.
 import { useMemo, useState } from 'react';
 import { GestureResponderEvent, LayoutChangeEvent, Platform, StyleSheet } from 'react-native';
 import Svg, { Circle, Line, Path, Rect, Text as SvgText } from 'react-native-svg';
@@ -19,6 +20,9 @@ type Props = {
   inputs: Inputs;
   fastest: Inputs | null; // the fastest lap's, laid under this lap's
   fastestLabel: string | null;
+  model?: Inputs | null; // perfect driving's or the realistic target's, laid over this lap's, dashed
+  modelLabel?: string | null;
+  marks?: { at_m: number; code: string }[]; // the obvious mistakes, where each happens
   phases?: number[]; // perfect driving's own, an index into MODEL_PHASES at each point
   channels?: Partial<Record<InputRole, { channel: string | null; unit: string | null }>>;
   bands: Band[];
@@ -33,11 +37,14 @@ type Props = {
 };
 
 const CHANNELS: { role: InputRole; title: string; unit: string; digits: number; missing: string }[] = [
+  { role: 'speed', title: 'Speed', unit: 'km/h', digits: 1, missing: 'speed' },
   { role: 'throttle', title: 'Throttle', unit: '%', digits: 0, missing: 'throttle' },
   { role: 'brake', title: 'Brake', unit: 'bar', digits: 0, missing: 'brake pressure' },
   { role: 'steer', title: 'Steering', unit: 'deg', digits: 1, missing: 'steering angle' },
   { role: 'gear', title: 'Gear', unit: '', digits: 0, missing: 'gear' },
+  { role: 'rpm', title: 'Revs', unit: 'rpm', digits: 0, missing: 'engine revs' },
 ];
+const MODEL_DASH = '6,4';
 const PAD = { ...TRACE_PAD_X, top: 4, bottom: 4 };
 const STRIP = 8;
 const AXIS_ROW = 18; // corner labels under the last chart
@@ -52,8 +59,8 @@ type Geometry = {
   indexAt: (sx: number) => number; // the whole lap's point under a pixel
 };
 
-export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, phases, channels, bands, selected,
-  onSelect, corners, from, to, cursor, onCursor, tall }: Props) {
+export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, model, modelLabel, marks, phases,
+  channels, bands, selected, onSelect, corners, from, to, cursor, onCursor, tall }: Props) {
   const styles = useStyles();
   const theme = useTheme();
   const c = useChartColors();
@@ -66,6 +73,7 @@ export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, 
     px: (m) => PAD.left + ((m - x0) / (x1 - x0 || 1)) * w,
     indexAt: (sx) => i0 + Math.max(0, Math.min(i1 - i0, Math.round(((sx - PAD.left) / w) * (i1 - i0)))),
   };
+  const marked = (marks ?? []).filter((m) => m.at_m >= x0 && m.at_m <= x1);
   const shown = bands.filter((b) => b.end_m >= x0 && b.start_m <= x1);
   const local = cursor != null && cursor >= i0 && cursor <= i1 ? cursor : null;
   const bandAt = (i: number) => shown.filter((b) => i * stepM >= b.start_m && i * stepM <= b.end_m)
@@ -91,11 +99,15 @@ export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, 
   };
 
   const have = CHANNELS.filter((ch) => inputs[ch.role]);
-  const missing = CHANNELS.filter((ch) => !inputs[ch.role]);
-  const fastestMissing = fastest ? have.filter((ch) => !fastest[ch.role]) : [];
+  const missing = CHANNELS.filter((ch) => ch.role !== 'speed' && !inputs[ch.role]);
+  const fastestMissing = fastest ? have.filter((ch) => ch.role !== 'speed' && !fastest[ch.role]) : [];
   const phaseColors = MODEL_PHASES.map((p) => phaseColor(theme, p)); // the driving phases' colours, as everywhere
   const unitOf = (ch: (typeof CHANNELS)[number]) => channels?.[ch.role]?.unit ?? ch.unit;
   const height = (role: InputRole) => (role === 'gear' ? (tall ? 84 : 64) : tall ? 112 : 84);
+  const over = (role: InputRole) => {
+    const v = model?.[role];
+    return v && v.length === points ? v : null;
+  };
   const sources = have.map((ch) => channels?.[ch.role]?.channel).filter((s): s is string => !!s);
 
   return (
@@ -103,6 +115,13 @@ export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, 
       <View style={styles.legend}>
         <LegendLine color={c.s1} label="This lap" />
         {fastest && fastestLabel && <LegendLine color={c.axis} label={fastestLabel} thin />}
+        {model && modelLabel && <LegendLine color={c.s3} label={modelLabel} dashed />}
+        {marked.length > 0 && (
+          <View style={styles.legendItem}>
+            <Text style={StyleSheet.flatten([styles.mark, { color: c.text }])}>!</Text>
+            <Text style={styles.legendText}>obvious mistake</Text>
+          </View>
+        )}
       </View>
       {phases && phases.length === points && (
         <View {...touch}>
@@ -124,8 +143,9 @@ export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, 
       {have.map((ch, k) => (
         <View key={ch.role} {...touch}>
           <Channel geo={geo} title={ch.title} unit={unitOf(ch)} digits={ch.digits} role={ch.role}
-            values={inputs[ch.role]!} under={fastest?.[ch.role] ?? null} bands={shown} selected={selected}
-            cursor={local} height={height(ch.role)} corners={k === have.length - 1 ? corners : []} />
+            values={inputs[ch.role]!} under={fastest?.[ch.role] ?? null} over={over(ch.role)} bands={shown}
+            selected={selected} marks={marked} markLabels={k === 0} cursor={local} height={height(ch.role)}
+            corners={k === have.length - 1 ? corners : []} />
         </View>
       ))}
       <Text style={styles.note}>
@@ -141,12 +161,14 @@ export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, 
   );
 }
 
-function LegendLine({ color, label, thin }: { color: string; label: string; thin?: boolean }) {
+function LegendLine({ color, label, thin, dashed }: { color: string; label: string; thin?: boolean;
+  dashed?: boolean }) {
   const styles = useStyles();
   return (
     <View style={styles.legendItem}>
       <Svg width={16} height={4}>
-        <Line x1={0} x2={16} y1={2} y2={2} stroke={color} strokeWidth={thin ? 1.5 : 2} />
+        <Line x1={0} x2={16} y1={2} y2={2} stroke={color} strokeWidth={thin ? 1.5 : 2}
+          strokeDasharray={dashed ? MODEL_DASH : undefined} />
       </Svg>
       <Text style={styles.legendText}>{label}</Text>
     </View>
@@ -190,15 +212,18 @@ type ChannelProps = {
   role: InputRole;
   values: number[];
   under: number[] | null;
+  over: number[] | null; // perfect driving's, dashed
   bands: Band[];
   selected: number | null;
+  marks: { at_m: number; code: string }[];
+  markLabels: boolean; // the first chart names them
   cursor: number | null;
   height: number;
   corners: { code: string; at_m: number }[];
 };
 
-function Channel({ geo, title, unit, digits, role, values, under, bands, selected, cursor, height, corners }:
-  ChannelProps) {
+function Channel({ geo, title, unit, digits, role, values, under, over, bands, selected, marks, markLabels, cursor,
+  height, corners }: ChannelProps) {
   const styles = useStyles();
   const theme = useTheme();
   const c = useChartColors();
@@ -206,7 +231,7 @@ function Channel({ geo, title, unit, digits, role, values, under, bands, selecte
   const axisRow = corners.length ? AXIS_ROW : 0;
   const h = height - PAD.top - PAD.bottom;
   const [lo, hi, ticks] = useMemo(() => {
-    const seen = [values, under].flatMap((v) => (v ? v.slice(i0, i1 + 1) : [])).filter(Number.isFinite);
+    const seen = [values, under, over].flatMap((v) => (v ? v.slice(i0, i1 + 1) : [])).filter(Number.isFinite);
     let a = Math.min(...seen), b = Math.max(...seen);
     if (!seen.length) [a, b] = [0, 1];
     if (role === 'gear') return [a - 0.5, b + 0.5, a === b ? [a] : [a, b]];
@@ -215,7 +240,7 @@ function Channel({ geo, title, unit, digits, role, values, under, bands, selecte
     const span = b - a || 1;
     const out: [number, number] = [a - (role === 'brake' ? 0 : span * 0.06), b + span * 0.06];
     return [...out, niceTicks(out[0], out[1], 3)] as [number, number, number[]];
-  }, [values, under, i0, i1, role]);
+  }, [values, under, over, i0, i1, role]);
   const py = (v: number) => PAD.top + (1 - (v - lo) / (hi - lo || 1)) * h;
   const paths = useMemo(() => {
     const path = (vals: number[]) => {
@@ -233,10 +258,10 @@ function Channel({ geo, title, unit, digits, role, values, under, bands, selecte
       }
       return d;
     };
-    return { lap: path(values), under: under ? path(under) : null };
+    return { lap: path(values), under: under ? path(under) : null, over: over ? path(over) : null };
     // px and py follow from width, the range and the scale
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [values, under, i0, i1, width, lo, hi, height, role, stepM]);
+  }, [values, under, over, i0, i1, width, lo, hi, height, role, stepM]);
   const fmt = (v: number | undefined) => (v == null || !Number.isFinite(v) ? '–' : v.toFixed(digits));
   const ticksX: { label: string; x: number }[] = [];
   for (const k of [...corners].sort((a, z) => a.at_m - z.at_m)) {
@@ -263,6 +288,12 @@ function Channel({ geo, title, unit, digits, role, values, under, bands, selecte
                   <Text style={styles.readoutUnder}>{`${fmt(under[cursor])}${unit ? ` ${unit}` : ''}`}</Text>
                 </>
               )}
+              {over && (
+                <>
+                  <View style={StyleSheet.flatten([styles.key, styles.keyThin, { backgroundColor: c.s3 }])} />
+                  <Text style={styles.readoutUnder}>{`${fmt(over[cursor])}${unit ? ` ${unit}` : ''}`}</Text>
+                </>
+              )}
             </>
           ) : (
             <Text style={styles.readout}> </Text>
@@ -271,7 +302,8 @@ function Channel({ geo, title, unit, digits, role, values, under, bands, selecte
       </View>
       {width > 0 && (
         <Svg width={width} height={height + axisRow} pointerEvents="none"
-          accessibilityLabel={`${title} along the lap${under ? ', with the fastest lap’s' : ''}`}>
+          accessibilityLabel={`${title} along the lap${under ? ', with the fastest lap’s' : ''}${
+            over ? ', with perfect driving’s' : ''}`}>
           {bands.map((b) => {
             const xa = px(Math.max(b.start_m, i0 * stepM)), xb = px(Math.min(b.end_m, i1 * stepM));
             return (
@@ -297,9 +329,27 @@ function Channel({ geo, title, unit, digits, role, values, under, bands, selecte
           )}
           <Path d={paths.lap} stroke={c.s1} strokeWidth={2} fill="none" strokeLinejoin="round"
             strokeLinecap="round" />
+          {paths.over && (
+            <Path d={paths.over} stroke={c.s3} strokeWidth={1.75} strokeDasharray={MODEL_DASH} fill="none"
+              strokeLinejoin="round" />
+          )}
+          {marks.map((m, j) => (
+            <Line key={`k${j}`} x1={px(m.at_m)} x2={px(m.at_m)} y1={top} y2={bottom} stroke={c.text}
+              strokeWidth={1} strokeDasharray="2,3" />
+          ))}
+          {markLabels && marks.map((m, j) => (
+            <SvgText key={`l${j}`} x={px(m.at_m) + 3} y={top + 10} fontSize={11} fontWeight="700"
+              fill={c.text} fontFamily={SANS}>
+              !
+            </SvgText>
+          ))}
           {cursor != null && (
             <Line x1={px(cursor * stepM)} x2={px(cursor * stepM)} y1={top} y2={bottom} stroke={c.text}
               strokeWidth={1} />
+          )}
+          {cursor != null && over && Number.isFinite(over[cursor]) && (
+            <Circle cx={px(cursor * stepM)} cy={py(over[cursor])} r={3} fill={c.s3} stroke={c.surface}
+              strokeWidth={1.5} />
           )}
           {cursor != null && under && Number.isFinite(under[cursor]) && (
             <Circle cx={px(cursor * stepM)} cy={py(under[cursor])} r={3} fill={c.axis} stroke={c.surface}
@@ -330,6 +380,7 @@ const useStyles = themed((c) => ({
   readout: { ...Type.number, fontSize: 13, color: c.text },
   readoutUnder: { ...Type.number, fontSize: 13, color: c.textSecondary },
   key: { width: 10, height: 3 },
+  mark: { ...Type.number, fontSize: 13, fontWeight: '700' as const },
   keyThin: { height: 2 },
   legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, rowGap: 6, backgroundColor: 'transparent' },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },

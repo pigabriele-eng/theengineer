@@ -173,6 +173,29 @@ def test_a_lift_on_the_way_out_of_a_corner_is_an_obvious_mistake(fastest):
     clean = check_lap(fastest.trace, t.perfect, t.held, SECTIONS, lap_time=fastest.time,
                       calibrations=(t.calibration, t.held_calibration))
     assert clean["obvious"] == []
+    assert out["budget"]["mistakes"] >= lifts[0]["cost_s"]
+    # the fastest lap itself, the targets built on it, lift and all: the lift still counts in what it lost to
+    # mistakes, and the part perfect driving copies of it is shown apart, so the parts still add up to the gap
+    own = targets([lifted], lifted.trace, lifted.time, SECTIONS)
+    out = check_lap(lifted.trace, own.perfect, own.held, SECTIONS, lap_time=lifted.time,
+                    calibrations=(own.calibration, own.held_calibration))
+    lift = next(m for m in out["obvious"] if m["kind"] == "exit_lift")
+    b = out["budget"]
+    assert b["mistakes"] >= lift["cost_s"] > 0 and b["in_targets"] < 0
+    assert sum(b[k] for k in ("mistakes", "in_targets", "at_limit", "optimism", "pit_lane", "other")) == \
+        pytest.approx(out["gap"], abs=2e-3)
+
+
+def test_a_lift_from_full_throttle_past_the_slowest_point_is_on_the_way_out_however_hard_it_corners(fastest):
+    d = np.arange(N + 1, dtype=float)
+    lifted = Lap(1 - 0.06 * _step(d, 360, 420, 10))
+    lifted.trace["throttle"] = np.where((d >= 350) & (d <= 400), 20.0, lifted.trace["throttle"])
+    ay = lifted.trace["ay"]
+    ay[340:420] = 1.2 * float(np.max(np.abs(ay[290:340]))) * np.sign(ay[300])  # a long corner, still loaded
+    t = targets([fastest, lifted], fastest.trace, fastest.time, SECTIONS)
+    out = check_lap(lifted.trace, t.perfect, t.held, SECTIONS, lap_time=lifted.time,
+                    calibrations=(t.calibration, t.held_calibration))
+    assert [m["kind"] for m in out["obvious"] if m["code"] == "T1"][:1] == ["exit_lift"]
 
 
 def test_braking_below_the_limit_costs_the_later_brake_point():
@@ -214,3 +237,75 @@ def test_speed_that_stops_climbing_on_the_way_out_is_a_stall():
     assert len(out) == 1 and 70 <= out[0][0] <= 85 and 85 <= out[0][1] <= 100
     tr["braking"][75:] = 1.0  # the same, braking for the next corner: not a stall
     assert _stalls(tr, 0, 199, np.full(200, -0.3), -1.0) == []
+
+
+def test_the_best_technique_lap_takes_the_best_clean_pass_or_builds_one(fastest):
+    from app.analysis.technique import Pass, best_technique, section_times
+    d = np.arange(N + 1, dtype=float)
+    lifted = Lap(1 - 0.06 * _step(d, 360, 420, 10))  # an exit lift out of T1
+    lifted.trace["throttle"] = np.where((d >= 350) & (d <= 400), 20.0, lifted.trace["throttle"])
+    slow_t2 = Lap(1 - 0.03 * _step(d, 600, 800, 20))  # clean but slower through T2
+    laps = [fastest, lifted, slow_t2]
+    t = targets(laps, fastest.trace, fastest.time, SECTIONS)
+    passes = []
+    for i, x in enumerate(laps):
+        out = check_lap(x.trace, t.perfect, t.held, SECTIONS, lap_time=x.time,
+                        calibrations=(t.calibration, t.held_calibration))
+        passes.append(Pass("Q1", i + 1, x.time, "PIA", section_times(x.trace, SECTIONS), out["obvious"],
+                           out["trace"]))
+    # the lifted lap with its lift taken out: never slower, quicker out of T1, the same elsewhere
+    tr = passes[1].trace
+    fixed = np.array(tr["model"]["fixed"]["speed"])
+    driven = np.array(tr["driven"])
+    m = np.arange(len(driven)) * tr["step_m"]
+    assert np.all(fixed >= driven - 0.05)
+    assert fixed[(m > 370) & (m < 410)].min() > driven[(m > 370) & (m < 410)].max() - 1
+    assert np.allclose(fixed[m > 500], driven[m > 500], atol=0.05)
+    # slow_t2 laid over: T1 from the lap with no lift (the fastest), T2 its own pass with nothing to take out
+    best = best_technique(passes[2], passes, SECTIONS)
+    src = {x["code"]: x for x in best["sources"]}
+    assert src["T2"]["kind"] == "pass" and src["T2"]["number"] == 1 and src["T2"]["gain_s"] > 0
+    # the lifted lap: T1's lift is not a clean pass, and the fastest lap's T1 is quicker: that pass is taken
+    best = best_technique(passes[1], passes, SECTIONS)
+    src = {x["code"]: x for x in best["sources"]}
+    assert src["T1"]["kind"] == "pass" and src["T1"]["number"] == 1
+    # the fastest lap: nothing quicker anywhere, nothing to take out
+    best = best_technique(passes[0], passes, SECTIONS)
+    assert [x["kind"] for x in best["sources"]] == ["own", "own"]
+    assert best["time"] == pytest.approx(fastest.time, abs=1e-3)
+    # the join blended: the speed runs on as smoothly as the laps' own
+    best = best_technique(passes[2], passes, SECTIONS)
+    v = np.array(best["speed"])
+    assert len(v) == len(driven) and np.abs(np.diff(v)).max() <= np.abs(np.diff(driven)).max() + 1
+    assert best["time"] < slow_t2.time
+    # another driver's passes are not this driver's best
+    other = [Pass(p.run, p.number, p.time, "RAC" if p is not passes[2] else "PIA", p.times, p.obvious, p.trace)
+             for p in passes]
+    best = best_technique(other[2], other, SECTIONS)
+    assert all(x["kind"] != "pass" for x in best["sources"])
+
+
+def test_a_lift_taken_out_of_the_lap_runs_on_at_its_own_acceleration(fastest):
+    from app.analysis.technique import Envelope, without_mistakes
+    d = np.arange(N + 1, dtype=float)
+    lifted = Lap(1 - 0.06 * _step(d, 360, 420, 10))
+    t = targets([fastest, lifted], fastest.trace, fastest.time, SECTIONS)
+    env_r = Envelope(lifted.trace["curvature"], t.held, t.held_calibration)
+    lift = {"kind": "exit_lift", "start_m": 350, "end_m": 400, "at_m": 355}
+    fixed = without_mistakes(lifted.trace, env_r, SECTIONS, [lift])
+    v = lifted.trace["speed"]
+    assert np.all(fixed >= v - 1e-9) and np.all(fixed[:350] == v[:350]) and np.all(fixed[600:] == v[600:])
+    assert fixed[400] > v[400] and fixed[400] <= fastest.trace["speed"][400] * 1.01
+    assert np.abs(np.diff(fixed)).max() <= np.abs(np.diff(v)).max() + 0.5
+    assert without_mistakes(lifted.trace, env_r, SECTIONS, []).tolist() == v.tolist()
+
+
+def test_a_small_lift_is_a_lift_too():
+    from app.analysis.technique import _dips
+    n = 200
+    thr = np.full(n, 100.0)
+    thr[50:54] = 88.0  # 12 points off for 0.1 s: still off the throttle
+    thr[120] = 80.0  # one sample's jolt is not
+    ts = np.arange(n) * 0.025  # 40 m/s
+    out = _dips(thr, ts, np.maximum.accumulate(thr), np.full(n, -1.5), 0, -1.0, 0)
+    assert [(a, lo) for a, _, _, lo in out] == [(50, 88.0)]

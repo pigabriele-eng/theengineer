@@ -173,17 +173,20 @@ def store(db: Session, scope: str, sig: str, value, status: int = 200) -> bytes:
     """Keep the answer (committed with whatever else the request has pending); its JSON text, as kept."""
     text = as_json(value)
     body = zlib.compress(text, 6)
+    db.flush()  # what else is pending goes in first: only the row below is undone when it collides
     for _ in range(2):
+        # looked for before the savepoint: on SQLite a transaction that has read can't wait its turn to write
         row = db.scalar(select(PageCache).where(PageCache.scope == scope))
-        if row is None:
-            row = PageCache(scope=scope)
-            db.add(row)
-        row.signature, row.status, row.body = sig, status, body
         try:
-            db.commit()
-            return text
+            with db.begin_nested():  # a savepoint
+                if row is None:
+                    row = PageCache(scope=scope)
+                    db.add(row)
+                row.signature, row.status, row.body = sig, status, body
+            break
         except IntegrityError:  # another request kept it a moment ago: overwrite that one
-            db.rollback()
+            continue
+    db.commit()
     return text
 
 

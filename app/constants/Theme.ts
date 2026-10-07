@@ -96,7 +96,7 @@ export function resolveFont(style: TextStyle): TextStyle | null {
 
 export const Type = {
   // section labels ("TYRES", "SETUP"...): Archivo Narrow, capitals, letter-spaced
-  label: { fontFamily: face('label', 700), fontSize: 12, letterSpacing: 1.4, textTransform: 'uppercase' } as TextStyle,
+  label: { fontFamily: face('label', 700), fontSize: 13, letterSpacing: 1.4, textTransform: 'uppercase' } as TextStyle,
   // lap times, deltas and every figure that lines up with the one below it
   number: { fontFamily: face('label', 600), fontVariant: ['tabular-nums'] } as TextStyle,
   // a headline or a very large figure: Anton, capitals
@@ -108,6 +108,37 @@ export const Type = {
   // a text link: Archivo Narrow capitals over an underline (components/Programme.tsx TextLink draws the underline)
   link: { fontFamily: face('label', 700), fontSize: 14, letterSpacing: 1.4, textTransform: 'uppercase' } as TextStyle,
 };
+
+// ---------- readable ----------
+
+/** The smallest text the app draws (Gabriele: "make sure the UI is readable"): nothing under 12 px, a label (capitals)
+ * not under 13 px, and on a phone reading text (more than 60 characters) not under 16 px. Text (components/Themed.tsx)
+ * raises a smaller size to these, so a page that asks for less still reads. */
+export const MIN_TEXT = { any: 12, label: 13, phoneBody: 16, bodyChars: 60 };
+
+/** The size (and line height, in proportion) a text is drawn at: its own, raised to MIN_TEXT. `floor` is a size it must
+ * reach anyway (the reading text it is part of); `phoneBody`: it is reading text on a phone. Null when nothing changes. */
+export function readableSize(style: TextStyle, floor: number, phoneBody: boolean): TextStyle | null {
+  const size = style.fontSize;
+  if (size == null) return null;
+  const min = Math.max(MIN_TEXT.any, style.textTransform === 'uppercase' ? MIN_TEXT.label : 0, floor,
+    phoneBody ? MIN_TEXT.phoneBody : 0);
+  if (size >= min) return null;
+  const out: TextStyle = { fontSize: min };
+  if (typeof style.lineHeight === 'number') out.lineHeight = Math.round(style.lineHeight * (min / size));
+  return out;
+}
+
+/** The smallest a tap target is (WCAG 2.5.5): 44 x 44 px. React Native's hitSlop is not enough on the web, where the
+ * browser only knows the element's own box. */
+export const TAP = 44;
+
+/** Room around a control drawn smaller than a tap target, without moving anything on the page: padding grows the
+ * pressable box by `room` px on each side (`y` above and below, `x` left and right), and a negative margin of the same
+ * size keeps the layout as drawn. A control `h` px tall needs (TAP - h) / 2 above and below. */
+export function tapRoom(y: number, x = 0): ViewStyle {
+  return { paddingVertical: y, marginVertical: -y, paddingHorizontal: x, marginHorizontal: -x };
+}
 
 // Square edges everywhere: the names stay so every screen's boxes, buttons and chips lose their rounding at once.
 export const Radius = {
@@ -256,13 +287,25 @@ export function ramp([lo, hi]: string[], t: number) {
   return `#${a.map((v, i) => Math.round(v + (b[i] - v) * k).toString(16).padStart(2, '0')).join('')}`;
 }
 
-/** Near-black or white for text on a filled colour, whichever reads. */
-export function inkOn(fill: string) {
-  const [r, g, b] = hexRgb(fill).map((v) => {
+const luminance = (hex: string) => {
+  const [r, g, b] = hexRgb(hex).map((v) => {
     const c = v / 255;
     return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
   });
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.35 ? INK.onLight : INK.onDark;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+
+/** The WCAG contrast ratio of two colours (#rrggbb), 1 to 21. */
+export function contrast(a: string, b: string) {
+  const x = luminance(a);
+  const y = luminance(b);
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+}
+
+/** Near-black or white for text on a filled colour: whichever has more contrast with it. */
+export function inkOn(fill: string) {
+  if (!/^#[0-9a-f]{6}$/i.test(fill)) return INK.onLight;
+  return contrast(INK.onLight, fill) >= contrast(INK.onDark, fill) ? INK.onLight : INK.onDark;
 }
 
 /** Light and dark versions of a set of colours made from the tokens, picked with `[scheme]`. */

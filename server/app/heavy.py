@@ -21,7 +21,7 @@ import functools
 import gc
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 POLL_S = 0.05  # how often background work looks again whether the lock is free and nobody else wants it
@@ -39,6 +39,16 @@ def release_memory() -> None:
     """Free what the last job left behind and give it back to the system."""
     gc.collect()
     trim()
+
+
+# Called before a thread waits for the lock (app/connections.py hands back the database connections it holds, so
+# requests waiting their turn don't take every connection of the pool).
+before_waiting: list[Callable[[], None]] = []
+
+
+def _before_waiting() -> None:
+    for fn in before_waiting:
+        fn()
 
 
 _background = threading.local()
@@ -77,15 +87,20 @@ class _HeavyLock:
         if depth:  # this thread holds it already
             got = self._lock.acquire(blocking, timeout)
         elif in_background():
+            if blocking:
+                _before_waiting()
             got = self._acquire_last(blocking, timeout)
         else:
-            with self._count:
-                self._waiting += 1
-            try:
-                got = self._lock.acquire(blocking, timeout)
-            finally:
+            got = self._lock.acquire(False)
+            if not got and blocking:
+                _before_waiting()
                 with self._count:
-                    self._waiting -= 1
+                    self._waiting += 1
+                try:
+                    got = self._lock.acquire(True, timeout)
+                finally:
+                    with self._count:
+                        self._waiting -= 1
         if not got:
             return False
         self._held.depth = depth + 1

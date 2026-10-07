@@ -1,17 +1,17 @@
 """Run sessions: logger uploads, lap lists, analysis and voice debriefs for one run."""
+import logging
 import shutil
 import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 from sqlalchemy.orm import Session
 
 from app import garage, heavy, models, page_cache, schemas, storage
 from app.analysis.emptyrun import NoLaps, judge
 from app.analysis.laps import CornerSpec, LapTiming, SessionData, analyze, compare_laps, load_session, time_laps
 from app.db import get_db
-from app.heavy import one_at_a_time
 from app.importers.csvlog import CsvLog, read_csv_log
 from app.importers.motec import LdFile, LdFormatError, read_ld, read_ldx_beacons
 from app.importers.window import beacons_in
@@ -21,6 +21,7 @@ from app.timing import read_file, store_laps, track_line
 _line = track_line  # the track's start/finish line for lap timing (other routers import it by this name)
 
 router = APIRouter(prefix="/sessions")
+log = logging.getLogger(__name__)
 
 # .csv and .txt are logger exports (MoTeC i2, AiM Race Studio, Pi Toolbox); the logger is read from the file
 SUPPORTED = {".ld": "motec", ".ldx": "motec", ".csv": "csv", ".txt": "csv"}
@@ -89,29 +90,31 @@ def get_session(session_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{session_id}/files", response_model=schemas.SessionDetail, status_code=201)
-@one_at_a_time
 def upload_file(session_id: int, file: UploadFile, db: Session = Depends(get_db)):
     """Upload a MoTeC .ld log, the .ldx i2 saved next to it (its beacons give exact lap times), or a CSV export
     from MoTeC i2, AiM Race Studio or Pi Toolbox."""
-    s = _get(db, session_id)
-    name = file.filename or ""
-    ext = Path(name).suffix.lower()
-    if ext not in SUPPORTED:
-        raise HTTPException(415, f"Unsupported file type '{ext}'. Supported now: MoTeC .ld and .ldx, "
-                                 "and CSV exports from MoTeC i2, AiM Race Studio and Pi Toolbox (.csv, .txt)")
-    # a plain def (run in a worker thread), so parsing a big log doesn't stall other requests
-    if ext == ".ldx":
-        return _attach_ldx(db, s, name, file.file.read())
-    with tempfile.TemporaryDirectory(prefix="theengineer-upload-") as tmp:
-        path = Path(tmp) / f"log{ext}"
-        with path.open("wb") as out:
-            shutil.copyfileobj(file.file, out, storage.CHUNK_BYTES)
-        try:
-            rec = add_log(db, s, path, name)
-        except NoLaps as e:  # the session stays as it was; nothing is stored
-            raise HTTPException(422, f"{name} wasn't added ({e.reason}).") from e
-        _attach_track(db, s, rec)
-    db.commit()
+    # one log-reading job at a time (app/heavy.py) until the log is stored and committed (tracks and events found
+    # or made for it too); matching the run to its season and queueing its pages read no log, so others go first
+    with heavy.lock:
+        s = _get(db, session_id)
+        name = file.filename or ""
+        ext = Path(name).suffix.lower()
+        if ext not in SUPPORTED:
+            raise HTTPException(415, f"Unsupported file type '{ext}'. Supported now: MoTeC .ld and .ldx, "
+                                     "and CSV exports from MoTeC i2, AiM Race Studio and Pi Toolbox (.csv, .txt)")
+        # a plain def (run in a worker thread), so parsing a big log doesn't stall other requests
+        if ext == ".ldx":
+            return _attach_ldx(db, s, name, file.file.read())
+        with tempfile.TemporaryDirectory(prefix="theengineer-upload-") as tmp:
+            path = Path(tmp) / f"log{ext}"
+            with path.open("wb") as out:
+                shutil.copyfileobj(file.file, out, storage.CHUNK_BYTES)
+            try:
+                rec = add_log(db, s, path, name)
+            except NoLaps as e:  # the session stays as it was; nothing is stored
+                raise HTTPException(422, f"{name} wasn't added ({e.reason}).") from e
+            _attach_track(db, s, rec)
+        db.commit()
     if s.event_id is not None:
         from app import season_match  # here: it uses the seasons, which use this module's importers
 
@@ -174,6 +177,7 @@ def add_log(db: Session, s: models.RunSession, path: Path, name: str,
         raise HTTPException(422, str(e)) from e
 
     key = storage.save_file(path, ext)
+    _delete_unless_committed(db, key)
     logger = SUPPORTED[ext]
     meta = {"event": ld.event_name, "event_session": ld.event_session, "venue": ld.venue,
             "device_serial": ld.device_serial, "date": ld.date, "time": ld.time,
@@ -190,6 +194,37 @@ def add_log(db: Session, s: models.RunSession, path: Path, name: str,
     db.flush()
     store_laps(db, s, rec, LapTiming(data.laps, data.lap_source, data.timing_line), track)
     return rec
+
+
+_UNCOMMITTED = "stored files no committed row points to yet"
+
+
+def _delete_unless_committed(db: Session, key: str) -> None:
+    """Delete the stored file again unless db commits the row that points to it: when something fails later, the
+    rows are rolled back and the file would stay in storage (1 GB on Supabase's free plan) with nothing pointing to
+    it. Best effort: a file that can't be deleted is logged."""
+    if _UNCOMMITTED not in db.info:
+        db.info[_UNCOMMITTED] = []
+        event.listen(db, "after_commit", _committed)  # this session's transactions only
+        event.listen(db, "after_transaction_end", _not_committed)
+    db.info[_UNCOMMITTED].append(key)
+
+
+def _committed(db: Session) -> None:
+    db.info[_UNCOMMITTED].clear()
+
+
+def _not_committed(db: Session, transaction) -> None:
+    """A transaction ended (rolled back, or the session closed) without committing: its stored files go."""
+    if transaction.parent is not None:  # a savepoint: the files go or stay with the whole transaction
+        return
+    keys = db.info[_UNCOMMITTED]
+    while keys:
+        key = keys.pop()
+        try:
+            storage.delete(key)
+        except Exception:
+            log.exception("Couldn't delete stored file %s, whose rows were rolled back", key)
 
 
 def _attach_ldx(db: Session, s: models.RunSession, name: str, raw: bytes) -> dict:
