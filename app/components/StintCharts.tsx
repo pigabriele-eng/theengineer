@@ -1,15 +1,15 @@
 // Charts for the stint tool. Colours: the app's time colours for the fade (red: slower, green: quicker), each phase's
 // own colour on its row, and the balance pair (understeer, oversteer, grey: within the normal). Values and labels
-// always use text colours, and every bar keeps its signed value beside it.
+// always use text colours, and every bar keeps its signed value beside it. The programme's chrome: square bars from
+// an ink centre line, Archivo capitals for the legend and the axis words.
 import { useRef, useState } from 'react';
 import { LayoutChangeEvent, Platform, Pressable, StyleSheet, TextStyle } from 'react-native';
-import Svg, { Circle, Line, Path } from 'react-native-svg';
+import Svg, { Circle, Line, Rect } from 'react-native-svg';
 
-import { useChartColors } from '@/components/ReportCharts';
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { Text, View } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
 import { FadeRow, signed } from '@/lib/stint';
-import { byScheme, chartPlate, deltaColor, phaseColor, themed, useTheme } from '@/constants/Theme';
+import { byScheme, chartPlate, deltaColor, face, Fonts, phaseColor, themed, Type, useTheme } from '@/constants/Theme';
 
 const BALANCE = byScheme((c) => c.balance);
 export const useBalanceColors = () => BALANCE[useColorScheme() === 'dark' ? 'dark' : 'light'];
@@ -27,12 +27,12 @@ export type OnCorner = (code: string | null) => void;
 // A corner the way the analysis names it ("T6", "T2-T5", "T8/T9"; C1, C2... on a track without official numbers).
 const CORNER = /(\b[TC]\d+(?:[-/][TC]?\d+)*)/;
 
-/** Text naming corners, with each corner of `codes` in it pointable: hover or tap it to find it on the map. */
+/** Text naming corners, with each corner of `codes` in it pointable: hover or tap it to find it on the map. The
+ * corner is underlined; the one on the map is in programme red. */
 export function CornerText({ text, codes, focus, onCorner, style }: {
   text: string; codes: string[]; focus?: string | null; onCorner?: OnCorner; style?: TextStyle;
 }) {
   const styles = useStyles();
-  const tint = useThemeColor({}, 'tint');
   const over = useRef<string | null>(null);
   if (!onCorner) return <Text style={style}>{text}</Text>;
   return (
@@ -54,7 +54,7 @@ export function CornerText({ text, codes, focus, onCorner, style }: {
         return (
           <Text key={i} {...hover} accessibilityRole="button" accessibilityLabel={`Show ${part} on the track map`}
             onPress={() => onCorner(focus === part && over.current !== part ? null : part)}
-            style={StyleSheet.flatten([styles.corner, { textDecorationColor: tint }, focus === part && { color: tint }])}>
+            style={StyleSheet.flatten([styles.corner, focus === part && styles.cornerOn])}>
             {part}
           </Text>
         );
@@ -68,26 +68,19 @@ function useWidth(): [number, (e: LayoutChangeEvent) => void] {
   return [width, (e) => setWidth(e.nativeEvent.layout.width)];
 }
 
-/** A bar from the centre line, rounded (4 px) at its far end. */
+/** A square bar from the ink centre line. */
 function CentreBar({ width, value, max, color, height = 12, faded = false }: {
   width: number; value: number; max: number; color: string; height?: number; faded?: boolean;
 }) {
-  const c = useChartColors();
+  const c = useTheme().chart;
   const mid = width / 2;
   const len = Math.min(Math.abs(value) / (max || 1), 1) * (mid - 2);
-  const r = Math.min(4, len, height / 2);
-  const y = 0, h = height;
-  let d = '';
-  if (len > 0.5) {
-    d = value >= 0
-      ? `M${mid},${y}H${mid + len - r}Q${mid + len},${y} ${mid + len},${y + r}V${y + h - r}Q${mid + len},${y + h} ${
-        mid + len - r},${y + h}H${mid}Z`
-      : `M${mid},${y}H${mid - len + r}Q${mid - len},${y} ${mid - len},${y + r}V${y + h - r}Q${mid - len},${y + h} ${
-        mid - len + r},${y + h}H${mid}Z`;
-  }
   return (
     <Svg width={width} height={height}>
-      {d ? <Path d={d} fill={color} fillOpacity={faded ? 0.35 : 1} /> : null}
+      {len > 0.5 ? (
+        <Rect x={value >= 0 ? mid : mid - len} y={0} width={len} height={height} fill={color}
+          fillOpacity={faded ? 0.35 : 1} />
+      ) : null}
       <Line x1={mid} x2={mid} y1={0} y2={height} stroke={c.axis} strokeWidth={1} />
     </Svg>
   );
@@ -97,7 +90,6 @@ function CentreBar({ width, value, max, color, height = 12, faded = false }: {
 export function FadeBars({ rows, focus, onCorner }: { rows: FadeRow[]; focus?: string | null; onCorner?: OnCorner }) {
   const styles = useStyles();
   const theme = useTheme();
-  const c = useChartColors();
   const [width, onLayout] = useWidth();
   const max = Math.max(...rows.map((r) => Math.abs(r.per_lap)), 0.01);
   const top = rows.find((r) => r.clear && r.per_lap > 0)?.key;
@@ -106,15 +98,17 @@ export function FadeBars({ rows, focus, onCorner }: { rows: FadeRow[]; focus?: s
       <View style={styles.legend}>
         <Key color={theme.delta.loss} label="Slower as the stint goes on" />
         <Key color={theme.delta.gain} label="Quicker" />
-        <Key color={c.axis} label="Faded: within the lap-to-lap scatter" faded />
+        <Key color={theme.chart.muted} label="Faded: within the lap-to-lap scatter" faded />
       </View>
-      <View onLayout={onLayout} style={styles.block}>
-        {rows.map((r) => (
-          <View key={r.key} style={StyleSheet.flatten([styles.fadeRow, { borderLeftColor: phaseColor(theme, r.key) }])}
+      <View onLayout={onLayout} style={styles.rows}>
+        {rows.map((r, i) => (
+          <View key={r.key} style={StyleSheet.flatten([styles.fadeRow, i === 0 && styles.fadeFirst])}
             accessibilityLabel={`${r.label}: ${signed(r.per_lap, 3)} s a lap${r.clear ? '' : ', within the scatter'}`}>
             <View style={styles.rowHead}>
+              <View style={StyleSheet.flatten([styles.phaseKey, { backgroundColor: phaseColor(theme, r.key) }])} />
               <Text style={StyleSheet.flatten([styles.rowLabel, r.key === top && styles.strong])}>{r.label}</Text>
-              <Text style={StyleSheet.flatten([styles.rowValue, { color: deltaColor(theme, r.per_lap) }, !r.clear && styles.dim])}>
+              <Text style={StyleSheet.flatten([styles.rowValue, { color: deltaColor(theme, r.per_lap) ?? theme.text },
+                !r.clear && styles.dim])}>
                 {signed(r.per_lap, 3)} s/lap
               </Text>
             </View>
@@ -138,14 +132,20 @@ function Key({ color, label, faded = false, ring = false }: { color: string; lab
   const styles = useStyles();
   return (
     <View style={styles.legendItem}>
-      <View style={StyleSheet.flatten([ring ? styles.ring : styles.swatch, ring ? { borderColor: color } :
-        { backgroundColor: color, opacity: faded ? 0.35 : 1 }])} />
+      {/* a ring keys the early laps' ring mark on the chart; every other key is a flat square */}
+      {ring ? (
+        <Svg width={12} height={12}>
+          <Circle cx={6} cy={6} r={4} fill="none" stroke={color} strokeWidth={2} />
+        </Svg>
+      ) : (
+        <View style={StyleSheet.flatten([styles.swatch, { backgroundColor: color, opacity: faded ? 0.35 : 1 }])} />
+      )}
       <Text style={styles.legendText}>{label}</Text>
     </View>
   );
 }
 
-/** A change as a bar from the centre: grip in % (orange falls, blue rises) or balance in ° (blue/red). */
+/** A change as a bar from the centre: grip in % (red falls, green rises) or balance in ° (blue/magenta). */
 export function ChangeBar({ value, max, color, faded }: { value: number | null; max: number; color: string;
   faded?: boolean }) {
   const styles = useStyles();
@@ -165,7 +165,7 @@ export type ShiftRow = { label: string; early: number; late: number; shift: numb
 export function BalanceDumbbell({ rows, early, late, onCorner }: { rows: ShiftRow[]; early: string; late: string;
   onCorner?: OnCorner }) {
   const styles = useStyles();
-  const c = useChartColors();
+  const c = useTheme().chart;
   const pal = useBalanceColors();
   const [width, onLayout] = useWidth();
   const [picked, setPicked] = useState<number | null>(null);
@@ -182,7 +182,7 @@ export function BalanceDumbbell({ rows, early, late, onCorner }: { rows: ShiftRo
   return (
     <View style={styles.chart}>
       <View style={styles.legend}>
-        <Key color={c.axis} label={`Early laps (${early})`} ring />
+        <Key color={c.ink} label={`Early laps (${early})`} ring />
         <Key color={pal.under} label={`Late laps (${late}): towards understeer`} />
         <Key color={pal.over} label="towards oversteer" />
         <Key color={pal.neutral} label={`holds (within ±${MIN_SHIFT}°)`} />
@@ -207,8 +207,8 @@ export function BalanceDumbbell({ rows, early, late, onCorner }: { rows: ShiftRo
               },
             } : {})}
             accessibilityLabel={`${r.label}: ${signed(r.early)}° to ${signed(r.late)}°, ${signed(r.shift)}°`}
-            style={StyleSheet.flatten([styles.dumbRow, picked === i && { backgroundColor: `${c.grid}88` }])}>
-            <Text style={StyleSheet.flatten([styles.dumbLabel, r.strong && styles.strong])} numberOfLines={1}>
+            style={StyleSheet.flatten([styles.dumbRow, picked === i && styles.dumbRowOn])}>
+            <Text style={StyleSheet.flatten([styles.dumbLabel, r.strong && styles.strongLabel])} numberOfLines={1}>
               {r.label}
             </Text>
             <View style={styles.dumbPlot} onLayout={i === 0 ? onLayout : undefined}>
@@ -218,7 +218,7 @@ export function BalanceDumbbell({ rows, early, late, onCorner }: { rows: ShiftRo
                   <Line x1={x(-span)} x2={x(span)} y1={H / 2} y2={H / 2} stroke={c.grid} strokeWidth={1} />
                   <Line x1={x(r.early)} x2={x(r.late)} y1={H / 2} y2={H / 2} stroke={col} strokeWidth={2}
                     strokeOpacity={0.6} />
-                  <Circle cx={x(r.early)} cy={H / 2} r={4} fill={c.surface} stroke={c.axis} strokeWidth={2} />
+                  <Circle cx={x(r.early)} cy={H / 2} r={4} fill={c.surface} stroke={c.ink} strokeWidth={2} />
                   <Circle cx={x(r.late)} cy={H / 2} r={5} fill={col} stroke={c.surface} strokeWidth={2} />
                 </Svg>
               )}
@@ -240,28 +240,33 @@ export function BalanceDumbbell({ rows, early, late, onCorner }: { rows: ShiftRo
 }
 
 const useStyles = themed((c) => ({
-  block: { gap: 10, backgroundColor: 'transparent' },
+  rows: { backgroundColor: 'transparent' },
   chart: { gap: 10, ...chartPlate(c) },
-  legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 14, rowGap: 4, backgroundColor: 'transparent' },
-  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },
-  swatch: { width: 12, height: 12, borderRadius: 3 },
-  ring: { width: 10, height: 10, borderRadius: 5, borderWidth: 2 },
-  legendText: { fontSize: 12, opacity: 0.75 },
-  fadeRow: { gap: 4, backgroundColor: 'transparent', borderLeftWidth: 4, paddingLeft: 8 }, // the phase's colour on the edge
-  rowHead: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, backgroundColor: 'transparent' },
-  rowLabel: { fontSize: 14, flexShrink: 1 },
-  rowValue: { fontSize: 14, fontVariant: ['tabular-nums'], fontWeight: '600' },
-  rowNote: { fontSize: 12, opacity: 0.65 },
-  strong: { fontWeight: '700' },
+  legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 18, rowGap: 6, backgroundColor: 'transparent' },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: 'transparent' },
+  swatch: { width: 14, height: 10 },
+  legendText: { ...Type.label, fontFamily: Fonts.label, fontSize: 11, letterSpacing: 0.8, color: c.textSecondary },
+  fadeRow: { gap: 6, backgroundColor: 'transparent', paddingVertical: 10, borderTopWidth: 1, borderColor: c.separator },
+  fadeFirst: { borderColor: c.rule },
+  rowHead: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'transparent' },
+  phaseKey: { width: 12, height: 12 },
+  rowLabel: { fontFamily: Fonts.body, fontSize: 16, color: c.text, flex: 1 },
+  rowValue: { ...Type.number, fontFamily: face('label', 700), fontSize: 14 },
+  rowNote: { fontFamily: Fonts.body, fontSize: 13, lineHeight: 18, color: c.textSecondary },
+  strong: { fontFamily: face('body', 700) },
+  strongLabel: { fontFamily: face('label', 700), color: c.text },
   dim: { opacity: 0.5 },
   changeBar: { flex: 1, minWidth: 40, backgroundColor: 'transparent' },
   dumbHead: { flexDirection: 'row', justifyContent: 'space-between', marginLeft: 76, marginRight: 58,
     backgroundColor: 'transparent' },
-  axisText: { fontSize: 11, opacity: 0.6 },
-  dumbRow: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 4, minHeight: 30 },
-  dumbLabel: { width: 68, fontSize: 13 },
+  axisText: { ...Type.label, fontSize: 10, color: c.textMuted },
+  dumbRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 30, borderBottomWidth: 1,
+    borderColor: c.separator },
+  dumbRowOn: { backgroundColor: c.surfaceRaised },
+  dumbLabel: { ...Type.number, width: 68, fontSize: 13, color: c.textSecondary },
   dumbPlot: { flex: 1, backgroundColor: 'transparent' },
-  dumbValue: { width: 50, fontSize: 13, textAlign: 'right', fontVariant: ['tabular-nums'] },
-  readout: { fontSize: 12, opacity: 0.75, minHeight: 17 },
-  corner: { textDecorationLine: 'underline', textDecorationStyle: 'dotted' },
+  dumbValue: { ...Type.number, width: 50, fontSize: 13, textAlign: 'right', color: c.text },
+  readout: { fontFamily: Fonts.body, fontSize: 13, lineHeight: 18, color: c.textSecondary, minHeight: 18 },
+  corner: { textDecorationLine: 'underline', textDecorationStyle: 'dotted', textDecorationColor: c.text },
+  cornerOn: { color: c.mark, textDecorationColor: c.mark },
 }));

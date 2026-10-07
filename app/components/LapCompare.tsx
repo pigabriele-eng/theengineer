@@ -1,16 +1,26 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
+import { ActivityIndicator, StyleSheet } from 'react-native';
 
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { Choice, useText } from '@/components/Picks';
+import { Swatch } from '@/components/Programme';
+import { Text, View } from '@/components/Themed';
 import { TraceChart, useSeriesColors } from '@/components/TraceChart';
 import { Analysis, api, DETECTED_CORNERS_NOTE, formatLap, Lap, LapCompare as Compare } from '@/lib/api';
-import { Radius, themed } from '@/constants/Theme';
+import { themed, Type, useTheme } from '@/constants/Theme';
 
-type Props = { sessionId: number; analysis: Analysis; laps: Lap[] };
+type Props = {
+  sessionId: number;
+  analysis: Analysis;
+  laps: Lap[];
+  heading?: boolean; // its own label over the picks; false where the page's section already names it
+};
 
-/** A lap against the reference lap: time delta, speed, throttle and brake on one distance axis. */
-export function LapCompare({ sessionId, analysis, laps: allLaps }: Props) {
+/** A lap against the reference lap: time delta, speed, throttle and brake on one distance axis. The laps to pick as
+ * the programme's figures (the picked one underlined in red), the charts in the programme's chrome. */
+export function LapCompare({ sessionId, analysis, laps: allLaps, heading = true }: Props) {
   const styles = useStyles();
+  const t = useText();
+  const theme = useTheme();
   const ref = analysis.reference_lap;
   const laps = allLaps.filter((l) => l.file_id === analysis.file_id);
   const clean = laps.filter((l) => l.clean && l.number !== ref);
@@ -20,7 +30,6 @@ export function LapCompare({ sessionId, analysis, laps: allLaps }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [cursor, setCursor] = useState<number | null>(null);
   const colors = useSeriesColors();
-  const tint = useThemeColor({}, 'tint');
 
   useEffect(() => {
     if (lap == null) return;
@@ -43,34 +52,24 @@ export function LapCompare({ sessionId, analysis, laps: allLaps }: Props) {
 
   return (
     <View style={styles.section}>
-      <Text style={styles.h2}>Compare laps</Text>
-      <View style={styles.chips}>
+      {heading && <Text style={t.sub}>Compare laps</Text>}
+      <View style={styles.picks}>
         {clean.map((l) => (
-          <Pressable key={l.number} onPress={() => setLap(l.number)}
-            style={[styles.chip, l.number === lap && { borderColor: tint }]}>
-            <Text style={l.number === lap ? { color: tint } : undefined}>
-              L{l.number} {formatLap(l.time_s)}
-            </Text>
-          </Pressable>
+          <Choice key={l.number} label={`${l.number}`} detail={formatLap(l.time_s)} on={l.number === lap}
+            onPress={() => setLap(l.number)} accessibilityLabel={`Lap ${l.number}, ${formatLap(l.time_s)}`} />
         ))}
       </View>
 
       <View style={styles.legend}>
-        <Text>
-          <Text style={{ color: colors.reference }}>●</Text> L{ref} {time(ref)} (reference)
-        </Text>
-        <Text>
-          <Text style={{ color: colors.compare }}>●</Text> L{lap} {time(lap)}
-        </Text>
-        {cursor != null && data && (
-          <Text style={styles.at}>at {Math.round(data.distance[cursor])} m</Text>
-        )}
+        <Swatch color={colors.reference} label={`L${ref} ${time(ref)} (reference)`} width={14} height={4} />
+        <Swatch color={colors.compare} label={`L${lap} ${time(lap)}`} width={14} height={4} />
+        {cursor != null && data && <Text style={styles.at}>at {Math.round(data.distance[cursor])} m</Text>}
       </View>
 
-      {error && <Text style={styles.error}>{error}</Text>}
-      {!data && !error && <ActivityIndicator />}
+      {error && <Text style={t.error}>{error}</Text>}
+      {!data && !error && <ActivityIndicator color={theme.text} style={styles.left} />}
       {data && (
-        <>
+        <View style={styles.charts}>
           <TraceChart {...shared} title="Time vs reference" unit="s" zeroLine height={110}
             series={[{ values: data.delta, color: colors.compare }]} />
           {pair('speed') && <TraceChart {...shared} title="Speed" unit="km/h" series={pair('speed')!} />}
@@ -78,23 +77,22 @@ export function LapCompare({ sessionId, analysis, laps: allLaps }: Props) {
             <TraceChart {...shared} title="Throttle" unit="%" domain={[0, 100]} height={100} series={pair('throttle')!} />
           )}
           {pair('brake') && <TraceChart {...shared} title="Brake" unit="" height={100} series={pair('brake')!} />}
-          <Text style={styles.hint}>
+          <Text style={StyleSheet.flatten([t.small, styles.measure])}>
             Above zero, L{lap} is behind the reference at that point. Drag across a chart to read values.
             {detected && markers.length > 0 ? ` ${DETECTED_CORNERS_NOTE}` : ''}
           </Text>
-        </>
+        </View>
       )}
     </View>
   );
 }
 
 const useStyles = themed((c) => ({
-  section: { gap: 10 },
-  h2: { fontSize: 18, fontWeight: '700' },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: c.surface },
-  legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 },
-  at: { opacity: 0.7, fontVariant: ['tabular-nums'] },
-  error: { color: c.error },
-  hint: { fontSize: 12, opacity: 0.6 },
+  section: { gap: 14 },
+  picks: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 14, rowGap: 10 },
+  legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 22, rowGap: 8, alignItems: 'center' },
+  at: { ...Type.number, fontSize: 13, color: c.textSecondary },
+  left: { alignSelf: 'flex-start' },
+  charts: { gap: 14 },
+  measure: { maxWidth: 820 },
 }));

@@ -1,9 +1,11 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Switch } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
 
 import { CompareTraces, LineKey, SectionTable, useLapColors, WhereTheTimeIs } from '@/components/CompareViews';
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { Choice, PageHead, Toggle, useText } from '@/components/Picks';
+import { Colophon, Page, Section, TextLink } from '@/components/Programme';
+import { Text, View } from '@/components/Themed';
 import {
   CompareResult,
   compareLaps,
@@ -17,7 +19,7 @@ import {
   signedSeconds,
   TrackGroup,
 } from '@/lib/compare';
-import { Radius, themed } from '@/constants/Theme';
+import { face, Fonts, themed, Type, useTheme } from '@/constants/Theme';
 
 // A picked lap keeps its colour slot for as long as it is picked.
 type Pick = { session_id: number; lap: number; slot: number };
@@ -29,8 +31,11 @@ const freeSlot = (picks: Pick[]) => [0, 1, 2, 3, 4, 5].find((s) => !picks.some((
 // Compare laps: pick 2 to 6 laps from any sessions at one track (a driver's own runs, a teammate's, a client's),
 // then see where the time is, the section times and the traces on one distance axis.
 // Open with ?session=<id> to start from that session's best lap, or ?laps=<session>.<lap>,... for given laps.
+// A page of the race programme: the headline, the laps as a ruled list, then numbered sections.
 export default function CompareScreen() {
   const styles = useStyles();
+  const t = useText();
+  const theme = useTheme();
   const params = useLocalSearchParams<{ session?: string; laps?: string; ideal?: string }>();
   const router = useRouter();
   const [groups, setGroups] = useState<TrackGroup[] | null>(null);
@@ -52,7 +57,6 @@ export default function CompareScreen() {
   const scroll = useRef<ScrollView>(null);
   const resultsY = useRef(0);
   const tracesY = useRef(0);
-  const tint = useThemeColor({}, 'tint');
 
   const sessions = useMemo(() => new Map((groups ?? []).flatMap((g) => g.sessions.map((s) => [s.id, s]))), [groups]);
   const groupOf = (id: number) => groups?.find((g) => g.sessions.some((s) => s.id === id)) ?? null;
@@ -140,53 +144,61 @@ export default function CompareScreen() {
   const stale = busy || (shown != null && encodePicks(shown.picks) !== encodePicks(picks));
 
   return (
-    <ScrollView ref={scroll} contentContainerStyle={styles.container}>
+    <Page scrollRef={scroll}>
       <Stack.Screen options={{ title: 'Compare laps' }} />
-      <Text style={styles.intro}>
-        Pick {MIN_LAPS} to {MAX_LAPS} laps from any sessions at one track: your own runs, a teammate's or a client's.
-        Each session comes in with its best lap; tap a lap to swap it for another.
-      </Text>
+      <PageHead title="Compare laps"
+        dek={`${MIN_LAPS} to ${MAX_LAPS} laps from any sessions at one track: your own runs, a teammate's or a client's.`} />
 
-      <View style={styles.section}>
-        <Text style={styles.h2}>Laps{track?.track ? ` at ${track.track}` : ''}</Text>
+      <Section no={1} title="The laps"
+        dek={`${track?.track ? `At ${track.track}. ` : ''}Each session comes in with its best lap; tap a lap to swap it for another.`}>
+        {picks.length > 0 && (
+          <View style={styles.headRow}>
+            <Text style={StyleSheet.flatten([styles.th, styles.grow])}>Lap</Text>
+            <Text style={styles.th}>Time</Text>
+            <View style={styles.removeCol} />
+          </View>
+        )}
         {picks.map((p, i) => {
           const s = sessions.get(p.session_id);
-          const t = lapTime(p);
+          const time = lapTime(p);
           const open = editing === keyOf(p);
           return (
             <View key={keyOf(p)} style={styles.pick}>
-              <Pressable style={styles.pickRow} onPress={() => setEditing(open ? null : keyOf(p))}>
-                <LineKey color={pickColors.laps[i]} />
-                <View style={styles.grow}>
-                  <Text style={styles.pickTitle} numberOfLines={1}>
-                    {s?.name ?? `Session ${p.session_id}`} · L{p.lap}
-                  </Text>
-                  <Text style={styles.sub} numberOfLines={1}>
-                    {[s?.driver, s?.date, open ? 'pick a lap below' : 'tap to change the lap'].filter(Boolean).join(' · ')}
-                  </Text>
-                </View>
-                <View style={styles.right}>
-                  <Text style={styles.time}>{formatLap(t)}</Text>
-                  {picks.length > 1 && t != null && (
-                    <Text style={styles.sub}>{t === fastest ? 'fastest' : signedSeconds(t - fastest)}</Text>
-                  )}
-                </View>
-                <Pressable onPress={() => remove(p)} hitSlop={10} style={styles.remove} accessibilityLabel="Remove lap">
+              <View style={styles.pickRow}>
+                <Pressable style={styles.pickMain} onPress={() => setEditing(open ? null : keyOf(p))}
+                  accessibilityRole="button" accessibilityState={{ expanded: open }}
+                  accessibilityLabel={`${s?.name ?? `Session ${p.session_id}`} lap ${p.lap}: change the lap`}>
+                  <LineKey color={pickColors.laps[i]} />
+                  <View style={styles.grow}>
+                    <Text style={styles.pickTitle} numberOfLines={1}>
+                      {s?.name ?? `Session ${p.session_id}`} · L{p.lap}
+                    </Text>
+                    <Text style={t.labelMuted} numberOfLines={1}>
+                      {[s?.driver, s?.date, open ? 'pick a lap below' : 'tap to change the lap'].filter(Boolean).join(' · ')}
+                    </Text>
+                  </View>
+                  <View style={styles.right}>
+                    <Text style={styles.time}>{formatLap(time)}</Text>
+                    {picks.length > 1 && time != null && (
+                      <Text style={StyleSheet.flatten([styles.gap, time === fastest && styles.gapBest])}>
+                        {time === fastest ? 'fastest' : signedSeconds(time - fastest)}
+                      </Text>
+                    )}
+                  </View>
+                </Pressable>
+                <Pressable onPress={() => remove(p)} hitSlop={10} style={styles.removeCol} accessibilityRole="button"
+                  accessibilityLabel="Remove lap">
                   <Text style={styles.removeText}>✕</Text>
                 </Pressable>
-              </Pressable>
+              </View>
               {open && s && (
-                <View style={styles.lapChips}>
+                <View style={styles.lapChoices}>
                   {s.laps.map((l) => {
                     const used = l.number !== p.lap && picks.some((q) => q.session_id === s.id && q.lap === l.number);
                     return (
-                      <Pressable key={l.number} disabled={used} onPress={() => swap(p, l.number)}
-                        style={StyleSheet.flatten([styles.chip, l.number === p.lap && { borderColor: tint },
-                          (!l.clean || used) && styles.dim])}>
-                        <Text style={l.number === p.lap ? { color: tint } : undefined}>
-                          L{l.number} {formatLap(l.time)}
-                        </Text>
-                      </Pressable>
+                      <Choice key={l.number} label={`${l.number}`} detail={formatLap(l.time)} on={l.number === p.lap}
+                        disabled={used} dim={!l.clean} onPress={() => swap(p, l.number)}
+                        accessibilityLabel={`Lap ${l.number}, ${formatLap(l.time)}${l.clean ? '' : ', not clean'}`} />
                     );
                   })}
                 </View>
@@ -196,18 +208,18 @@ export default function CompareScreen() {
         })}
 
         {picks.length < MAX_LAPS && !showList && (
-          <Pressable onPress={() => setAdding(true)} style={StyleSheet.flatten([styles.button, { borderColor: tint }])}>
-            <Text style={[styles.buttonText, { color: tint }]}>Add a lap from another session</Text>
-          </Pressable>
+          <View style={styles.action}>
+            <TextLink label="+ Add a lap from another session" onPress={() => setAdding(true)} />
+          </View>
         )}
         {showList && (
           <View style={styles.list}>
-            {!groups && !error && <ActivityIndicator />}
+            {!groups && !error && <ActivityIndicator color={theme.text} style={styles.left} />}
             {groups && groups.length === 0 && (
-              <Text style={styles.sub}>No session has timed laps yet. Upload logs on the Sessions tab first.</Text>
+              <Text style={t.note}>No session has timed laps yet. Upload logs on the Sessions page first.</Text>
             )}
             {groups && groups.length > 0 && (
-              <Text style={styles.sub}>
+              <Text style={t.note}>
                 {picks.length === 0
                   ? 'Tap a session to add its best lap.'
                   : 'Tap a session to add its best lap; tap it again for its next best.'}
@@ -218,101 +230,89 @@ export default function CompareScreen() {
                 <Text style={styles.groupName}>{g.track ?? 'Track not known'}</Text>
                 {g.sessions.map((s) => {
                   const n = picks.filter((p) => p.session_id === s.id).length;
+                  const full = picks.length >= MAX_LAPS || n >= s.laps.filter((l) => l.clean).length;
                   return (
-                    <Pressable key={s.id} onPress={() => add(s)} style={styles.sessionRow}
-                      disabled={picks.length >= MAX_LAPS || n >= s.laps.filter((l) => l.clean).length}>
+                    <Pressable key={s.id} onPress={() => add(s)} style={StyleSheet.flatten([styles.sessionRow, full && styles.dim])}
+                      disabled={full} accessibilityRole="button" accessibilityLabel={`Add ${s.name}'s best lap`}>
                       <View style={styles.grow}>
                         <Text style={styles.pickTitle}>{s.name}</Text>
-                        <Text style={styles.sub}>
+                        <Text style={t.labelMuted}>
                           {[s.driver, s.date, `${s.laps.length} laps`, n ? `${n} picked` : null].filter(Boolean).join(' · ')}
                         </Text>
                       </View>
                       <Text style={styles.time}>{formatLap(s.best_time)}</Text>
-                      <Text style={[styles.plus, { color: tint }]}>＋</Text>
+                      <Text style={styles.addWord}>Add</Text>
                     </Pressable>
                   );
                 })}
               </View>
             ))}
-            {adding && picks.length >= MIN_LAPS && (
-              <Pressable onPress={() => setAdding(false)}>
-                <Text style={[styles.sub, { color: tint }]}>Done</Text>
-              </Pressable>
-            )}
+            {adding && picks.length >= MIN_LAPS && <TextLink label="Done" onPress={() => setAdding(false)} />}
           </View>
         )}
 
         {picks.length >= MIN_LAPS && (
           <View style={styles.idealRow}>
-            <View style={styles.grow}>
-              <Text style={styles.pickTitle}>Ideal lap</Text>
-              <Text style={styles.sub}>
-                The quickest of these laps in each section, put together
-                {data ? `: ${formatLap(data.ideal.time)}` : ''}
-              </Text>
-            </View>
-            <Switch value={ideal} onValueChange={setIdeal} />
+            <Toggle on={ideal} onChange={setIdeal} label="Ideal lap"
+              detail={`The quickest of these laps in each section, put together${data ? `: ${formatLap(data.ideal.time)}` : ''}`} />
           </View>
         )}
-      </View>
+      </Section>
 
-      {error && <Text style={styles.error}>{error}</Text>}
+      {error && <Text style={StyleSheet.flatten([t.error, styles.gapTop])}>{error}</Text>}
       {busy && (
-        <View style={styles.busy}>
-          <ActivityIndicator />
-          <Text style={styles.sub}>Placing the laps on one line…</Text>
+        <View style={StyleSheet.flatten([styles.busy, styles.gapTop])}>
+          <ActivityIndicator color={theme.text} />
+          <Text style={t.note}>Placing the laps on one line…</Text>
         </View>
       )}
 
       {data && shown && picks.length >= MIN_LAPS && (
-        <View style={[styles.results, stale && styles.stale]} onLayout={(e) => (resultsY.current = e.nativeEvent.layout.y)}>
-          <WhereTheTimeIs data={data} colors={colors} focus={focus} onFocus={onFocus} onShow={showSection} />
-          <SectionTable data={data} colors={colors} ideal={ideal} onPick={showSection} />
+        <View style={StyleSheet.flatten([styles.results, stale && styles.stale])}
+          onLayout={(e) => (resultsY.current = e.nativeEvent.layout.y)}>
+          <WhereTheTimeIs no={2} data={data} colors={colors} focus={focus} onFocus={onFocus} onShow={showSection} />
+          <SectionTable no={3} data={data} colors={colors} ideal={ideal} onPick={showSection} />
           <View onLayout={(e) => (tracesY.current = e.nativeEvent.layout.y)} style={styles.transparent}>
-            <CompareTraces data={data} colors={colors} ideal={ideal} zoom={zoom} onZoom={setZoom} cursor={cursor}
+            <CompareTraces no={4} data={data} colors={colors} ideal={ideal} zoom={zoom} onZoom={setZoom} cursor={cursor}
               onCursor={setCursor} />
           </View>
         </View>
       )}
-    </ScrollView>
+      <Colophon left="The Engineer · Compare laps" right={track?.track ?? undefined} />
+    </Page>
   );
 }
 
 const useStyles = themed((c) => ({
-  container: { padding: 16, gap: 20, maxWidth: 1100, width: '100%', alignSelf: 'center' },
-  intro: { opacity: 0.7, lineHeight: 20 },
-  section: { gap: 8 },
-  h2: { fontSize: 18, fontWeight: '700' },
-  pick: { borderBottomWidth: 1, borderColor: c.separator, paddingBottom: 8, gap: 8 },
+  grow: { flex: 1, minWidth: 0, backgroundColor: 'transparent' },
+  left: { alignSelf: 'flex-start' },
+  headRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 10, borderBottomWidth: 1, borderColor: c.rule,
+    paddingBottom: 5 },
+  th: { ...Type.label, fontSize: 11, color: c.text },
+  pick: { borderBottomWidth: 1, borderColor: c.separator, paddingVertical: 10, gap: 10 },
   pickRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  grow: { flex: 1, backgroundColor: 'transparent' },
-  pickTitle: { fontSize: 16, fontWeight: '600' },
-  sub: { opacity: 0.7, fontSize: 13 },
+  pickMain: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  pickTitle: { fontFamily: face('body', 600), fontSize: 17, lineHeight: 22, color: c.text },
   right: { alignItems: 'flex-end', backgroundColor: 'transparent' },
-  time: { fontSize: 16, fontVariant: ['tabular-nums'] },
-  remove: { paddingHorizontal: 6, paddingVertical: 4 },
-  removeText: { fontSize: 16, opacity: 0.6 },
-  lapChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingLeft: 24 },
-  chip: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.chip, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: c.surface },
+  time: { ...Type.number, fontFamily: face('label', 700), fontSize: 18, color: c.text },
+  gap: { ...Type.number, fontSize: 13, color: c.delta.loss },
+  gapBest: { ...Type.label, fontSize: 11, color: c.timing.best },
+  removeCol: { width: 28, alignItems: 'center' },
+  removeText: { fontFamily: Fonts.label, fontSize: 15, color: c.textMuted },
+  lapChoices: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 14, rowGap: 10, paddingLeft: 26 },
   dim: { opacity: 0.45 },
-  button: { borderRadius: Radius.control, padding: 12, alignItems: 'center', borderWidth: 1 },
-  buttonText: { fontWeight: '600', fontSize: 15 },
-  list: { gap: 12 },
-  group: { gap: 2 },
-  groupName: { fontSize: 13, fontWeight: '600', opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
-  sessionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderColor: c.separator,
-  },
-  plus: { fontSize: 20, fontWeight: '600' },
-  idealRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingTop: 4 },
-  error: { color: c.error },
-  busy: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  results: { gap: 28 },
+  action: { marginTop: 16 },
+  list: { gap: 12, marginTop: 16 },
+  group: { gap: 0 },
+  groupName: { ...Type.label, color: c.text, borderBottomWidth: 1, borderColor: c.rule, paddingBottom: 5 },
+  sessionRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderBottomWidth: 1,
+    borderColor: c.separator },
+  addWord: { ...Type.link, fontSize: 12, letterSpacing: 1.2, color: c.text, borderBottomWidth: 2, borderColor: c.rule,
+    paddingBottom: 1 },
+  idealRow: { marginTop: 18, maxWidth: 640 },
+  busy: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  gapTop: { marginTop: 18 },
+  results: { backgroundColor: 'transparent' },
   stale: { opacity: 0.5 },
   transparent: { backgroundColor: 'transparent' },
 }));

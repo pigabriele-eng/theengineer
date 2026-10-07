@@ -11,7 +11,7 @@ import { niceTicks, useChartColors } from '@/components/ReportCharts';
 import { Band, bandFill, pointRange, TRACE_PAD_X } from '@/components/TechniqueTrace';
 import { Text, View } from '@/components/Themed';
 import { InputRole, Inputs, MODEL_PHASES } from '@/lib/technique';
-import { chartPlate, Fonts, phaseColor, PLATE_PAD, themed, useTheme } from '@/constants/Theme';
+import { chartPlate, Fonts, phaseColor, PLATE_PAD, themed, Type, useTheme } from '@/constants/Theme';
 
 type Props = {
   stepM: number;
@@ -284,8 +284,7 @@ function Channel({ geo, title, unit, digits, role, values, under, bands, selecte
               strokeWidth={1} />
           ))}
           {role === 'steer' && lo < 0 && hi > 0 && (
-            <Line x1={PAD.left} x2={width - PAD.right} y1={py(0)} y2={py(0)} stroke={c.axis} strokeWidth={1}
-              strokeOpacity={0.6} />
+            <Line x1={PAD.left} x2={width - PAD.right} y1={py(0)} y2={py(0)} stroke={c.muted} strokeWidth={1} />
           )}
           {ticks.map((t) => (
             <SvgText key={`t${t}`} x={PAD.left - 6} y={py(t) + 4} fontSize={10} fill={c.axis} textAnchor="end"
@@ -299,7 +298,7 @@ function Channel({ geo, title, unit, digits, role, values, under, bands, selecte
           <Path d={paths.lap} stroke={c.s1} strokeWidth={2} fill="none" strokeLinejoin="round"
             strokeLinecap="round" />
           {cursor != null && (
-            <Line x1={px(cursor * stepM)} x2={px(cursor * stepM)} y1={top} y2={bottom} stroke={c.axis}
+            <Line x1={px(cursor * stepM)} x2={px(cursor * stepM)} y1={top} y2={bottom} stroke={c.text}
               strokeWidth={1} />
           )}
           {cursor != null && under && Number.isFinite(under[cursor]) && (
@@ -323,18 +322,18 @@ function Channel({ geo, title, unit, digits, role, values, under, bands, selecte
 }
 
 const useStyles = themed((c) => ({
-  wrap: { gap: 6, ...chartPlate(c) },
-  head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: 8,
-    backgroundColor: 'transparent' },
-  title: { fontSize: 12, fontWeight: '600', opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 },
+  wrap: { gap: 8, ...chartPlate(c) },
+  head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', gap: 8,
+    backgroundColor: 'transparent', borderBottomWidth: 1, borderColor: c.rule, paddingBottom: 4, minHeight: 24 },
+  title: { ...Type.label, fontSize: 11, color: c.text },
   readoutRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },
-  readout: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
-  readoutUnder: { fontSize: 13, opacity: 0.75, fontVariant: ['tabular-nums'] },
-  key: { width: 10, height: 2, borderRadius: 1 },
-  keyThin: { height: 1.5 },
-  legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, backgroundColor: 'transparent' },
+  readout: { ...Type.number, fontSize: 13, color: c.text },
+  readoutUnder: { ...Type.number, fontSize: 13, color: c.textSecondary },
+  key: { width: 10, height: 3 },
+  keyThin: { height: 2 },
+  legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, rowGap: 6, backgroundColor: 'transparent' },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },
-  legendText: { fontSize: 12, opacity: 0.75 },
-  swatch: { width: 12, height: 8, borderRadius: 2 },
-  note: { fontSize: 12, opacity: 0.65, lineHeight: 17 },
+  legendText: { ...Type.label, fontFamily: Fonts.label, fontSize: 11, letterSpacing: 0.8, color: c.textSecondary },
+  swatch: { width: 14, height: 10 },
+  note: { fontFamily: Fonts.body, fontSize: 13, lineHeight: 18, color: c.textMuted },
 }));
