@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import DataError, IntegrityError
 
 from app import calendar_sync, coaching, driver_prints, empty_runs, event_delete, event_modes, prebuild, run_delete
-from app import storage, timing
+from app import compare_suggest, storage, timing
 from app.auth import check_settings, require_user, require_user_or_query_token
 from app.plain_errors import PlainErrors
 from app.db import create_tables
@@ -98,6 +98,7 @@ app.include_router(prebuild.router, dependencies=signed_in)
 app.include_router(coaching.router, dependencies=signed_in)
 app.include_router(event_modes.router, dependencies=signed_in)
 app.include_router(event_debriefs.router, dependencies=signed_in)
+app.include_router(compare_suggest.router, dependencies=signed_in)
 app.include_router(debriefs.media_router, dependencies=[Depends(require_user_or_query_token)])
 
 

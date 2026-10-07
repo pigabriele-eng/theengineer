@@ -18,7 +18,7 @@ import {
   TraceRole,
 } from '@/lib/compare';
 import { noPrint } from '@/lib/print';
-import { deltaColor, deltaWash, face, Fonts, phaseColor, themed, Type, useTheme } from '@/constants/Theme';
+import { deltaColor, deltaWash, face, Fonts, phaseColor, TAP, themed, Type, useTheme } from '@/constants/Theme';
 
 // Colours of the laps in a result, by the slot each lap was given when it was picked.
 export function useLapColors(slots: number[]) {
@@ -327,7 +327,7 @@ const useStyles = themed((c) => ({
   also: { marginTop: 14 },
   // the section table: hairlines between rows, an ink rule under the head, colour as flat blocks in the cells
   headRow: { flexDirection: 'row', alignItems: 'flex-end', borderBottomWidth: 1, borderColor: c.rule },
-  row: { flexDirection: 'row', alignItems: 'stretch', height: 33, borderBottomWidth: 1, borderColor: c.separator },
+  row: { flexDirection: 'row', alignItems: 'stretch', height: TAP, borderBottomWidth: 1, borderColor: c.separator },
   footFirst: { borderTopWidth: 3, borderColor: c.rule },
   th: { ...Type.label, fontSize: 11, color: c.text },
   cellBox: { paddingVertical: 5, paddingHorizontal: 6, alignItems: 'flex-end', gap: 2 },
