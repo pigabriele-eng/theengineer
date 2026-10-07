@@ -16,6 +16,7 @@ from app.routers import prep as prep_report
 from app.routers import stint as stint_tool
 from app.routers import track_grip, trackshape
 from app.routers import driver_style
+from app.routers import event_debriefs
 from app.vehicle import tyre_store
 from app import results
 
@@ -87,6 +88,7 @@ app.include_router(event_delete.router, dependencies=signed_in)
 app.include_router(run_delete.router, dependencies=signed_in)
 app.include_router(prebuild.router, dependencies=signed_in)
 app.include_router(coaching.router, dependencies=signed_in)
+app.include_router(event_debriefs.router, dependencies=signed_in)
 app.include_router(debriefs.media_router, dependencies=[Depends(require_user_or_query_token)])
 
 

@@ -31,6 +31,7 @@ import {
   shortName, Year, yearKey, yearOf,
 } from '@/lib/homeFolds';
 import { launchEvent } from '@/lib/openCurrent';
+import { weekendsOf } from '@/lib/weekendOpen';
 import { PrepAvailability } from '@/lib/prep';
 import { fetchFinishes, Finishes } from '@/lib/finishes';
 import { fetchReport, Report } from '@/lib/report';
@@ -74,7 +75,7 @@ export default function SessionsScreen() {
     eventsApi.folders().then(
       (f) => {
         if (!latest()) return;
-        setFolders(f);
+        setFolders(weekendsOf(f)); // coaching days have a list of their own (Coaching)
         setError(null);
         setLoads((n) => n + 1);
       },
@@ -199,6 +200,7 @@ export default function SessionsScreen() {
           {/* only what concerns the whole list here; comparing, tagging and the driver fingerprints are in each event
               and under Tools (Gabriele, 2026-10-07: that row "is normally event specific") */}
           <TextLink onPress={() => setMaking(true)} label="+ New event" />
+          <TextLink href="/seasons" label="Seasons" arrow />
           {calendar && (
             <View style={wide ? styles.sync : styles.syncPhone}>
               <CalendarLine calendar={calendar} onSynced={(c) => {
@@ -239,7 +241,7 @@ export default function SessionsScreen() {
           ))}
         </YearFold>
       ))}
-      <Colophon left="The Engineer · Sessions" links={[
+      <Colophon left="The Engineer · Weekend" links={[
         { label: 'Seasons', href: '/seasons' },
         { label: 'Garage', href: '/garage' },
         { label: 'Racing calendar', href: '/tools/calendar' },

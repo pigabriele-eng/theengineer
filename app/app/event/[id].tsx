@@ -12,7 +12,7 @@ import { EventForm } from '@/components/EventForm';
 import { EventInfoCard } from '@/components/EventInfoCard';
 import { HeroCountry } from '@/components/Flag';
 import { MoveSessions } from '@/components/MoveSessions';
-import { PrepButton, usePrepAvailability } from '@/components/PrepButton';
+import { Tabs } from '@/components/Picks';
 import {
   B, Colophon, Fig, Folio, Hero, Label, Page, Section, Swatch, TextLink, useGutter, useWide,
 } from '@/components/Programme';
@@ -23,6 +23,7 @@ import { RunNameQuestions } from '@/components/RunNames';
 import { SeasonMatch } from '@/components/SeasonMatch';
 import { filledNote, localPick, PickerKind, RunChips, RunNameEditor, RunPicker, useGarage } from '@/components/RunChips';
 import { Text, View } from '@/components/Themed';
+import WeekendDuring from '@/components/weekend/During';
 import { formatLap } from '@/lib/api';
 import { todayIso, When, whenOf } from '@/lib/calendar';
 import { MAX_LAPS } from '@/lib/compare';
@@ -32,6 +33,7 @@ import { RunsDeleted } from '@/lib/deleteRuns';
 import { dateRange, dayLabel, eventsApi, Folder, FolderSession, KIND_NAMES, NO_EVENT } from '@/lib/events';
 import { EventGuess } from '@/lib/fingerprints';
 import { Garage, garageApi, RunFields } from '@/lib/garage';
+import { duringSections } from '@/lib/weekendRuns';
 import { noPrint } from '@/lib/print';
 import { face, Fonts, PHOTOS, photoFor, themed, Type, useTheme } from '@/constants/Theme';
 
@@ -39,6 +41,8 @@ import { face, Fonts, PHOTOS, photoFor, themed, Type, useTheme } from '@/constan
 type Run = FolderSession & { driver_id?: number | null; car_id?: number | null };
 // What opens in the band under the event's links: one at a time
 type Panel = 'rename' | 'edit' | 'delete' | 'move' | 'delete runs';
+// A race weekend's two stages (Gabriele, 2026-10-07): getting ready for it, and while it is on
+type Stage = 'before' | 'during';
 
 const freeSlot = (picks: Pick[]) => [0, 1, 2, 3, 4, 5].find((s) => !picks.some((p) => p.slot === s)) ?? 0;
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -53,7 +57,7 @@ export default function EventScreen() {
   const wide = useWide();
   const gutter = useGutter();
   const { width } = useWindowDimensions();
-  const params = useLocalSearchParams<{ id: string; compare?: string }>();
+  const params = useLocalSearchParams<{ id: string; compare?: string; stage?: string }>();
   const key = params.id === NO_EVENT ? NO_EVENT : String(Number(params.id));
   const router = useRouter();
   const [folder, setFolder] = useState<Folder | null>(null);
@@ -73,7 +77,6 @@ export default function EventScreen() {
   const scroll = useRef<ScrollView>(null);
   const topH = useRef(0); // the photo and its folio, above the page's body
   const compareY = useRef(0); // where Side by side starts in the body
-  const prep = usePrepAvailability(); // events whose track has past data: the Prep report button
   // how many times the event came from the server (not counting the chips' changes made here at once): what's
   // worked out from its runs is asked for again with it; null until the event is read
   const [reads, setReads] = useState(0);
@@ -178,13 +181,19 @@ export default function EventScreen() {
   const timed = sessions.some((s) => s.best_lap_s != null);
   // its country (the flag and three letters in the hero's kicker), from its track, else its name ("Monza test")
   const country = isEvent && folder ? countryOfAny([folder.track, folder.name]) : null;
+  // a weekend opens on Before while it has no runs, on During once it has; a tap keeps the pick in the address
+  const asked: Stage | null = params.stage === 'before' || params.stage === 'during' ? params.stage : null;
+  const stage: Stage = asked ?? (sessions.length > 0 ? 'during' : 'before');
+  const pickStage = (s: Stage) => router.setParams({ stage: s });
+  const during = isEvent && stage === 'during';
+  const showRuns = !isEvent || during; // the runs by day and side by side are part of During
 
   // ---------- the photo and the folio ----------
 
   const top = folder ? (
     <View onLayout={(e) => (topH.current = e.nativeEvent.layout.height)}>
       <Hero photo={isEvent ? photoFor(folder.track) : PHOTOS.dusk} tag={isEvent ? TAG[whenOf(folder, todayIso())] : 'Unfiled'}
-        rest="Sessions" restHref="/" title={headlineOf(folder, isEvent)} deck={deckOf(folder, isEvent)}
+        rest="Weekend" restHref="/" title={headlineOf(folder, isEvent)} deck={deckOf(folder, isEvent)}
         height={wide ? 380 : 400} badge={country ? <HeroCountry country={country} /> : undefined} />
       <Folio items={isEvent ? [
         folder.track,
@@ -196,29 +205,58 @@ export default function EventScreen() {
     </View>
   ) : undefined;
 
-  // ---------- the event's links, and the band under them ----------
+  // ---------- the stage tabs, and the band under them ----------
 
-  const links = isEvent && eventId != null && folder && (
-    <View style={wide ? styles.links : styles.linksPhone} {...noPrint}>
-      {timed && <TextLink href={{ pathname: '/report', params: { event: eventId } }} label="Report" red arrow />}
-      {timed && <TextLink href={{ pathname: '/quali', params: { event: eventId } }} label="Quali prep" arrow />}
-      {timed && <TextLink href={{ pathname: '/technique', params: { event: eventId } }} label="Technique check" arrow />}
-      {timed && <TextLink href={{ pathname: '/tools/stint', params: { event: eventId } }} label="Stint analysis" arrow />}
-      {timed && <TextLink href={{ pathname: '/drivers/compare', params: { event: eventId } }} label="Compare drivers" arrow />}
-      {timed && <TextLink href="/drivers/fingerprints" label="Driver fingerprints" arrow />}
-      <TextLink href={{ pathname: '/prediction', params: { event: eventId } }} label="Prediction" arrow />
-      {whenOf(folder, todayIso()) !== 'upcoming' && (
-        <TextLink href={{ pathname: '/prediction', params: { event: eventId, view: 'actual' } }}
-          label="Predicted vs actual" arrow />
-      )}
-      <PrepButton eventId={eventId} info={prep[String(eventId)]} compact />
-      <View style={wide ? styles.manage : styles.managePhone}>
-        <TextLink onPress={() => showPanel(panel === 'rename' ? null : 'rename')} label="Rename" small />
-        <TextLink onPress={() => showPanel(panel === 'edit' ? null : 'edit')} label="Change dates" small />
-        <TextLink onPress={() => showPanel(panel === 'delete' ? null : 'delete')} label="Delete event" small />
+  // Before | During, the full report and print: nothing else to choose from first (every analysis is in the section it
+  // belongs to, or in the More line at the end)
+  const stageBar = isEvent && eventId != null && folder && (
+    <View style={wide ? styles.links : styles.linksPhone}>
+      <Tabs big value={stage} onChange={pickStage} items={[
+        { key: 'before', label: 'Before', sub: 'Prep' },
+        { key: 'during', label: 'During', sub: sessions.length ? plural(sessions.length, 'run') : 'No runs yet' },
+      ]} />
+      <View style={wide ? styles.manage : styles.managePhone} {...noPrint}>
+        {timed && <TextLink href={{ pathname: '/report', params: { event: eventId } }} label="Full report" red arrow />}
         <PrintButton title={['Event', folder.name, folder.track].filter(Boolean).join(' · ')} />
       </View>
     </View>
+  );
+
+  // The rest of what the event offers, in one line at the end of the page: the analyses and the event's own actions.
+  const more = isEvent && eventId != null && folder && (
+    <View style={styles.more} {...noPrint}>
+      <Label>More</Label>
+      <View style={styles.moreLinks}>
+        {timed && <TextLink href={{ pathname: '/report', params: { event: eventId } }} label="Full report" arrow small />}
+        {timed && <TextLink href={{ pathname: '/technique', params: { event: eventId } }} label="Technique check" arrow small />}
+        {timed && <TextLink href={{ pathname: '/quali', params: { event: eventId } }} label="Quali prep" arrow small />}
+        {timed && <TextLink href={{ pathname: '/tools/stint', params: { event: eventId } }} label="Stint analysis" arrow small />}
+        {timed && <TextLink href={{ pathname: '/drivers/compare', params: { event: eventId } }} label="Compare drivers" arrow small />}
+        {timed && <TextLink href="/drivers/fingerprints" label="Driver fingerprints" arrow small />}
+        <TextLink href={{ pathname: '/prediction', params: { event: eventId } }} label="Prediction" arrow small />
+        {whenOf(folder, todayIso()) !== 'upcoming' && (
+          <TextLink href={{ pathname: '/prediction', params: { event: eventId, view: 'actual' } }}
+            label="Predicted vs actual" arrow small />
+        )}
+      </View>
+      <View style={styles.moreLinks}>
+        <TextLink onPress={() => showPanel(panel === 'rename' ? null : 'rename')} label="Rename" small />
+        <TextLink onPress={() => showPanel(panel === 'edit' ? null : 'edit')} label="Change dates" small />
+        <TextLink onPress={() => showPanel(panel === 'delete' ? null : 'delete')} label="Delete event" small />
+      </View>
+    </View>
+  );
+
+  // Before the weekend: the prep report (the lap to aim for, corner by corner, grip, the setup to start with)
+  const before = isEvent && eventId != null && folder && !during && (
+    <Section no={1} title="Before the weekend"
+      dek="The lap to aim for, corner by corner, the track’s grip and the setup to start with, from the past events here.">
+      <View style={styles.beforeLinks}>
+        <TextLink href={{ pathname: '/prep', params: { event: eventId } }} label="Open the prep report" red arrow />
+        {timed && <TextLink href={{ pathname: '/quali', params: { event: eventId } }} label="Quali prep" arrow />}
+        <TextLink href={{ pathname: '/prediction', params: { event: eventId } }} label="Prediction" arrow />
+      </View>
+    </Section>
   );
 
   // One panel at a time in a ruled band under the links: rename, change the dates, delete the event, move or delete
@@ -284,8 +322,9 @@ export default function EventScreen() {
     : wide ? styles.days : styles.daysPhone;
   const dayStyle = cols === 'across' ? styles.dayAcross : cols === 'half' ? styles.dayHalf : wide ? styles.day : undefined;
 
-  let no = 0;
-  const runs = folder && (
+  // During's own sections come first (lib/weekendRuns.ts duringSections); Before's one
+  let no = during ? duringSections(folder) : isEvent ? 1 : 0;
+  const runs = folder && showRuns && (
     <Section no={++no} title="Runs" dek={isEvent
       ? 'Day by day, each with its best lap. Tick two to six to put them side by side; tap a name to rename it, a best lap to open the run.'
       : 'Runs filed in no event. Tick them, then Move to put them into one, or Delete to remove them for good.'}>
@@ -325,7 +364,7 @@ export default function EventScreen() {
     </Section>
   );
 
-  const sideBySide = folder && sessions.length >= 2 && (
+  const sideBySide = folder && showRuns && sessions.length >= 2 && (
     <Section no={++no} title="Side by side" onLayout={(e) => (compareY.current = e.nativeEvent.layout.y)}
       dek="Two to six runs next to each other: lap times, the best time in each section, top speed, tyres.">
       {picks.length >= 2 ? (
@@ -376,22 +415,36 @@ export default function EventScreen() {
         {error && (
           <View style={styles.errorBox}>
             <ErrorLine>{folder ? error : `Can’t open this event: ${error}`}</ErrorLine>
-            {!folder && <TextLink href="/" label="Sessions" arrow />}
+            {!folder && <TextLink href="/" label="Weekend" arrow />}
           </View>
         )}
-        {links}
+        {stageBar}
         {band}
         {notice && <View style={styles.notice}><Said text={notice} onPress={() => setNotice(null)} /></View>}
         {seasonQuestion}
         {runNameQuestion}
-        {runs}
-        {sideBySide}
-        {info}
-        {results}
-        {addRun}
+        {during && eventId != null ? (
+          <WeekendDuring eventId={eventId} folder={folder}>
+            {runs}
+            {sideBySide}
+            {info}
+            {results}
+            {addRun}
+          </WeekendDuring>
+        ) : (
+          <>
+            {before}
+            {runs}
+            {sideBySide}
+            {info}
+            {results}
+            {addRun}
+          </>
+        )}
+        {more}
         {folder && (
           <Colophon left={`The Engineer · ${isEvent ? 'Event' : 'Unfiled runs'}`} links={[
-            { label: 'Sessions', href: '/' },
+            { label: 'Weekend', href: '/' },
             { label: 'Seasons', href: '/seasons' },
             { label: 'Garage', href: '/garage' },
           ]} />
@@ -681,6 +734,9 @@ const useStyles = themed((c) => ({
   manage: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 18, rowGap: 10, marginLeft: 'auto' },
   managePhone: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 18, rowGap: 10, width: '100%',
     borderTopWidth: 1, borderColor: c.separator, paddingTop: 12 },
+  more: { marginTop: 40, borderTopWidth: 3, borderColor: c.rule, paddingTop: 10, gap: 14 },
+  moreLinks: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 22, rowGap: 14 },
+  beforeLinks: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 26, rowGap: 14 },
   band: { marginTop: 20, borderTopWidth: 3, borderColor: c.rule, paddingTop: 10, gap: 12, maxWidth: 680 },
   confirm: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 24, color: c.text },
   notice: { marginTop: 18, maxWidth: 720 },

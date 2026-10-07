@@ -135,7 +135,7 @@ export default function ToolsScreen() {
       <AppearancePicker no={GROUPS.length + 1} />
       {authEnabled && <Account no={GROUPS.length + 2} />}
       <Colophon left="The Engineer · Tools" links={[
-        { label: 'Sessions', href: '/' },
+        { label: 'Weekend', href: '/' },
         { label: 'Garage', href: '/garage' },
         { label: 'Seasons', href: '/seasons' },
       ]} />
