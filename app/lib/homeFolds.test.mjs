@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  byYear, carLine, champKey, driverLapsLine, driversLine, eventKey, monthSpan, openByDefault, OTHER, shortName, surname, yearKey,
+  byYear, carLine, champKey, driverLapsLine, driversLine, eventKey, finishesLine, monthSpan, openByDefault, OTHER, shortName, surname, yearKey,
 } from './homeFolds.ts';
 
 const ev = (id, start, end, extra = {}) => ({
@@ -94,4 +94,14 @@ test("each driver's laps: three letters of the surname, then the laps nobody is 
   assert.equal(driverLapsLine({ drivers: [], driver_laps: [], unassigned_laps: 5 }), '5 laps unassigned');
   assert.equal(driverLapsLine({ drivers: [], driver_laps: [], unassigned_laps: 0 }), null);
   assert.equal(driverLapsLine({ drivers: ['Gabriele Piana'] }), 'Piana'); // an older server: the names only
+});
+
+test('race finishes: overall place, the class place when there are classes, DNF when not classified', () => {
+  const f = (code, position, cls = null, cp = null, status = 'classified') =>
+    ({ code, position, class: cls, class_position: cp, status });
+  assert.equal(finishesLine([f('R1', 5), f('R2', 3)]), 'R1 P5 · R2 P3');
+  assert.equal(finishesLine([f('R1', 12, 'Am', 2)]), 'R1 P12 (Am P2)');
+  assert.equal(finishesLine([f('R1', 7), f('R2', null, null, null, 'dnf')]), 'R1 P7 · R2 DNF');
+  assert.equal(finishesLine([]), null);
+  assert.equal(finishesLine(undefined), null);
 });

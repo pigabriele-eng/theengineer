@@ -22,11 +22,12 @@ import {
   dayLabel, eventsApi, Folder, FolderSession, FolderSummary, NO_EVENT,
 } from '@/lib/events';
 import {
-  byYear, carLine, Championship, champKey, driverLapsLine, eventKey, Folds, monthSpan, openByDefault, readFolds, saveFolds,
+  byYear, carLine, Championship, champKey, driverLapsLine, eventKey, finishesLine, Folds, monthSpan, openByDefault, readFolds, saveFolds,
   shortName, Year, yearKey, yearOf,
 } from '@/lib/homeFolds';
 import { launchEvent } from '@/lib/openCurrent';
 import { PrepAvailability } from '@/lib/prep';
+import { fetchFinishes, Finishes } from '@/lib/finishes';
 import { fetchReport, Report } from '@/lib/report';
 import { face, Fonts, Space, themed, Type, useTheme } from '@/constants/Theme';
 
@@ -48,6 +49,7 @@ export default function SessionsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [making, setMaking] = useState(false);
   const [calendar, setCalendar] = useState<CalendarState | null>(null);
+  const [finishes, setFinishes] = useState<Finishes | null>(null); // our official race finishes, per event
   const [filter, setFilter] = useState<Filter | null>(null); // null: what the list opens on
   const [details, setDetails] = useState<Record<string, Detail>>({});
   const [loads, setLoads] = useState(0); // counts the list's loads: the details are read again with it
@@ -67,6 +69,7 @@ export default function SessionsScreen() {
       (e) => setError((e as Error).message),
     );
     calendarApi.state().then(setCalendar, () => {}); // the list works without it
+    fetchFinishes().then(setFinishes); // one call for the whole list; without it the rows simply have none
   }, []);
   useFocusEffect(load);
   // the calendar is being read in the background: look again shortly
@@ -210,7 +213,7 @@ export default function SessionsScreen() {
         <YearFold key={y.key} no={i + 1} y={y} isOpen={isOpen} toggle={toggle} today={today}>
           {(c) => c.events.map((f) => (
             <EventFold key={f.key} f={f} open={isOpen(eventKey(f))} onToggle={() => toggle(eventKey(f))}
-              country={countryOfEvent(f)}
+              country={countryOfEvent(f)} finishes={f.id != null ? finishesLine(finishes?.events[String(f.id)]) : null}
               detail={details[f.key]} plan={f.id != null ? plans.get(f.id) : undefined}
               prep={f.id != null ? prep[String(f.id)] : undefined} onChanged={load} onRenamed={renamed(f.key)} />
           ))}
@@ -292,9 +295,10 @@ function shortDates(start: string | null, end: string | null) {
 /** An event: one line (its days, name, round, track, runs and best lap, or what is planned) that folds and opens with
  * a tap; open, its runs and links (an event with data) and its actions: Rename, Delete (Remove when planned) and the
  * Prep report. Renaming takes the line's place. */
-function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged, country }: {
+function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged, country, finishes }: {
   f: FolderSummary;
   country: Country | null; // its flag and three letters before its name
+  finishes: string | null; // our race finishes: "R1 P5 · R2 P3"
   open: boolean;
   onToggle: () => void;
   detail?: Detail;
@@ -312,7 +316,7 @@ function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged
   const past = whenOf(f, todayIso()) === 'past';
   const round = f.season?.round != null ? `Round ${f.season.round}` : null;
   const meta = planned ? [round, plannedLine(f, plan)].filter(Boolean).join(' · ')
-    : [round, f.track, driverLapsLine(f), carLine(f), plural(f.sessions, 'run'),
+    : [round, finishes, f.track, driverLapsLine(f), carLine(f), plural(f.sessions, 'run'),
       f.clean_laps ? plural(f.clean_laps, 'clean lap') : null]
       .filter(Boolean).join(' · ');
   const status = planned ? { text: past ? 'No data' : 'Planned', line: past ? c.textMuted : c.rule }
