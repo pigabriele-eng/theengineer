@@ -4,7 +4,7 @@ Numbers come from a published track map (the series', the circuit's or the FIA's
 positions are metres from the timing (finish) line along the lap: measured on a logged lap where we have one, else on
 a surveyed centre line of the layout the series races and scaled to its official length, good to about 50 m, which
 the analysis tolerates (it snaps each number to the slow point near it). Corners sharing a sector are timed as one
-section. Tracks without a usable outline yet (Misano, Valencia, Lausitzring, Sachsenring, Salzburgring) and ones whose
+section. Tracks without a usable outline yet (Valencia, Lausitzring, Sachsenring, Salzburgring) and ones whose
 numbering could not be confirmed (Barcelona, Portimão, Jeddah, Oschersleben, Norisring) are left out: their logs keep
 C1, C2... until they are added.
 """
@@ -138,6 +138,31 @@ KNOWN: dict[str, dict] = {
                     ("T6", 1925, None), ("T7", 2171, "T7-T8"), ("T8", 2234, "T7-T8"), ("T9", 2515, None),
                     ("T10", 2647, None), ("T11", 2788, None), ("T12", 3140, "T12-T13"), ("T13", 3221, "T12-T13"),
                     ("T14", 3441, None), ("T15", 4054, None), ("T16", 4128, "T16-T17"), ("T17", 4191, "T16-T17")],
+    },
+    # GT4 European Series circuit map (16 turns, 4226 m); measured on our 2026 qualifying lap (4163 m logged).
+    "Misano World Circuit": {
+        "aliases": ("misano", "misano world circuit", "misano world circuit marco simoncelli"),
+        "words": ("misano",),
+        "length_m": 4226,
+        "source": "https://www.gt4europeanseries.com/images/circuits/track-misano.png",
+        "corners": [
+            ("T1", 251, None),
+            ("T2", 406, None),
+            ("T3", 513, None),
+            ("T4", 853, None),
+            ("T5", 927, None),
+            ("T6", 998, None),
+            ("T7", 1334, None),
+            ("T8", 1694, None),
+            ("T9", 2050, None),
+            ("T10", 2177, None),
+            ("T11", 2818, None),
+            ("T12", 3100, None),
+            ("T13", 3261, None),
+            ("T14", 3432, None),
+            ("T15", 3575, None),
+            ("T16", 3890, None),
+        ],
     },
 }
 
