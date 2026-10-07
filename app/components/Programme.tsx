@@ -588,7 +588,7 @@ const useStyles = themed((c) => ({
 
   colophon: { marginTop: 40, borderTopWidth: 6, borderColor: c.rule, paddingTop: 10, flexDirection: 'row', flexWrap: 'wrap',
     justifyContent: 'space-between', gap: 8 },
-  colLinks: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  colLinks: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, maxWidth: '100%' }, // wraps, never past the edge
   colLink: { flexDirection: 'row', gap: 6 },
   colHit: { minWidth: TAP, ...tapRoom(14) },
 }));
