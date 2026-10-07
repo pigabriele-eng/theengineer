@@ -1,11 +1,12 @@
-import { Link, Stack } from 'expo-router';
-import { ReactNode, useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
+import { Link, Stack, useLocalSearchParams } from 'expo-router';
+import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
 
 import {
   Choice, Choices, ErrorLine, Field, FormActions, Input, MainButton, Note, PageTitle, Said,
 } from '@/components/Controls';
 import { EntryFields, Lists, useLists } from '@/components/EventInfoForm';
+import { SeasonMatch } from '@/components/SeasonMatch';
 import { Block, Colophon, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { todayIso } from '@/lib/calendar';
@@ -27,10 +28,47 @@ import {
   seriesApi,
   SeriesCalendar,
 } from '@/lib/seasons';
+import { SeasonQuestion, seasonMatchApi } from '@/lib/seasonMatch';
 import { face, Fonts, inkOn, themed, Type, useTheme } from '@/constants/Theme';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const THIS_YEAR = new Date().getFullYear();
+
+// Which seasons are open, remembered on the device the way lib/appearance.ts keeps the Light/Dark choice: only the
+// seasons tapped open or shut are kept, by id; the rest follow the default. No storage (a private window): the default.
+const FOLD_KEY = 'theengineer.seasons.open';
+type Folds = Record<string, boolean>;
+function readFolds(): Folds {
+  try {
+    const v = JSON.parse(globalThis.localStorage?.getItem(FOLD_KEY) ?? '{}');
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  } catch {
+    return {};
+  }
+}
+function saveFolds(f: Folds) {
+  try {
+    globalThis.localStorage?.setItem(FOLD_KEY, JSON.stringify(f));
+  } catch {
+    // not remembered, but still folded or opened for this visit
+  }
+}
+
+/** Open unless tapped shut: this year's seasons, else those of the next year ahead; the rest are folded. */
+function openByDefault(seasons: Season[]): Set<number> {
+  const now = seasons.filter((s) => s.year === THIS_YEAR);
+  const ahead = seasons.filter((s) => s.year > THIS_YEAR).map((s) => s.year);
+  const year = now.length ? THIS_YEAR : ahead.length ? Math.min(...ahead) : null;
+  return new Set(seasons.filter((s) => s.year === year).map((s) => s.id));
+}
+
+/** The questions waiting about a season: which event is one of its rounds (an option names one of its rounds, or the
+ * season) and who drove its rounds' events. */
+function questionsOf(s: Season, questions: SeasonQuestion[]) {
+  const keys = new Set([...s.rounds.map((r) => `round:${r.id}`), `season:${s.id}`]);
+  const events = new Set(s.rounds.map((r) => r.event_id).filter((id): id is number => id != null));
+  return questions.filter((q) => q.options.some((o) => keys.has(o.key)) || (q.kind === 'drivers' && events.has(q.event_id)));
+}
 
 /** Seasons made ahead: a series and a year with our car number and our entry (tyre, car, team, drivers 1 to 4). A
  * series the server can read from its site brings its calendar (every round becomes a planned event under Upcoming,
@@ -44,7 +82,13 @@ export default function SeasonsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [making, setMaking] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [questions, setQuestions] = useState<SeasonQuestion[]>([]);
   const { lists, error: listsError, reload: reloadLists } = useLists();
+  // folded or open: what was tapped on this device, else the default; the season a link names (?season=) opens
+  const [folds, setFolds] = useState<Folds>(readFolds);
+  const { season: linked } = useLocalSearchParams<{ season?: string }>();
+  const scroll = useRef<ScrollView>(null);
+  const scrolled = useRef(false);
 
   const load = useCallback(() => {
     seasonsApi.list().then(
@@ -54,14 +98,30 @@ export default function SeasonsScreen() {
       },
       (e) => setError((e as Error).message),
     );
+    seasonMatchApi.pending().then((p) => setQuestions(p.questions), () => setQuestions([])); // an older server: none
   }, []);
   useEffect(() => {
     load();
     seriesApi.series().then(setSeries, () => setSeries([])); // 404 on a server without the results module
   }, [load]);
 
+  const defaults = seasons ? openByDefault(seasons) : new Set<number>();
+  const isOpen = (s: Season) => folds[s.id] ?? (String(s.id) === linked || defaults.has(s.id));
+  const setOpen = (id: number, open: boolean) =>
+    setFolds((f) => {
+      const next = { ...f, [id]: open };
+      saveFolds(next);
+      return next;
+    });
+  // the season a link names: once it is laid out, scroll to it
+  const placed = (id: number, y: number) => {
+    if (scrolled.current || String(id) !== linked) return;
+    scrolled.current = true;
+    scroll.current?.scrollTo({ y: Math.max(0, y - 12), animated: false });
+  };
+
   return (
-    <Page>
+    <Page scrollRef={scroll}>
       <Stack.Screen options={{ title: 'Seasons' }} />
       <PageTitle kicker="Sessions" title="Seasons"
         dek="Make a season for the year: its rounds become planned events under Upcoming, with their dates and venue, and each round’s event takes its tyre, car, team and drivers from the season unless you set them on the event." />
@@ -72,11 +132,12 @@ export default function SeasonsScreen() {
         {!making && <MainButton label="+ New season" onPress={() => setMaking(true)} disabled={!lists} />}
       </View>
       {making && lists && (
-        <Section no="New" title="New season" dek="A series and a year, our car number and what we run.">
+        <Section no="NEW" title="New season" dek="A series and a year, our car number and what we run.">
           <NewSeason lists={lists} series={series} onListsChanged={reloadLists} onCancel={() => setMaking(false)}
-            onMade={(text) => {
+            onMade={(text, id) => {
               setMaking(false);
               setNotice(text);
+              setOpen(id, true); // a season just made opens
               load();
               reloadLists(); // drivers and a team may have come from the entry list
             }} />
@@ -86,6 +147,8 @@ export default function SeasonsScreen() {
       {seasons && seasons.length === 0 && !making && <Note style={styles.empty}>No seasons yet.</Note>}
       {seasons && lists && seasons.map((s, i) => (
         <SeasonSection key={s.id} no={i + 1} season={s} lists={lists} series={series} onListsChanged={reloadLists}
+          open={isOpen(s)} onToggle={() => setOpen(s.id, !isOpen(s))} questions={questionsOf(s, questions)}
+          onLayout={(y) => placed(s.id, y)}
           onChanged={(text) => {
             if (text) setNotice(text);
             load();
@@ -150,7 +213,7 @@ function NewSeason({ lists, series, onListsChanged, onCancel, onMade }: {
   series: Series[] | null;
   onListsChanged: () => void;
   onCancel: () => void;
-  onMade: (text: string) => void;
+  onMade: (text: string, id: number) => void;
 }) {
   const styles = useStyles();
   const [year, setYear] = useState(THIS_YEAR);
@@ -183,7 +246,7 @@ function NewSeason({ lists, series, onListsChanged, onCancel, onMade }: {
       const season = await seasonsApi.create({ name: (name ?? auto).trim() || auto, series: picked?.key ?? null, year,
         car_number: number.trim().replace(/^#/, '') || null, entry, rounds: manual });
       const told = picked ? await fillFromSite(season, setBusy) : roundsSaid(season);
-      onMade(told);
+      onMade(told, season.id);
     } catch (e) {
       setError((e as Error).message);
       setBusy(null);
@@ -288,11 +351,15 @@ function RoundsEditor({ rounds, onChange }: { rounds: DraftRound[]; onChange: (r
 
 // ---------- a season ----------
 
-function SeasonSection({ no, season, lists, series, onListsChanged, onChanged }: {
+function SeasonSection({ no, season, lists, series, open, onToggle, questions, onLayout, onListsChanged, onChanged }: {
   no: number;
   season: Season;
   lists: Lists;
   series: Series[] | null;
+  open: boolean;
+  onToggle: () => void;
+  questions: SeasonQuestion[]; // waiting about this season
+  onLayout: (y: number) => void;
   onListsChanged: () => void;
   onChanged: (text?: string) => void;
 }) {
@@ -341,79 +408,128 @@ function SeasonSection({ no, season, lists, series, onListsChanged, onChanged }:
       ? e.drivers.map((id, i) => `${i + 1} ${garage.drivers.find((d) => d.id === id)?.name ?? '?'}`).join('  ') : null],
   ];
   return (
-    <Section no={no} title={season.name}
-      dek={[season.car_number ? `Car #${season.car_number}` : 'No car number',
-        fromSite ? `${seriesName ?? season.series}, from its site` : 'made by hand',
-        plural(season.rounds.length, 'round')].join(' · ')}>
-      {editing === 'entry' ? (
-        <View style={styles.editor}>
-          <Label>Our entry</Label>
-          <EntryEditor season={season} lists={lists} onListsChanged={onListsChanged} onCancel={() => setEditing(null)}
-            onSaved={() => {
-              setEditing(null);
-              onChanged();
-            }} />
-        </View>
-      ) : (
-        <View style={styles.entryBlock}>
-          <View style={styles.entryHead}>
-            <Label>Our entry</Label>
-            <TextLink onPress={() => setEditing('entry')} label="Edit" small />
-          </View>
-          <View style={wide ? styles.entryStrip : styles.entryLines}>
-            {entry.map(([label, value], i) => (
-              <View key={label} style={StyleSheet.flatten([wide ? styles.entryCell : styles.entryLine,
-                wide && i === 0 && styles.entryCellFirst, wide && i === entry.length - 1 && styles.entryCellLast])}>
-                <Text style={styles.entryLabel}>{label}</Text>
-                <Text style={StyleSheet.flatten([styles.entryValue, !wide && styles.right, !value && styles.unset])}>
-                  {value ?? 'not set'}
-                </Text>
-              </View>
-            ))}
-          </View>
-        </View>
-      )}
-      {editing === 'rounds' ? (
-        <View style={styles.editor}>
-          <AddRounds season={season} onCancel={() => setEditing(null)} onSaved={(text) => {
-            setEditing(null);
-            onChanged(text);
-          }} />
-        </View>
-      ) : (
-        <View style={styles.rounds}>
-          <View style={styles.roundsHead}>
-            <Label>Rounds</Label>
-            <Label muted>{fromSite ? 'Entry lists from the series’ site' : ''}</Label>
-          </View>
-          {season.rounds.map((r) => (
-            <RoundRow key={r.id} r={r} season={season} entries={r.round_id ? counts.get(r.round_id) ?? 0 : 0} />
-          ))}
-          {season.rounds.length === 0 && (
-            <Note style={styles.noRounds}>
-              No rounds yet.{fromSite ? ' Update from the series’ site, or add them by hand.' : ''}
-            </Note>
+    <View style={wide ? styles.season : styles.seasonPhone} onLayout={(e) => onLayout(e.nativeEvent.layout.y)}>
+      <SeasonHead no={no} season={season} open={open} onToggle={onToggle} questions={questions.length} />
+      {open && (
+        <View style={wide ? styles.seasonBody : styles.seasonBodyPhone}>
+          <Text style={wide ? styles.seasonDek : styles.seasonDekPhone}>
+            {[season.car_number ? `Car #${season.car_number}` : 'No car number',
+              fromSite ? `${seriesName ?? season.series}, from its site` : 'made by hand'].join(' · ')}
+          </Text>
+          {questions.length > 0 && (
+            <View style={styles.questions}>
+              {[...new Set(questions.map((q) => q.event_id))].map((id) => (
+                <SeasonMatch key={id} eventId={id} onChanged={() => onChanged()} />
+              ))}
+            </View>
           )}
+          {editing === 'entry' ? (
+            <View style={styles.editor}>
+              <Label>Our entry</Label>
+              <EntryEditor season={season} lists={lists} onListsChanged={onListsChanged} onCancel={() => setEditing(null)}
+                onSaved={() => {
+                  setEditing(null);
+                  onChanged();
+                }} />
+            </View>
+          ) : (
+            <View style={styles.entryBlock}>
+              <View style={styles.entryHead}>
+                <Label>Our entry</Label>
+                <TextLink onPress={() => setEditing('entry')} label="Edit" small />
+              </View>
+              <View style={wide ? styles.entryStrip : styles.entryLines}>
+                {entry.map(([label, value], i) => (
+                  <View key={label} style={StyleSheet.flatten([wide ? styles.entryCell : styles.entryLine,
+                    wide && i === 0 && styles.entryCellFirst, wide && i === entry.length - 1 && styles.entryCellLast])}>
+                    <Text style={styles.entryLabel}>{label}</Text>
+                    <Text style={StyleSheet.flatten([styles.entryValue, !wide && styles.right, !value && styles.unset])}>
+                      {value ?? 'not set'}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+          {editing === 'rounds' ? (
+            <View style={styles.editor}>
+              <AddRounds season={season} onCancel={() => setEditing(null)} onSaved={(text) => {
+                setEditing(null);
+                onChanged(text);
+              }} />
+            </View>
+          ) : (
+            <View style={styles.rounds}>
+              <View style={styles.roundsHead}>
+                <Label>Rounds</Label>
+                <Label muted>{fromSite ? 'Entry lists from the series’ site' : ''}</Label>
+              </View>
+              {season.rounds.map((r) => (
+                <RoundRow key={r.id} r={r} season={season} entries={r.round_id ? counts.get(r.round_id) ?? 0 : 0} />
+              ))}
+              {season.rounds.length === 0 && (
+                <Note style={styles.noRounds}>
+                  No rounds yet.{fromSite ? ' Update from the series’ site, or add them by hand.' : ''}
+                </Note>
+              )}
+            </View>
+          )}
+          {error && <ErrorLine>{error}</ErrorLine>}
+          {busy && <Note>{busy}</Note>}
+          <View style={styles.actions}>
+            {fromSite && (busy ? <ActivityIndicator /> : <TextLink onPress={update} label="Update from the series’ site" red arrow />)}
+            {editing !== 'rounds' && <TextLink onPress={() => setEditing('rounds')} label="+ Add a round" />}
+            {asking ? (
+              <View style={styles.confirm}>
+                <Text style={styles.confirmText}>Delete {season.name} and its planned events without data?</Text>
+                <FormActions>
+                  <MainButton danger label="Delete the season" onPress={remove} />
+                  <TextLink onPress={() => setAsking(false)} label="Keep it" />
+                </FormActions>
+              </View>
+            ) : (
+              <TextLink onPress={() => setAsking(true)} label="Delete season" small />
+            )}
+          </View>
         </View>
       )}
-      {error && <ErrorLine>{error}</ErrorLine>}
-      {busy && <Note>{busy}</Note>}
-      <View style={styles.actions}>
-        {fromSite && (busy ? <ActivityIndicator /> : <TextLink onPress={update} label="Update from the series’ site" red arrow />)}
-        {editing !== 'rounds' && <TextLink onPress={() => setEditing('rounds')} label="+ Add a round" />}
-        {asking ? (
-          <View style={styles.confirm}>
-            <Text style={styles.confirmText}>Delete {season.name} and its planned events without data?</Text>
-            <FormActions>
-              <MainButton danger label="Delete the season" onPress={remove} />
-              <TextLink onPress={() => setAsking(false)} label="Keep it" />
-            </FormActions>
+    </View>
+  );
+}
+
+/** A season's heading, folded or open (tap it): the thick rule, its number in an ink block, its name, the year and how
+ * many rounds, a red block when questions about it are waiting, and the ▸ / ▾ mark. */
+function SeasonHead({ no, season, open, onToggle, questions }: {
+  no: number;
+  season: Season;
+  open: boolean;
+  onToggle: () => void;
+  questions: number;
+}) {
+  const styles = useStyles();
+  const wide = useWide();
+  const c = useTheme();
+  const facts = `${season.year} · ${plural(season.rounds.length, 'round')}`;
+  const asked = questions ? plural(questions, 'open question') : null;
+  return (
+    <Pressable onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded: open }}
+      accessibilityLabel={`${season.name}, ${facts}${asked ? `, ${asked}` : ''}`}
+      accessibilityHint={open ? 'Folds the season' : 'Opens the season'}>
+      <View style={styles.foldRule} />
+      <View style={wide ? styles.foldHead : styles.foldHeadPhone}>
+        <View style={styles.foldNo}><Text style={styles.foldNoText}>{String(no).padStart(2, '0')}</Text></View>
+        <View style={styles.foldWords}>
+          <Text style={wide ? styles.foldTitle : styles.foldTitlePhone} numberOfLines={open ? undefined : 1}>
+            {season.name}
+          </Text>
+          <View style={styles.foldFacts}>
+            <Text style={styles.foldFact}>{facts}</Text>
+            {asked ? <Block label={asked} color={c.mark} ink={inkOn(c.mark)} /> : null}
           </View>
-        ) : (
-          <TextLink onPress={() => setAsking(true)} label="Delete season" small />
-        )}
+        </View>
+        <Text style={wide ? styles.foldMark : styles.foldMarkPhone}>{open ? '▾' : '▸'}</Text>
       </View>
-    </Section>
+    </Pressable>
   );
 }
 
@@ -575,6 +691,29 @@ const useStyles = themed((c) => ({
   roundInput: { flexGrow: 1, flexBasis: 120, minWidth: 110, fontSize: 15 },
   roundWide: { flexBasis: 170 },
   addRound: { marginTop: 6, marginBottom: 4 },
+
+  // a season: its heading, folded or open
+  season: { marginTop: 40 },
+  seasonPhone: { marginTop: 30 },
+  foldRule: { height: 6, backgroundColor: c.rule },
+  foldHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 20, paddingTop: 10 },
+  foldHeadPhone: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, paddingTop: 10 },
+  foldNo: { backgroundColor: c.rule, paddingHorizontal: 8, paddingTop: 6, paddingBottom: 5 },
+  foldNoText: { fontFamily: Fonts.display, fontSize: 22, lineHeight: 24, letterSpacing: 0.9, color: c.background },
+  foldWords: { flex: 1, minWidth: 0, gap: 6 },
+  foldTitle: { fontFamily: Fonts.display, fontSize: 44, lineHeight: 46, textTransform: 'uppercase', color: c.text },
+  foldTitlePhone: { fontFamily: Fonts.display, fontSize: 32, lineHeight: 34, textTransform: 'uppercase', color: c.text },
+  foldFacts: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 6 },
+  foldFact: { ...Type.label, fontFamily: Fonts.label, fontSize: 13, letterSpacing: 1.2, color: c.textSecondary,
+    fontVariant: ['tabular-nums'] },
+  foldMark: { fontFamily: Fonts.label, fontSize: 26, lineHeight: 46, color: c.text, width: 26, textAlign: 'right' },
+  foldMarkPhone: { fontFamily: Fonts.label, fontSize: 22, lineHeight: 34, color: c.text, width: 20, textAlign: 'right' },
+  seasonBody: { marginTop: 16 },
+  seasonBodyPhone: { marginTop: 12 },
+  seasonDek: { fontFamily: Type.dek.fontFamily, fontSize: 17, lineHeight: 24, color: c.textSecondary, marginBottom: 20 },
+  seasonDekPhone: { fontFamily: Type.dek.fontFamily, fontSize: 16, lineHeight: 22, color: c.textSecondary,
+    marginBottom: 16 },
+  questions: { gap: 18, marginBottom: 24, maxWidth: 760 },
 
   // a season: our entry
   entryBlock: { marginBottom: 22 },
