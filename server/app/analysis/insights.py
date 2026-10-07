@@ -242,9 +242,17 @@ def targets(laps: list, reference: dict[str, np.ndarray], lap_time: float,
     raw, raw_held = _closed_sim(curvature, perfect), _closed_sim(curvature, held)
     cal_p = cal_h = cal
     if sections:
-        def best(ts: list[np.ndarray]) -> list[tuple[int, int, float]]:
-            return [(s.start, s.end, min(float(t[s.end] - t[s.start]) for t in ts)) for s in sections]
-        passes = best([_times(x) - saved.get(id(x), 0.0) for x in laps])
+        def best(ts: list[np.ndarray], ok: list[list[bool]] | None = None) -> list[tuple[int, int, float]]:
+            out = []
+            for k, s in enumerate(sections):
+                took = [float(t[s.end] - t[s.start]) for t in ts]
+                kept = [x for i, x in enumerate(took) if ok is None or ok[i][k]] or took
+                out.append((s.start, s.end, min(kept)))
+            return out
+        # only passes whose timing agrees with their own speed: where a lap's position along the line slipped, a
+        # section can take a second less than the speed through it allows (Spa T12, a whole 0.5 s)
+        passes = best([_times(x) - saved.get(id(x), 0.0) for x in laps], [consistent_passes(_times(x), x.trace["speed"],
+                                                                                            sections) for x in laps])
         # a flat-out section is only as quick as the speed carried into it: a pass with more (a tow, another lap's
         # exit) is no floor for it, so there the model alone shapes the lap, never quicker than that pass
         floor = [p for p, s in zip(passes, sections, strict=True) if not _flat_out(reference, s)]
@@ -255,6 +263,25 @@ def targets(laps: list, reference: dict[str, np.ndarray], lap_time: float,
         cal_h = cal.to_best(raw_held, best([np.asarray(reference["t"], float)]), cap=passes)
     return Targets(car_limits(traces, load, shaped), perfect, held, cal_p.target(raw), cal_h.target(raw_held), cal_p,
                    cal_h, shape)
+
+
+PASS_AGREE = 0.02  # a pass's time through a section within this share of what its own speed says
+
+
+def consistent_passes(t: np.ndarray, speed: np.ndarray, sections: list[Section]) -> list[bool]:
+    """Per section, whether a lap's time through it (t: s to each metre) agrees with the time its own speed takes
+    over the metres (scaled to the lap's own time, so a speed that reads a little high or low everywhere doesn't
+    count) within PASS_AGREE. Where the lap's position along the line slipped, its time through a section is off
+    while its speed is not."""
+    t = np.asarray(t, float)
+    ms = np.maximum(np.asarray(speed, float), 5.0) / 3.6
+    c = np.concatenate([[0.0], np.cumsum(2 / (ms[:-1] + ms[1:]))])
+    c *= (t[-1] - t[0]) / c[-1] if c[-1] > 0 else 1.0
+    out = []
+    for s in sections:
+        by_speed = float(c[s.end] - c[s.start])
+        out.append(by_speed > 0 and abs(float(t[s.end] - t[s.start]) - by_speed) <= PASS_AGREE * by_speed)
+    return out
 
 
 def _flat_out(reference: dict[str, np.ndarray], s: Section) -> bool:
@@ -782,13 +809,15 @@ def _analysis(prep: Prepared | None, scan: Callable[[], list[dict]], scanned: bo
         return {"laps": [], "sections": []}
     laps, sim = prep.laps, prep.sim
     per_lap = {s.code: [section_metrics(x, s, prep.limits, sim) for x in laps] for s in prep.sections}
+    ok = [consistent_passes(_times(x), x.trace["speed"], prep.sections) for x in laps]
+    agree = {s.code: [o[k] for o in ok] for k, s in enumerate(prep.sections)}  # passes timed as their speed says
     ref_i = laps.index(prep.reference)
 
     sections_out = []
     for s in prep.sections:
         ms = per_lap[s.code]
         times = np.array([m["time"] for m in ms])
-        best_i = int(np.argmin(times))
+        best_i = int(np.argmin(np.where(agree[s.code], times, np.inf))) if any(agree[s.code]) else int(np.argmin(times))
         ref_m = ms[ref_i]
         sections_out.append({
             **s.to_dict(),
@@ -825,7 +854,8 @@ def _analysis(prep: Prepared | None, scan: Callable[[], list[dict]], scanned: bo
                          "best_lap": best.number, "consistency": consistency([x.time for x in xs]),
                          "extraction": round(100 * sim.time / best.time, 2)})
 
-    ideal = sum(float(min(m["time"] for m in per_lap[s.code])) for s in prep.sections)
+    ideal = sum(float(min([m["time"] for m, a in zip(per_lap[s.code], agree[s.code], strict=True) if a]
+                          or [m["time"] for m in per_lap[s.code]])) for s in prep.sections)
     sp = sim.speed
     return {
         "reference": {"run": prep.reference.run, "lap": prep.reference.number, "time": prep.reference.time},

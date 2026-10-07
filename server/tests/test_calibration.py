@@ -309,3 +309,19 @@ def test_a_small_lift_is_a_lift_too():
     ts = np.arange(n) * 0.025  # 40 m/s
     out = _dips(thr, ts, np.maximum.accumulate(thr), np.full(n, -1.5), 0, -1.0, 0)
     assert [(a, lo) for a, _, _, lo in out] == [(50, 88.0)]
+
+
+def test_a_pass_whose_timing_slipped_against_its_speed_lends_the_theoretical_lap_nothing(fastest):
+    import copy
+
+    from app.analysis.insights import consistent_passes
+    slipped = copy.deepcopy(fastest)
+    t = slipped.trace["t"]
+    d = np.arange(N + 1, dtype=float)
+    # its position along the line slipped: 0.4 s less through T1 than its speed takes, given back in T2
+    t += -0.4 * np.clip((d - 100) / 300, 0, 1) + 0.4 * np.clip((d - 600) / 300, 0, 1)
+    assert consistent_passes(slipped.trace["t"], slipped.trace["speed"], SECTIONS) == [False, False]
+    assert consistent_passes(fastest.trace["t"], fastest.trace["speed"], SECTIONS) == [True, True]
+    t_ = targets([fastest, slipped], fastest.trace, fastest.time, SECTIONS)
+    alone = targets([fastest], fastest.trace, fastest.time, SECTIONS)
+    assert t_.sim.time == pytest.approx(alone.sim.time, abs=0.01)
