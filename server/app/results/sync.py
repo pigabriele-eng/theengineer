@@ -13,9 +13,11 @@ again every REFRESH_MINUTES.
 from __future__ import annotations
 
 import logging
+import re
 import sys
 import threading
 import time
+from collections import Counter
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 
@@ -368,16 +370,17 @@ def start_background() -> None:
 
 
 def series_key(text: str | None) -> str | None:
-    """The results source a series name means: 'ADAC GT4 Germany 2026' -> 'adac-gt4-germany'."""
-    low = (text or "").lower()
-    if not low:
+    """The results source a series name, an event name or a logger's event field means: 'ADAC GT4 Germany 2026',
+    '2025 GT4GER T02 HOC', '02_ADACGT4_T01_HOC' -> 'adac-gt4-germany'; 'GT4_ES_R05 Zandvoort' -> 'gt4-europe'."""
+    low = re.sub(r"[_\-.]+", " ", (text or "").lower())
+    if not low.strip():
         return None
     for key, adapter in ADAPTERS.items():
-        if key in low or adapter.NAME.lower() in low:
+        if key.replace("-", " ") in low or adapter.NAME.lower() in low:
             return key
-    if "adac" in low or "germany" in low:
+    if "adac" in low or re.search(r"\bgt4 ?ger", low):
         return adac.SERIES
-    if "europe" in low or "gt4 european" in low:
+    if "europe" in low or re.search(r"\bgt4 ?(es|eu|e)\b", low):
         return gt4europe.SERIES
     return None
 
@@ -407,4 +410,14 @@ def series_of_event(db: Session, event_id: int) -> str:
     if season is not None and season.series in ADAPTERS:
         return season.series
     ev = db.get(models.Event, event_id)
-    return series_key(ev.series if ev else None) or DEFAULT_SERIES
+    if ev is None:
+        return DEFAULT_SERIES
+    found_key = series_key(ev.series) or series_key(ev.name)
+    if found_key:
+        return found_key
+    # what the logs say: MoTeC's event field ("2025 GT4GER T02 HOC"), the most common one among the event's runs
+    names = db.scalars(select(models.LoggerFile.meta).join(models.RunSession,
+                                                           models.RunSession.id == models.LoggerFile.session_id)
+                       .where(models.RunSession.event_id == event_id)).all()
+    keys = Counter(k for m in names if isinstance(m, dict) and (k := series_key(m.get("event"))))
+    return keys.most_common(1)[0][0] if keys else DEFAULT_SERIES

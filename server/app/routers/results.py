@@ -12,7 +12,7 @@ GET /results/events/{id}/prediction is the event's Prediction tab and, once the 
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -37,7 +37,7 @@ class SyncIn(BaseModel):
 
 
 class LinkIn(BaseModel):
-    series: str = sync.DEFAULT_SERIES
+    series: str | None = None  # the event's own series when not sent
     year: int | None = None
     round_id: str | None = Field(default=None, max_length=40)
     car_number: str | None = Field(default=None, max_length=8)
@@ -101,31 +101,64 @@ def _event_facts(db: Session, ev: models.Event) -> dict:
     if year is None:
         first, _ = plans.event_days(db, ev)
         year = first.year if first else None
-    return {"venue": venue_key(track), "track": track, "year": year, "rows": rows}
+    return {"venue": venue_key(track), "track": track, "year": year, "rows": rows, "start": start,
+            "end": folder["end"]}
 
 
 def _target(db: Session, ev: models.Event, facts: dict, link: rm.EventResultLink | None) -> tuple:
     """(series, year, the round's id or None, our car number or None) the event's results come from: set by hand,
     else the season round it is (the series' own round), else its series, circuit and year."""
     if link is not None and link.by_hand:
-        return link.series, link.year or facts["year"], link.round_id, link.car_number
+        # the app sets only the car number by hand: the series is the event's own (an older link may hold the
+        # default series), and a round set by hand counts only in that series
+        series = sync.series_of_event(db, ev.id)
+        return series, link.year or facts["year"], link.round_id if link.series == series else None, link.car_number
     found = sync.season_round_of_event(db, ev.id)
     if found is not None:
         season, rnd = found
         if not facts["venue"] and rnd.venue:  # the round's own venue when the event has none yet
             facts["venue"], facts["track"] = venue_key(rnd.venue), facts["track"] or rnd.venue
         return season.series, season.year, rnd.round_id, season.car_number
-    return sync.series_of_event(db, ev.id), facts["year"], None, None
+    series = sync.series_of_event(db, ev.id)
+    return series, facts["year"], None, _season_number(db, series, facts["year"])
 
 
-def _round(db: Session, series: str, year: int | None, venue: str | None,
-           round_id: str | None = None) -> rm.ResultRound | None:
+def _season_number(db: Session, series: str, year: int | None) -> str | None:
+    """Our car number in one of our seasons of this series and year: a test day there is with that car."""
+    from app import seasons
+
+    if year is None:
+        return None
+    s = db.scalars(select(seasons.Season).where(seasons.Season.series == series, seasons.Season.year == year,
+                                                seasons.Season.car_number.is_not(None))).first()
+    return s.car_number.strip().lstrip("#") if s is not None and s.car_number else None
+
+
+def _same_weekend(rnd: rm.ResultRound, start: str | None, end: str | None) -> bool:
+    """Whether the round ran on the event's days (a day either side): a test at the circuit months before the
+    series came there is not that round. True when either side has no dates."""
+    days = {s.starts_at[:10] for s in rnd.sessions if s.starts_at and len(s.starts_at) >= 10}
+    if not start or not days:
+        return True
+    try:
+        lo = date.fromisoformat(start[:10]) - timedelta(days=1)
+        hi = date.fromisoformat((end or start)[:10]) + timedelta(days=1)
+        return any(lo <= date.fromisoformat(d) <= hi for d in days)
+    except ValueError:
+        return True
+
+
+def _round(db: Session, series: str, year: int | None, venue: str | None, round_id: str | None = None,
+           start: str | None = None, end: str | None = None) -> rm.ResultRound | None:
+    """The round set by id, else the one at the event's circuit that year and on the event's days."""
     if year is None or (venue is None and round_id is None):
         return None
     q = (select(rm.ResultRound).where(rm.ResultRound.series == series, rm.ResultRound.year == year)
          .options(selectinload(rm.ResultRound.sessions).selectinload(rm.ResultSession.rows)))
-    q = q.where(rm.ResultRound.round_id == round_id) if round_id else q.where(rm.ResultRound.venue == venue)
-    return db.scalars(q).first()
+    if round_id:
+        return db.scalars(q.where(rm.ResultRound.round_id == round_id)).first()
+    return next((r for r in db.scalars(q.where(rm.ResultRound.venue == venue)).all()
+                 if _same_weekend(r, start, end)), None)
 
 
 def _link(db: Session, event_id: int) -> rm.EventResultLink | None:
@@ -136,7 +169,7 @@ def event_overview(db: Session, ev: models.Event) -> dict:
     facts = _event_facts(db, ev)
     link = _link(db, ev.id)
     series, year, round_id, season_number = _target(db, ev, facts, link)
-    rnd = _round(db, series, year, facts["venue"], round_id)
+    rnd = _round(db, series, year, facts["venue"], round_id, facts["start"], facts["end"])
     out: dict = {"event_id": ev.id, "series": series, "year": year, "venue": facts["venue"], "track": facts["track"],
                  "round": None, "car_number": None, "car_number_from": None, "sessions": [],
                  "sync": sync.state.as_dict()}
@@ -145,13 +178,13 @@ def event_overview(db: Session, ev: models.Event) -> dict:
     elif season_number:
         out["car_number"], out["car_number_from"] = season_number, "the season"
     if rnd is None:
-        out["note"] = ("No official results for this circuit and year yet" if year and facts["venue"]
+        out["note"] = ("No official results for this circuit on the event's days yet" if year and facts["venue"]
                        else "This event has no circuit or date to match official results to")
         return out
     out["round"] = {"year": rnd.year, "round": rnd.order, "round_id": rnd.round_id, "name": rnd.name,
                     "fetched_at": rnd.fetched_at.isoformat() if rnd.fetched_at else None}
     bests = [r["best_lap_s"] for r in facts["rows"] if r["best_lap_s"]]
-    number = link.car_number if link and link.car_number and link.series == series else None
+    number = link.car_number if link and link.car_number and (link.by_hand or link.series == series) else None
     if number:
         out["car_number_from"] = "set" if link.by_hand else "logged laps"
     elif season_number:
@@ -167,6 +200,8 @@ def event_overview(db: Session, ev: models.Event) -> dict:
                                   car_number=number))
     elif not link.by_hand:
         link.series, link.year, link.round_id, link.car_number = series, rnd.year, rnd.round_id, number
+    elif link.series != series:  # a car number set by hand on an event first matched to another series
+        link.series, link.year, link.round_id = series, rnd.year, rnd.round_id
     db.commit()
     matched: dict[int, list[dict]] = {}
     for r in facts["rows"]:
@@ -222,14 +257,15 @@ def event_prediction(event_id: int, db: Session = Depends(get_db)):
     if not sessions:
         out["note"] = "No official results loaded yet: the server is still reading them from the series' site."
         return out
-    rnd = _round(db, series, year, venue, (overview["round"] or {}).get("round_id"))
+    rid = (overview["round"] or {}).get("round_id")
+    rnd = _round(db, series, year, venue, rid) if rid else None  # the round run on the event's days, if any
     if rnd is not None:
         venue = rnd.venue or venue
     order = rnd.order if rnd is not None else None
     team, _ = summary.team_of(summary._rounds(db, series), number, year)
     out["team"] = team
-    out["finished"] = any(s["venue"] == venue and int(s["year"]) == year and (order is None or s["order"] == order)
-                          for s in sessions)
+    out["finished"] = order is not None and any(
+        s["venue"] == venue and int(s["year"]) == year and s["order"] == order for s in sessions)
     bests = [] if out["finished"] else [r["best_lap_s"] for r in _event_facts(db, ev)["rows"] if r["best_lap_s"]]
     try:
         pred = predict.predict_round(sessions, venue, year, car_number=number, team=team, before_order=order,
@@ -257,7 +293,7 @@ def fetch_event(event_id: int, db: Session = Depends(get_db)):
     series, year, round_id, _ = _target(db, ev, facts, link)
     if year is None:
         raise HTTPException(422, "This event has no date, so its season isn't known")
-    rnd = _round(db, series, year, facts["venue"], round_id)
+    rnd = _round(db, series, year, facts["venue"], round_id, facts["start"], facts["end"])
     started = sync.start(series, [year], rnd.round_id if rnd else None, force=rnd is not None)
     return {"started": started, "sync": sync.state.as_dict()}
 
@@ -272,11 +308,12 @@ def set_link(event_id: int, body: LinkIn, db: Session = Depends(get_db)):
             db.delete(link)
             db.commit()
         return event_overview(db, _event(db, event_id))
+    series = _series(body.series) if body.series else sync.series_of_event(db, event_id)
     if link is None:
-        link = rm.EventResultLink(event_id=event_id, series=_series(body.series), year=body.year or 0)
+        link = rm.EventResultLink(event_id=event_id, series=series, year=body.year or 0)
         db.add(link)
     facts = _event_facts(db, _event(db, event_id))
-    link.series = _series(body.series)
+    link.series = series
     link.year = body.year or facts["year"] or 0
     link.round_id = body.round_id or link.round_id
     link.car_number = (body.car_number or "").strip().lstrip("#") or None

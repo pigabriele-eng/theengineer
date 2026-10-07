@@ -37,35 +37,51 @@ def _pct(v: float | None) -> str:
     return f"{v:.2f} %" if v is not None else ""
 
 
-def car_number(db: Session, p: Plan, venue: str | None) -> tuple[str | None, str | None]:
-    """Our car number for the official results and where it came from: set by hand for this event, else the garage's
-    number for the car record the runs belong to, else set by hand for the latest past event here or found from its
-    logged laps, else the last one set by hand on any event."""
+def car_number(db: Session, p: Plan, venue: str | None,
+               series: str = sync.DEFAULT_SERIES) -> tuple[str | None, str | None]:
+    """Our car number in ``series``' official results and where it came from: set by hand for this event, else its
+    season's, else the garage's number for the car record the runs belong to, else set by hand for the latest past
+    event here of the same series or found from its logged laps, else the last one set by hand on an event of the
+    same series (a GT4 European number is never used for ADAC GT4 Germany)."""
     ids = [p.target.event.id] + [pe.id for pe in p.past]
     links = {link.event_id: link for link in db.scalars(select(rm.EventResultLink)
                                                         .where(rm.EventResultLink.event_id.in_(ids)))}
     mine = links.get(p.target.event.id)
     if mine is not None and mine.by_hand and mine.car_number:
         return mine.car_number, "set for this event"
+    found = sync.season_round_of_event(db, p.target.event.id)
+    if found is not None and found[0].car_number:
+        return found[0].car_number.strip().lstrip("#"), "the season"
     if p.car.startswith("car:"):  # the car record the runs belong to, with its number in the garage
         info = db.scalar(select(garage.CarInfo).where(garage.CarInfo.car_id == int(p.car.split(":", 1)[1])))
         if info is not None and info.number:
             return info.number.strip().lstrip("#"), "from the garage"
     for pe in reversed(p.past):
+        if sync.series_of_event(db, pe.id) != series:
+            continue
         link = links.get(pe.id)
         if link is not None and link.by_hand:
             if link.car_number:
                 return link.car_number, f"set for {pe.info.event.name}"
             continue
-        number = from_laps(db, pe, venue, sync.series_of_event(db, pe.id))
+        number = from_laps(db, pe, venue, series)
         if number:
             return number, f"found from the logged laps of {pe.info.event.name}"
-    last = db.scalars(select(rm.EventResultLink).where(rm.EventResultLink.by_hand == 1,
-                                                       rm.EventResultLink.car_number.is_not(None))
-                      .order_by(rm.EventResultLink.updated_at.desc())).first()
-    if last is not None:
-        return last.car_number, "set on another event"
+    for last in db.scalars(select(rm.EventResultLink).where(rm.EventResultLink.by_hand == 1,
+                                                            rm.EventResultLink.car_number.is_not(None))
+                           .order_by(rm.EventResultLink.updated_at.desc()).limit(20)):
+        if sync.series_of_event(db, last.event_id) == series and raced(db, series, last.car_number, p.target.start):
+            return last.car_number, "set on another event"
     return None, None
+
+
+def raced(db: Session, series: str, number: str, start: str | None) -> bool:
+    """Whether a car with this number ran in ``series`` that year or the year before (a number from another series,
+    or from years ago, belongs to another car)."""
+    year = int(start[:4]) if start else date.today().year
+    return db.scalar(select(rm.ResultRow.id).join(rm.ResultSession).join(rm.ResultRound)
+                     .where(rm.ResultRound.series == series, rm.ResultRound.year.in_([year, year - 1]),
+                            rm.ResultRow.car_number == number).limit(1)) is not None
 
 
 def from_laps(db: Session, pe: PastEvent, venue: str | None, series: str = sync.DEFAULT_SERIES) -> str | None:
@@ -323,7 +339,7 @@ def official(db: Session, p: Plan, today: date | None = None) -> dict:
     venue = venue_key(track.name) if track is not None else None
     year = int(p.target.start[:4]) if p.target.start else (today or date.today()).year
     series = sync.series_of_event(db, p.target.event.id)
-    number, source = car_number(db, p, venue)
+    number, source = car_number(db, p, venue, series)
     best, best_from = logged_best(p)
     out: dict = {"series": series, "venue": venue, "track": track.name if track is not None else None, "year": year,
                  "car_number": number, "car_number_from": source, "team": None, "brand": None, "loaded": False,
