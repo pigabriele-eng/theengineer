@@ -10,6 +10,7 @@ import { Cells, DeltaBlock, Item, Pick, SubHead, usePrepType, ValueBlock } from 
 import { Fig, Label, Section, SpecLine, TextLink, useWide } from '@/components/Programme';
 import { GripChart } from '@/components/report/TrackGrip';
 import { Text, View } from '@/components/Themed';
+import { ZOOM_HINT } from '@/components/Zoom';
 import { formatLap } from '@/lib/api';
 import { fetchGuide, gearName, Guide, GuideCorner } from '@/lib/guide';
 import { cornersOf } from '@/lib/trackmap';
@@ -584,7 +585,7 @@ function Corners({ no, corners, guide }: { no: number; corners: PrepReport['corn
   const rows = [...corners.rows].sort((a, b) => order(a) - order(b));
   const top = [...corners.rows].sort((a, b) => (b.gain_s ?? 0) - (a.gain_s ?? 0)).slice(0, 3).map((r) => r.code);
   const graphs = guide?.status === 'working' ? 'The graphs follow once the past events’ laps are read.'
-    : guide?.status === 'none' ? guide.reason : null;
+    : guide?.status === 'none' ? guide.reason : guide?.status === 'ready' ? ZOOM_HINT : null;
   return (
     <Section no={no} title="Corner by corner"
       dek={`In lap order. The ideal pass is what the quickest passes did; its graph is the best pass here against a ` +
