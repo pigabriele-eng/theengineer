@@ -305,7 +305,7 @@ export default function EventScreen() {
 
   const results = eventId != null && (
     <Section no={++no} title="Results" dek="The official timing sheets of the round, with our car among them.">
-      <ResultsPanel eventId={eventId} />
+      <ResultsPanel eventId={eventId} heading={false} />
     </Section>
   );
 

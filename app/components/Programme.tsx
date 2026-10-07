@@ -202,8 +202,8 @@ export function Hero({ photo, tag, rest, restHref, title, deck, height, deckGap 
           <Defs>
             <LinearGradient id="heroShade" x1="0" y1="0" x2="0" y2="1">
               <Stop offset="0" stopColor="#0a0a0a" stopOpacity={0} />
-              <Stop offset="0.38" stopColor="#0a0a0a" stopOpacity={0.42} />
-              <Stop offset="1" stopColor="#0a0a0a" stopOpacity={0.8} />
+              <Stop offset="0.3" stopColor="#0a0a0a" stopOpacity={0.5} />
+              <Stop offset="1" stopColor="#0a0a0a" stopOpacity={0.88} />
             </LinearGradient>
           </Defs>
           <Rect x="0" y="0" width="100%" height="100%" fill="url(#heroShade)" />
@@ -470,8 +470,10 @@ const useStyles = themed((c) => ({
   kickRestText: { ...Type.label, fontFamily: Fonts.label, fontSize: 12, letterSpacing: 1.7, color: PHOTO_INK },
   headline: { fontFamily: Fonts.display, textTransform: 'uppercase', color: PHOTO_INK, textShadowColor: 'rgba(0,0,0,0.35)',
     textShadowRadius: 18, textShadowOffset: { width: 0, height: 1 } },
-  deck: { fontFamily: Type.dek.fontFamily, fontSize: 19, lineHeight: 26, color: '#EFEBE0', marginTop: 10, maxWidth: 640 },
-  deckPhone: { fontFamily: Type.dek.fontFamily, fontSize: 16, lineHeight: 22, color: '#EFEBE0', marginTop: 10 },
+  deck: { fontFamily: Type.dek.fontFamily, fontSize: 19, lineHeight: 26, color: '#EFEBE0', marginTop: 10, maxWidth: 640,
+    textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 6 },
+  deckPhone: { fontFamily: Type.dek.fontFamily, fontSize: 16, lineHeight: 22, color: '#EFEBE0', marginTop: 10,
+    textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 6 },
 
   // folio
   folio: { flexDirection: 'row', flexWrap: 'wrap', borderBottomWidth: 1, borderColor: c.rule },
