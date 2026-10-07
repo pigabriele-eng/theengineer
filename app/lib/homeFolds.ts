@@ -132,6 +132,20 @@ export function driversLine(f: Pick<FolderSummary, 'drivers'>) {
   return names.length ? names.join(', ') : null;
 }
 
+/** Each driver's laps in the event, as a timing screen names drivers: "PIA 84 laps · RAC 71 laps", then the laps of
+ * runs nobody is set on yet ("12 laps unassigned"). A driver's three letters are the first of their surname (the
+ * surname when two drivers share them). Null when no run has laps; the drivers alone from an older server. */
+export function driverLapsLine(f: Pick<FolderSummary, 'drivers' | 'driver_laps' | 'unassigned_laps'>) {
+  if (!f.driver_laps) return driversLine(f);
+  const codes = f.driver_laps.map((d) => surname(d.name).replace(/[^\p{L}]/gu, '').slice(0, 3).toUpperCase());
+  const parts = f.driver_laps.map((d, i) => {
+    const code = codes[i] && codes.indexOf(codes[i]) === codes.lastIndexOf(codes[i]) ? codes[i] : surname(d.name);
+    return `${code} ${d.laps} lap${d.laps === 1 ? '' : 's'}`;
+  });
+  if (f.unassigned_laps) parts.push(`${f.unassigned_laps} lap${f.unassigned_laps === 1 ? '' : 's'} unassigned`);
+  return parts.length ? parts.join(' · ') : null;
+}
+
 /** The event's car: the one with the most laps, by its model without the chassis code ("BMW M4 GT4 Evo" for "BMW M4
  * GT4 Evo (G82)"), and "+1" for each other car. Null when no run has a car. */
 export function carLine(f: Pick<FolderSummary, 'cars'>) {
