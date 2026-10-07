@@ -2,7 +2,6 @@ import gc
 import json
 import os
 import shutil
-import sqlite3
 import tempfile
 import time
 from functools import cache
@@ -10,8 +9,6 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import event
-from sqlalchemy.engine import Engine
 
 # CI runs the suite in a few parallel jobs, each one part of the test files (pytest --shard 2/4 runs the second of
 # four parts). The parts are made of whole files, so a file's module fixtures are built in one job only, and of about
@@ -91,14 +88,6 @@ def pytest_configure(config):
 def pytest_unconfigure(config):
     if _worker_dir:
         shutil.rmtree(_worker_dir, ignore_errors=True)
-
-
-@event.listens_for(Engine, "connect")
-def _no_waiting_for_the_disk(dbapi_connection, _record):
-    """The tests' SQLite databases don't wait for each write to reach the disk (a database that lives for one test
-    needn't survive a power cut): creating the tables alone waited over a second for the disk in every test."""
-    if isinstance(dbapi_connection, sqlite3.Connection):
-        dbapi_connection.execute("PRAGMA synchronous = OFF")
 
 
 @cache
