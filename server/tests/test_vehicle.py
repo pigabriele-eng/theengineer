@@ -1,4 +1,5 @@
 import math
+from functools import cache
 
 import numpy as np
 import pytest
@@ -145,7 +146,18 @@ def _bicycle(vy: float, r: float, delta: float, u: float) -> tuple[float, float,
 def bicycle_session(levels=(0.35, 0.5, 0.65, 0.8, 0.95, 1.1, 1.2, 1.28, 1.34, 1.37),
                     speeds=(90.0, 120.0, 150.0), ratio=15.0, yaw_scale=0.9, seed=0) -> SessionData:
     """Corners at each lateral g and speed, entered and left from a straight, driven by a nonlinear bicycle
-    model with the axle curves FRONT and REAR. The yaw gyro reads yaw_scale of the truth, like a real one can."""
+    model with the axle curves FRONT and REAR. The yaw gyro reads yaw_scale of the truth, like a real one can.
+
+    The model is worked out once per test process for each set of arguments (seconds of Python each time); every
+    call gets its own copy of the arrays, so a test may change its session freely."""
+    t, distance, channels = _bicycle_log(tuple(levels), tuple(speeds), ratio, yaw_scale, seed)
+    channels = {k: v.copy() for k, v in channels.items()}
+    return SessionData(t=t.copy(), distance=distance.copy(), channels=channels, sources={k: k for k in channels})
+
+
+@cache
+def _bicycle_log(levels: tuple, speeds: tuple, ratio: float, yaw_scale: float,
+                 seed: int) -> tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]]:
     a, b = _AXLES
     dt, sub = 0.002, 5  # 500 Hz integration, logged at 100 Hz
     rng = np.random.default_rng(seed)
@@ -186,7 +198,7 @@ def bicycle_session(levels=(0.35, 0.5, 0.65, 0.8, 0.95, 1.1, 1.2, 1.28, 1.34, 1.
     channels = {k: np.array(v) for k, v in log.items()}
     t = np.arange(len(channels["speed"])) / MASTER_HZ
     distance = np.concatenate([[0.0], np.cumsum(channels["speed"][1:] / 3.6 / MASTER_HZ)])
-    return SessionData(t=t, distance=distance, channels=channels, sources={k: k for k in channels})
+    return t, distance, channels
 
 
 @pytest.fixture(scope="module")

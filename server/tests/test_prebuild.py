@@ -72,6 +72,34 @@ def test_a_kept_page_answers_without_reading_the_log_or_waiting_for_the_lock(cli
         assert client.get(f"/sessions/{sid}/stint").json() == first["stint"]
 
 
+def test_a_kept_page_goes_out_as_the_json_it_is_kept_as(client, monkeypatch):
+    from fastapi import routing
+
+    from app.routers import balance, report_grip, stint, trackmap, trackshape
+
+    sid, fid = _session(client)
+    ev = client.get(f"/sessions/{sid}").json()["event_id"]
+    analysis = client.get(f"/sessions/{sid}/analysis").json()
+    lap = next(l["number"] for l in analysis["laps"] if l["clean"] and l["number"] != analysis["reference_lap"])
+    paths = [*(f"/sessions/{sid}/{p}" for p in PAGES), f"/stint?files={fid}", f"/sessions/{sid}/stint",
+             f"/report/grip?session={sid}", f"/report/balance?session={sid}", f"/report/grip?event={ev}",
+             f"/report/balance?event={ev}", f"/events/{ev}/map", f"/events/{ev}/shape",
+             f"/sessions/{sid}/compare?lap={lap}&reference_lap={analysis['reference_lap']}"]
+    encoded = []
+    real = routing.jsonable_encoder
+    monkeypatch.setattr(routing, "jsonable_encoder", lambda x, *a, **k: encoded.append(x) or real(x, *a, **k))
+    first = {p: client.get(p) for p in paths}  # worked out: sent as the text just kept
+    for _ in range(2):  # from memory, then (as after a restart) from the database
+        for p in paths:
+            r = client.get(p)
+            assert r.status_code == 200 and r.headers["content-type"] == "application/json", (p, r.text)
+            assert r.content == first[p].content, p
+        for module in (stint, trackmap, trackshape, report_grip, balance):
+            module._cache.clear()
+    assert encoded == []  # FastAPI never read them back into Python to write them out again
+    assert first[f"/events/{ev}/map"].json() == {**first[f"/sessions/{sid}/map"].json(), "event_fastest": True}
+
+
 def test_a_kept_page_is_worked_out_again_when_its_log_or_laps_change(client, monkeypatch):
     from app import db as app_db, heavy, models
     from app.routers import sessions

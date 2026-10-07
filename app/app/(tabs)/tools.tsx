@@ -71,6 +71,11 @@ const GROUPS: { name: string; dek: string; tools: Tool[] }[] = [
         blurb: 'Each driver’s driving style from their laps, which traits go with faster laps, and who drove a run nobody tagged.',
       },
       {
+        href: '/drivers/habits',
+        title: 'Driver habits',
+        blurb: 'Each driver’s recurring mistakes over every event, getting better or worse, and two drivers side by side.',
+      },
+      {
         href: '/compare',
         title: 'Compare laps',
         blurb: 'Any two to six laps from any sessions at one track, on one line: where the time is and why.',

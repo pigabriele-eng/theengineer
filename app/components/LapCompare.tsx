@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, StyleSheet } from 'react-native';
 
 import { Choice, useText } from '@/components/Picks';
 import { Swatch } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { TraceChart, useSeriesColors } from '@/components/TraceChart';
+import { ResetZoom, useZoomState, ZOOM_HINT, ZoomGroup } from '@/components/Zoom';
 import { Analysis, api, DETECTED_CORNERS_NOTE, formatLap, Lap, LapCompare as Compare } from '@/lib/api';
 import { themed, Type, useTheme } from '@/constants/Theme';
 
@@ -43,19 +44,26 @@ export function LapCompare({ sessionId, analysis, laps: allLaps, bare = false }:
       live = false;
     };
   }, [sessionId, lap, ref]);
+  // the charts zoom together, and stay on the same stretch of track when another lap is picked
+  const zoom = useZoomState();
+  // each chart's lines, kept from one render to the next so a chart only redraws them when they or its view change
+  const lines = useMemo(() => {
+    const pair = (role: 'speed' | 'throttle' | 'brake') =>
+      data?.reference[role] && data.compare[role]
+        ? [
+            { values: data.reference[role]!, color: colors.reference },
+            { values: data.compare[role]!, color: colors.compare },
+          ]
+        : null;
+    return { delta: data ? [{ values: data.delta, color: colors.compare }] : [], speed: pair('speed'),
+      throttle: pair('throttle'), brake: pair('brake') };
+  }, [data, colors]);
 
   if (lap == null) return null;
   const markers = (data?.corners ?? analysis.corners).map((c) => ({ at: c.apex_m, label: c.code }));
   const detected = (data?.numbering ?? analysis.numbering) === 'detected';
   const time = (n: number) => formatLap(laps.find((l) => l.number === n)?.time_s);
   const shared = { distance: data?.distance ?? [], cursor, onCursor: setCursor, markers };
-  const pair = (role: 'speed' | 'throttle' | 'brake') =>
-    data?.reference[role] && data.compare[role]
-      ? [
-          { values: data.reference[role]!, color: colors.reference },
-          { values: data.compare[role]!, color: colors.compare },
-        ]
-      : null;
 
   return (
     <View style={styles.section}>
@@ -71,24 +79,27 @@ export function LapCompare({ sessionId, analysis, laps: allLaps, bare = false }:
         <Swatch color={colors.reference} label={`L${ref} ${time(ref)} (reference)`} width={14} height={4} />
         <Swatch color={colors.compare} label={`L${lap} ${time(lap)}`} width={14} height={4} />
         {cursor != null && data && <Text style={styles.at}>at {Math.round(data.distance[cursor])} m</Text>}
+        <ResetZoom zoom={zoom} reserve />
       </View>
 
       {error && <Text style={t.error}>{error}</Text>}
       {!data && !error && <ActivityIndicator color={theme.text} style={styles.left} />}
       {data && (
-        <View style={styles.charts}>
-          <TraceChart {...shared} title="Time vs reference" unit="s" zeroLine height={110}
-            series={[{ values: data.delta, color: colors.compare }]} />
-          {pair('speed') && <TraceChart {...shared} title="Speed" unit="km/h" series={pair('speed')!} />}
-          {pair('throttle') && (
-            <TraceChart {...shared} title="Throttle" unit="%" domain={[0, 100]} height={100} series={pair('throttle')!} />
-          )}
-          {pair('brake') && <TraceChart {...shared} title="Brake" unit="" height={100} series={pair('brake')!} />}
-          <Text style={StyleSheet.flatten([t.small, styles.measure])}>
-            Above zero, L{lap} is behind the reference at that point. Drag across a chart to read values.
-            {detected && markers.length > 0 ? ` ${DETECTED_CORNERS_NOTE}` : ''}
-          </Text>
-        </View>
+        <ZoomGroup zoom={zoom}>
+          <View style={styles.charts}>
+            <TraceChart {...shared} title="Time vs reference" unit="s" zeroLine height={110} series={lines.delta} />
+            {lines.speed && <TraceChart {...shared} title="Speed" unit="km/h" series={lines.speed} />}
+            {lines.throttle && (
+              <TraceChart {...shared} title="Throttle" unit="%" domain={[0, 100]} height={100} series={lines.throttle} />
+            )}
+            {lines.brake && <TraceChart {...shared} title="Brake" unit="" height={100} series={lines.brake} />}
+            <Text style={StyleSheet.flatten([t.small, styles.measure])}>
+              Above zero, L{lap} is behind the reference at that point. Hover over or touch a chart to read values.{' '}
+              {ZOOM_HINT}
+              {detected && markers.length > 0 ? ` ${DETECTED_CORNERS_NOTE}` : ''}
+            </Text>
+          </View>
+        </ZoomGroup>
       )}
     </View>
   );
