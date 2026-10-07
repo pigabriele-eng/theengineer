@@ -56,6 +56,7 @@ def client(tmp_path, monkeypatch):
     for key in ("DEEPGRAM_API_KEY", "ANTHROPIC_API_KEY", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY",
                 "ALLOWED_EMAILS"):
         monkeypatch.delenv(key, raising=False)  # sign-in off, files on the local disk
+    monkeypatch.setenv("PREBUILD", "off")  # only its own tests turn it on (tests/test_prebuild.py)
     import importlib
 
     import app.db
@@ -76,6 +77,8 @@ def client(tmp_path, monkeypatch):
     import app.timing
     importlib.reload(app.db)
     importlib.reload(app.models)
+    import app.page_cache
+    importlib.reload(app.page_cache)  # its table on the fresh database's metadata
     import app.garage
     importlib.reload(app.garage)
     importlib.reload(app.timing)
@@ -136,7 +139,9 @@ def client(tmp_path, monkeypatch):
         deadline = time.monotonic() + 120
         while app.routers.imports._jobs.unfinished_tasks and time.monotonic() < deadline:
             time.sleep(0.05)
-        app.routers.prep.wait_idle()  # first: it asks for reports and technique checks
+        import app.prebuild
+        app.prebuild.wait_idle()  # first: it asks for everything else
+        app.routers.prep.wait_idle()  # then: it asks for reports and technique checks
         app.routers.technique.wait_idle()  # then: it asks for reports
         app.routers.reports.wait_idle()
     app.db.engine.dispose()

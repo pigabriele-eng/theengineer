@@ -285,6 +285,58 @@ def _work() -> None:
             jobs.task_done()
 
 
+def prebuild(kind: str, id_: int) -> str:
+    """For the prebuild (app/prebuild.py): work the report out now, on the calling thread, unless it is up to date,
+    failed for these very inputs, or is queued or being worked out already. What it did."""
+    with SessionLocal() as db:
+        try:
+            plan = plan_for(db, kind, id_)
+        except HTTPException:
+            return "gone"
+        if plan.error or not _used(plan):
+            return "nothing to do"
+        row = db.scalar(select(models.ReportCache).where(models.ReportCache.scope == plan.scope))
+        if row is not None and row.result is not None and row.result_signature == plan.signature:
+            return "up to date"
+        if row is not None and row.signature == plan.signature and row.status == "failed":
+            return "failed before"
+    if not claim(_lock, _pending, plan.scope):
+        return "queued already"
+    try:
+        run_job(plan.scope)
+    finally:
+        with _lock:
+            _pending.discard(plan.scope)
+    return "done"
+
+
+def claim(lock: threading.Lock, pending: set[str], scope: str) -> bool:
+    """Mark the scope as being worked out (a request then answers with its progress, and doesn't queue it again);
+    False when it is queued or being worked out already."""
+    with lock:
+        if scope in pending:
+            return False
+        pending.add(scope)
+        return True
+
+
+def prebuild_traces(session_id: int) -> str:
+    """For the prebuild: the session's compact lap traces, one log, unless they are up to date."""
+    with SessionLocal() as db:
+        try:
+            plan = plan_for(db, "session", session_id)
+        except HTTPException:
+            return "gone"
+        used = _used(plan)
+        if not used:
+            return "nothing to do"
+        rec = db.scalar(select(models.SessionTraces).where(models.SessionTraces.session_id == session_id))
+        if rec is not None and rec.signature == used[0].signature:
+            return "up to date"
+        ensure_traces(db, used[0], plan.track)
+        return "done"
+
+
 def wait_idle(timeout: float = 120) -> bool:
     """Wait until every report asked for is worked out (for tests). True when nothing is left."""
     deadline = time.monotonic() + timeout
@@ -357,12 +409,17 @@ def ensure_traces(db: Session, item: Item, track: models.Track | None) -> models
     rec = db.scalar(select(models.SessionTraces).where(models.SessionTraces.session_id == item.session.id))
     if rec is not None and rec.signature == item.signature:
         return rec
-    if rec is None:
-        rec = models.SessionTraces(session_id=item.session.id)
-        db.add(rec)
-    old = rec.path
-    rec.signature, rec.error, rec.path, rec.laps = item.signature, None, None, 0
     with heavy.lock:
+        # another job (the prebuild, a report, a technique check) may have made them while this one waited its turn
+        rec = db.scalars(select(models.SessionTraces).where(models.SessionTraces.session_id == item.session.id)
+                         .execution_options(populate_existing=True)).first()
+        if rec is not None and rec.signature == item.signature:
+            return rec
+        if rec is None:
+            rec = models.SessionTraces(session_id=item.session.id)
+            db.add(rec)
+        old = rec.path
+        rec.signature, rec.error, rec.path, rec.laps = item.signature, None, None, 0
         try:
             s, f = item.session, item.file
             ld = read_file(f)
@@ -379,7 +436,7 @@ def ensure_traces(db: Session, item: Item, track: models.Track | None) -> models
             rec.error = f"Its log couldn't be analysed: {e}"
         finally:
             heavy.release_memory()
-    db.commit()
+        db.commit()  # before the lock is let go, so the next job that waited for it finds them made
     forget_file(old, rec.path)
     return rec
 

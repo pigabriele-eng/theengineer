@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app import heavy, models
+from app import heavy, models, page_cache
 from app.analysis.balance import car_geometry
 from app.analysis.fuel import FUEL_DENSITY
 from app.analysis.insights import RunInput
@@ -114,6 +114,25 @@ def reduced(db: Session, f: models.LoggerFile) -> tuple[LogSummary, models.Track
 
 
 def stint_view(db: Session, file_ids: list[int]) -> dict:
+    """The stints of the logs; the view of one log (the session page's) is kept once worked out (app/page_cache.py),
+    with its lap tags in its signature."""
+    ids = list(dict.fromkeys(file_ids))
+    if len(ids) == 1 and (f := db.get(models.LoggerFile, ids[0])) is not None:
+        return page_cache.cached(db, f"session:{f.session_id}|stint|file:{f.id}", lambda: _view_signature(db, f),
+                                 lambda: _stint_view(db, ids), locked=False)
+    return _stint_view(db, ids)
+
+
+def _view_signature(db: Session, f: models.LoggerFile) -> str:
+    s = f.session
+    preset, mass, density = _car(db, s)
+    track = session_track(db, s)
+    return page_cache.session_signature(db, "stint", s, f, preset, mass, density, s.car_id, len(s.files),
+                                        f.filename, track.name if track else None,
+                                        sorted(tags_for_files(db, [f.id]).get(f.id, {}).items()))
+
+
+def _stint_view(db: Session, file_ids: list[int]) -> dict:
     ids = list(dict.fromkeys(file_ids))
     if not ids:
         raise HTTPException(422, "Tick at least one log")
