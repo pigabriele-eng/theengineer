@@ -21,11 +21,10 @@ from app import garage
 from app.analysis.advice import lap_text
 from app.prep.plan import PastEvent, Plan, lap_times
 from app.results import models as rm
-from app.results import predict, summary
+from app.results import predict, summary, sync
 from app.results.venues import venue_key
 
 log = logging.getLogger(__name__)
-SERIES = "gt4-europe"
 YEARS_SHOWN = 4  # past years at the venue in the table
 MAKES_SHOWN = 5
 MIN_MATCHES = 2  # sessions whose official best lap must match ours to name our car
@@ -58,7 +57,7 @@ def car_number(db: Session, p: Plan, venue: str | None) -> tuple[str | None, str
             if link.car_number:
                 return link.car_number, f"set for {pe.info.event.name}"
             continue
-        number = from_laps(db, pe, venue)
+        number = from_laps(db, pe, venue, sync.series_of_event(db, pe.id))
         if number:
             return number, f"found from the logged laps of {pe.info.event.name}"
     last = db.scalars(select(rm.EventResultLink).where(rm.EventResultLink.by_hand == 1,
@@ -69,14 +68,14 @@ def car_number(db: Session, p: Plan, venue: str | None) -> tuple[str | None, str
     return None, None
 
 
-def from_laps(db: Session, pe: PastEvent, venue: str | None) -> str | None:
+def from_laps(db: Session, pe: PastEvent, venue: str | None, series: str = sync.DEFAULT_SERIES) -> str | None:
     """Our car at a past event that was the official meeting here: the car whose official best laps match our
     logged best laps in at least two sessions (one match can be chance in a field of thirty). A test day here
     matches the year's round by track and year, but not by date."""
     if venue is None or not pe.info.start:
         return None
     rnd = db.scalars(select(rm.ResultRound)
-                     .where(rm.ResultRound.series == SERIES, rm.ResultRound.year == int(pe.info.start[:4]),
+                     .where(rm.ResultRound.series == series, rm.ResultRound.year == int(pe.info.start[:4]),
                             rm.ResultRound.venue == venue)
                      .options(selectinload(rm.ResultRound.sessions).selectinload(rm.ResultSession.rows))).first()
     if rnd is None or not _same_meeting([{"starts_at": s.starts_at} for s in rnd.sessions], pe.info.start,
@@ -301,7 +300,7 @@ def _loaded(db: Session) -> tuple:
 
 def backtest_verdict(db: Session, sessions: list[dict], number: str, team: str | None) -> dict | None:
     """The backtest's overall verdict, worked out once per car and set of loaded results (it predicts every round)."""
-    key = (number, team, _loaded(db))
+    key = (number, team, len(sessions), _loaded(db))
     with _trust_lock:
         if key in _trust:
             return _trust[key]
@@ -323,16 +322,17 @@ def official(db: Session, p: Plan, today: date | None = None) -> dict:
     track = p.target.track or next((pe.info.track for pe in reversed(p.past) if pe.info.track), None)
     venue = venue_key(track.name) if track is not None else None
     year = int(p.target.start[:4]) if p.target.start else (today or date.today()).year
+    series = sync.series_of_event(db, p.target.event.id)
     number, source = car_number(db, p, venue)
     best, best_from = logged_best(p)
-    out: dict = {"series": SERIES, "venue": venue, "track": track.name if track is not None else None, "year": year,
+    out: dict = {"series": series, "venue": venue, "track": track.name if track is not None else None, "year": year,
                  "car_number": number, "car_number_from": source, "team": None, "brand": None, "loaded": False,
                  "years": [], "lines": [], "track_verdict": None, "makes": None, "weather": {}, "prediction": None,
                  "trust": None, "note": None}
     if venue is None:
         out["note"] = "This event has no track yet, so there are no official results to look back on."
         return out
-    h = summary.history(db, venue=venue, series=SERIES, car_number=number, year=year)
+    h = summary.history(db, venue=venue, series=series, car_number=number, year=year)
     h = before(h, p.target.start, year)
     if h.get("note"):
         out["note"] = (f"{h['note']}: the server loads them from the series' site (the Results panel on an event "
@@ -357,7 +357,7 @@ def official(db: Session, p: Plan, today: date | None = None) -> dict:
     out["lines"] = [year_line(y) for y in table[:2]]
     if out["track_verdict"] and out["track_verdict"]["text"]:
         out["lines"].append(out["track_verdict"]["text"])
-    sessions = summary.model_sessions(db, SERIES)
+    sessions = summary.model_sessions(db, series)
     try:
         pred = predict.predict_round(sessions, venue, year, car_number=number, team=out["team"], logged_best_s=best)
         pred["logged_best"] = {"time_s": best, "event": best_from} if best else None

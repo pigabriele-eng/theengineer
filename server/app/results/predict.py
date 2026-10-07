@@ -46,7 +46,8 @@ The weights were picked by backtesting 2023-2026 (see ``backtest``); most of the
 change the errors very little, the circuit offset and the race-form blend help most.
 
 **Wet sessions.** A session flagged ``Wet`` at its start or its end is left out
-of every lap-time and gap model, because a wet lap says nothing about dry pace.
+of every lap-time and gap model, because a wet lap says nothing about dry pace. When a sheet gives no conditions
+(ADAC GT4 Germany's tables), a session more than ``WET_PCT`` slower than the weekend's best lap counts as wet.
 Wet sessions still count for race finishing positions. Predictions assume a dry
 session.
 
@@ -59,6 +60,7 @@ error). With too little history to backtest, fixed fallbacks are used.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Iterable, Sequence
 from itertools import pairwise
 from statistics import median
@@ -83,6 +85,7 @@ LOGGED_WEIGHT = 0.5  # weight of the logged-lap estimate against the results mod
 LAYOUT_JUMP_PCT = 2.5  # a circuit that got this much quicker/slower beyond season pace is treated as changed
 PACE_RIDGE = 0.01  # small pull of each season's pace toward the previous season's (1 = one fresh pole)
 PACE_CLAMP_PCT = 5.0  # season pace change since the last visit is kept within +-5 %
+WET_PCT = 4.0  # without a weather line, a session this much slower than the weekend's best lap was wet
 RANGE_ROUNDS = 12  # inner backtest depth used for the likely ranges
 RANGE_QUANTILE = 0.8
 FALLBACK_ERR = {"pole_pct": 0.6, "gap_pct": 0.5, "time_s": 0.8, "q_pos": 6.0, "q_class_pos": 4.0, "r_pos": 6.0}
@@ -100,10 +103,36 @@ def _team_match(row_team: str | None, team: str | None) -> bool:
     return bool(a and b) and (a == b or a in b or b in a)
 
 
+def _surname(name: str | None) -> str:
+    """'Gabriele Piana', 'G.Piana' and 'PIANA Gabriele' all -> 'piana' (the last word, else the word in capitals)."""
+    text = (name or "").strip()
+    caps = [w for w in text.split() if len(w) > 1 and w.isupper()]
+    word = caps[0] if caps else (re.split(r"[\s.]+", text)[-1] if text else "")
+    return _norm(word)
+
+
 def is_wet(session: dict) -> bool:
     """True when the session was declared wet at its start or its end."""
     w = session.get("weather") or {}
     return "wet" in (_norm(w.get("conditions_start")), _norm(w.get("conditions_end")))
+
+
+def mark_wet(sessions: list[dict]) -> list[dict]:
+    """Flag as wet the sessions whose sheet gave no conditions but whose best lap was more than ``WET_PCT`` slower
+    than the quickest lap of the same weekend (a series whose site gives no weather: a dry qualifying is within
+    about 2.5 % of the weekend's best, a wet one 7-10 % off it)."""
+    best: dict[tuple, float] = {}
+    for s in sessions:
+        p = _pole(s)
+        key = (s["year"], s.get("round_id") or s.get("order"))
+        if p and (key not in best or p < best[key]):
+            best[key] = p
+    for s in sessions:
+        w = s.get("weather") or {}
+        p, b = _pole(s), best.get((s["year"], s.get("round_id") or s.get("order")))
+        if not (w.get("conditions_start") or w.get("conditions_end")) and p and b and _gap_pct(p, b) > WET_PCT:
+            s["weather"] = {**w, "conditions_start": "Wet", "conditions_end": "Wet", "inferred": True}
+    return sessions
 
 
 def _round_key(s: dict) -> tuple[int, int]:
@@ -166,12 +195,23 @@ class _Us:
     brand + class when the team is unknown or absent."""
 
     def __init__(self, year: int, car_number: str | None, team: str | None, brand: str | None,
-                 car_class: str | None, prior: list[dict]):
+                 car_class: str | None, prior: list[dict], driver: str | None = None):
         self.year = year
         self.car_number = str(car_number) if car_number is not None else None
         self.team = team
         self.brand = brand
         self.car_class = car_class
+        self.driver = _surname(driver) if driver else None
+        # Our drivers this season, to find us in seasons the car ran for another team or under another number.
+        self.crew: set[str] = set()
+        if self.car_number and not self.driver:
+            for s in sorted(prior, key=_round_key, reverse=True):
+                if int(s["year"]) != year:
+                    continue
+                rows = self.rows(s, allow_fallback=False)
+                if rows:
+                    self.crew = {_surname(d) for d in rows[0].get("drivers") or []} - {""}
+                    break
         # Fill brand / class from our latest row this season (or the latest season the team raced).
         if not (self.brand and self.car_class):
             for s in sorted(prior, key=_round_key, reverse=True):
@@ -185,6 +225,11 @@ class _Us:
         """Our rows in a session. ``allow_fallback=False`` returns only our own car / team."""
         rows = s.get("rows") or []
         same_year = int(s["year"]) == self.year
+        if self.driver:  # a driver given: wherever that driver raced, else (a year without them) the brand
+            mine = [r for r in rows if self.driver in {_surname(d) for d in r.get("drivers") or []}]
+            if mine or not allow_fallback or same_year:
+                return mine
+            return self._brand_rows(rows)
         if same_year and self.car_number:
             # This season the car number + team is who we are.
             mine = [r for r in rows if str(r.get("car_number")) == self.car_number
@@ -195,10 +240,28 @@ class _Us:
             # Earlier seasons: the team, our car number first, else the team's other car(s).
             mine = [r for r in rows if _team_match(r.get("team"), self.team)]
             same = [r for r in mine if self.car_number and str(r.get("car_number")) == self.car_number]
-            if same or mine:
-                return same or mine
+            if same:
+                return same
+            crew = self._crew_rows(rows)
+            if crew or mine:
+                return crew or mine
+        elif not same_year:
+            crew = self._crew_rows(rows)
+            if crew:
+                return crew
         if not allow_fallback:
             return []
+        return self._brand_rows(rows)
+
+    def _crew_rows(self, rows: list[dict]) -> list[dict]:
+        """The cars that had the most of this season's drivers (a driver who changed team or number)."""
+        if not self.crew:
+            return []
+        n = {id(r): len(self.crew & {_surname(d) for d in r.get("drivers") or []}) for r in rows}
+        top = max(n.values(), default=0)
+        return [r for r in rows if top and n[id(r)] == top]
+
+    def _brand_rows(self, rows: list[dict]) -> list[dict]:
         if self.brand:
             return [r for r in rows if _norm(r.get("brand")) == _norm(self.brand)
                     and (not self.car_class or r.get("car_class") == self.car_class)]
@@ -513,9 +576,9 @@ def _race_form(prior: list[dict], year: int, us: _Us) -> float | None:
 
 def _core(sessions: Sequence[dict], venue: str, year: int, car_number: str | None, team: str | None,
           brand: str | None, car_class: str | None, before_order: int | None,
-          logged_best_s: float | None) -> dict:
+          logged_best_s: float | None, driver: str | None = None) -> dict:
     prior, cutoff = _split(sessions, venue, year, before_order)
-    us = _Us(year, car_number, team, brand, car_class, prior)
+    us = _Us(year, car_number, team, brand, car_class, prior, driver)
     pole = _pole_model(prior, venue, year)
     gapm = _gap_model(prior, venue, year, us)
     entry = _expected_entry(prior, year, us.car_class)
@@ -647,7 +710,7 @@ def _range_errors(prior: list[dict], kw: dict) -> dict[str, float]:
 def predict_round(sessions: Sequence[dict], venue: str, year: int, *, car_number: str | None = None,
                   team: str | None = None, brand: str | None = None, car_class: str | None = None,
                   before_order: int | None = None, logged_best_s: float | None = None,
-                  with_ranges: bool = True) -> dict:
+                  with_ranges: bool = True, driver: str | None = None) -> dict:
     """Predict qualifying (Q1, Q2) and race (R1, R2) results of ``year``'s round at ``venue``.
 
     Only sessions of earlier seasons and of this season's rounds with ``order < before_order``
@@ -655,7 +718,7 @@ def predict_round(sessions: Sequence[dict], venue: str, year: int, *, car_number
     ``sessions`` (so a finished round can be "re-predicted" honestly), otherwise to one past
     the last round of ``year`` that is in the data.
     """
-    kw = {"car_number": car_number, "team": team, "brand": brand, "car_class": car_class}
+    kw = {"car_number": car_number, "team": team, "brand": brand, "car_class": car_class, "driver": driver}
     core = _core(sessions, venue, year, before_order=before_order, logged_best_s=logged_best_s, **kw)
     err = _range_errors(core["prior"], kw) if with_ranges else dict(FALLBACK_ERR)
     us: _Us = core["us"]
@@ -815,7 +878,8 @@ def _explain(core: dict, label: str, year: int, out: dict) -> list[str]:
 
 
 def backtest(sessions: Sequence[dict], *, car_number: str = "12", team: str = "Borusan Otomotiv Motorsport",
-             years: Iterable[int] = (2023, 2024, 2025, 2026), with_ranges: bool = False) -> dict:
+             years: Iterable[int] = (2023, 2024, 2025, 2026), with_ranges: bool = False,
+             driver: str | None = None) -> dict:
     """Predict every round of ``years`` from strictly earlier rounds and compare with what happened.
 
     The naive baseline is: pole and our lap time = the same session at our last dry visit to the
@@ -828,8 +892,8 @@ def backtest(sessions: Sequence[dict], *, car_number: str = "12", team: str = "B
     pool: dict[str, list[float]] = {}
     for y, o, v in rounds:
         pred = predict_round(sessions, v, y, car_number=car_number, team=team, before_order=o,
-                             with_ranges=with_ranges)
-        core = _core(sessions, v, y, car_number, team, None, None, o, None)
+                             with_ranges=with_ranges, driver=driver)
+        core = _core(sessions, v, y, car_number, team, None, None, o, None, driver)
         act = _actual(sessions, v, y, core["us"])
         errs = _round_errors(core, act)
         base = _naive(core["prior"], v, y, core["us"])
@@ -866,6 +930,7 @@ def backtest(sessions: Sequence[dict], *, car_number: str = "12", team: str = "B
     return {
         "car_number": car_number,
         "team": team,
+        "driver": driver,
         "years": list(years),
         "rounds": per_round,
         "overall": overall,
