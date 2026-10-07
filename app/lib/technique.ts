@@ -55,10 +55,15 @@ export type Budget = {
   other_gains: number;
 };
 
-export type InputRole = 'throttle' | 'brake' | 'steer' | 'gear';
-/** The driver's inputs at the speed trace's points (every step_m metres): throttle %, brake pressure, steering and
- * gear as the log's channels for those roles have them; null where the log has no such channel. */
-export type Inputs = Record<InputRole, number[] | null>;
+export type InputRole = 'throttle' | 'brake' | 'steer' | 'gear' | 'rpm';
+/** The driver's inputs at the speed trace's points (every step_m metres): throttle %, brake pressure, steering,
+ * gear and revs as the log's channels for those roles have them; null (or missing, from an older check) where the log
+ * has no such channel. */
+export type Inputs = Partial<Record<InputRole, number[] | null>>;
+/** Perfect driving's and the realistic target's inputs at the same points, to lay over the driver's: what their
+ * speed asks of the car (throttle as a share of full drive, brake in the driver's own pressure per g, the gear and
+ * revs of the ideal shift points). No steering: the model has none. */
+export type ModelInputs = { perfect: Inputs; realistic: Inputs };
 /** Perfect driving's own phases (trace.model_phases indexes these). Its model has no pedal positions and never
  * coasts: it brakes, drives at the grip limit (part throttle) or at full throttle. */
 export const MODEL_PHASES = ['braking', 'at the grip limit', 'full throttle'] as const;
@@ -78,7 +83,7 @@ export type LapCheck = {
   mistakes: Mistake[];
   obvious?: ObviousMistake[]; // most costly first; they may overlap the mistakes above
   trace: { step_m: number; driven: number[]; perfect: number[]; realistic: number[]; inputs?: Inputs;
-    model_phases?: number[] } | null;
+    model_phases?: number[]; model?: ModelInputs } | null;
   // the event's fastest lap (the one the report measures from), its inputs to lay under this lap's; none when this
   // lap is that one
   fastest?: { session_id: number; run: string; number: number; time: number; this_lap: boolean;

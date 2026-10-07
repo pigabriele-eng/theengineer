@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from app.analysis.channels import EXIT, POWER
+from app.analysis.channels import EXIT, POWER, G
 from app.analysis.lapsim import TOP_SPEED_MARGIN, Calibration, LapModel, SimLap
 from app.analysis.laps import Section
 from app.analysis.local_limits import PlaceLimits, on_own_line
@@ -48,7 +48,8 @@ TC_AFTER_FULL_M = 60  # traction control working this soon after full throttle s
 PICKUP = 20.0  # % pedal: the throttle is back on
 PIT_SPEED_SHARE = 0.6  # over the line slower than this share of perfect driving's speed: the lap ends in the pits
 TRACE_STEP_M = 5
-INPUT_ROLES = {"throttle": 0, "brake": 1, "steer": 1, "gear": 0}  # the driver's inputs sent with the trace: decimals
+# the driver's inputs sent with the trace: decimals
+INPUT_ROLES = {"throttle": 0, "brake": 1, "steer": 1, "gear": 0, "rpm": 0}
 # perfect driving's own phases (model_phases): braking, at the grip limit (part throttle), full throttle; no coasting
 MODEL_PHASES = ("braking", "grip limit", "full throttle")
 
@@ -1085,6 +1086,97 @@ def model_phases(env: Envelope, sim: SimLap, step: int) -> list[int]:
     return out
 
 
+MODEL_SMOOTH_M = 15  # perfect driving's acceleration is read over this many metres
+MODEL_FULL = 0.92  # within this share of full drive, perfect driving is at full throttle
+MODEL_BRAKING_G = 0.15  # slowing this much harder than the drag alone, perfect driving is on the brakes
+MODEL_BRAKE_G = 0.3  # the driver's brake pressure per g is fitted where they brake at least this hard
+MODEL_BRAKE_MIN = 0.1  # ...with at least this share of their hardest pressure on the pedal
+MODEL_BRAKE_SAMPLES = 30
+DOWNSHIFT_MARGIN_RPM = 300  # perfect driving shifts down once the lower gear is this far short of its upshift
+
+
+def _resistance(env: Envelope, v: np.ndarray) -> np.ndarray:
+    """g of drag at v (m/s): the power curve's air drag, what slows the car with no pedal pressed."""
+    return max(-float(env.lim.power[2]), 0.0) * v * v
+
+
+def _accel(kmh: np.ndarray, t: np.ndarray | None = None) -> np.ndarray:
+    """Acceleration (g) along a speed trace every metre, read over MODEL_SMOOTH_M."""
+    v = np.asarray(kmh, float) / 3.6
+    a = np.gradient(v, t) / G if t is not None else np.gradient(v * v / 2) / G
+    k = np.ones(MODEL_SMOOTH_M) / MODEL_SMOOTH_M
+    return np.convolve(np.pad(a, MODEL_SMOOTH_M, mode="edge"), k, mode="same")[MODEL_SMOOTH_M:-MODEL_SMOOTH_M]
+
+
+def _brake_per_g(tr: dict[str, np.ndarray], env: Envelope) -> float | None:
+    """The driver's brake pressure per g of braking beyond the drag, fitted on this lap's own braking: so perfect
+    driving's braking reads in the log's own pressure units. None without a brake channel or braking to fit."""
+    if "brake" not in tr:
+        return None
+    p = np.asarray(tr["brake"], float)
+    decel = -_accel(tr["speed"]) - _resistance(env, np.asarray(tr["speed"], float) / 3.6)
+    m = np.isfinite(p) & np.isfinite(decel) & (decel >= MODEL_BRAKE_G)
+    if m.sum() < MODEL_BRAKE_SAMPLES:
+        return None
+    m &= p >= MODEL_BRAKE_MIN * float(np.max(p[m]))
+    k = float(np.dot(p[m], decel[m]) / np.dot(decel[m], decel[m])) if m.sum() >= MODEL_BRAKE_SAMPLES else 0.0
+    return k if k > 0 else None
+
+
+def _ideal_gears(shifts: ShiftModel, kmh: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """The gear (as logged) perfect driving is in at each point, and its revs: up at the ideal shift point (the top
+    gear runs to the rev limiter), down once the lower gear is DOWNSHIFT_MARGIN_RPM short of its own."""
+    gears = sorted(shifts.ratio, key=lambda g: -shifts.ratio[g])  # lowest first
+    top = len(gears) - 1
+    up = [shifts.ideal.get(g, shifts.limit) if j < top else np.inf for j, g in enumerate(gears)]
+
+    def lowest(v: float) -> int:
+        return next((j for j, g in enumerate(gears) if shifts.ratio[g] * v < up[j]), top)
+
+    j = lowest(float(kmh[0]))
+    out = np.empty(len(kmh), int)
+    for k, v in enumerate(np.asarray(kmh, float)):
+        while j < top and shifts.ratio[gears[j]] * v >= up[j]:
+            j += 1
+        while j > 0 and shifts.ratio[gears[j - 1]] * v < up[j - 1] - DOWNSHIFT_MARGIN_RPM:
+            j -= 1
+        out[k] = gears[j]
+    ratio = np.array([shifts.ratio[int(g)] for g in out])
+    return out, np.minimum(ratio * kmh, shifts.limit)
+
+
+def model_inputs(tr: dict[str, np.ndarray], env: Envelope, sim: SimLap, step: int,
+                 shifts: ShiftModel | None = None) -> dict[str, list[float] | None]:
+    """Perfect driving's inputs at the speed trace's points, every step metres, to lay over the driver's: what its
+    speed (sim, as the chart draws it) asks of the car. Full throttle wherever its model is (model_phases) or the
+    speed needs nearly all the car's drive there (MODEL_FULL); part throttle as the share of full drive the speed
+    needs; brake pressure where it slows clearly harder than the drag (MODEL_BRAKING_G), as the driver's own pressure
+    per g on this lap would give it (None without a brake channel); and the gear and revs of the ideal shift points
+    at its speed (None without a shift model). The model has no pedals: these are what its speed needs."""
+    kmh = np.asarray(sim.speed, float)
+    v = kmh / 3.6
+    a = _accel(kmh)
+    r = _resistance(env, v)
+    per_g = _brake_per_g(tr, env)
+    idx = np.arange(0, len(kmh), step)
+    phases = model_phases(env, sim, step)
+    throttle, brake = [], []
+    for k, i in enumerate(idx):
+        drive = float(a[i] + r[i])
+        full = env.power_at(int(min(i, env.n - 1)), float(v[i])) + float(r[i])
+        share = drive / max(full, 1e-6)
+        flat = phases[k] == 2 or share >= MODEL_FULL
+        braking = not flat and drive < -MODEL_BRAKING_G
+        throttle.append(100.0 if flat else 0.0 if braking else round(float(np.clip(100 * share, 0, 100))))
+        brake.append(round(per_g * -drive, 1) if braking and per_g is not None else 0.0)
+    out: dict[str, list[float] | None] = {"throttle": throttle, "brake": brake if per_g is not None else None,
+                                          "gear": None, "rpm": None}
+    if shifts is not None:
+        gear, rpm = _ideal_gears(shifts, kmh)
+        out["gear"], out["rpm"] = gear[idx].tolist(), np.round(rpm[idx]).tolist()
+    return out
+
+
 def check_lap(tr: dict[str, np.ndarray], perfect: PlaceLimits, held: PlaceLimits, sections: list[Section], *,
               lap_time: float, units: dict[str, str] | None = None, detail: bool = True,
               calibrations: tuple[Calibration | None, Calibration | None] = (None, None),
@@ -1167,7 +1259,10 @@ def check_lap(tr: dict[str, np.ndarray], perfect: PlaceLimits, held: PlaceLimits
                         "driven": np.round(tr["speed"][::step], 1).tolist(),
                         "perfect": np.round(sim.speed[::step], 1).tolist(),
                         "realistic": np.round(realistic.speed[::step], 1).tolist(),
-                        "inputs": lap_inputs(tr, step), "model_phases": model_phases(env, sim, step)}
+                        "inputs": lap_inputs(tr, step), "model_phases": model_phases(env, sim, step),
+                        # perfect driving's and the realistic target's inputs, to lay over the driver's
+                        "model": {"perfect": model_inputs(tr, env, sim, step, shifts),
+                                  "realistic": model_inputs(tr, env_r, realistic, step, shifts)}}
         out["pieces"] = [{"start_m": p.start, "end_m": p.end, "role": p.role,
                           "code": p.corner.code if p.corner else section_of((p.start + p.end) // 2),
                           "cost_s": round(p.cost, 3), "cost_perfect_s": round(p.cost_perfect, 3)} for p in pieces]

@@ -322,6 +322,7 @@ function OnTheTrack({ answer, check, selected, onSelect, sideBySide }: { answer:
   const t = useText();
   const styles = useStyles();
   const [cursor, setCursor] = useState<number | null>(null);
+  const [overlay, setOverlay] = useState<Overlay>('perfect');
   const mistake = check.mistakes[(selected ?? 0) - 1] ?? null;
   const bands = useMemo(() => bandsOf(check), [check]);
   // the map doesn't follow the cursor: kept as it is while the charts are scrubbed
@@ -363,11 +364,26 @@ function OnTheTrack({ answer, check, selected, onSelect, sideBySide }: { answer:
               under it.
             </Text>
           )}
+          {tr.inputs && tr.model && (
+            <Tabs label="Laid over the driver's inputs, dashed" value={overlay} onChange={setOverlay}
+              items={OVERLAYS} />
+          )}
+          {tr.inputs && tr.model && overlay !== 'off' && (
+            <Text style={t.note}>
+              The dashed line is what the {overlay === 'perfect' ? 'perfect lap' : 'realistic target'}&apos;s speed asks
+              of the car: throttle as a share of the car&apos;s full drive, brake pressure at this driver&apos;s own
+              pressure per g on this lap, and the gear and revs of the ideal shift points. The model has no pedals or
+              steering; ! marks each obvious mistake.
+            </Text>
+          )}
           {tr.inputs ? (
             <TechniqueInputs stepM={tr.step_m} points={tr.driven.length} inputs={tr.inputs}
               fastest={fastest && !fastest.this_lap ? fastest.inputs : null}
               fastestLabel={fastest && !fastest.this_lap
                 ? `Fastest lap: ${fastest.run} L${fastest.number} · ${formatLap(fastest.time)}` : null}
+              model={overlay === 'off' ? null : tr.model?.[overlay] ?? null}
+              modelLabel={OVERLAYS.find((o) => o.key === overlay)?.legend ?? null}
+              marks={(check.obvious ?? []).map((m) => ({ at_m: m.at_m, code: m.code }))}
               phases={tr.model_phases} channels={answer.inputs} bands={bands} selected={selected} onSelect={onSelect}
               corners={corners} cursor={cursor} onCursor={setCursor} tall={sideBySide} />
           ) : (
@@ -382,6 +398,13 @@ function OnTheTrack({ answer, check, selected, onSelect, sideBySide }: { answer:
     </View>
   );
 }
+
+type Overlay = 'perfect' | 'realistic' | 'off';
+const OVERLAYS: { key: Overlay; label: string; legend: string | null }[] = [
+  { key: 'perfect', label: 'Perfect', legend: 'Perfect driving' },
+  { key: 'realistic', label: 'Realistic', legend: 'Realistic target' },
+  { key: 'off', label: 'Off', legend: null },
+];
 
 const bandsOf = (check: LapCheck) =>
   check.mistakes.map((m, i) => ({ n: i + 1, start_m: m.start_m, end_m: m.end_m, label: `${m.title} (${m.code})`,

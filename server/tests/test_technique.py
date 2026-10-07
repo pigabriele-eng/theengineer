@@ -7,6 +7,7 @@ import pytest
 from app.analysis.insights import _closed_sim
 from app.analysis.laps import Section
 from app.analysis.local_limits import PlaceLimits
+from app.analysis.shifts import ShiftModel
 from app.analysis.technique import Envelope, check_lap, habits
 from tests.synthetic import curvature_at, simulate, write_ld
 
@@ -99,8 +100,9 @@ def test_the_trace_carries_the_drivers_inputs_and_perfect_drivings_phases(env, k
     n = len(t["driven"])
     assert n == N // t["step_m"] + 1
     ins = t["inputs"]
-    assert set(ins) == {"throttle", "brake", "steer", "gear"}
-    for role in ins:
+    assert set(ins) == {"throttle", "brake", "steer", "gear", "rpm"}
+    assert ins["rpm"] is None  # this log has no revs
+    for role in ("throttle", "brake", "steer", "gear"):
         # every channel at the speed trace's own points: the same metres, so they line up with it point for point
         assert len(ins[role]) == n
         assert ins[role] == pytest.approx(np.asarray(tr[role][::t["step_m"]], float), abs=0.06)
@@ -122,6 +124,42 @@ def test_the_trace_carries_the_drivers_inputs_and_perfect_drivings_phases(env, k
     assert out2["trace"]["inputs"]["steer"] is None
     assert out2["trace"]["inputs"]["throttle"] == ins["throttle"]
     assert [x["key"] for x in out2["mistakes"]] == [x["key"] for x in out["mistakes"] if x["kind"] != "steering"]
+
+
+def test_perfect_drivings_inputs_to_lay_over_the_drivers(env, k, lim):
+    tr = lap(env.P * 3.6, k)  # the perfect lap itself, braking at 60 bar per g
+    shifts = ShiftModel({5: 60.0, 6: 40.0, 7: 30.0}, np.array([3000.0, 7000.0]), np.array([400.0, 400.0]), 7000.0,
+                        {5: 6800.0, 6: 6800.0}, 1.0, 0.0)
+    out = check_lap(tr, lim, HELD, SECTIONS, lap_time=float(tr["t"][-1]), shifts=shifts)
+    t = out["trace"]
+    n, step = len(t["driven"]), t["step_m"]
+    m = np.arange(n) * step
+    model = t["model"]["perfect"]
+    assert set(model) == {"throttle", "brake", "gear", "rpm"}
+    assert all(len(model[r]) == n for r in model)
+    thr, brk = np.array(model["throttle"]), np.array(model["brake"])
+    ph = np.array(t["model_phases"])
+    # full throttle wherever the model is, the pedal off while it brakes, never both
+    assert np.all(thr[ph == 2] == 100)
+    assert np.all((thr == 0) | (brk == 0))
+    for apex in (300, 700):  # braking into both corners, at about the driver's own pressure for that deceleration
+        into = (m > apex - 150) & (m < apex - 20)
+        assert brk[into].max() > 0 and np.all(thr[into & (brk > 0)] == 0)
+    hard = brk > 0
+    assert np.median(brk[hard] / (60 * np.abs(tr["ax"][::step][hard]))) == pytest.approx(1, abs=0.15)
+    assert np.all(brk[(m > 400) & (m < 450)] == 0)
+    # the ideal shift points: up at 6,800 rpm, the gear rising with the speed, the revs never past the limiter
+    gear, rpm = np.array(model["gear"]), np.array(model["rpm"])
+    assert set(gear.tolist()) <= {5, 6, 7} and np.all(rpm <= 7000)
+    v = np.array(t["perfect"])
+    # (the speeds are rounded to 0.1 km/h)
+    assert np.all(rpm == pytest.approx(np.array([shifts.ratio[g] for g in gear]) * v, abs=5))
+    assert np.all(rpm[gear == 5] < 6800) and np.all(rpm[gear == 6] < 6800)
+    # the realistic target's too; with no brake channel there is no brake pressure to give
+    del tr["brake"]
+    out2 = check_lap(tr, lim, HELD, SECTIONS, lap_time=float(tr["t"][-1]), shifts=shifts)
+    assert out2["trace"]["model"]["perfect"]["brake"] is None
+    assert len(out2["trace"]["model"]["realistic"]["throttle"]) == n
 
 
 def _costs_add_up(out: dict) -> None:
@@ -256,9 +294,16 @@ def test_technique_check_api(client):
     assert len(tr["driven"]) == len(tr["perfect"]) == len(tr["realistic"]) == body["length_m"] // tr["step_m"] + 1
     # the driver's inputs at the same points; the synthetic log has no gear channel
     ins = tr["inputs"]
-    assert {r: v is not None for r, v in ins.items()} == {"throttle": True, "brake": True, "steer": True, "gear": False}
+    assert {r: v is not None for r, v in ins.items()} == {"throttle": True, "brake": True, "steer": True, "gear": False,
+                                                       "rpm": False}
     assert all(len(ins[r]) == len(tr["driven"]) for r in ("throttle", "brake", "steer"))
     assert len(tr["model_phases"]) == len(tr["driven"])
+    # perfect driving's and the realistic target's inputs to lay over the driver's; no gear without a shift model
+    for which in ("perfect", "realistic"):
+        model = tr["model"][which]
+        assert len(model["throttle"]) == len(tr["driven"])
+        assert model["brake"] is None or len(model["brake"]) == len(tr["driven"])
+        assert model["gear"] is None and model["rpm"] is None
     assert body["inputs"]["throttle"] == {"channel": "rThrottlePedal", "unit": "%"}
     assert body["inputs"]["brake"]["channel"] == "Brake Torque" and body["inputs"]["gear"]["channel"] is None
     # the session's quickest lap is the event's fastest: nothing to lay over it
