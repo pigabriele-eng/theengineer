@@ -175,7 +175,7 @@ export default function CornerTrace({ corner, step, brakeUnit, wide }: { corner:
         <Text style={styles.readout} accessibilityLiveRegion="polite">{readout.join(' · ')}</Text>
         {!zoom.shared && <ResetZoom zoom={zoom} />}
       </View>
-      <ZoomArea zoom={zoom} full={full} view={view} left={PAD.left} width={w} minSpan={least} onCursor={cursorAt}
+      <ZoomArea zoom={zoom} full={full} left={PAD.left} width={w} minSpan={least} onCursor={cursorAt}
         onLeave={() => setCursor(null)} onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}>
         {width > 0 && n > 1 && (
           <Svg width={width} height={height} pointerEvents="none" accessibilityRole="image"

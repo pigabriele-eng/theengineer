@@ -2,14 +2,17 @@
 // gear held at each point, the gear number on the track at every corner it is braked for (and on the long runs), an
 // ink tick across the track where each braking starts, and the official corner numbers beside the track. Colour and
 // number together, never colour alone: every coloured run that matters carries its number, and the legend repeats it.
+// It zooms like the track map (components/Zoom.tsx ZoomPlane): both ways at once, keeping its shape.
 import { useMemo, useState } from 'react';
 import { LayoutChangeEvent, StyleSheet } from 'react-native';
 import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
 
 import { Text, View } from '@/components/Themed';
 import { useWide } from '@/components/Programme';
+import { ResetZoom, usePlaneZoom, ZoomPlane } from '@/components/Zoom';
 import { gearName, GuideMap } from '@/lib/guide';
-import { Box, leaderEnd, MapPoint, placeLabels } from '@/lib/trackmap';
+import { Box, leaderEnd, MapPoint, Placed, placeLabels } from '@/lib/trackmap';
+import { Plane, Point, toFrame } from '@/lib/zoom';
 import { face, Fonts, inkOn, themed, Type, useTheme } from '@/constants/Theme';
 
 const PAD = 36; // room round the track for the corner labels
@@ -60,14 +63,23 @@ function gearColours(gears: number[], ramp: string[]): Map<number, string> {
   return out;
 }
 
-function layout(map: GuideMap, width: number, maxHeight: number, wide: boolean) {
+/** A corner label placed on the whole map, moved with its corner on the zoomed one (`at`: where a point is drawn). */
+function moveLabel(l: Placed, at: (p: Point) => Point): Placed {
+  const a = at(l.anchor);
+  return { ...l, anchor: a, box: { ...l.box, x: l.box.x + a.x - l.anchor.x, y: l.box.y + a.y - l.anchor.y } };
+}
+
+// The drawing, zoomed by `view` (both ways, keeping the track's shape: lib/zoom.ts) when it is given. The lines, the
+// gear numbers and the labels keep their size; zoomed in, the gear numbers that had no room on the whole map appear
+// where they now fit. The corner labels are placed once, on the whole map, and move with their corners.
+function layout(map: GuideMap, width: number, maxHeight: number, wide: boolean, view: Plane | null = null) {
   const z = wide ? { track: 8, badge: 11, font: 13, num: 13 } : { track: 6, badge: 10, font: 12, num: 12 };
   const x0 = Math.min(...map.x), x1 = Math.max(...map.x);
   const y0 = Math.min(...map.y), y1 = Math.max(...map.y);
   const s = Math.max(0.01, Math.min((width - 2 * PAD) / (x1 - x0 || 1), (maxHeight - 2 * PAD) / (y1 - y0 || 1)));
   const height = Math.round((y1 - y0) * s + 2 * PAD);
   const left = (width - (x1 - x0) * s) / 2;
-  const px = (p: MapPoint) => ({ x: left + (p.x - x0) * s, y: PAD + (y1 - p.y) * s });
+  const px = (p: MapPoint) => toFrame(view, width, height, { x: left + (p.x - x0) * s, y: PAD + (y1 - p.y) * s });
   const pts = map.x.map((x, i) => px({ x, y: map.y[i] }));
   const n = pts.length;
   const pt = (i: number) => pts[((i % n) + n) % n];
@@ -100,7 +112,7 @@ function layout(map: GuideMap, width: number, maxHeight: number, wide: boolean) 
   const runAt = (i: number) => runs.find((u) => i >= u.i0 && i < u.i1) ?? runs[runs.length - 1];
   for (const b of map.braking) add(runAt(Math.min(at(b.end_m) + 1, n - 1)));
   const longest = [...runs].sort((a, b) => b.i1 - b.i0 - (a.i1 - a.i0));
-  const minRun = Math.ceil((wide ? 120 : 180) / map.step_m);
+  const minRun = Math.ceil((wide ? 120 : 180) / (view?.k ?? 1) / map.step_m); // as long on the screen when zoomed
   for (const run of longest) if (run.i1 - run.i0 >= minRun) add(run);
 
   // where each braking starts: a tick across the track
@@ -137,7 +149,7 @@ function layout(map: GuideMap, width: number, maxHeight: number, wide: boolean) 
   const named = map.corners.length
     ? map.corners.map((c) => ({ code: c.code, anchor: px({ x: c.x, y: c.y }) }))
     : map.sections.filter((s) => s.apex).map((s) => ({ code: s.code, anchor: px(s.apex!) }));
-  const labels = placeLabels(named, pts, { width, height }, {
+  const labels = view ? [] : placeLabels(named, pts, { width, height }, {
     fontSize: z.font, clearance: z.track / 2 + 4,
     obstacles: [...badges.map((b) => b.box), around([bar.a, bar.b], 2), around([a0, a1, head(0.5), head(-0.5)], 2)],
   });
@@ -151,7 +163,16 @@ export default function GearMap({ map, caption, asLogged }: { map: GuideMap; cap
   const c = theme.chart;
   const wide = useWide();
   const [width, setWidth] = useState(0);
-  const g = useMemo(() => (width > 0 ? layout(map, width, wide ? 560 : 440, wide) : null), [map, width, wide]);
+  const maxHeight = wide ? 560 : 440;
+  // the map zooms both ways: the wheel or a pinch, a box dragged across it, a drag once zoomed (components/Zoom.tsx);
+  // another lap or another width starts on the whole map
+  const zoom = usePlaneZoom(`${map.length_m}:${map.x.length}:${map.x[0]}:${width}:${wide}`);
+  const whole = useMemo(() => (width > 0 ? layout(map, width, maxHeight, wide) : null), [map, width, maxHeight, wide]);
+  const g = useMemo(() => {
+    if (!whole || !zoom.view) return whole;
+    const at = (p: Point) => toFrame(zoom.view, whole.width, whole.height, p);
+    return { ...layout(map, width, maxHeight, wide, zoom.view), labels: whole.labels.map((l) => moveLabel(l, at)) };
+  }, [whole, map, width, maxHeight, wide, zoom.view]);
   const used = useMemo(() => [...new Set((map.gear ?? []).filter((x): x is number => x != null))].sort((a, b) => a - b),
     [map.gear]);
   const colours = useMemo(() => gearColours(used, c.speed), [used, c.speed]);
@@ -179,50 +200,55 @@ export default function GearMap({ map, caption, asLogged }: { map: GuideMap; cap
             <View style={styles.tick} />
             <Text style={styles.legendText}>Braking starts</Text>
           </View>
+          <ResetZoom zoom={zoom} reserve />
         </View>
       )}
+      {!used.length && <ResetZoom zoom={zoom} reserve />}
       <View onLayout={(e: LayoutChangeEvent) => setWidth(e.nativeEvent.layout.width)}>
         {!g && <Text style={styles.note}>Drawing the gear map…</Text>}
         {g && (
-          <Svg width={g.width} height={g.height} accessibilityRole="image" accessibilityLabel={described}>
-            <Path d={g.loop} stroke={c.ink} strokeWidth={g.z.track + 4} fill="none" strokeLinejoin="round" />
-            {g.runs.map((r, i) => (
-              <Path key={i} d={r.d} stroke={fill(r.gear)} strokeWidth={g.z.track} fill="none" strokeLinejoin="round" />
-            ))}
-            {g.ticks.map((t, i) => (
-              <Line key={`h${i}`} x1={t.a.x} y1={t.a.y} x2={t.b.x} y2={t.b.y} stroke={c.surface} strokeWidth={6}
-                strokeLinecap="round" />
-            ))}
-            {g.ticks.map((t, i) => (
-              <Line key={`t${i}`} x1={t.a.x} y1={t.a.y} x2={t.b.x} y2={t.b.y} stroke={c.ink} strokeWidth={2.5}
-                strokeLinecap="round" />
-            ))}
-            <Line x1={g.bar.a.x} y1={g.bar.a.y} x2={g.bar.b.x} y2={g.bar.b.y} stroke={c.ink} strokeWidth={4} />
-            <Path d={g.arrow} stroke={c.ink} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
-            {g.labels.map((l) => {
-              const end = leaderEnd(l);
-              return l.leader ? (
-                <Line key={`l${l.code}`} x1={l.anchor.x} y1={l.anchor.y} x2={end.x} y2={end.y} stroke={c.ink2}
-                  strokeWidth={1} />
-              ) : null;
-            })}
-            {g.badges.map((b, i) => (
-              <Circle key={`c${i}`} cx={b.p.x} cy={b.p.y} r={g.z.badge} fill={fill(b.gear)} stroke={c.surface}
-                strokeWidth={2} />
-            ))}
-            {g.badges.map((b, i) => (
-              <SvgText key={`n${i}`} x={b.p.x} y={b.p.y + g.z.num * 0.36} fontSize={g.z.num} fontFamily={Fonts.label}
-                fontWeight="700" fill={inkOn(fill(b.gear))} textAnchor="middle">
-                {b.gear}
-              </SvgText>
-            ))}
-            {g.labels.map((l) => (
-              <SvgText key={l.code} x={l.box.x + l.box.w / 2} y={l.box.y + l.box.h - 3} fontSize={g.z.font}
-                fontFamily={Fonts.label} fontWeight="700" fill={c.ink} textAnchor="middle">
-                {l.code}
-              </SvgText>
-            ))}
-          </Svg>
+          <ZoomPlane zoom={zoom} width={g.width} height={g.height}>
+            <Svg width={g.width} height={g.height} pointerEvents="none" accessibilityRole="image"
+              accessibilityLabel={described}>
+              <Path d={g.loop} stroke={c.ink} strokeWidth={g.z.track + 4} fill="none" strokeLinejoin="round" />
+              {g.runs.map((r, i) => (
+                <Path key={i} d={r.d} stroke={fill(r.gear)} strokeWidth={g.z.track} fill="none" strokeLinejoin="round" />
+              ))}
+              {g.ticks.map((t, i) => (
+                <Line key={`h${i}`} x1={t.a.x} y1={t.a.y} x2={t.b.x} y2={t.b.y} stroke={c.surface} strokeWidth={6}
+                  strokeLinecap="round" />
+              ))}
+              {g.ticks.map((t, i) => (
+                <Line key={`t${i}`} x1={t.a.x} y1={t.a.y} x2={t.b.x} y2={t.b.y} stroke={c.ink} strokeWidth={2.5}
+                  strokeLinecap="round" />
+              ))}
+              <Line x1={g.bar.a.x} y1={g.bar.a.y} x2={g.bar.b.x} y2={g.bar.b.y} stroke={c.ink} strokeWidth={4} />
+              <Path d={g.arrow} stroke={c.ink} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+              {g.labels.map((l) => {
+                const end = leaderEnd(l);
+                return l.leader ? (
+                  <Line key={`l${l.code}`} x1={l.anchor.x} y1={l.anchor.y} x2={end.x} y2={end.y} stroke={c.ink2}
+                    strokeWidth={1} />
+                ) : null;
+              })}
+              {g.badges.map((b, i) => (
+                <Circle key={`c${i}`} cx={b.p.x} cy={b.p.y} r={g.z.badge} fill={fill(b.gear)} stroke={c.surface}
+                  strokeWidth={2} />
+              ))}
+              {g.badges.map((b, i) => (
+                <SvgText key={`n${i}`} x={b.p.x} y={b.p.y + g.z.num * 0.36} fontSize={g.z.num} fontFamily={Fonts.label}
+                  fontWeight="700" fill={inkOn(fill(b.gear))} textAnchor="middle">
+                  {b.gear}
+                </SvgText>
+              ))}
+              {g.labels.map((l) => (
+                <SvgText key={l.code} x={l.box.x + l.box.w / 2} y={l.box.y + l.box.h - 3} fontSize={g.z.font}
+                  fontFamily={Fonts.label} fontWeight="700" fill={c.ink} textAnchor="middle">
+                  {l.code}
+                </SvgText>
+              ))}
+            </Svg>
+          </ZoomPlane>
         )}
       </View>
       {!map.gear && (
