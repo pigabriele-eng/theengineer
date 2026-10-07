@@ -519,9 +519,7 @@ function SeasonHead({ no, season, open, onToggle, questions }: {
       <View style={wide ? styles.foldHead : styles.foldHeadPhone}>
         <View style={styles.foldNo}><Text style={styles.foldNoText}>{String(no).padStart(2, '0')}</Text></View>
         <View style={styles.foldWords}>
-          <Text style={wide ? styles.foldTitle : styles.foldTitlePhone} numberOfLines={open ? undefined : 1}>
-            {season.name}
-          </Text>
+          <Text style={wide ? styles.foldTitle : styles.foldTitlePhone}>{season.name}</Text>
           <View style={styles.foldFacts}>
             <Text style={styles.foldFact}>{facts}</Text>
             {asked ? <Block label={asked} color={c.mark} ink={inkOn(c.mark)} /> : null}
@@ -702,12 +700,12 @@ const useStyles = themed((c) => ({
   foldNoText: { fontFamily: Fonts.display, fontSize: 22, lineHeight: 24, letterSpacing: 0.9, color: c.background },
   foldWords: { flex: 1, minWidth: 0, gap: 6 },
   foldTitle: { fontFamily: Fonts.display, fontSize: 44, lineHeight: 46, textTransform: 'uppercase', color: c.text },
-  foldTitlePhone: { fontFamily: Fonts.display, fontSize: 32, lineHeight: 34, textTransform: 'uppercase', color: c.text },
+  foldTitlePhone: { fontFamily: Fonts.display, fontSize: 27, lineHeight: 30, textTransform: 'uppercase', color: c.text },
   foldFacts: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 6 },
   foldFact: { ...Type.label, fontFamily: Fonts.label, fontSize: 13, letterSpacing: 1.2, color: c.textSecondary,
     fontVariant: ['tabular-nums'] },
   foldMark: { fontFamily: Fonts.label, fontSize: 26, lineHeight: 46, color: c.text, width: 26, textAlign: 'right' },
-  foldMarkPhone: { fontFamily: Fonts.label, fontSize: 22, lineHeight: 34, color: c.text, width: 20, textAlign: 'right' },
+  foldMarkPhone: { fontFamily: Fonts.label, fontSize: 22, lineHeight: 30, color: c.text, width: 20, textAlign: 'right' },
   seasonBody: { marginTop: 16 },
   seasonBodyPhone: { marginTop: 12 },
   seasonDek: { fontFamily: Type.dek.fontFamily, fontSize: 17, lineHeight: 24, color: c.textSecondary, marginBottom: 20 },
