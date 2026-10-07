@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions } from 'react-native';
 
 import { LineKey, useLapColors } from '@/components/CompareViews';
+import { DeleteEvent } from '@/components/DeleteEvent';
 import { EventCompare, Pick } from '@/components/EventCompare';
 import { EventForm } from '@/components/EventForm';
 import { EventInfoCard } from '@/components/EventInfoCard';
@@ -11,6 +12,7 @@ import { MoveSessions } from '@/components/MoveSessions';
 import { PrepButton, usePrepAvailability } from '@/components/PrepButton';
 import { RenameEvent } from '@/components/RenameEvent';
 import { ResultsPanel } from '@/components/ResultsPanel';
+import { SeasonMatch } from '@/components/SeasonMatch';
 import { filledNote, localPick, PickerKind, RunChips, RunNameEditor, RunPicker, useGarage } from '@/components/RunChips';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
@@ -244,26 +246,8 @@ export default function EventScreen() {
       )}
       {panel === 'delete' && folder && eventId != null && (
         <View style={styles.panel}>
-          <Text style={styles.confirm}>
-            Delete the event &ldquo;{folder.name}&rdquo;? Only the folder goes: its {plural(folder.sessions, 'session')}{' '}
-            and their logs stay, under Not in an event.
-          </Text>
-          <View style={styles.actions}>
-            <Pressable accessibilityRole="button" style={StyleSheet.flatten([styles.action, styles.danger])}
-              onPress={async () => {
-                try {
-                  await eventsApi.remove(eventId);
-                  router.replace('/');
-                } catch (e) {
-                  setError((e as Error).message);
-                }
-              }}>
-              <Text style={StyleSheet.flatten([styles.actionText, styles.dangerText])}>Delete the event</Text>
-            </Pressable>
-            <Pressable onPress={() => setPanel(null)} accessibilityRole="button" style={styles.action}>
-              <Text style={styles.actionText}>Keep it</Text>
-            </Pressable>
-          </View>
+          <DeleteEvent id={eventId} name={folder.name} onCancel={() => setPanel(null)}
+            onDeleted={() => router.replace('/')} />
         </View>
       )}
     </View>
@@ -345,6 +329,7 @@ export default function EventScreen() {
               <Text style={styles.notice}>{notice}</Text>
             </Pressable>
           )}
+          {eventId != null && <SeasonMatch eventId={eventId} onChanged={load} />}
           {eventId != null && (
             <EventInfoCard eventId={eventId} onInfo={(i) => setEventDrivers(i?.resolved.drivers.map((d) => d.id) ?? [])}
               version={folder} />

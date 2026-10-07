@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import DataError, IntegrityError
 
-from app import calendar_sync, empty_runs, storage, timing
+from app import calendar_sync, empty_runs, event_delete, storage, timing
 from app.auth import check_settings, require_user, require_user_or_query_token
 from app.db import create_tables
 from app.routers import catalog, debriefs, imports, insights, sessions, trackmap, tyres, vehicle
@@ -24,6 +24,9 @@ from app.routers import results as series_results  # noqa: E402
 from app import catalog as vehicle_lists, seasons  # noqa: E402
 
 seasons.bind_models()  # their tables on the current database's metadata (the tests load a fresh one each time)
+from app import season_match  # noqa: E402
+
+season_match.bind_models()
 
 
 @asynccontextmanager
@@ -37,6 +40,7 @@ async def lifespan(_: FastAPI):
     tyre_store.start()  # summarises logs for the tyre model in the background, older ones first
     calendar_sync.start()  # reads the racing calendar now and then, for planned events
     results_sync.start_background()  # official series results: missing seasons, and current events kept fresh
+    season_match.start()  # in the background: events with data and no season join theirs, or a question is kept
     yield
     tyre_store.stop()
     calendar_sync.stop()
@@ -71,7 +75,9 @@ app.include_router(series_results.router, dependencies=signed_in)
 app.include_router(garage.router, dependencies=signed_in)
 app.include_router(vehicle_lists.router, dependencies=signed_in)
 app.include_router(seasons.router, dependencies=signed_in)
+app.include_router(season_match.router, dependencies=signed_in)
 app.include_router(track_grip.router, dependencies=signed_in)
+app.include_router(event_delete.router, dependencies=signed_in)
 app.include_router(debriefs.media_router, dependencies=[Depends(require_user_or_query_token)])
 
 

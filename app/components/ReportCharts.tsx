@@ -6,7 +6,7 @@ import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
 
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
-import { byScheme, chartPlate, Fonts, PLATE_PAD, Radius, themed } from '@/constants/Theme';
+import { byScheme, chartPlate, Fonts, PLATE_PAD, themed, Type } from '@/constants/Theme';
 
 const PALETTE = byScheme((c) => ({
   s1: c.chart.series[0], s2: c.chart.series[1], s3: c.chart.series[2], grid: c.chart.grid, axis: c.chart.muted,
@@ -61,13 +61,10 @@ export function Bars({ rows, unit = 's', digits = 2, max }: {
   );
 }
 
-/** A bar growing from the baseline at x, its far end rounded (4 px), square at the baseline. */
+/** A bar growing from the baseline at x: a flat, square block (the programme has no rounded corners). */
 function Bar({ x, y, w, h, fill }: { x: number; y: number; w: number; h: number; fill: string }) {
   if (w <= 0.5) return null;
-  const r = Math.min(4, w, h / 2);
-  const d = `M${x},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h - r}Q${x + w},${y + h} ${x + w - r},${
-    y + h}H${x}Z`;
-  return <Path d={d} fill={fill} />;
+  return <Path d={`M${x},${y}H${x + w}V${y + h}H${x}Z`} fill={fill} />;
 }
 
 export type LineSeries = { key: string; label: string; values: (number | null)[]; color: string; width?: number;
@@ -251,16 +248,15 @@ export function niceTicks(lo: number, hi: number, count: number) {
 const useStyles = themed((c) => ({
   chart: { gap: 6, ...chartPlate(c) },
   plate: chartPlate(c),
-  chartTitle: { fontSize: 13, fontWeight: '600' },
+  chartTitle: { ...Type.label, color: c.text },
   legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, backgroundColor: 'transparent' },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },
-  legendKey: { width: 14, height: 2, borderRadius: 1 },
-  legendText: { fontSize: 12, opacity: 0.75 },
-  tip: { position: 'absolute', borderWidth: 1, borderRadius: Radius.control, paddingHorizontal: 8, paddingVertical: 6, gap: 2,
-    minWidth: 120 },
+  legendKey: { width: 14, height: 3 },
+  legendText: { fontFamily: Fonts.label, fontSize: 12, color: c.textSecondary },
+  tip: { position: 'absolute', borderWidth: 1, paddingHorizontal: 8, paddingVertical: 6, gap: 2, minWidth: 120 },
   tipHead: { fontSize: 11, opacity: 0.7, fontVariant: ['tabular-nums'] },
   tipRow: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },
-  tipKey: { width: 10, height: 2, borderRadius: 1 },
+  tipKey: { width: 10, height: 3 },
   tipValue: { fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
   tipLabel: { fontSize: 12, opacity: 0.7 },
 }));

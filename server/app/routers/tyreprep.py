@@ -121,7 +121,7 @@ def tyre_prep(session: int | None = None, event: int | None = None, db: Session 
         if out is None:
             skipped.append({"session_id": s.id, "session": name, "reason": why})
             continue
-        reduced.append({**out, "session_id": s.id, "name": name})
+        reduced.append({**out, "session_id": s.id, "name": name, "kind": s.kind.value if s.kind else None})
     if not reduced:
         raise HTTPException(404, "No readable logger file in " + ("this session" if session else "this event"))
     reduced.sort(key=_when)
