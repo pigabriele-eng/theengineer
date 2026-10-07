@@ -36,6 +36,7 @@ from app import heavy, models, storage
 from app.analysis.laps import TIMING_VERSION, LapTiming, TimingLine, time_laps
 from app.importers.csvlog import read_log
 from app.importers.motec import LdFile
+from app.importers.window import window
 
 log = logging.getLogger(__name__)
 
@@ -53,8 +54,11 @@ _worker: threading.Thread | None = None
 
 
 def read_file(f: models.LoggerFile) -> LdFile:
-    """An uploaded log, read from wherever it is stored."""
-    return read_log(storage.local_path(f.path))
+    """An uploaded log, read from wherever it is stored. A run split from a longer log (run_split.py) reads its part
+    of the stored log (meta "window"), from 0 at the part's start."""
+    ld = read_log(storage.local_path(f.path))
+    w = (f.meta or {}).get("window")
+    return window(ld, w[0], w[1]) if w else ld
 
 
 def track_line(track: models.Track | None) -> TimingLine | None:

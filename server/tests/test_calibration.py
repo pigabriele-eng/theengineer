@@ -78,14 +78,14 @@ def test_a_lap_quicker_in_one_section_moves_only_that_section(fastest):
     # still carries down the straight into it
     assert _section(t.sim.t, SECTIONS[0]) <= _section(other.trace["t"], SECTIONS[0]) + 1e-9
     assert gain["T1"] > 0.1
-    assert 0 <= gain["T2"] < 0.05 * gain["T1"]
+    assert -1e-9 <= gain["T2"] < 0.05 * gain["T1"]  # capped at the best pass: exactly none, to rounding
     # T2 from its braking on is the fastest lap's own
     brake = int(CORNERS_M[1]) - 50
     assert np.allclose(np.diff(t.sim.t)[brake:], np.diff(ref)[brake:], atol=1e-9)
     assert t.sim.time == pytest.approx(fastest.time - gain["T1"] - gain["T2"], abs=1e-9)
     # the realistic target (the median of two laps) gains less than the theoretical lap, and only in T1 too
     real = {s.code: _section(ref, s) - _section(t.realistic.t, s) for s in SECTIONS}
-    assert 0 < real["T1"] <= gain["T1"] and 0 <= real["T2"] < 0.05 * gain["T1"]
+    assert 0 < real["T1"] <= gain["T1"] and -1e-9 <= real["T2"] < 0.05 * gain["T1"]
 
 
 # ---------- a lap on a line of its own ----------
@@ -138,3 +138,79 @@ def test_perfect_driving_on_a_lap_that_moves_across_the_road(fastest, monkeypatc
     assert np.array_equal(mine.corner, t.perfect.corner)
     assert _closed_sim(fastest.trace["curvature"], mine).time == _closed_sim(fastest.trace["curvature"],
                                                                               t.perfect).time
+
+
+def test_the_theoretical_lap_is_never_quicker_than_the_best_pass_through_a_section(fastest):
+    d = np.arange(N + 1, dtype=float)
+    other = Lap(0.97 + 0.06 * _step(d, 40, 460))
+    t = targets([fastest, other], fastest.trace, fastest.time, SECTIONS)
+    for s in SECTIONS:
+        best = min(_section(x.trace["t"], s) for x in (fastest, other))
+        assert _section(t.sim.t, s) == pytest.approx(best, abs=1e-6)
+        assert _section(t.realistic.t, s) >= best - 1e-9
+
+
+def test_a_lap_off_the_fastest_laps_line_lends_the_targets_nothing(fastest):
+    alone = targets([fastest], fastest.trace, fastest.time, SECTIONS)
+    off = Lap(np.full(N + 1, 1.4))  # a speed channel in other units: "quicker" everywhere
+    t = targets([fastest, off], fastest.trace, fastest.time, SECTIONS)
+    assert t.sim.time == pytest.approx(alone.sim.time, abs=1e-9)
+    assert t.realistic.time == pytest.approx(alone.realistic.time, abs=1e-9)
+
+
+def test_a_lift_on_the_way_out_of_a_corner_is_an_obvious_mistake(fastest):
+    d = np.arange(N + 1, dtype=float)
+    lifted = Lap(1 - 0.06 * _step(d, 360, 420, 10))
+    lifted.trace["throttle"] = np.where((d >= 350) & (d <= 400), 20.0, lifted.trace["throttle"])
+    t = targets([fastest, lifted], fastest.trace, fastest.time, SECTIONS)
+    out = check_lap(lifted.trace, t.perfect, t.held, SECTIONS, lap_time=lifted.time,
+                    calibrations=(t.calibration, t.held_calibration))
+    lifts = [m for m in out["obvious"] if m["kind"] == "exit_lift"]
+    assert [m["code"] for m in lifts] == ["T1"] and 350 <= lifts[0]["at_m"] <= 360
+    # this lap gets its speed back by 420 m, quicker than any car could, so it loses less than a real lift would:
+    # the cost (the drive the lift took, carried on) is of its size, not under it
+    assert 0.01 <= lifts[0]["cost_s"] <= 2 * (lifted.time - fastest.time)
+    clean = check_lap(fastest.trace, t.perfect, t.held, SECTIONS, lap_time=fastest.time,
+                      calibrations=(t.calibration, t.held_calibration))
+    assert clean["obvious"] == []
+
+
+def test_braking_below_the_limit_costs_the_later_brake_point():
+    from app.analysis.technique import brake_cost
+    assert brake_cost(60.0, 25.0, 1.3, 1.3) == 0.0
+    soft = brake_cost(60.0, 25.0, 1.0, 1.3)
+    # braking 35 m/s at 1.0 g instead of 1.3 g: 0.83 s longer, of which the later brake point wins back most
+    assert 0.05 < soft < 0.83
+
+
+def test_the_theoretical_speed_runs_on_smoothly_across_a_section_join(fastest):
+    d = np.arange(N + 1, dtype=float)
+    other = Lap(0.97 + 0.06 * _step(d, 40, 460))
+    t = targets([fastest, other], fastest.trace, fastest.time, SECTIONS)
+    jump = np.abs(np.diff(t.sim.speed))
+    own = np.abs(np.diff(fastest.trace["speed"]))
+    assert jump[495:505].max() <= own.max() + 0.5  # no step at the join (500 m) beyond the lap's own
+
+
+def test_the_throttle_on_and_off_twice_is_two_lifts():
+    from app.analysis.technique import _dips
+    n = 200
+    thr = np.full(n, 100.0)
+    thr[50:60], thr[90:100] = 40.0, 30.0  # off and back on, twice
+    ts = np.arange(n) * 0.025  # 40 m/s
+    out = _dips(thr, ts, np.maximum.accumulate(thr), np.full(n, -1.5), 0, -1.0, 0)
+    assert [(a, lo) for a, _, _, lo in out] == [(50, 40.0), (90, 30.0)]
+
+
+def test_speed_that_stops_climbing_on_the_way_out_is_a_stall():
+    from app.analysis.technique import _stalls
+    # out of a corner at 2 m/s², flat for 10 m (0.4 s at about 25 m/s), then climbing again; no braking
+    x = np.arange(200, dtype=float)
+    v2 = np.where(x < 80, 20.0 ** 2 + 4 * x, np.where(x < 90, 20.0 ** 2 + 320, 20.0 ** 2 + 320 + 4 * (x - 90)))
+    ms = np.sqrt(v2)
+    t = np.concatenate([[0.0], np.cumsum(2 / (ms[:-1] + ms[1:]))])
+    tr = {"speed": ms * 3.6, "t": t, "braking": np.zeros(200)}
+    out = _stalls(tr, 0, 199, np.full(200, -0.3), -1.0)
+    assert len(out) == 1 and 70 <= out[0][0] <= 85 and 85 <= out[0][1] <= 100
+    tr["braking"][75:] = 1.0  # the same, braking for the next corner: not a stall
+    assert _stalls(tr, 0, 199, np.full(200, -0.3), -1.0) == []

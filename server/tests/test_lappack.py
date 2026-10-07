@@ -250,6 +250,8 @@ def test_comparisons_read_no_log_once_their_sessions_are_packed(client, monkeypa
     assert first.status_code == 200, first.text
     drivers = _job(client, sides)
     assert app.lappacks.wait_idle() and app.routers.reports.wait_idle()
+    from app import driver_prints  # looked up here: other tests reload it
+    driver_prints.wait_idle()  # the fingerprint pass the driver picks started reads logs under heavy.lock: let it end
     with app_db.SessionLocal() as db:
         rows = {r.session_id: r for r in db.scalars(select(models.LapPackFile))}
     assert set(rows) == set(ids.values()) and all(r.path and r.laps == 2 and r.error is None for r in rows.values())

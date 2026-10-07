@@ -114,3 +114,16 @@ def test_a_tracks_sectors_are_its_sections():
     secs, _ = make_sections(ref, corners)
     assert [s.code for s in secs] == ["T1", "T2", "T3-T4"]
     assert secs[1].apex == 800 and secs[1].end == secs[2].start == (790 + 830) // 2 and secs[2].end == 1099
+
+
+def test_laps_are_split_reading_each_channel_once(monkeypatch):
+    from app.importers import motec
+
+    ld = read_ld(write_ld(simulate(paces=(1.0, 0.99, 0.98, 0.97, 0.96))[0]))
+    starts, _ = lap_starts(ld)
+    reads: list[str] = []
+    values = motec.Channel.values
+    monkeypatch.setattr(motec.Channel, "values", lambda ch: reads.append(ch.name) or values(ch))
+    monkeypatch.setattr("app.analysis.laps.lap_starts", lambda *_: (starts, "gps"))
+    laps, _ = split_laps(ld)
+    assert len(laps) >= 4 and sorted(reads) == ["Lap Time", "vCar"]

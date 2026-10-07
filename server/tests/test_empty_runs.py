@@ -301,3 +301,29 @@ def test_stored_files_are_deleted(tmp_path):
     local.delete(key)
     local.delete(str(outside))  # never outside the storage folder
     assert not (tmp_path / "storage" / key).exists() and outside.exists()
+
+
+def test_what_the_app_filled_in_itself_keeps_no_empty_run(client, monkeypatch):
+    """A car from the logger's serial or the season, a driver from the driving style, a kind from the timetable:
+    none was put there by a person, so an empty run that has them still goes; a name typed for it keeps it."""
+    import app.db
+    import app.empty_runs
+    import app.models
+    from app.driver_prints import StyleTag
+    from app.results.models import RunNameMark
+
+    app.empty_runs.wait_idle()
+    ids = _old_import(client, monkeypatch, {"T01/a_car/pit.ld": pit_log(), "T01/b_named/pit.ld": pit_log()})
+    with app.db.SessionLocal() as db:
+        car = app.models.Car(name="BMW M4 GT4 #12")
+        driver = app.models.Driver(name="Gabriele Piana")
+        db.add_all([car, driver])
+        db.flush()
+        a = db.get(app.models.RunSession, ids["a_car"])
+        a.car_id, a.driver_id, a.kind = car.id, driver.id, app.models.SessionKind.practice
+        db.add_all([StyleTag(session_id=a.id, event_id=a.event_id, driver_id=driver.id, source="fingerprint"),
+                    RunNameMark(session_id=a.id, code="FP1", auto_name="FP1 stint 1"),
+                    RunNameMark(session_id=ids["b_named"], by_hand=True)])
+        db.commit()
+    assert app.empty_runs.cleanup() == {"removed": [ids["a_car"]], "kept": []}
+    assert client.get(f"/sessions/{ids['b_named']}").status_code == 200

@@ -136,21 +136,47 @@ def test_quicker_laps_tell_what_pays():
 
 
 def test_the_car_s_other_driver_names_the_other_style():
-    from app import driver_prints
-
     ep = ds.event_print(_event([(1, ["smooth"] * 6), (2, ["sharp"] * 6), (3, ["sharp"] * 5)]))
-    g = ds.guess(ep, {1: 11})
-    driver_prints._name_from_entry(g, [11, 22])
+    g = ds.guess(ep, {1: 11}, pair=(11, 22))
     assert {s.session_id: g.groups[s.group].driver_id for s in g.sessions} == {1: 11, 2: 22, 3: 22}
     other = next(grp for grp in g.groups if grp.driver_id == 22)
     assert other.source == "entry" and ds.confidence(g, other, 1.0) == "sure"
-    g = ds.guess(ep, {1: 11})
-    driver_prints._name_from_entry(g, [33, 22])  # the tagged driver isn't one of the car's: nothing follows
+    g = ds.guess(ep, {1: 11}, pair=(33, 22))  # the tagged driver isn't one of the car's: nothing follows
     assert {grp.driver_id for grp in g.groups} == {11, None}
+
+
+def test_of_two_drivers_a_fingerprint_only_has_to_say_which_way_round():
+    """Every outing that isn't one of the car's two drivers is the other: a fingerprint far below a sure match still
+    names both styles, the right way round; with no fingerprint of either, or no clear way round, nothing is named."""
+    ep = ds.event_print(_event([(1, ["smooth"] * 6), (2, ["sharp"] * 6), (3, ["sharp"] * 5)]))
+    g = ds.guess(ep, {})
+    smooth = next(i for i, grp in enumerate(g.groups) if any(s.session_id == 1 and s.group == i for s in g.sessions))
+    u = g.groups[smooth].v / np.linalg.norm(g.groups[smooth].v)
+    w = np.random.default_rng(1).standard_normal(len(ep.kinds))
+    w -= (w @ u) * u
+    weak = 0.15 * u + np.sqrt(1 - 0.15 ** 2) * w / np.linalg.norm(w)  # cosine 0.15 to the smooth style
+    assert ds._cos(weak, g.groups[smooth].v) < ds.MATCH_COS  # too weak to name anyone on its own
+    g = ds.guess(ep, {}, {11: weak}, max_groups=2, pair=(11, 22))
+    assert {s.session_id: g.groups[s.group].driver_id for s in g.sessions} == {1: 11, 2: 22, 3: 22}
+    assert {grp.source for grp in g.groups} == {"pair"}
+    g = ds.guess(ep, {}, {11: -weak}, max_groups=2, pair=(22, 11))  # either order of the pair
+    assert {s.session_id: g.groups[s.group].driver_id for s in g.sessions} == {1: 22, 2: 11, 3: 11}
+    assert {grp.driver_id for grp in ds.guess(ep, {}, {}, max_groups=2, pair=(11, 22)).groups} == {None}
+    flat = np.zeros(len(ep.kinds))
+    assert {grp.driver_id for grp in ds.guess(ep, {}, {11: flat}, max_groups=2, pair=(11, 22)).groups} == {None}
 
 
 def test_too_few_laps_suggest_nothing():
     assert ds.event_print(_event([(1, ["smooth"] * 3)])) is None
+
+
+def test_a_lift_without_the_throttle_back_is_not_early_throttle():
+    # a lift with no braking where the throttle never comes back: it is on at the corner's end, not 100 m early
+    d = np.arange(LENGTH, dtype=float)
+    tr = {"t": d / 50, "speed": 200 - 40 * np.exp(-((d - 500) / 60) ** 2), "brake": np.zeros(LENGTH),
+          "steer": np.sin(d / 50), "throttle": np.where(d < 380, 100.0, 0.0)}
+    f = ds.lap_features(tr, [ds.Corner("C1", 500, 200, 900)], 1.0, 1.0)
+    assert f["C1_throttle_on"] == 300
 
 
 # ---------- the API ----------
@@ -297,6 +323,50 @@ def test_drivers_are_set_from_the_style_by_themselves(client):
     assert [e["event"] for e in anna["events"]] == ["First weekend"]
 
 
+def test_every_pick_refines_the_fingerprint_and_a_correction_moves_it(client):
+    """Only a person's picks teach, from the laps of the runs they put the driver on: a run the style named after them
+    doesn't, the same pick made by a person does, and moving it to someone else takes its laps along."""
+    from app import driver_prints
+    from app.routers import reports
+
+    smooth, sharp = (1.0, 0.99, 0.995, 0.985, 0.99), (0.99, 0.985, 0.99, 0.98, 0.995)
+    ev = _weekend(client, "Test day", {"A1": (smooth, False), "B1": (sharp, True), "A2": (smooth, False)}, 10)
+    t0 = time.monotonic()
+    while client.get(f"/events/{ev['event']}/driver-guess").json()["status"] == "working":
+        assert time.monotonic() - t0 < 120
+        time.sleep(0.2)
+    assert reports.wait_idle()
+
+    def laps() -> dict[str, int]:
+        driver_prints.wait_idle()
+        return {d["driver"]: d["laps"] for d in client.get("/drivers/fingerprints").json()["drivers"]}
+
+    assert client.put(f"/sessions/{ev['A1']}/driver", json={"driver_name": "Anna"}).status_code == 200
+    one = laps()["Anna"]
+    got = {s["session_id"]: s for s in client.get(f"/events/{ev['event']}/driver-guess").json()["sessions"]}
+    assert got[ev["A2"]]["auto"] is not None  # named after A1 by the style: the app's, so it doesn't teach
+    anna = got[ev["A1"]]["driver_id"]
+    assert client.put(f"/sessions/{ev['A2']}/driver", json={"driver_id": anna}).status_code == 200
+    both = laps()["Anna"]
+    assert both > one
+    assert client.put(f"/sessions/{ev['A2']}/driver", json={"driver_name": "Ben"}).status_code == 200
+    assert laps() == {"Anna": one, "Ben": both - one}
+
+    # the event page's answer is kept until a driver changes: asked again, the style isn't worked out again
+    first = client.get(f"/events/{ev['event']}/driver-guess").json()
+    worked = []
+    guess_for = driver_prints.guess_for
+    driver_prints.guess_for = lambda *a, **k: worked.append(1) or guess_for(*a, **k)
+    try:
+        assert client.get(f"/events/{ev['event']}/driver-guess").json() == first and not worked
+        assert client.put(f"/sessions/{ev['B1']}/driver", json={"driver_name": "Ben"}).status_code == 200
+        driver_prints.wait_idle()
+        again = client.get(f"/events/{ev['event']}/driver-guess").json()
+        assert worked and {s["session_id"]: s["driver_id"] for s in again["sessions"]}[ev["B1"]] is not None
+    finally:
+        driver_prints.guess_for = guess_for
+
+
 def test_a_new_pair_is_asked_about_once_and_known_by_style_after(client):
     from app import driver_prints
     from app.routers import reports
@@ -352,3 +422,30 @@ def test_a_new_pair_is_asked_about_once_and_known_by_style_after(client):
     assert r.status_code == 200, r.text
     got = {s["session_id"]: s for s in client.get(f"/events/{second['event']}/driver-guess").json()["sessions"]}
     assert got[second[f"{side}3"]]["driver_id"] == other and got[second[f"{side}3"]]["auto"] is None
+
+
+def test_a_run_deleted_since_and_one_failing_event_don_t_stop_the_others(client, monkeypatch):
+    from app import driver_prints
+    from app.db import SessionLocal
+
+    anna = client.post("/garage/drivers", json={"name": "Anna"}).json()["id"]
+    evs = [client.post("/events/folders", json={"name": n}).json()["id"] for n in ("First", "Second")]
+    gone = ds.Guess(mode="groups", separation=None, groups=[ds.Group(driver_id=anna, source="fingerprint", laps=9)],
+                    sessions=[ds.SessionGuess(session_id=987654, group=0, share=1.0, laps=9)], labels=np.array([]))
+    monkeypatch.setattr(driver_prints, "guess_for", lambda *a, **k: gone)
+    with SessionLocal() as db:  # the print names a run that was deleted since
+        assert driver_prints.settle(db, evs[0], object(), {}) == 0
+        for ev in evs:
+            db.add(driver_prints.StylePrint(event_id=ev, signature="s", payload={}))
+        db.commit()
+        real, seen = driver_prints.settle, []
+
+        def settle(db, event_id, ep, learned):
+            seen.append(event_id)
+            if event_id == evs[0]:
+                raise RuntimeError("broken event")
+            return real(db, event_id, ep, learned)
+
+        monkeypatch.setattr(driver_prints, "settle", settle)
+        driver_prints.settle_all(db, {ev: ("s", []) for ev in evs})
+        assert seen == evs  # the second event is still settled

@@ -27,6 +27,11 @@ Three ways to a suggestion, best first:
   its groups match two different known drivers.
 - one style: every lap looks like one driver.
 
+A car with two drivers (the season's, or the event's own list: pair) splits into two styles at most, and they are
+those two: a style named after a tagged run makes the other the teammate, and otherwise the known fingerprints only
+need to say which way round fits better (DECIDE_MARGIN), not to match closely ("every outing that is not PIA must be
+RAC", Gabriele, 2026-10-07).
+
 A run is cut into stints where its laps are not consecutive (a pit stop or a slow lap between): each stint goes to
 the group most of its laps are in, stints of one group next to each other are joined. A run whose stints go to two
 groups had a driver change at a stop.
@@ -51,6 +56,7 @@ CLEAR_SPLIT = 0.25  # silhouette of a style split that is clearly two drivers
 LIKELY_SPLIT = 0.20  # ... likely two drivers
 KNOWN_SPLIT = 0.15  # ... two drivers when its groups match two different known drivers
 MATCH_COS = 0.3  # a group's fingerprint this close (cosine) to a known driver's is that driver
+DECIDE_MARGIN = 0.1  # of two drivers, one way round fits this much better (summed cosines): the styles are named
 MIN_GROUP_LAPS = 3
 MIN_GROUP_SHARE = 0.10
 MIN_STINT_LAPS = 3  # a shorter stint is joined to its neighbour: too few laps to call a driver change on
@@ -266,7 +272,7 @@ def lap_features(tr: dict[str, np.ndarray], corners: list[Corner], brake_top: fl
         else:
             s0 = max(a - 100, lo)
             back = _first(thr[s0:hi] > THROTTLE_ON)
-            t_on = s0 + (back or 0)
+            t_on = s0 + (back if back is not None else hi - s0)
             f[f"{k}_lift"] = float(thr[lo:a].min())
         f[f"{k}_throttle_on"] = float(t_on - a)
         full = _first(thr[t_on:hi] > THROTTLE_FULL)
@@ -395,6 +401,30 @@ def match_known(vecs: list[np.ndarray], known: dict[int, np.ndarray], taken: set
     return out
 
 
+def pair_names(vecs: list[np.ndarray], names: list, pair: tuple[int, int], known: dict[int, np.ndarray]) -> list:
+    """The two styles of a two-driver car named: one named after a tagged run of one of them makes the other the
+    teammate ("entry"); with none, the way round the known fingerprints fit better, when clearly better ("pair", with
+    each style's cosine to its driver's fingerprint where known). names: (driver, source, match) or None per style."""
+    a, b = pair
+
+    def fit(g: int, d: int) -> float:
+        return _cos(vecs[g], known[d]) if d in known else 0.0
+
+    named = [g for g in range(2) if names[g] is not None]
+    if named:
+        d = names[named[0]][0]
+        if len(named) == 1 and d in pair:
+            other = b if d == a else a
+            names[1 - named[0]] = (other, "entry", fit(1 - named[0], other) if other in known else None)
+        return names
+
+    one, two = fit(0, a) + fit(1, b), fit(0, b) + fit(1, a)
+    if abs(one - two) < DECIDE_MARGIN:
+        return names
+    first, second = (a, b) if one > two else (b, a)
+    return [(d, "pair", fit(g, d) if d in known else None) for g, d in ((0, first), (1, second))]
+
+
 def _stints(numbers: list[int], lab: list[int]) -> list[Stint]:
     """A run's laps (in order) cut where they are not consecutive, each piece given its laps' most common group,
     neighbours of one group joined and pieces too short to call joined to the longer neighbour."""
@@ -429,10 +459,11 @@ def _stints(numbers: list[int], lab: list[int]) -> list[Stint]:
 
 
 def guess(ep: EventPrint, tags: dict[int, int | None], known: dict[int, np.ndarray] | None = None,
-          max_groups: int = 3) -> Guess:
+          max_groups: int = 3, pair: tuple[int, int] | None = None) -> Guess:
     """Style groups, named where possible, and every session's stints. tags: session id -> its driver id (None when
     untagged). known: driver id -> fingerprint by kind from other events (in ep.kinds' order). max_groups: how many
-    drivers the car could have had (two in a two-driver car: a third group would be one of them on other tyres)."""
+    drivers the car could have had (two in a two-driver car: a third group would be one of them on other tyres).
+    pair: the car's two drivers, when it had exactly two (pair_names)."""
     known = known or {}
     n = len(ep.numbers)
     if n < MIN_LAPS:
@@ -458,11 +489,14 @@ def guess(ep: EventPrint, tags: dict[int, int | None], known: dict[int, np.ndarr
             if tagged:  # the tagged driver names the group most of their laps are in
                 g = int(np.bincount(lab[driver == tagged[0]], minlength=k).argmax())
                 names[g] = (tagged[0], "tag", None)
-            rest = [g for g in range(k) if names[g] is None]
-            for g, m in zip(rest, match_known([vecs[g] for g in rest], known, set(tagged)), strict=True):
-                if m is not None:
-                    names[g] = (m[0], "fingerprint", m[1])
-            named = {x[0] for x in names if x is not None}
+            if pair is not None and k == 2:
+                names = pair_names(vecs, names, pair, known)
+            else:
+                rest = [g for g in range(k) if names[g] is None]
+                for g, m in zip(rest, match_known([vecs[g] for g in rest], known, set(tagged)), strict=True):
+                    if m is not None:
+                        names[g] = (m[0], "fingerprint", m[1])
+            named = {x[0] for x in names if x is not None and (x[1] == "tag" or (x[2] or 0) >= MATCH_COS)}
             if separation < LIKELY_SPLIT and len(named) < k:  # a weak split counts only when known drivers explain it
                 found = None
             else:

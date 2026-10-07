@@ -4,7 +4,7 @@ again, and nothing set by hand is changed."""
 from datetime import date
 from functools import cache
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from tests.synthetic import simulate, write_ld
 from tests.test_imports import make_zip, upload
@@ -51,6 +51,42 @@ def _logged(name: str, venue: str | None, days: list[str], driver: str | None = 
             ids.append(s.id)
         db.commit()
         return ev.id, ids
+
+
+def _app_set(ids: list[int]) -> set[str]:
+    """How the app set these runs' drivers (driver_prints.StyleTag sources); a person's leave none."""
+    from app import driver_prints
+    from app.db import SessionLocal
+    with SessionLocal() as db:
+        return {t.source for t in driver_prints.set_by_style(db, ids).values()}
+
+
+def test_drivers_a_season_set_before_are_marked_as_the_app_s_once(client):
+    """Links made before the season's drivers were marked: their drivers stop teaching the fingerprints, once; a
+    driver a person set since stays theirs."""
+    from app import driver_prints, models, season_match
+    from app.db import SessionLocal
+    with SessionLocal() as db:
+        d = models.Driver(name="Gabriele")
+        db.add(d)
+        db.flush()
+        runs = [models.RunSession(name=f"Run {i}", driver_id=d.id) for i in range(3)]
+        db.add_all(runs)
+        db.flush()
+        row = season_match.SeasonMatch(event_id=1, kind="round", status="linked", prompt="",
+                                       done={"runs": {str(r.id): {"driver_id": d.id} for r in runs[:2]}})
+        db.add(row)
+        runs[1].driver_id = None  # cleared by a person since
+        db.commit()
+        assert season_match.mark_filled(db) == 1
+        db.commit()
+        assert {t.session_id: t.source for t in driver_prints.set_by_style(db, [r.id for r in runs]).values()} == {
+            runs[0].id: "season"}
+        db.execute(delete(driver_prints.StyleTag))  # a person's pick of the same driver since
+        db.commit()
+        assert season_match.mark_filled(db) == 0  # once per link
+        ids = [r.id for r in runs]
+    assert _app_set(ids) == set()
 
 
 def _scan() -> dict:
@@ -112,6 +148,7 @@ def test_a_test_day_before_the_round_joins_it_and_the_runs_get_the_car_and_drive
     assert info["resolved"]["team"]["name"] == "Hofor Racing"
     for run in _runs(client, job["session_ids"]).values():
         assert (run["car_id"], run["driver_id"]) == (entry["car_id"], entry["drivers"][0])  # "GABRIELE" in the log
+    assert _app_set(job["session_ids"]) == {"season"}  # the app's: it doesn't teach the driver fingerprints
     loggers = {x["serial"]: x["car_id"] for x in client.get("/garage").json()["loggers"]}
     assert loggers[12345] == entry["car_id"]  # later logs from this dash get the car by themselves
 
@@ -135,6 +172,7 @@ def test_a_test_day_before_the_round_joins_it_and_the_runs_get_the_car_and_drive
     rnd = client.get(f"/seasons/{season['id']}").json()["rounds"][0]
     assert rnd["event_id"] not in (None, ev) and rnd["made_event"]  # the round has its planned event again
     assert all(r["car_id"] is None and r["driver_id"] is None for r in _runs(client, job["session_ids"]).values())
+    assert _app_set(job["session_ids"]) == set()
     assert 12345 not in {x["serial"] for x in client.get("/garage").json()["loggers"] if x["car_id"]}
     assert _scan() == {"linked": 0, "asked": 0}
     assert client.get(f"/events/{ev}/info").json()["season"] is None

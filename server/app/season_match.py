@@ -250,19 +250,22 @@ def _round_cands(db: Session, f: _Facts) -> list[_Cand]:
 
 
 def _known_number(db: Session, series: str, year: int, event_id: int) -> str | None:
-    """Our car's number in a series' season: as the results module has it for this event (or as set by hand on it),
-    else in our season of the same series and year, else as set by hand on another event's results of that year. Never
+    """Our car's number in a series' season: as set by hand on this event's results, else in our season of the same
+    series and year, else as the results module found it for this event from our logged laps, else as set by hand on
+    another event's results of that year. Never
     from another year: numbers change from season to season (Gabriele, 2026-10-07), so then our car is looked for on
     the round's entry list by our drivers (_numbers_of)."""
     link = db.scalar(select(rm.EventResultLink).where(rm.EventResultLink.event_id == event_id))
-    if link is not None and link.car_number and (link.series == series or link.by_hand):
+    if link is not None and link.car_number and link.by_hand:
         return link.car_number
     number = db.scalar(select(seasons.Season.car_number).where(seasons.Season.series == series,
                                                                seasons.Season.year == year,
                                                                seasons.Season.car_number.is_not(None))
                        .order_by(seasons.Season.id.desc()).limit(1))
-    if number:
+    if number:  # the season's number, set by the user, before one found from our logged laps
         return number
+    if link is not None and link.car_number and link.series == series:
+        return link.car_number
     return db.scalar(select(rm.EventResultLink.car_number).where(
         rm.EventResultLink.series == series, rm.EventResultLink.year == year, rm.EventResultLink.by_hand == 1,
         rm.EventResultLink.car_number.is_not(None)).order_by(rm.EventResultLink.updated_at.desc()).limit(1))
@@ -561,8 +564,10 @@ def same_person(said: str | None, name: str | None) -> bool:
 
 def _driver_for(s: models.RunSession, drivers: list[models.Driver]) -> models.Driver | None:
     """The season's driver of a run: the one its log names, else the season's only driver (when the log names
-    nobody)."""
-    named = {n.strip() for f in s.files if isinstance(n := (f.meta or {}).get("driver"), str) and n.strip()}
+    nobody). A part of a log split at a driver change (meta "window": run_split.py) names nobody: its header names
+    one driver for the whole log."""
+    named = {n.strip() for f in s.files if isinstance(n := (f.meta or {}).get("driver"), str) and n.strip()
+             and not (f.meta or {}).get("window")}
     if named:
         hits = {d.id: d for d in drivers for n in named if same_person(n, d.name)}
         return next(iter(hits.values())) if len(hits) == 1 else None
@@ -582,8 +587,10 @@ def _entry_now(db: Session, ev: models.Event, season: seasons.Season, cache: dic
 def fill_runs(db: Session, ev: models.Event, season: seasons.Season, run_ids: list[int] | None,
               row: SeasonMatch) -> None:
     """The event's runs (or these of them) get the event's car (season_car: set on the event, else the season's), the
-    car its runs' logger, and their driver; only what a run doesn't have. Runs whose driver can't be told are left to
-    the driving style (driver_prints.settle)."""
+    car its runs' logger, and their driver; only what a run doesn't have. A driver set here is the app's (marked: it
+    never teaches the fingerprints, and the style may put it right). Runs whose driver can't be told are left to the
+    driving style (driver_prints.settle)."""
+    from app import driver_prints  # looked up when used: the tests reload it
     entry = seasons.entry_row(season.entry)
     car_id = season_car.for_event(db, ev, season)
     drivers = [d for i in entry["drivers"] if (d := db.get(models.Driver, i)) is not None]
@@ -612,17 +619,40 @@ def fill_runs(db: Session, ev: models.Event, season: seasons.Season, run_ids: li
                 need.append(s.id)
             else:
                 s.driver_id = got["driver_id"] = d.id
+                driver_prints.set_by_app(db, s, d.id, "season")  # the season's: never teaches the fingerprints
                 db.flush()
                 if s.car_id is not None:
                     garage.link_driver(db, d.id, s.car_id)
         if got:
             filled[str(s.id)] = {**filled.get(str(s.id), {}), **got}
     row.done = {**done, "runs": filled, "loggers": sorted(set(loggers)), "car_id": car_id,
-                "entry": _entry_used(car_id, drivers)}
+                "entry": _entry_used(car_id, drivers), "marked": True}
     db.flush()
     if need:
-        from app import driver_prints  # looked up when used: the tests reload it
         driver_prints.refresh_in_background()  # with the season's drivers known, the style names who it can
+
+
+def mark_filled(db: Session) -> int:
+    """Drivers set from a season before they were marked as the app's (fill_runs): marked now, once per link, where
+    the run still has that driver, so they stop teaching the fingerprints. Not committed. How many."""
+    from app import driver_prints  # looked up when used: the tests reload it
+    n = 0
+    for row in db.scalars(select(SeasonMatch).where(SeasonMatch.status.in_(("linked", "yes")),
+                                                    SeasonMatch.kind.in_(("round", "official")))).all():
+        done = row.done or {}
+        if done.get("marked"):
+            continue
+        for sid, got in (done.get("runs") or {}).items():
+            s = db.get(models.RunSession, int(sid))
+            if s is None or got.get("driver_id") is None or s.driver_id != got["driver_id"]:
+                continue
+            if driver_prints.set_by_style(db, [s.id]):
+                continue
+            driver_prints.set_by_app(db, s, s.driver_id, "season")
+            n += 1
+        row.done = {**done, "marked": True}
+    db.flush()
+    return n
 
 
 def ask_new_driver(db: Session, ev_id: int, q: dict | None) -> None:
@@ -850,6 +880,7 @@ def _make_car(db: Session, number: str, model: str | None, team: str | None) -> 
 def _undo(db: Session, row: SeasonMatch) -> None:
     """Take back a link made by itself: the runs' car and driver it filled (if still the same), the logger it fitted,
     the event's season, and the round (which gets its planned event again)."""
+    from app import driver_prints  # looked up when used: the tests reload it
     done = row.done or {}
     ev = db.get(models.Event, row.event_id)
     season = db.get(seasons.Season, done.get("season_id")) if done.get("season_id") else None
@@ -861,6 +892,7 @@ def _undo(db: Session, row: SeasonMatch) -> None:
             s.car_id = None
         if got.get("driver_id") is not None and s.driver_id == got["driver_id"]:
             s.driver_id = None
+            driver_prints.unmark(db, [s.id])
     for serial in done.get("loggers") or []:
         fitted = db.scalar(select(garage.CarLogger).where(garage.CarLogger.serial == serial))
         if fitted is not None and fitted.car_id == done.get("car_id"):
@@ -921,12 +953,8 @@ def _name_runs(db: Session, row: SeasonMatch, d: models.Driver) -> int:
         auto = db.scalar(select(driver_prints.StyleTag).where(driver_prints.StyleTag.session_id == s.id))
         if s.driver_id is not None and (auto is None or auto.driver_id != s.driver_id):
             continue  # a person's tag stands
-        if auto is not None:
-            db.delete(auto)
-        s.driver_id = d.id
+        driver_prints.picked(db, [s.id], d.id)
         n += 1
-        if s.car_id is not None:
-            garage.link_driver(db, d.id, s.car_id)
     return n
 
 

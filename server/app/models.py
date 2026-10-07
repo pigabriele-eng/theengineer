@@ -59,14 +59,14 @@ class Track(Base):
     # start/finish line for GPS lap timing, learned from the first log with a lap marker: {lat, lon, heading}
     timing_line: Mapped[dict | None] = mapped_column(JSON)
     corners: Mapped[list[Corner]] = relationship(back_populates="track", order_by="Corner.apex_m",
-                                                 cascade="all, delete-orphan")
+                                                 cascade="all, delete-orphan", lazy="selectin")
 
 
 class Corner(Base):
     """A named corner on a track, shared by debrief points and data analysis."""
     __tablename__ = "corners"
     id: Mapped[int] = mapped_column(primary_key=True)
-    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id"))
+    track_id: Mapped[int] = mapped_column(ForeignKey("tracks.id"), index=True)
     code: Mapped[str] = mapped_column(String(16))  # T1, T2, ...
     name: Mapped[str | None] = mapped_column(String(120))  # Grundig hairpin
     apex_m: Mapped[float | None] = mapped_column(Float)
@@ -96,35 +96,36 @@ class Event(Base):
     series: Mapped[str | None] = mapped_column(String(80))  # GTWC, NLS, GT4 Germany, ...
     track_id: Mapped[int | None] = mapped_column(ForeignKey("tracks.id"))
     date: Mapped[date | None] = mapped_column(Date)
-    track: Mapped[Track | None] = relationship()
+    track: Mapped[Track | None] = relationship(lazy="joined")
 
 
 class RunSession(Base):
     __tablename__ = "run_sessions"
     id: Mapped[int] = mapped_column(primary_key=True)
-    event_id: Mapped[int | None] = mapped_column(ForeignKey("events.id"))
+    event_id: Mapped[int | None] = mapped_column(ForeignKey("events.id"), index=True)
     kind: Mapped[SessionKind] = mapped_column(Enum(SessionKind), default=SessionKind.test)
     name: Mapped[str | None] = mapped_column(String(120))  # "FP2", "Run 3"
-    car_id: Mapped[int | None] = mapped_column(ForeignKey("cars.id"))
-    driver_id: Mapped[int | None] = mapped_column(ForeignKey("drivers.id"))
+    car_id: Mapped[int | None] = mapped_column(ForeignKey("cars.id"), index=True)
+    driver_id: Mapped[int | None] = mapped_column(ForeignKey("drivers.id"), index=True)
     track_temp_c: Mapped[float | None] = mapped_column(Float)
     ambient_temp_c: Mapped[float | None] = mapped_column(Float)
     tyre_set: Mapped[str | None] = mapped_column(String(60))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
-    event: Mapped[Event | None] = relationship()
-    car: Mapped[Car | None] = relationship()
-    driver: Mapped[Driver | None] = relationship()
-    files: Mapped[list[LoggerFile]] = relationship(back_populates="session", cascade="all, delete-orphan")
+    event: Mapped[Event | None] = relationship(lazy="joined")
+    car: Mapped[Car | None] = relationship(lazy="joined")
+    driver: Mapped[Driver | None] = relationship(lazy="joined")
+    files: Mapped[list[LoggerFile]] = relationship(back_populates="session", cascade="all, delete-orphan",
+                                                   lazy="selectin")
     laps: Mapped[list[Lap]] = relationship(back_populates="session", order_by="Lap.number",
-                                           cascade="all, delete-orphan")
+                                           cascade="all, delete-orphan", lazy="selectin")
     debriefs: Mapped[list[Debrief]] = relationship(back_populates="session", cascade="all, delete-orphan")
 
 
 class LoggerFile(Base):
     __tablename__ = "logger_files"
     id: Mapped[int] = mapped_column(primary_key=True)
-    session_id: Mapped[int] = mapped_column(ForeignKey("run_sessions.id"))
+    session_id: Mapped[int] = mapped_column(ForeignKey("run_sessions.id"), index=True)
     logger: Mapped[str] = mapped_column(String(20))  # motec, vbox, windarab
     filename: Mapped[str] = mapped_column(String(255))
     path: Mapped[str] = mapped_column(String(512))
@@ -136,8 +137,8 @@ class LoggerFile(Base):
 class Lap(Base):
     __tablename__ = "laps"
     id: Mapped[int] = mapped_column(primary_key=True)
-    session_id: Mapped[int] = mapped_column(ForeignKey("run_sessions.id"))
-    file_id: Mapped[int] = mapped_column(ForeignKey("logger_files.id"))
+    session_id: Mapped[int] = mapped_column(ForeignKey("run_sessions.id"), index=True)
+    file_id: Mapped[int] = mapped_column(ForeignKey("logger_files.id"), index=True)
     number: Mapped[int] = mapped_column(Integer)
     time_s: Mapped[float] = mapped_column(Float)
     start_s: Mapped[float] = mapped_column(Float)  # seconds from the start of the logger file
@@ -148,7 +149,7 @@ class Lap(Base):
 class Debrief(Base):
     __tablename__ = "debriefs"
     id: Mapped[int] = mapped_column(primary_key=True)
-    session_id: Mapped[int] = mapped_column(ForeignKey("run_sessions.id"))
+    session_id: Mapped[int] = mapped_column(ForeignKey("run_sessions.id"), index=True)
     mode: Mapped[DebriefMode] = mapped_column(Enum(DebriefMode), default=DebriefMode.individual)
     language: Mapped[str] = mapped_column(String(8), default="en")
     status: Mapped[DebriefStatus] = mapped_column(Enum(DebriefStatus), default=DebriefStatus.ready)
@@ -169,7 +170,7 @@ class DebriefPoint(Base):
     """One statement from a debrief, tagged so it can be compared with data and other debriefs."""
     __tablename__ = "debrief_points"
     id: Mapped[int] = mapped_column(primary_key=True)
-    debrief_id: Mapped[int] = mapped_column(ForeignKey("debriefs.id"))
+    debrief_id: Mapped[int] = mapped_column(ForeignKey("debriefs.id"), index=True)
     section: Mapped[str] = mapped_column(String(40))  # balance, tyres, brakes, ... (report sections)
     text: Mapped[str] = mapped_column(Text)
     speaker_driver_id: Mapped[int | None] = mapped_column(ForeignKey("drivers.id"))
@@ -362,7 +363,7 @@ class CalendarEntry(Base):
     start: Mapped[date] = mapped_column(Date)
     end: Mapped[date] = mapped_column(Date)  # the last day
     included: Mapped[bool] = mapped_column(default=True)  # off: no event for it, until switched on again
-    event_id: Mapped[int | None] = mapped_column(Integer)
+    event_id: Mapped[int | None] = mapped_column(Integer, index=True)
     made_event: Mapped[bool] = mapped_column(default=False)  # the sync made the event (not one already there)
     named: Mapped[str | None] = mapped_column(String(160))  # the name the sync gave the event; another: renamed by hand
     seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

@@ -133,7 +133,7 @@ def summarize(runs: list[Run]) -> dict:
                 "clean_laps": len(cl), "mean_clean": round(float(times.mean()), 3),
                 "spread_clean": round(float(times.std()), 3),
                 "theoretical_best": round(sum(min(seg[(r.name, l.number)][c.code]["time"] for l in cl)
-                                              for c in corners), 3),
+                                              for c in corners), 3) if corners else None,
                 # where this run's best lap loses to the reference lap, corner by corner
                 "best_vs_reference": {c.code: round(seg[(r.name, best.number)][c.code]["time"]
                                                     - seg[(ref_run.name, ref_lap.number)][c.code]["time"], 3)

@@ -347,3 +347,9 @@ def test_quali_session_names():
     for name in ("R1", "04_R1", "FP1", "Long run", "L1", "Equal", "Torque"):
         assert not tp.is_quali_session({"name": name}), name
     assert tp.is_quali_session({"name": "Run 3", "kind": "qualifying"})
+
+
+def test_runs_with_a_creep_between_two_stops_at_the_end():
+    # a stop, a 15 km/h creep, then another stop: the first stop ends on the last moving sample
+    v = np.array([0.0] * 20 + [120.0] * 980 + [0.0] * 300 + [15.0] + [0.0] * 200)
+    assert tp._runs({"speed": v, "t": np.arange(len(v)) / HZ}, [], None, None, None, None) == []

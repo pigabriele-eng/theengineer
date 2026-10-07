@@ -30,6 +30,22 @@ def test_session_upload_analysis_and_debrief(client):
     assert client.get(f"/sessions/{s['id']}/debriefs").json()[0]["points"][0]["phase"] == "entry"
 
 
+def test_a_track_s_corners_can_be_replaced_after_a_debrief_named_one(client):
+    from app import models
+    from app.db import SessionLocal
+
+    track = client.post("/tracks", json={"name": "Norisring", "corners": [{"code": "T1", "name": "Grundig"}]}).json()
+    s = client.post("/sessions", json={}).json()
+    r = client.post(f"/sessions/{s['id']}/debriefs", json={"mode": "individual", "points": [
+        {"section": "balance", "text": "Entry understeer", "corner_id": track["corners"][0]["id"]}]})
+    assert r.status_code == 201, r.text
+    r = client.put(f"/tracks/{track['id']}/corners", json=[{"code": "T1"}, {"code": "T2"}])
+    assert r.status_code == 200, r.text
+    with SessionLocal() as db:  # no link left to the deleted corner (Postgres refuses one), its code kept
+        (point,) = db.query(models.DebriefPoint).all()
+        assert (point.corner_id, point.corner_code) == (None, "T1")
+
+
 def test_rejects_unsupported_files(client):
     s = client.post("/sessions", json={}).json()
     r = client.post(f"/sessions/{s['id']}/files", files={"file": ("run.xrk", b"a,b")})

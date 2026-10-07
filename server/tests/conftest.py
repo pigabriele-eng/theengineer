@@ -1,12 +1,69 @@
 import gc
+import json
 import os
 import shutil
 import tempfile
 import time
 from functools import cache
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+
+# CI runs the suite in a few parallel jobs, each one part of the test files (pytest --shard 2/4 runs the second of
+# four parts). The parts are made of whole files, so a file's module fixtures are built in one job only, and of about
+# equal time by the seconds each file took (tests/durations.json; a file not in it counts as an average one).
+# `pytest -n auto --store-durations` writes that table again after tests were added or got slower.
+DURATIONS = Path(__file__).with_name("durations.json")
+
+
+def pytest_addoption(parser):
+    parser.addoption("--shard", metavar="I/N", help="run only part I of N (1 to N) of the test files")
+    parser.addoption("--store-durations", action="store_true", help="write each file's seconds to tests/durations.json")
+
+
+def _test_file(nodeid: str) -> str:
+    return nodeid.split("::", 1)[0]
+
+
+def split_files(files: list[str], seconds: dict[str, float], parts: int) -> list[list[str]]:
+    """The files in `parts` parts of about equal time: the longest file first, each into the part with least time."""
+    known = [seconds[f] for f in files if f in seconds]
+    average = sum(known) / len(known) if known else 1.0
+    load, split = [0.0] * parts, [[] for _ in range(parts)]
+    for f in sorted(files, key=lambda f: (-seconds.get(f, average), f)):
+        i = load.index(min(load))
+        load[i] += seconds.get(f, average)
+        split[i].append(f)
+    return split
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config, items):
+    shard = config.getoption("shard")
+    if not shard:
+        return
+    index, parts = (int(n) for n in shard.split("/"))
+    if not 1 <= index <= parts:
+        raise pytest.UsageError(f"--shard {shard}: the part goes from 1 to {parts}")
+    seconds = json.loads(DURATIONS.read_text()) if DURATIONS.exists() else {}
+    mine = set(split_files(sorted({_test_file(i.nodeid) for i in items}), seconds, parts)[index - 1])
+    config.hook.pytest_deselected(items=[i for i in items if _test_file(i.nodeid) not in mine])
+    items[:] = [i for i in items if _test_file(i.nodeid) in mine]
+
+
+_file_seconds: dict[str, float] = {}
+
+
+def pytest_runtest_logreport(report):
+    _file_seconds[_test_file(report.nodeid)] = _file_seconds.get(_test_file(report.nodeid), 0.0) + report.duration
+
+
+def pytest_sessionfinish(session):
+    # with pytest-xdist the workers' reports all reach the main process, which writes the table
+    if session.config.getoption("store_durations") and not hasattr(session.config, "workerinput"):
+        DURATIONS.write_text(json.dumps({f: round(s, 1) for f, s in sorted(_file_seconds.items())}, indent=1) + "\n")
+
 
 # Set TEST_DATABASE_URL to a throwaway Postgres database to run the API tests against Postgres instead of SQLite
 # (its tables are dropped before every test).
@@ -57,6 +114,7 @@ def client(tmp_path, monkeypatch):
                 "ALLOWED_EMAILS"):
         monkeypatch.delenv(key, raising=False)  # sign-in off, files on the local disk
     monkeypatch.setenv("PREBUILD", "off")  # only its own tests turn it on (tests/test_prebuild.py)
+    monkeypatch.setenv("RUN_DUPES", "off")  # the same sample log is uploaded many times; tests/test_run_dupes.py on
     import importlib
 
     import app.db

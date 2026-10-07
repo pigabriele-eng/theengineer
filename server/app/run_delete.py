@@ -42,7 +42,7 @@ def _parse(text: str) -> list[int]:
     return ids
 
 
-def _runs(db: Session, ids: list[int]) -> list[tuple[int, str, int | None]]:
+def _runs(db: Session, ids: list[int]) -> list[tuple[int, str | None, int | None]]:
     """(id, name, event id) of each run, in the order asked; 404 for one that doesn't exist."""
     rows = {r.id: (r.id, r.name, r.event_id) for r in db.execute(
         select(models.RunSession.id, models.RunSession.name, models.RunSession.event_id)
@@ -53,8 +53,8 @@ def _runs(db: Session, ids: list[int]) -> list[tuple[int, str, int | None]]:
     return [rows[i] for i in ids]
 
 
-def _name(runs: list[tuple[int, str, int | None]]) -> str:
-    names = [name for _, name, _ in runs]
+def _name(runs: list[tuple[int, str | None, int | None]]) -> str:
+    names = [name or f"run {i}" for i, name, _ in runs]  # a run made without a name has none
     return ", ".join(names[:6]) + (f" and {len(names) - 6} more" if len(names) > 6 else "")
 
 

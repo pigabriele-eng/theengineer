@@ -63,7 +63,7 @@ export type Analysis = {
   file_id: number;
   reference_lap: number;
   length_m: number;
-  theoretical_best: number;
+  theoretical_best: number | null; // null when the reference lap has no corner
   numbering?: CornerNumbering; // absent when the log has no clean lap
   corners: (CornerSpan & { best_lap: number; laps: Record<string, CornerMetrics> })[];
 };

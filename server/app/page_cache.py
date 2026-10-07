@@ -1,13 +1,13 @@
 """Answers of the pages that read a log, kept in the database (table page_cache) so they open at once.
 
-A session's insights, lap analysis, stint view, track map and track shape, an event's track shape and each session's
-tyre prep reduction are worked out from the logs: seconds each on a fast machine, far longer on the hosted server,
-which also has to download the log first. Each answer is kept with a signature of everything it was made from (the
-log and its stored path, its laps as stored, the car's channel map, the track's start/finish line and corners, and
-the page's version below); the next request with the same signature answers from here, without reading the log and
-without waiting for the server's heavy-work lock (app/heavy.py). When anything changes the signature no longer
-matches, and the answer is worked out again as before and kept. The prebuild (app/prebuild.py) fills this in the
-background right after logs are uploaded.
+A session's insights, lap analysis, lap comparisons, stint view, track map and track shape, an event's track shape and
+each session's tyre prep reduction are worked out from the logs: seconds each on a fast machine, far longer on the
+hosted server, which also has to download the log first. Each answer is kept with a signature of everything it was
+made from (the log and its stored path, its laps as stored, the car's channel map, the track's start/finish line and
+corners, and the page's version below); the next request with the same signature answers from here, without reading
+the log and without waiting for the server's heavy-work lock (app/heavy.py). When anything changes the signature no
+longer matches, and the answer is worked out again as before and kept. The prebuild (app/prebuild.py) fills this in
+the background right after logs are uploaded.
 
 Rows are keyed by a scope that starts with the run or event they belong to ("session:7|analysis", "event:1|shape"),
 so deleting an event or a run (app/event_delete.py) deletes them with it.
@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import zlib
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -33,7 +34,8 @@ from app.db import Base
 log = logging.getLogger(__name__)
 
 # Raise a page's version when what it answers changes, so every kept answer of that page is worked out again.
-VERSIONS = {"insights": 1, "analysis": 1, "stint": 1, "map": 1, "shape": 1, "tyreprep": 1, "grip": 1, "balance": 1}
+VERSIONS = {"insights": 1, "analysis": 1, "compare": 1, "stint": 1, "map": 1, "shape": 1, "tyreprep": 1, "grip": 1,
+            "balance": 1}
 KEPT_ERRORS = (404, 422)  # answers that say what a log can't give (no lap, no GPS): the same log gives the same answer
 
 
@@ -104,7 +106,7 @@ def sessions_part(db: Session, sessions: list[models.RunSession]) -> list:
 
 
 def _pack(x) -> bytes:
-    return zlib.compress(json.dumps(x, separators=(",", ":"), default=_plain).encode(), 6)
+    return zlib.compress(json.dumps(_finite(x), separators=(",", ":"), default=_plain).encode(), 6)
 
 
 def _plain(x):
@@ -113,9 +115,22 @@ def _plain(x):
     return str(x)
 
 
+def _finite(x):
+    """NaN and infinity as None: the API answers without them (a kept NaN would fail every request after)."""
+    if isinstance(x, dict):
+        return {k: _finite(v) for k, v in x.items()}
+    if isinstance(x, list | tuple):
+        return [_finite(v) for v in x]
+    if isinstance(x, float):
+        return x if math.isfinite(x) else None
+    if hasattr(x, "tolist"):  # numpy numbers and arrays
+        return _finite(x.tolist())
+    return x
+
+
 def plain(x):
-    """The value as it reads back from here (lists for tuples and arrays, string keys)."""
-    return json.loads(json.dumps(x, default=_plain))
+    """The value as it reads back from here (lists for tuples and arrays, string keys, None for NaN)."""
+    return json.loads(json.dumps(_finite(x), default=_plain))
 
 
 def lookup(db: Session, scope: str, sig: str) -> tuple[int, object] | None:
@@ -163,6 +178,8 @@ def cached(db: Session, scope: str, sig: Callable[[], str], work: Callable[[], o
     hit = lookup(db, scope, sig())
     if hit is not None:
         return _answer(hit)
+    if locked:
+        db.commit()  # hands the database connection back while this waits its turn: the pool is small
     with heavy.lock if locked else nullcontext():
         if locked:
             hit = lookup(db, scope, sig())

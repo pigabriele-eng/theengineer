@@ -35,6 +35,8 @@ MIN_LAPS_FOR_TRENDS = 8
 LIMIT_LAPS_WITHIN = 0.02  # the car's limits come from laps this close to the quickest
 MIN_LIMIT_LAPS = 3
 SHAPE_LAPS = 40  # the road's shape is read from the quickest laps, at most this many
+FLAT_OUT_PCT, FLAT_OUT_SHARE = 98.0, 0.95  # a section at this throttle over this share of it is flat out
+OFF_LINE_KMH = 20.0  # a lap whose speed is this far from the fastest lap's on average (km/h) is off the line
 SIGNIFICANT_P = 0.01
 
 
@@ -149,11 +151,13 @@ def targets(laps: list, reference: dict[str, np.ndarray], lap_time: float,
     trace has no "t"); reference: the fastest lap's trace, lap_time its time. Each target is the fastest lap's real
     time at every metre, less what perfect driving at the target's limits gains there over perfect driving at that
     lap's own limits (lapsim.Calibration): the model's own error cancels, and neither target is slower than the
-    fastest lap anywhere, nor through any of the sections. The theoretical lap is also never slower than the best
-    pass through a section: that is what a lap has really shown there.
+    fastest lap anywhere, nor through any of the sections. Through every section the theoretical lap takes exactly
+    the best pass a lap has really made there (the model alone would be quicker than anything the car and tyres have
+    shown), and the realistic target is never quicker than that.
 
     The road's shape comes from the quickest laps (SHAPE_LAPS): grip is compared per unit of its load where it is
     known, and its banked corners, crests and compressions lend their grip to no other place."""
+    laps = _matching(laps, reference)
     traces = [x.trace for x in _limit_laps(laps)]
     shape = road_shape(laps)
     load, shaped = on_line(shape, len(traces[0]["speed"]))
@@ -165,10 +169,36 @@ def targets(laps: list, reference: dict[str, np.ndarray], lap_time: float,
     if sections:
         def best(ts: list[np.ndarray]) -> list[tuple[int, int, float]]:
             return [(s.start, s.end, min(float(t[s.end] - t[s.start]) for t in ts)) for s in sections]
-        cal_p = cal.to_best(raw, best([_times(x) for x in laps]))
-        cal_h = cal.to_best(raw_held, best([np.asarray(reference["t"], float)]))  # the fastest lap's own, as timed
+        passes = best([_times(x) for x in laps])
+        # a flat-out section is only as quick as the speed carried into it: a pass with more (a tow, another lap's
+        # exit) is no floor for it, so there the model alone shapes the lap, never quicker than that pass
+        floor = [p for p, s in zip(passes, sections, strict=True) if not _flat_out(reference, s)]
+        # the theoretical lap takes exactly the best pass the car has really made through every section: the model
+        # only shapes the speed inside it (it ran up to ~0.5 s a lap quicker than any pass ever driven); the
+        # realistic target is never slower than the fastest lap's own pass, nor quicker than the best one
+        cal_p = cal.to_best(raw, floor, cap=passes)
+        cal_h = cal.to_best(raw_held, best([np.asarray(reference["t"], float)]), cap=passes)
     return Targets(car_limits(traces, load, shaped), perfect, held, cal_p.target(raw), cal_h.target(raw_held), cal_p,
                    cal_h, shape)
+
+
+def _flat_out(reference: dict[str, np.ndarray], s: Section) -> bool:
+    """The fastest lap is at full throttle through (nearly) all of the section."""
+    thr = reference.get("throttle")
+    if thr is None or s.end <= s.start:
+        return False
+    return float(np.mean(np.asarray(thr[s.start:s.end], float) >= FLAT_OUT_PCT)) >= FLAT_OUT_SHARE
+
+
+def _matching(laps: list, reference: dict[str, np.ndarray]) -> list:
+    """The laps whose speed follows the fastest lap's along the line. A log whose distance or speed is off (a lap
+    counted from the wrong place, a speed channel in other units) would otherwise lend the targets passes and grip
+    the car never showed: a whole Hockenheim session ran 45 km/h off on average, and made the theoretical lap 11 s
+    quicker than the fastest lap."""
+    ref = np.asarray(reference["speed"], float)
+    keep = [x for x in laps if float(np.nanmean(np.abs(np.asarray(x.trace["speed"], float)[:len(ref)] - ref)))
+            <= OFF_LINE_KMH]
+    return keep or laps
 
 
 def _limit_laps(laps: list[LapRecord]) -> list[LapRecord]:

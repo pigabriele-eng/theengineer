@@ -38,8 +38,10 @@ def _track(db: Session, s: models.RunSession, f: models.LoggerFile) -> models.Tr
 
 def _key(s: models.RunSession, logs: list[models.LoggerFile], main: models.LoggerFile, line) -> tuple:
     cmap = _channel_map(s)
-    return (s.id, tuple((f.id, f.path) for f in logs), main.id, repr(main.meta.get("beacons")),
-            repr(line), repr(sorted(cmap.items()) if cmap else None), s.ambient_temp_c, s.track_temp_c)
+    key = (s.id, tuple((f.id, f.path) for f in logs), main.id, repr(main.meta.get("beacons")),
+           repr(line), repr(sorted(cmap.items()) if cmap else None), s.ambient_temp_c, s.track_temp_c)
+    w = main.meta.get("window")  # the part of the log a run split from a longer one reads (run_split.py)
+    return (*key, tuple(w)) if w else key
 
 
 def _summarise(s: models.RunSession, main: models.LoggerFile, line) -> dict | None:

@@ -26,25 +26,29 @@ export default function FingerprintsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const live = useRef(true); // false once the page is gone: an answer still on its way is dropped, not polled on
 
   const load = useCallback(() => {
     fingerprintsApi.all().then(
       (d) => {
+        if (!live.current) return;
         setDb(d);
         setError(null);
         if (timer.current) clearTimeout(timer.current);
         if (d.updating) timer.current = setTimeout(load, POLL_MS); // the latest uploads are still being added
       },
-      (e) => setError((e as Error).message),
+      (e) => live.current && setError((e as Error).message),
     );
   }, []);
   const loadDrivers = useCallback(() => {
-    driversApi.list().then(setDrivers, () => setDrivers([]));
+    driversApi.list().then((d) => live.current && setDrivers(d), () => live.current && setDrivers([]));
   }, []);
   useEffect(() => {
+    live.current = true;
     load();
     loadDrivers();
     return () => {
+      live.current = false;
       if (timer.current) clearTimeout(timer.current);
     };
   }, [load, loadDrivers]);

@@ -40,18 +40,41 @@ ROLES = {"speed", "lat", "lon"}  # all a verdict reads from a log
 _thread: threading.Thread | None = None
 
 
+def _set_by_the_app(db: Session, s: models.RunSession) -> set[str]:
+    """What the app itself filled in on a run: its driver from the driving style (driver_prints.py) or the season's
+    entry (season_match.py), its kind from the official timetable (results/run_names.py)."""
+    from app import driver_prints, season_match  # here: they import the routers
+    from app.results import models as rm
+
+    out = set()
+    if db.scalar(select(driver_prints.StyleTag.id).where(driver_prints.StyleTag.session_id == s.id)) is not None:
+        out.add("driver")
+    for done in db.scalars(select(season_match.SeasonMatch.done)):
+        if "driver_id" in ((done or {}).get("runs") or {}).get(str(s.id), {}):
+            out.add("driver")
+    mark = db.scalar(select(rm.RunNameMark).where(rm.RunNameMark.session_id == s.id))
+    if mark is not None and mark.auto_name and not mark.by_hand:
+        out.add("kind")
+    return out
+
+
 def entered_by_hand(db: Session, s: models.RunSession) -> str | None:
     """What the user put on the session, if anything: such a session is never removed. An import makes a session
-    of kind test with no driver, car, conditions or tyres; the app has no way to rename one."""
+    of kind test with no driver, car, conditions or tyres. The car isn't counted: the app fills it in from the
+    logger's serial and the season (garage.py, season_match.py); nor a driver or kind the app filled in itself."""
+    from app.results import models as rm
+
     if s.debriefs:
         return "a debrief"
     if db.scalar(select(setup_models.SessionSetup.id).where(setup_models.SessionSetup.session_id == s.id)) is not None:
         return "a setup sheet"
-    if s.driver_id is not None:
+    mark = db.scalar(select(rm.RunNameMark).where(rm.RunNameMark.session_id == s.id))
+    if mark is not None and mark.by_hand:
+        return "a name typed for it"
+    auto = _set_by_the_app(db, s) if s.driver_id is not None or s.kind != models.SessionKind.test else set()
+    if s.driver_id is not None and "driver" not in auto:
         return "a driver"
-    if s.car_id is not None:
-        return "a car"
-    if s.kind != models.SessionKind.test:
+    if s.kind != models.SessionKind.test and "kind" not in auto:
         return f"the kind {s.kind}"
     if s.track_temp_c is not None or s.ambient_temp_c is not None:
         return "temperatures"
@@ -146,10 +169,13 @@ def check_session(session_id: int) -> str | None:
 
 def remove_session(db: Session, s: models.RunSession) -> list[str]:
     """Delete the session with its laps and files, and every cached result made from it. Returns the storage keys
-    to delete once this is committed. Not committed."""
+    to delete once this is committed (not a log another run still reads: runs split from one log share it,
+    run_split.py). Not committed."""
     sid, eid = s.id, s.event_id
     file_ids = [f.id for f in s.files]
-    keys = [f.path for f in s.files]
+    shared = set(db.scalars(select(models.LoggerFile.path).where(
+        models.LoggerFile.path.in_([f.path for f in s.files]), models.LoggerFile.id.not_in(file_ids))))
+    keys = [f.path for f in s.files if f.path not in shared]
     for row in db.scalars(select(models.TyreData).where(or_(models.TyreData.session_id == sid,
                                                             models.TyreData.file_id.in_(file_ids)))):
         db.delete(row)
