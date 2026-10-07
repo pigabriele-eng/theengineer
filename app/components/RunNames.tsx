@@ -94,7 +94,7 @@ function Question({ q, onDone }: { q: RunNameQuestion; onDone: (text: string, le
 const useStyles = themed((c) => ({
   list: { gap: 18 },
   question: { alignSelf: 'stretch', gap: 10, borderTopWidth: 3, borderColor: c.rule, paddingTop: 10 },
-  kind: { color: c.mark },
+  kind: { color: c.error }, // red words: the red that reads as text
   prompt: { fontFamily: Fonts.display, fontSize: 24, lineHeight: 28, textTransform: 'uppercase', color: c.text },
   promptPhone: { fontFamily: Fonts.display, fontSize: 19, lineHeight: 23, textTransform: 'uppercase', color: c.text },
   answers: { marginTop: 6 },
