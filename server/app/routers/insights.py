@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app import lappacks, models
+from app import lappacks, models, page_cache
 from app.analysis.balance import car_geometry
 from app.analysis.compare import ROLES as COMPARE_ROLES
 from app.analysis.compare import RunSource, compare_groups
@@ -53,11 +53,17 @@ def _runs(db: Session, session_ids: list[int]) -> tuple[list[RunInput], models.T
 
 
 @router.get("/sessions/{session_id}/insights")
-@one_at_a_time
 def session_insights(session_id: int, db: Session = Depends(get_db)):
-    """Lap time opportunities, driving trends, setup checks and driver scores for one session."""
-    runs, track = _runs(db, [session_id])
-    return analyze_runs(runs, official_corners(track), drop_channels=True)
+    """Lap time opportunities, driving trends, setup checks and driver scores for one session; kept once worked
+    out (app/page_cache.py)."""
+    s = _get(db, session_id)
+
+    def work() -> dict:
+        runs, track = _runs(db, [s.id])
+        return analyze_runs(runs, official_corners(track), drop_channels=True)
+
+    return page_cache.cached(db, f"session:{s.id}|insights",
+                             lambda: page_cache.session_signature(db, "insights", s, main_file(s)), work)
 
 
 class InsightsIn(BaseModel):

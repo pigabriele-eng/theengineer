@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import heavy, models
+from app import heavy, models, page_cache
 from app.analysis.laps import split_laps
 from app.analysis.tyreprep import aggregate, log_channels, reduce_session
 from app.db import get_db
@@ -67,21 +67,35 @@ def _reduce(db: Session, s: models.RunSession) -> tuple[dict | None, str | None]
         if key in _cache:
             _cache.move_to_end(key)
             return _cache[key], None
-    # one log in memory at a time across every request and import; letting go hands its memory back
-    with heavy.lock:
-        with _cache_lock:  # a request that waited its turn may find this session reduced already
-            if key in _cache:
-                return _cache[key], None
-        try:
-            out = _summarise(s, main, line)
-            if out is None:
-                return None, "no speed channel"
-            out["pressure_runs"] = logged_runs(db, session_ids=[s.id])
-        except (LdFormatError, OSError, ValueError) as e:
-            return None, f"the log can't be read ({e})"
-        except Exception:  # one log the analysis trips on leaves that session out, not the whole event
-            log.exception("Tyre prep: session %s left out", s.id)
-            return None, "the analysis couldn't make sense of this log"
+    # kept in the database too (app/page_cache.py), so it outlives a restart; the pressure runs name the session and
+    # its logs, so their names are in the signature as well
+    scope = f"session:{s.id}|tyreprep"
+    sig = page_cache.signature("tyreprep", key, s.name, [f.filename for f in logs])
+    hit = page_cache.lookup(db, scope, sig)
+    if hit is None:
+        # one log in memory at a time across every request and import; letting go hands its memory back
+        with heavy.lock:
+            with _cache_lock:  # a request that waited its turn may find this session reduced already
+                if key in _cache:
+                    return _cache[key], None
+            hit = page_cache.lookup(db, scope, sig)
+            if hit is None:
+                try:
+                    out = _summarise(s, main, line)
+                    if out is None:
+                        return None, "no speed channel"
+                    out["pressure_runs"] = logged_runs(db, session_ids=[s.id])
+                except (LdFormatError, OSError, ValueError) as e:
+                    return None, f"the log can't be read ({e})"
+                except Exception:  # one log the analysis trips on leaves that session out, not the whole event
+                    log.exception("Tyre prep: session %s left out", s.id)
+                    return None, "the analysis couldn't make sense of this log"
+        if hit is None:
+            page_cache.store(db, scope, sig, out)
+    if hit is not None:
+        out = hit[1]
+    else:
+        out = page_cache.plain(out)  # as it reads back from the database, so both give the same report
     with _cache_lock:
         _cache[key] = out
         while len(_cache) > CACHE_SIZE:

@@ -17,6 +17,7 @@ import {
   TcZone,
   Verdict,
 } from '@/lib/grip';
+import { noPrint } from '@/lib/print';
 
 import { ChartColors, Dumbbell, GgDiagram, GripMap, inkOn, LegendItem, ramp, Scatter, useChartColors } from './GripCharts';
 import { Fonts, themed, Type } from '@/constants/Theme';
@@ -323,7 +324,8 @@ function GgBlock({ data, c, sectionAt }: { data: GripResult; c: ChartColors; sec
       <Text style={styles.h3}>The g-g diagram and the grip limit</Text>
       <View style={styles.tabs}>
         {lim.bands_kmh.map((b, i) => (
-          <Pressable key={i} onPress={() => setBand(i)} style={i === band ? [styles.tab, { borderColor: c.ink }] : styles.tab}>
+          <Pressable key={i} onPress={() => setBand(i)} {...(i === band ? null : noPrint)}
+            style={i === band ? [styles.tab, { borderColor: c.ink }] : styles.tab}>
             <Text style={i === band ? styles.tabOn : styles.tabText}>{label(b)}</Text>
           </Pressable>
         ))}

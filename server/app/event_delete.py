@@ -276,8 +276,9 @@ def _forget(folder: str, file_ids: set[int], keys: list[str]) -> None:
 
 def _busy() -> bool:
     """Analysis jobs queued or running (they may have read the event's runs before it went)."""
+    from app import prebuild
     from app.routers import prep, reports, technique
-    return any(m._jobs.unfinished_tasks for m in (reports, technique, prep))
+    return any(m._jobs.unfinished_tasks for m in (reports, technique, prep)) or bool(prebuild._queue.unfinished_tasks)
 
 
 def _event_or_404(db: Session, event_id: int) -> models.Event:

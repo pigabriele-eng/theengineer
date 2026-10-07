@@ -16,6 +16,7 @@ import {
   Opportunity,
   TraceRole,
 } from '@/lib/compare';
+import { noPrint } from '@/lib/print';
 import { deltaColor, deltaWash, face, Fonts, phaseColor, themed, Type, useTheme } from '@/constants/Theme';
 
 // Colours of the laps in a result, by the slot each lap was given when it was picked.
@@ -92,7 +93,7 @@ export const WhereTheTimeIs = memo(function WhereTheTimeIs({ data, colors, focus
                 </View>
                 <Text style={t.body}>{sentence(o)}</Text>
                 <Swatch color={phaseColor(theme, o.phase)} label={`Mostly ${o.phase}`} width={14} height={10} />
-                <Text style={styles.show}>Show on the traces →</Text>
+                <Text style={styles.show} {...noPrint}>Show on the traces →</Text>
               </Pressable>
             );
           })}

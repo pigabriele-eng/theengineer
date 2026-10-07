@@ -2,6 +2,7 @@ import { Link, Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Fragment, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, LayoutChangeEvent, Pressable, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 
+import PrintButton from '@/components/PrintButton';
 import {
   B, Block, Colophon, Fig, Folio, Hero, Label, Page, Section, Swatch, TextLink, useGutter, useWide,
 } from '@/components/Programme';
@@ -14,6 +15,7 @@ import { useEventFolder, useSessionEvent } from '@/components/SessionSwitcher';
 import { Text, View } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
 import { formatLap } from '@/lib/api';
+import { noPrint } from '@/lib/print';
 import { dateRange, sessionsInOrder } from '@/lib/events';
 import { TrackShapeData } from '@/lib/trackshape';
 import {
@@ -169,6 +171,7 @@ export default function ReportScreen() {
   const track = answer?.track ?? folder?.track ?? null;
   const runs = report?.runs_analysed ?? 0;
   const dates = folder ? dateRange(folder.start, folder.end) : null;
+  const pdfName = [isEvent ? 'Event report' : 'Session report', answer?.title ?? folder?.name].filter(Boolean).join(' · ');
 
   const top = (
     <View onLayout={(e: LayoutChangeEvent) => setTopH(e.nativeEvent.layout.height)}>
@@ -293,7 +296,7 @@ export default function ReportScreen() {
     <Page top={top} scrollRef={scroll}>
       <Stack.Screen options={{ title: answer ? `Report · ${answer.title}` : 'Report' }} />
       {folder && folder.id != null && (
-        <ScopeBar folder={folder} current={'session' in scope ? scope.session : null} scope={scope}
+        <ScopeBar folder={folder} current={'session' in scope ? scope.session : null} scope={scope} pdfName={pdfName}
           onWhole={() => router.setParams({ event: String(folder.id), session: undefined })}
           onPick={(id) => router.setParams({ session: String(id), event: undefined })} />
       )}
@@ -324,10 +327,15 @@ export default function ReportScreen() {
           These numbers are from before the sessions last changed; the new report replaces them when it is ready.
         </Text>
       )}
-      {!folder && hasLaps && (
-        <View style={styles.quali}>
-          <TextLink href={{ pathname: '/technique', params: isEvent ? { event: scope.event } : { session: scope.session } }}
-            label="Technique check" arrow />
+      {!folder && (
+        <View style={styles.headLinks}>
+          {hasLaps && (
+            <View {...noPrint}>
+              <TextLink href={{ pathname: '/technique', params: isEvent ? { event: scope.event } : { session: scope.session } }}
+                label="Technique check" arrow />
+            </View>
+          )}
+          <PrintButton title={pdfName} />
         </View>
       )}
       {/* The core report answers at once from the server's cache; the map and the other sections load themselves
@@ -350,10 +358,11 @@ function sectionTones(theme: Palette, report: Report): Record<string, string> {
 
 // ---------- the scope: whole event or one session ----------
 
-function ScopeBar({ folder, current, scope, onWhole, onPick }: {
+function ScopeBar({ folder, current, scope, pdfName, onWhole, onPick }: {
   folder: NonNullable<ReturnType<typeof useEventFolder>>;
   current: number | null; // the session shown, or null for the whole event
   scope: ReportScope;
+  pdfName: string;
   onWhole: () => void;
   onPick: (id: number) => void;
 }) {
@@ -361,7 +370,8 @@ function ScopeBar({ folder, current, scope, onWhole, onPick }: {
   const wide = useWide();
   const order = sessionsInOrder(folder);
   return (
-    <View style={styles.scope}>
+    // the whole bar stays off the printed page: the headline says what the report is for
+    <View style={styles.scope} {...noPrint}>
       <Label>Report for</Label>
       <TextLink onPress={onWhole} label="Whole event" red={current == null} small />
       <Label muted>or one session</Label>
@@ -384,9 +394,10 @@ function ScopeBar({ folder, current, scope, onWhole, onPick }: {
           </Fragment>
         ))}
       </View>
-      <View style={wide ? styles.tech : undefined}>
+      <View style={StyleSheet.flatten([styles.links, wide && styles.tech])}>
         <TextLink href={{ pathname: '/technique', params: 'event' in scope ? { event: scope.event } : { session: scope.session } }}
           label="Technique check" arrow small />
+        <PrintButton title={pdfName} />
       </View>
     </View>
   );
@@ -936,6 +947,8 @@ const useStyles = themed((c) => ({
   runText: { fontFamily: Fonts.display, fontSize: 18, lineHeight: 20, color: c.textMuted },
   runTextOn: { color: c.text },
   tech: { marginLeft: 'auto' },
+  links: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 20, rowGap: 8 },
+  headLinks: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 20, rowGap: 8, marginTop: 16 },
 
   // 01 the lap
   lapFeature: { flexDirection: 'row' },

@@ -24,6 +24,7 @@ import {
 } from '@/lib/garage';
 import { Fonts, themed, Type, useTheme } from '@/constants/Theme';
 import { seasonsApi } from '@/lib/seasons';
+import { noPrint } from '@/lib/print';
 
 export type PickerKind = 'driver' | 'car';
 export type RunRef = { id: number; name: string; driver_id?: number | null; driver?: string | null; car_id?: number | null };
@@ -418,7 +419,7 @@ export function RunHeader({ run, kind, logSession, onChanged, eventId, bare = fa
             <Text style={StyleSheet.flatten([styles.kindText, { color: theme.background }])}>{KIND_NAMES[kind]}</Text>
           </View>
           <Pressable onPress={() => setEditing(true)} accessibilityRole="button" accessibilityLabel={`Rename ${run.name}`}
-            hitSlop={4} style={styles.chip}>
+            hitSlop={4} style={styles.chip} {...noPrint}>
             <Text style={styles.chipText}>Rename</Text>
           </Pressable>
           <RunChips run={shown} garage={garage} open={open} onOpen={setOpen} />

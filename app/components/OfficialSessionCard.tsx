@@ -54,7 +54,7 @@ export function OfficialSessionCard({ s, current, bare }: { s: OfficialSession; 
         <View style={styles.links}>
           <Text style={type.small}>Our {ours.length === 1 ? 'session' : 'sessions'}:</Text>
           {ours.map((o) => (
-            <TextLink key={o.id} label={o.name} small href={{ pathname: '/session/[id]', params: { id: o.id } }} />
+            <TextLink key={o.id} label={o.name} small print href={{ pathname: '/session/[id]', params: { id: o.id } }} />
           ))}
         </View>
       )}

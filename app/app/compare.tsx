@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-nati
 
 import { CompareTraces, LineKey, SectionTable, useLapColors, WhereTheTimeIs } from '@/components/CompareViews';
 import { Choice, PageHead, Toggle, useText } from '@/components/Picks';
+import PrintButton from '@/components/PrintButton';
 import { Colophon, Page, Section, TextLink } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import {
@@ -20,6 +21,7 @@ import {
   TrackGroup,
 } from '@/lib/compare';
 import { face, Fonts, themed, Type, useTheme } from '@/constants/Theme';
+import { noPrint } from '@/lib/print';
 
 // A picked lap keeps its colour slot for as long as it is picked.
 type Pick = { session_id: number; lap: number; slot: number };
@@ -159,12 +161,16 @@ export default function CompareScreen() {
   const pickColors = useLapColors(picks.map((p) => p.slot));
   const focus = data ? Math.max(0, shown!.picks.findIndex((p) => keyOf(p) === focusKey)) : 0;
   const stale = busy || (shown != null && encodePicks(shown.picks) !== encodePicks(picks));
+  const pdfName = ['Compare laps', ...picks.map((p) => `${sessions.get(p.session_id)?.name ?? `Session ${p.session_id}`} L${p.lap}`)]
+    .join(' · ');
 
   return (
     <Page scrollRef={scroll}>
       <Stack.Screen options={{ title: 'Compare laps' }} />
       <PageHead title="Compare laps"
-        dek={`${MIN_LAPS} to ${MAX_LAPS} laps from any sessions at one track: your own runs, a teammate's or a client's.`} />
+        dek={`${MIN_LAPS} to ${MAX_LAPS} laps from any sessions at one track: your own runs, a teammate's or a client's.`}>
+        <PrintButton title={pdfName} />
+      </PageHead>
 
       <Section no={1} title="The laps"
         dek={`${track?.track ? `At ${track.track}. ` : ''}Each session comes in with its best lap; tap a lap to swap it for another.`}>
@@ -172,7 +178,7 @@ export default function CompareScreen() {
           <View style={styles.headRow}>
             <Text style={StyleSheet.flatten([styles.th, styles.grow])}>Lap</Text>
             <Text style={styles.th}>Time</Text>
-            <View style={styles.removeCol} />
+            <View style={styles.removeCol} {...noPrint} />
           </View>
         )}
         {picks.map((p, i) => {
@@ -204,7 +210,7 @@ export default function CompareScreen() {
                   </View>
                 </Pressable>
                 <Pressable onPress={() => remove(p)} hitSlop={10} style={styles.removeCol} accessibilityRole="button"
-                  accessibilityLabel="Remove lap">
+                  accessibilityLabel="Remove lap" {...noPrint}>
                   <Text style={styles.removeText}>✕</Text>
                 </Pressable>
               </View>
@@ -230,7 +236,7 @@ export default function CompareScreen() {
           </View>
         )}
         {showList && (
-          <View style={styles.list}>
+          <View style={styles.list} {...noPrint}>
             {!groups && !error && <ActivityIndicator color={theme.text} style={styles.left} />}
             {groups && groups.length === 0 && (
               <Text style={t.note}>No session has timed laps yet. Upload logs on the Sessions page first.</Text>

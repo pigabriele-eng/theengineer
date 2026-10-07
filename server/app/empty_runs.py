@@ -25,7 +25,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app import db as app_db  # SessionLocal is looked up when used: the tests swap the database
-from app import heavy, models, storage
+from app import heavy, models, page_cache, storage
 from app.analysis.emptyrun import UNTIMED, Verdict, judge
 from app.analysis.laps import load_session
 from app.routers import sessions, trackmap
@@ -167,6 +167,7 @@ def remove_session(db: Session, s: models.RunSession) -> list[str]:
         event_row = db.scalar(select(model).where(model.scope == f"event:{eid}")) if eid is not None else None
         if event_row is not None and _mentions(event_row.result, sid):  # worked out again without it
             event_row.result, event_row.result_signature, event_row.signature = None, None, ""
+    page_cache.forget_session(db, sid)
     db.delete(s)
     db.flush()
     with trackmap._cache_lock:
