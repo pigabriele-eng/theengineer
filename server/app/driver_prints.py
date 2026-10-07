@@ -107,8 +107,10 @@ def _ready(db: Session, event_id: int) -> tuple[list, str, int]:
     if plan.error:
         return [], "", 0
     ready, pending = [], 0
-    for item in reports._used(plan):
-        rec = db.scalar(select(models.SessionTraces).where(models.SessionTraces.session_id == item.session.id))
+    used = reports._used(plan)
+    traces = reports.traces_of(db, [item.session.id for item in used])
+    for item in used:
+        rec = traces.get(item.session.id)
         if rec is None or rec.signature != item.signature:
             pending += 1
         elif rec.path is not None:

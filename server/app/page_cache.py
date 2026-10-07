@@ -163,6 +163,8 @@ def cached(db: Session, scope: str, sig: Callable[[], str], work: Callable[[], o
     hit = lookup(db, scope, sig())
     if hit is not None:
         return _answer(hit)
+    if locked:
+        db.commit()  # hands the database connection back while this waits its turn: the pool is small
     with heavy.lock if locked else nullcontext():
         if locked:
             hit = lookup(db, scope, sig())
