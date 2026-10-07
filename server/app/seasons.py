@@ -469,7 +469,15 @@ def _save(db: Session, s: Season, body: SeasonIn) -> dict:
         if body.rounds is not None:
             gone = set_rounds(db, s, body.rounds)
         db.commit()
+    _match(db, s.id)
     return {**season_row(db, s), "events_removed": gone}
+
+
+def _match(db: Session, season_id: int) -> None:
+    """Events with data join the season (or a question is kept), and its events' runs get its car and drivers."""
+    from app import season_match  # here: it uses this module
+
+    season_match.safely("a season was saved", season_match.scan, db, season_id)
 
 
 router = APIRouter()
@@ -596,6 +604,7 @@ def fill_season_entry(season_id: int, body: EntryRowIn, db: Session = Depends(ge
     s = _season(db, season_id)
     filled = fill_entry(db, s, body)
     db.commit()
+    _match(db, s.id)
     return {**season_row(db, s), "filled": filled}
 
 

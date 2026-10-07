@@ -12,6 +12,7 @@ import { MoveSessions } from '@/components/MoveSessions';
 import { PrepButton, usePrepAvailability } from '@/components/PrepButton';
 import { RenameEvent } from '@/components/RenameEvent';
 import { ResultsPanel } from '@/components/ResultsPanel';
+import { SeasonMatch } from '@/components/SeasonMatch';
 import { filledNote, localPick, PickerKind, RunChips, RunNameEditor, RunPicker, useGarage } from '@/components/RunChips';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
@@ -326,6 +327,7 @@ export default function EventScreen() {
               <Text style={styles.notice}>{notice}</Text>
             </Pressable>
           )}
+          {eventId != null && <SeasonMatch eventId={eventId} onChanged={load} />}
           {eventId != null && (
             <EventInfoCard eventId={eventId} onInfo={(i) => setEventDrivers(i?.resolved.drivers.map((d) => d.id) ?? [])}
               version={folder} />
