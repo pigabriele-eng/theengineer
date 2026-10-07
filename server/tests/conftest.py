@@ -82,6 +82,8 @@ def client(tmp_path, monkeypatch):
     importlib.reload(app.routers.catalog)
     importlib.reload(app.routers.sessions)
     importlib.reload(app.routers.reports)
+    import app.lappacks
+    importlib.reload(app.lappacks)
     importlib.reload(app.routers.imports)
     importlib.reload(app.routers.debriefs)
     importlib.reload(app.routers.drivers)
@@ -138,6 +140,7 @@ def client(tmp_path, monkeypatch):
             time.sleep(0.05)
         app.routers.prep.wait_idle()  # first: it asks for reports and technique checks
         app.routers.technique.wait_idle()  # then: it asks for reports
+        app.lappacks.wait_idle()  # then: it may ask for reports
         app.routers.reports.wait_idle()
     app.db.engine.dispose()
     gc.unfreeze()

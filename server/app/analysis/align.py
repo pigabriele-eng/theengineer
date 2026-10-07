@@ -16,7 +16,8 @@ MAX_OFFSET_M = 30  # further from the line than this is the pit lane or a GPS er
 MAX_JUMP_M = 150  # disagreement with wheel-speed distance beyond this is a GPS error
 DRIFT_SMOOTH_S = 4.0  # GPS against wheel-speed distance is averaged over this long
 PAD_S = 1.5  # seconds either side of the lap marker searched for the real line crossing
-CHUNK = 200  # positions measured against the whole line at once: about 4 MB a step on a 5 km line
+CHUNK = 200  # positions placed on the line at once: a few MB a step on a 5 km line
+COARSE = 32  # project takes the line in blocks of this many points
 
 
 @dataclass
@@ -58,15 +59,52 @@ def track_line(data: SessionData, lap: Lap, length: int | None = None) -> TrackL
 
 
 def project(line: TrackLine, lat: np.ndarray, lon: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Nearest point on the line (metres from the timing line) and the distance to it, for each position."""
+    """Nearest point on the line (metres from the timing line) and the distance to it, for each position.
+
+    Each position is measured only against the stretches of line that can hold its nearest point. The line is taken
+    in blocks of COARSE points: a block can hold it only when the block's first point is no further from the
+    position than the nearest first point is, plus how far the block strays from its first point. The sums are the
+    ones made against the whole line, so the answer is too (the first of equally near points), in a fraction of the
+    time."""
     x, y = line.xy(lat, lon)
     dist = np.empty(len(x), int)
     off = np.empty(len(x))
     lx, ly = line.x.astype(np.float32), line.y.astype(np.float32)
+    n = len(lx)
+    cx, cy = lx[::COARSE], ly[::COARSE]  # each block's first point
+    bx, by = (np.pad(v.astype(float), (0, -n % COARSE), mode="edge").reshape(-1, COARSE) for v in (lx, ly))
+    stray = np.hypot(bx - bx[:, :1], by - by[:, :1]).max(1) + 0.01
+    ks = np.arange(COARSE)
+
+    def whole(at: slice | np.ndarray, px: np.ndarray, py: np.ndarray) -> None:
+        d2 = (px[:, None] - lx) ** 2 + (py[:, None] - ly) ** 2
+        dist[at] = d2.argmin(1)
+        off[at] = np.sqrt(d2.min(1))
+
     for i in range(0, len(x), CHUNK):
-        d2 = (x[i:i + CHUNK, None].astype(np.float32) - lx) ** 2 + (y[i:i + CHUNK, None].astype(np.float32) - ly) ** 2
-        dist[i:i + CHUNK] = d2.argmin(1)
-        off[i:i + CHUNK] = np.sqrt(d2.min(1))
+        px, py = x[i:i + CHUNK].astype(np.float32), y[i:i + CHUNK].astype(np.float32)
+        fix = np.isfinite(px) & np.isfinite(py)
+        if not fix.all():  # a position without a fix is measured against the whole line, as before
+            whole(np.flatnonzero(~fix) + i, px[~fix], py[~fix])
+            px, py = px[fix], py[fix]
+        if not len(px):
+            continue
+        c = np.sqrt(((px[:, None] - cx) ** 2 + (py[:, None] - cy) ** 2).astype(float))
+        reach = c.min(1) * 1.001 + 0.01
+        p, b = np.nonzero(c <= reach[:, None] + stray)  # by position, then block: each position has one at least
+        if len(b) * 4 > c.size:  # far from the line (the pit lane, the paddock): most of it is near enough
+            whole(np.flatnonzero(fix) + i, px, py)
+            continue
+        j = (b[:, None] * COARSE + ks).ravel()
+        p = np.repeat(p, COARSE)
+        keep = j < n
+        j, p = j[keep], p[keep]
+        d2 = (px[p] - lx[j]) ** 2 + (py[p] - ly[j]) ** 2
+        least = np.minimum.reduceat(d2, np.flatnonzero(np.r_[True, p[1:] != p[:-1]]))
+        hit = np.flatnonzero(d2 == least[p])
+        first = hit[np.r_[True, p[hit][1:] != p[hit][:-1]]]  # of the nearest points, the first along the line
+        dist[np.flatnonzero(fix) + i] = j[first]
+        off[np.flatnonzero(fix) + i] = np.sqrt(least)
     return dist, off
 
 

@@ -252,6 +252,20 @@ class SessionTraces(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class LapPackFile(Base):
+    """A session's lap pack (analysis/lappack.py) in file storage: its clean laps' speed and GPS, so laps are compared
+    without reading the log (app/lappacks.py). signature says what it was made from; when it no longer matches, it is
+    made again."""
+    __tablename__ = "lap_packs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    session_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)  # no foreign key, as session_traces
+    signature: Mapped[str] = mapped_column(String(64))
+    path: Mapped[str | None] = mapped_column(String(512))  # storage key; None when the session has no clean lap
+    laps: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text)  # why the log couldn't be read
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class ReportCache(Base):
     """The last report worked out for an event or a session, and the progress of the one being worked out."""
     __tablename__ = "report_cache"
