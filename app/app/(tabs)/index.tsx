@@ -2,12 +2,14 @@ import { Href, Link, useFocusEffect, useNavigation, useRouter } from 'expo-route
 import { ReactNode, useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 
+import { DeletedNotice, DeleteEventAction } from '@/components/DeleteEvent';
 import { CalendarLine, FilterBar, PlanForm, plannedLine, RemovePlanned } from '@/components/EventFilter';
 import { PrepButton, usePrepAvailability } from '@/components/PrepButton';
 import {
   B, Colophon, Fig, Folio, Hero, InsetPhoto, Label, Page, Section, SpecLine, Swatch, TextLink, useWide,
 } from '@/components/Programme';
 import { RenameEvent } from '@/components/RenameEvent';
+import { SeasonMatchCount } from '@/components/SeasonMatch';
 import { Text, View } from '@/components/Themed';
 import { api, formatLap } from '@/lib/api';
 import {
@@ -172,6 +174,7 @@ export default function SessionsScreen() {
         </View>
       )}
       {error && <Text style={styles.error}>Can&apos;t reach the server: {error}</Text>}
+      <DeletedNotice />
       {!folders && !error && <ActivityIndicator style={styles.loading} />}
       {folders?.length === 0 && (
         <Text style={styles.empty}>
@@ -179,6 +182,7 @@ export default function SessionsScreen() {
           own. Or make an event first with + New event and upload into it.
         </Text>
       )}
+      {folders && <SeasonMatchCount onChanged={load} />}
       {folders && folders.length > 0 && sections.map((when, i) => {
         const list = groups[when];
         const leadHere = lead && leadWhen === when && lead.sessions > 0 ? lead : null;
@@ -540,6 +544,7 @@ function ListItem({ f, when, first, plan, prep, onRenamed, onChanged }: {
         <View style={wide ? styles.itemActions : styles.itemActionsPhone}>
           <TextLink onPress={() => setRenaming(true)} label="Rename" small />
           {planned && <RemovePlanned f={f} plan={plan} onRemoved={onChanged} />}
+          {!planned && <DeleteEventAction id={f.id!} name={f.name} onDeleted={onChanged} />}
           {f.id != null && <PrepButton eventId={f.id} info={prep} compact />}
         </View>
       )}

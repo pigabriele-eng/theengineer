@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
 
 import { useLapColors } from '@/components/CompareViews';
+import { DeleteEvent } from '@/components/DeleteEvent';
 import { ErrorLine, FormActions, Input, MainButton, Note, Said, Tick } from '@/components/Controls';
 import { EventCompare, Pick, RunKey } from '@/components/EventCompare';
 import { EventForm } from '@/components/EventForm';
@@ -15,6 +16,7 @@ import {
 } from '@/components/Programme';
 import { RenameEvent } from '@/components/RenameEvent';
 import { ResultsPanel } from '@/components/ResultsPanel';
+import { SeasonMatch } from '@/components/SeasonMatch';
 import { filledNote, localPick, PickerKind, RunChips, RunNameEditor, RunPicker, useGarage } from '@/components/RunChips';
 import { Text, View } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
@@ -216,30 +218,18 @@ export default function EventScreen() {
         </>
       )}
       {panel === 'delete' && eventId != null && (
-        <>
-          <Label>Delete the event</Label>
-          <Text style={styles.confirm}>
-            Delete the event &ldquo;{folder.name}&rdquo;? Only the folder goes: its {plural(folder.sessions, 'run')}{' '}
-            and their logs stay, under Not in an event.
-          </Text>
-          <FormActions>
-            <MainButton danger label="Delete the event" onPress={async () => {
-              try {
-                await eventsApi.remove(eventId);
-                router.replace('/');
-              } catch (e) {
-                setError((e as Error).message);
-              }
-            }} />
-            <TextLink onPress={() => setPanel(null)} label="Keep it" />
-          </FormActions>
-        </>
+        <DeleteEvent id={eventId} name={folder.name} onCancel={() => setPanel(null)}
+          onDeleted={() => router.replace('/')} />
       )}
       {panel === 'move' && picks.length > 0 && (
         <MoveSessions fromKey={key} count={picks.length} onMove={moveTo} onCancel={() => setPanel(null)} />
       )}
     </View>
   );
+
+  // The questions about the event's season (or who drove it), when the server isn't sure: under the band, above the
+  // runs. Nothing when there are none.
+  const seasonQuestion = eventId != null && <SeasonMatch eventId={eventId} onChanged={load} style={styles.season} />;
 
   // ---------- the sections ----------
 
@@ -341,6 +331,7 @@ export default function EventScreen() {
         {links}
         {band}
         {notice && <View style={styles.notice}><Said text={notice} onPress={() => setNotice(null)} /></View>}
+        {seasonQuestion}
         {runs}
         {sideBySide}
         {info}
@@ -637,6 +628,7 @@ const useStyles = themed((c) => ({
   band: { marginTop: 20, borderTopWidth: 3, borderColor: c.rule, paddingTop: 10, gap: 12, maxWidth: 680 },
   confirm: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 24, color: c.text },
   notice: { marginTop: 18, maxWidth: 720 },
+  season: { marginTop: 22, maxWidth: 760 },
 
   // runs
   empty: { marginTop: 8 },

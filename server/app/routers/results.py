@@ -111,7 +111,7 @@ def _link(db: Session, event_id: int) -> rm.EventResultLink | None:
 def event_overview(db: Session, ev: models.Event) -> dict:
     facts = _event_facts(db, ev)
     link = _link(db, ev.id)
-    series = link.series if link else sync.DEFAULT_SERIES
+    series = link.series if link and link.by_hand else sync.series_of_event(db, ev.id)
     year = (link.year if link and link.by_hand else None) or facts["year"]
     rnd = _round(db, series, year, facts["venue"], link.round_id if link and link.by_hand else None)
     out: dict = {"event_id": ev.id, "series": series, "year": year, "venue": facts["venue"], "track": facts["track"],
@@ -126,7 +126,7 @@ def event_overview(db: Session, ev: models.Event) -> dict:
     out["round"] = {"year": rnd.year, "round": rnd.order, "round_id": rnd.round_id, "name": rnd.name,
                     "fetched_at": rnd.fetched_at.isoformat() if rnd.fetched_at else None}
     bests = [r["best_lap_s"] for r in facts["rows"] if r["best_lap_s"]]
-    number = link.car_number if link and link.car_number else None
+    number = link.car_number if link and link.car_number and link.series == series else None
     if number:
         out["car_number_from"] = "set" if link.by_hand else "logged laps"
     else:
@@ -139,7 +139,7 @@ def event_overview(db: Session, ev: models.Event) -> dict:
         db.add(rm.EventResultLink(event_id=ev.id, series=series, year=rnd.year, round_id=rnd.round_id,
                                   car_number=number))
     elif not link.by_hand:
-        link.year, link.round_id, link.car_number = rnd.year, rnd.round_id, number
+        link.series, link.year, link.round_id, link.car_number = series, rnd.year, rnd.round_id, number
     db.commit()
     matched: dict[int, list[dict]] = {}
     for r in facts["rows"]:
@@ -174,7 +174,7 @@ def fetch_event(event_id: int, db: Session = Depends(get_db)):
     ev = _event(db, event_id)
     facts = _event_facts(db, ev)
     link = _link(db, ev.id)
-    series = link.series if link else sync.DEFAULT_SERIES
+    series = link.series if link and link.by_hand else sync.series_of_event(db, ev.id)
     year = (link.year if link and link.by_hand else None) or facts["year"]
     if year is None:
         raise HTTPException(422, "This event has no date, so its season isn't known")
@@ -232,34 +232,38 @@ def history(venue: str | None = None, car_number: str | None = None, year: int |
 
 @router.get("/predict")
 def prediction(venue: str, year: int, car_number: str | None = None, team: str | None = None,
-               logged_best_s: float | None = None, series: str = sync.DEFAULT_SERIES, db: Session = Depends(get_db)):
+               logged_best_s: float | None = None, series: str = sync.DEFAULT_SERIES, driver: str | None = None,
+               db: Session = Depends(get_db)):
     """Qualifying times and places and race finishes predicted for a round (venue: a circuit name or key) from
-    earlier official results only, with a likely range from how far recent predictions missed."""
+    earlier official results only, with a likely range from how far recent predictions missed. "Us" is the car
+    number (with its team), or a driver (a surname is enough) followed through every team and number."""
     sessions = summary.model_sessions(db, _series(series))
     if not sessions:
         raise HTTPException(409, "No official results loaded yet")
     return predict.predict_round(sessions, venue_key(venue), year, car_number=car_number, team=team,
-                                 logged_best_s=logged_best_s)
+                                 logged_best_s=logged_best_s, driver=driver)
 
 
 @router.get("/backtest")
 def backtest(car_number: str = "12", team: str | None = None, series: str = sync.DEFAULT_SERIES,
-             db: Session = Depends(get_db)):
-    """Each round of 2023 on predicted from what was known before it, against what happened and a naive guess."""
+             driver: str | None = None, db: Session = Depends(get_db)):
+    """Each round from the second season loaded (2023 at the earliest) predicted from what was known before it,
+    against what happened and a naive guess."""
     sessions = summary.model_sessions(db, _series(series))
     if not sessions:
         raise HTTPException(409, "No official results loaded yet")
-    if team is None:
+    if team is None and not driver:
         rounds = summary._rounds(db, series)
         team, _ = summary.team_of(rounds, car_number, None)
-    return predict.backtest(sessions, car_number=car_number, team=team)
+    years = range(max(2023, sync.first_year(series) + 1), date.today().year + 1)
+    return predict.backtest(sessions, car_number=car_number, team=team, driver=driver, years=years)
 
 
 # --- seasons set up ahead: calendar and entry lists --------------------------------------------------------------
 
 def _years(series: str) -> list[int]:
     """The years whose calendar can be read: from the first season results are kept for to next year."""
-    return list(range(sync.FIRST_YEAR, date.today().year + 2))
+    return list(range(sync.first_year(series), date.today().year + 2))
 
 
 @router.get("/series")

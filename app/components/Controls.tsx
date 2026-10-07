@@ -120,10 +120,11 @@ export function Tick({ on, onPress, disabled, label, size = 22 }: {
   );
 }
 
-/** The main action of a form or a page: a solid ink block with paper capitals (`danger`: a red block, for a delete).
- * `busy`: a spinner in its place. */
-export function MainButton({ label, onPress, busy, disabled, danger, style }: {
+/** The main action of a form or a page: a solid ink block with paper capitals (`danger`: a red block, for a delete),
+ * and `sub`, a small line under them (why this answer). `busy`: a spinner in its place. */
+export function MainButton({ label, sub, onPress, busy, disabled, danger, style }: {
   label: string;
+  sub?: string | null;
   onPress: () => void;
   busy?: boolean;
   disabled?: boolean;
@@ -133,10 +134,15 @@ export function MainButton({ label, onPress, busy, disabled, danger, style }: {
   const styles = useStyles();
   const c = useTheme();
   return (
-    <Pressable onPress={onPress} disabled={disabled || busy} accessibilityRole="button" accessibilityLabel={label}
-      accessibilityState={{ disabled: disabled || busy, busy }}
+    <Pressable onPress={onPress} disabled={disabled || busy} accessibilityRole="button"
+      accessibilityLabel={sub ? `${label}: ${sub}` : label} accessibilityState={{ disabled: disabled || busy, busy }}
       style={StyleSheet.flatten([styles.main, danger && styles.mainDanger, (disabled && !busy) && styles.dim, style])}>
-      {busy ? <ActivityIndicator color={c.background} /> : <Text style={styles.mainText}>{label}</Text>}
+      {busy ? <ActivityIndicator color={c.background} /> : (
+        <>
+          <Text style={styles.mainText}>{label}</Text>
+          {sub ? <Text style={styles.mainSub}>{sub}</Text> : null}
+        </>
+      )}
     </Pressable>
   );
 }
@@ -218,10 +224,12 @@ const useStyles = themed((c) => ({
   tickOn: { backgroundColor: c.rule },
   tickMark: { fontFamily: Fonts.label, color: c.background, textAlign: 'center' },
 
-  main: { alignSelf: 'flex-start', minWidth: 120, minHeight: 42, alignItems: 'center', justifyContent: 'center',
+  main: { alignSelf: 'flex-start', maxWidth: '100%', minWidth: 120, minHeight: 42, alignItems: 'center', justifyContent: 'center',
     backgroundColor: c.rule, paddingHorizontal: 18, paddingVertical: 10 },
   mainDanger: { backgroundColor: c.error },
-  mainText: { ...Type.link, color: c.background },
+  mainText: { ...Type.link, color: c.background, textAlign: 'center' },
+  mainSub: { fontFamily: Fonts.label, fontSize: 12, letterSpacing: 0.3, lineHeight: 16, color: c.background,
+    textAlign: 'center', marginTop: 2, opacity: 0.85 },
   actions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 22, rowGap: 12, marginTop: 4 },
 
   said: { borderLeftWidth: 3, borderColor: c.rule, paddingLeft: 10, paddingVertical: 2 },

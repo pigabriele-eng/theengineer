@@ -144,7 +144,10 @@ export const resultsApi = {
 
 // ---------- wording ----------
 
-const SERIES_NAMES: Record<string, string> = { 'gt4-europe': 'GT4 European Series' };
+const SERIES_NAMES: Record<string, string> = {
+  'gt4-europe': 'GT4 European Series',
+  'adac-gt4-germany': 'ADAC GT4 Germany',
+};
 export const seriesName = (s: string) => SERIES_NAMES[s] ?? s;
 
 /** "GT4 European Series 2026, round 5 (Zandvoort)". */

@@ -158,6 +158,7 @@ def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]], event
                     job.done = i + 1
                     db.commit()
                 run.finish_events()
+            _join_seasons(db, job)  # before it is done: the app then asks what the events were run with
             job.status = models.ImportStatus.done
         except Exception as e:
             log.exception("Import %s failed", job_id)
@@ -171,6 +172,13 @@ def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]], event
             reports.schedule_sessions(db, list(job.session_ids or []))
         except Exception:
             log.exception("Couldn't start the reports of import %s", job_id)
+
+
+def _join_seasons(db: Session, job: models.ImportJob) -> None:
+    """The events the logs went into join their season (season_match.py), or a question about it is kept."""
+    from app import season_match  # here: it uses the seasons, which use this module
+
+    season_match.safely("an import", season_match.after_import, db, list(job.session_ids or []))
 
 
 class _Run:

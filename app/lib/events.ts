@@ -92,6 +92,12 @@ const send = (method: string, body: unknown): RequestInit => ({
 
 export type EventFields = { name?: string; start?: string | null; end?: string | null };
 
+// What deleting an event with its runs removes (server/app/event_delete.py): its runs, their laps, their logs, every
+// stored file (logs, lap traces, technique checks, recordings) and the bytes they take in storage (null: unknown).
+export type EventSize = { event_id: number; name: string; runs: number; laps: number; logs: number; files: number;
+  bytes: number | null };
+export type EventDeleted = Omit<EventSize, 'event_id'> & { deleted: number; rows: Record<string, number> };
+
 export const eventsApi = {
   folders: () => call<FolderSummary[]>('/events/folders'),
   folder: (key: string) => call<Folder>(`/events/${key}`),
@@ -99,6 +105,9 @@ export const eventsApi = {
     call<Folder>('/events/folders', send('POST', body)),
   update: (id: number, body: EventFields) => call<Folder>(`/events/${id}`, send('PATCH', body)),
   remove: (id: number) => call<{ deleted: number; sessions_kept: number[] }>(`/events/${id}`, { method: 'DELETE' }),
+  // the event with its runs, their logs and everything kept for them: for good
+  size: (id: number) => call<EventSize>(`/events/${id}/size`),
+  removeWithRuns: (id: number) => call<EventDeleted>(`/events/${id}?runs=delete`, { method: 'DELETE' }),
   // move sessions into an event, or out of their events with NO_EVENT
   move: (key: string, sessionIds: number[]) =>
     call<Folder>(`/events/${key}/sessions`, send('POST', { session_ids: sessionIds })),
@@ -123,6 +132,13 @@ export const eventsApi = {
 };
 
 type PickedFile = { uri: string; name: string; file?: File | Blob; mimeType?: string };
+
+/** Bytes as storage sizes read: "764 MB", "2.4 MB", "1.3 GB". */
+export function storageSize(bytes: number) {
+  const mb = bytes / 1024 ** 2;
+  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
+  return mb >= 10 ? `${Math.round(mb)} MB` : `${mb.toFixed(1)} MB`;
+}
 
 // On web we have a File or Blob; on iOS FormData takes a { uri, name, type } descriptor (as in lib/api.ts).
 const formFile = (f: PickedFile, type: string) =>
