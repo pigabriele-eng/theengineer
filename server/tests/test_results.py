@@ -265,3 +265,10 @@ def test_our_finishes_for_the_home_list(client, fake_site):
     assert body["qualifying"][str(done["id"])][0]["position"] == 2
     assert client.get("/results/finishes", params={"event_ids": str(other["id"])}).json()["events"] == {}
     assert client.get("/results/finishes", params={"event_ids": "x"}).status_code == 422
+
+
+def test_a_circuit_in_spain_is_not_spa():
+    assert venue_key("Circuit de Barcelona-Catalunya, Montmeló, Spain") == "barcelona"
+    assert venue_key("Circuit Ricardo Tormo, Valencia, Spain") == "valencia"
+    assert venue_key("Circuit de Spa-Francorchamps") == "spa" and venue_key("Hockenheimring") == "hockenheim"
+    assert venue_key("Lausitzring") == "lausitzring"
