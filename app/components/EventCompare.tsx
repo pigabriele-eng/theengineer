@@ -1,22 +1,22 @@
-// Sessions of one event side by side (GET /events/{key}/compare): lap times, consistency, the best time in each section
-// on the official corner numbers, top speed, tyres and conditions, in one table with a column per session. Each
-// session wears the colour slot it was picked with (the validated lap palette), so the colours here match Compare laps.
-import { Link } from 'expo-router';
+// Runs of one event side by side (GET /events/{key}/compare): lap times, consistency, the best time in each section
+// on the official corner numbers, top speed, tyres and conditions, in one table with a column per run. Each run wears
+// the colour slot it was picked with (the validated lap palette), so the colours here match Compare laps. The best of
+// each row is a purple block; the others print their gap to it in red, with a bar in the time-lost ramp in a section.
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
-import Svg, { Path } from 'react-native-svg';
+import { ActivityIndicator, ScrollView, StyleSheet } from 'react-native';
 
-import { LineKey, useLapColors } from '@/components/CompareViews';
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { useLapColors } from '@/components/CompareViews';
+import { Note } from '@/components/Controls';
+import { Swatch, TextLink, useWide } from '@/components/Programme';
+import { Text, View } from '@/components/Themed';
 import { DETECTED_CORNERS_NOTE, formatLap } from '@/lib/api';
 import { encodePicks } from '@/lib/compare';
 import { ComparedSession, dayLabel, eventsApi, KIND_NAMES, SideBySide } from '@/lib/events';
-import { deltaColor, deltaMark, Radius, themed, useTheme } from '@/constants/Theme';
+import { deltaMark, face, Fonts, themed, Type, useTheme } from '@/constants/Theme';
 
 const POLL_MS = 3000;
-const LABEL_W = 112;
-const COL_MIN = 100; // a session's column: as wide as the space allows, within these
-const COL_MAX = 168;
+const COL_MIN = 104; // a run's column: as wide as the space allows, within these
+const COL_MAX = 172;
 const WHEELS = ['fl', 'fr', 'rl', 'rr'] as const;
 
 export type Pick = { id: number; slot: number };
@@ -24,11 +24,16 @@ export type Pick = { id: number; slot: number };
 type Row = {
   label: string;
   values: (string | null)[];
-  best?: number | null; // index in bold
-  gaps?: (number | null)[]; // the share of the biggest gap behind the best, drawn as a red bar
-  subs?: (string | null)[]; // a smaller line under the value
+  best?: number | null; // index of the best: a purple block
+  gaps?: (number | null)[]; // the share of the biggest gap behind the best, drawn as a bar
+  subs?: (string | null)[]; // a smaller line under the value: the gap to the best
   hint?: string;
 };
+
+/** A run's colour key: a short flat stroke, beside its name wherever it is written. */
+export function RunKey({ color }: { color: string }) {
+  return <View style={{ width: 16, height: 4, backgroundColor: color }} />;
+}
 
 export function EventCompare({ folderKey, picks, onClear }: {
   folderKey: string;
@@ -39,7 +44,6 @@ export function EventCompare({ folderKey, picks, onClear }: {
   const [data, setData] = useState<SideBySide | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const tint = useThemeColor({}, 'tint');
   const ids = picks.map((p) => p.id);
   const key = ids.join(',');
   const colors = useLapColors(picks.map((p) => p.slot));
@@ -76,44 +80,31 @@ export function EventCompare({ folderKey, picks, onClear }: {
 
   return (
     <View style={styles.box}>
-      <View style={styles.titleRow}>
-        <Text style={styles.h2}>Side by side</Text>
+      <View style={styles.topLine}>
         {busy && <ActivityIndicator size="small" />}
-        {onClear && (
-          <Pressable onPress={onClear} hitSlop={8} accessibilityRole="button" style={styles.clear}>
-            <Text style={{ color: tint }}>Clear</Text>
-          </Pressable>
-        )}
+        {!shown && !error && <Note>Putting the runs side by side…</Note>}
+        {onClear && <View style={styles.clear}><TextLink onPress={onClear} label="Clear" small /></View>}
       </View>
       {error && <Text style={styles.error}>{error}</Text>}
-      {!shown && !error && <Text style={styles.note}>Putting the sessions side by side…</Text>}
       {shown && <Table data={shown} colors={colors.laps} />}
       {shown?.status === 'working' && (
-        <Text style={styles.note}>
+        <Note>
           Section times follow once the logs are read for the report
           {shown.progress?.current ? `: ${shown.progress.current}` : ''}.
-        </Text>
+        </Note>
       )}
       {shown && <CompareLapsLink sessions={shown.sessions} />}
     </View>
   );
 }
 
-/** One tap to Compare laps with each session's best lap, in the same colours. */
+/** One tap to Compare laps with each run's best lap, in the same colours. */
 function CompareLapsLink({ sessions }: { sessions: ComparedSession[] }) {
-  const styles = useStyles();
-  const tint = useThemeColor({}, 'tint');
   const laps = sessions.filter((s) => s.best_lap != null).map((s) => ({ session_id: s.id, lap: s.best_lap! }));
   if (laps.length < 2) return null;
   return (
-    // Link asChild hands its child's style to a web anchor, which can't take a style array: one object
-    <Link href={{ pathname: '/compare', params: { laps: encodePicks(laps.slice(0, 6)) } }} asChild>
-      <Pressable style={StyleSheet.flatten([styles.button, { borderColor: tint }])} accessibilityRole="link">
-        <Text style={StyleSheet.flatten([styles.buttonText, { color: tint }])}>
-          Compare these best laps: traces and where the time is ›
-        </Text>
-      </Pressable>
-    </Link>
+    <TextLink href={{ pathname: '/compare', params: { laps: encodePicks(laps.slice(0, 6)) } }} red arrow
+      label="Compare these best laps: traces and where the time is" />
   );
 }
 
@@ -129,7 +120,7 @@ function minIndex(values: (number | null | undefined)[], higher = false) {
   return at;
 }
 
-/** Lap times: every time, the quickest in bold and the others with their gap to it underneath. */
+/** Lap times: every time, the quickest on a purple block and the others with their gap to it underneath. */
 function timeRow(label: string, values: (number | null)[], hint?: string): Row {
   const best = minIndex(values);
   const b = best != null ? values[best]! : null;
@@ -203,25 +194,25 @@ function rowsOf(data: SideBySide): { title: string; rows: Row[]; note?: string }
 }
 
 function Table({ data, colors }: { data: SideBySide; colors: string[] }) {
-  const theme = useTheme();
+  const c = useTheme();
   const styles = useStyles();
+  const wide = useWide();
   const groups = rowsOf(data);
-  const wash = theme.delta.gainSteps[0];
+  const labelW = wide ? 150 : 104;
   const [width, setWidth] = useState(0);
-  const colW = Math.round(Math.min(COL_MAX, Math.max(COL_MIN, (width - LABEL_W) / data.sessions.length)));
+  const colW = Math.round(Math.min(COL_MAX, Math.max(COL_MIN, (width - labelW) / data.sessions.length)));
   const col = { width: colW };
+  const label = { width: labelW };
   return (
     <View style={styles.tableBox} onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
       <ScrollView horizontal showsHorizontalScrollIndicator>
         <View>
-          <View style={styles.row}>
-            <View style={[styles.label, styles.headCell]} />
+          <View style={styles.headRow}>
+            <View style={label} />
             {data.sessions.map((s, i) => (
-              <View key={s.id} style={[styles.col, col, styles.headCell]}>
-                <View style={styles.colHead}>
-                  <LineKey color={colors[i]} />
-                  <Text style={styles.colName} numberOfLines={2}>{s.name}</Text>
-                </View>
+              <View key={s.id} style={StyleSheet.flatten([styles.col, col, styles.headCell])}>
+                <RunKey color={colors[i]} />
+                <Text style={styles.colName} numberOfLines={2}>{s.name}</Text>
                 <Text style={styles.colSub} numberOfLines={1}>
                   {[s.date ? dayLabel(s.date) : null, s.time].filter(Boolean).join(' · ')}
                 </Text>
@@ -231,26 +222,31 @@ function Table({ data, colors }: { data: SideBySide; colors: string[] }) {
           </View>
           {groups.map((g) => (
             <View key={g.title}>
-              <Text style={styles.group}>{g.title}</Text>
-              {g.note && <Text style={[styles.note, styles.groupNote]}>{g.note}</Text>}
+              <View style={styles.group}>
+                <Text style={styles.groupTitle}>{g.title}</Text>
+                {g.note && <Text style={styles.groupNote}>{g.note}</Text>}
+              </View>
               {g.rows.map((r) => (
                 <View key={r.label} style={styles.row}>
-                  <View style={styles.label}>
+                  <View style={StyleSheet.flatten([styles.label, label])}>
                     <Text style={styles.rowName}>{r.label}</Text>
                     {r.hint && <Text style={styles.hint}>{r.hint}</Text>}
                   </View>
                   {r.values.map((v, i) => {
                     const best = r.best === i && r.values.filter((x) => x != null).length > 1;
+                    const gap = r.gaps?.[i];
                     return (
-                      <View key={i} style={StyleSheet.flatten([styles.col, col, styles.cell,
-                        best && { backgroundColor: wash }])}>
-                        <Text style={StyleSheet.flatten([styles.value, best && styles.best, v == null && styles.dim,
-                          !best && r.gaps?.[i] != null && { color: deltaColor(theme, r.gaps[i]) }])}>
-                          {v ?? '–'}
-                        </Text>
-                        {r.subs?.[i] && <Text style={StyleSheet.flatten([styles.sub, styles.lost])}>{r.subs[i]}</Text>}
-                        {r.gaps && r.gaps[i] != null && r.gaps[i]! > 0 && (
-                          <GapBar share={r.gaps[i]!} color={deltaMark(theme, r.gaps[i]!, 1)} width={colW - 16} />
+                      <View key={i} style={StyleSheet.flatten([styles.col, col, styles.cell])}>
+                        <View style={best ? { backgroundColor: c.timing.best } : undefined}>
+                          <Text style={StyleSheet.flatten([styles.value, best && styles.best, v == null && styles.dim,
+                            !best && gap != null && gap > 0 && { color: c.delta.loss }])}>
+                            {v ?? '–'}
+                          </Text>
+                        </View>
+                        {r.subs?.[i] && <Text style={styles.lost}>{r.subs[i]}</Text>}
+                        {gap != null && gap > 0 && (
+                          <View style={{ height: 5, width: Math.max(3, Math.min(1, gap) * (colW - 16)),
+                            backgroundColor: deltaMark(c, gap, 1) }} />
                         )}
                       </View>
                     );
@@ -261,60 +257,47 @@ function Table({ data, colors }: { data: SideBySide; colors: string[] }) {
           ))}
         </View>
       </ScrollView>
+      <View style={styles.legend}>
+        <Swatch color={c.timing.best} label="Best of these runs" />
+        <Swatch color={c.timing.loss[2]} height={5} label="Time lost to it" />
+      </View>
       {data.sessions.filter((s) => s.note).map((s) => (
-        <Text key={s.id} style={styles.note}>{s.name}: {s.note}</Text>
+        <Note key={s.id}>{s.name}: {s.note}</Note>
       ))}
       {data.reference && (
-        <Text style={styles.note}>
-          Bold on green: the quickest. The others show their gap to it in red; in a section their bars grow and deepen
-          with that gap. Sections are
-          the report&apos;s, on the official corner numbers, placed on the line of the event&apos;s quickest lap.
-        </Text>
+        <Note>
+          Sections are the report&apos;s, on the official corner numbers, placed on the line of the event&apos;s quickest
+          lap. In a section the bars grow and deepen with the time lost.
+        </Note>
       )}
     </View>
   );
 }
 
-/** The time a session loses in a section, as a bar from the left edge of its cell (4 px rounded end). */
-function GapBar({ share, color, width }: { share: number; color: string; width: number }) {
-  const styles = useStyles();
-  const w = Math.max(3, Math.min(1, share) * width);
-  const h = 4;
-  const r = 2;
-  return (
-    <Svg width={width} height={h} style={styles.bar}>
-      <Path d={`M0,0H${w - r}Q${w},0 ${w},${r}Q${w},${h} ${w - r},${h}H0Z`} fill={color} />
-    </Svg>
-  );
-}
-
 const useStyles = themed((c) => ({
-  box: { gap: 10, backgroundColor: 'transparent' },
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: 'transparent' },
-  h2: { fontSize: 18, fontWeight: '700' },
+  box: { gap: 14 },
+  topLine: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 18 },
   clear: { marginLeft: 'auto' },
-  error: { color: c.error },
-  note: { fontSize: 12, opacity: 0.6 },
-  tableBox: { gap: 6, backgroundColor: 'transparent' },
-  row: { flexDirection: 'row', borderBottomWidth: 1, borderColor: c.separator, backgroundColor: 'transparent' },
-  headCell: { paddingBottom: 6 },
-  label: { width: LABEL_W, paddingVertical: 6, paddingRight: 6, backgroundColor: 'transparent' },
-  col: { paddingHorizontal: 8, backgroundColor: 'transparent' },
-  cell: { paddingVertical: 6, gap: 4 },
-  colHead: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },
-  colName: { fontSize: 14, fontWeight: '700', flexShrink: 1 },
-  colSub: { fontSize: 11, opacity: 0.6 },
-  sub: { fontSize: 12, opacity: 0.6, fontVariant: ['tabular-nums'] },
-  lost: { color: c.delta.loss, opacity: 1 }, // a gap to the quickest
-  group: { fontSize: 12, fontWeight: '700', opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5,
-    paddingTop: 14, paddingBottom: 4 },
-  groupNote: { paddingBottom: 4 },
-  rowName: { fontSize: 14, fontWeight: '600' },
-  hint: { fontSize: 11, opacity: 0.55 },
-  value: { fontSize: 14, fontVariant: ['tabular-nums'] },
-  best: { fontWeight: '700' },
-  dim: { opacity: 0.4 },
-  bar: { marginTop: 1 },
-  button: { borderWidth: 1, borderRadius: Radius.control, padding: 12, alignItems: 'center' },
-  buttonText: { fontWeight: '600', fontSize: 15, textAlign: 'center' },
+  error: { fontFamily: Fonts.body, fontSize: 16, color: c.error },
+  tableBox: { gap: 12 },
+  headRow: { flexDirection: 'row', borderTopWidth: 3, borderBottomWidth: 1, borderColor: c.rule },
+  headCell: { paddingTop: 8, paddingBottom: 7, gap: 3 },
+  col: { paddingHorizontal: 6 },
+  colName: { fontFamily: Fonts.display, fontSize: 16, lineHeight: 19, textTransform: 'uppercase', color: c.text },
+  colSub: { fontFamily: face('label', 400), fontSize: 12, color: c.textSecondary },
+  group: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 12, paddingTop: 16, paddingBottom: 5,
+    borderBottomWidth: 3, borderColor: c.rule },
+  groupTitle: { fontFamily: Fonts.display, fontSize: 20, lineHeight: 22, textTransform: 'uppercase', color: c.text },
+  groupNote: { fontFamily: Type.dek.fontFamily, fontSize: 13, color: c.textSecondary },
+  row: { flexDirection: 'row', borderBottomWidth: 1, borderColor: c.separator },
+  label: { paddingVertical: 7, paddingRight: 8 },
+  rowName: { ...Type.label, fontFamily: Fonts.label, fontSize: 12, letterSpacing: 1.1, color: c.text },
+  hint: { fontFamily: face('label', 400), fontSize: 11, color: c.textMuted, marginTop: 1 },
+  cell: { paddingVertical: 6, gap: 3, alignItems: 'flex-start' },
+  value: { fontFamily: Fonts.label, fontSize: 15, lineHeight: 19, fontVariant: ['tabular-nums'], color: c.text,
+    paddingHorizontal: 4, paddingVertical: 1 },
+  best: { fontFamily: Type.label.fontFamily, color: c.timing.onBest },
+  dim: { color: c.textMuted },
+  lost: { fontFamily: Fonts.label, fontSize: 12, fontVariant: ['tabular-nums'], color: c.delta.loss, paddingHorizontal: 4 },
+  legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 22, rowGap: 8, alignItems: 'center' },
 }));

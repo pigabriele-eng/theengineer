@@ -2,10 +2,12 @@
 // EventInfoForm saves an event's info (fields the season already gives are left to it); AskEventInfo asks for it
 // after an upload, for each event the upload's runs are in that is missing some of it, filled from its season or
 // from the previous event of the same car.
-import { ReactNode, useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, TextInput } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator } from 'react-native';
 
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { Choice, Choices, ErrorLine, Field, FormActions, Input, MainButton, Note } from '@/components/Controls';
+import { Block, Label, TextLink } from '@/components/Programme';
+import { Text, View } from '@/components/Themed';
 import { carLong, driversFor, Garage, garageApi } from '@/lib/garage';
 import {
   catalogApi,
@@ -20,7 +22,7 @@ import {
   Tyre,
   Vehicle,
 } from '@/lib/seasons';
-import { Radius, themed, useTheme } from '@/constants/Theme';
+import { Fonts, inkOn, themed, Type, useTheme } from '@/constants/Theme';
 
 const MAX_DRIVERS = 4;
 
@@ -49,14 +51,14 @@ const FIELD_OF: Record<MissingKey, FieldKey> = {
   'tyre brand': 'tyre', compound: 'tyre', car: 'car', team: 'team', drivers: 'drivers',
 };
 
-/** The tyre, car, vehicle, team and drivers 1 to 4 as chips: tap one to pick it, or add a new one in place. */
+/** The tyre, car, vehicle, team and drivers 1 to 4 as words to pick: tap one to pick it, or add a new one in place. */
 export function EntryFields({ value, onChange, lists, onListsChanged, focus, notes }: {
   value: Entry;
   onChange: (v: Entry) => void;
   lists: Lists;
   onListsChanged: () => void; // a tyre, team or driver was added
   focus?: FieldKey | null; // the field to point at (a checklist item tapped)
-  notes?: Partial<Record<FieldKey, string | null>>; // where a value came from, under its field
+  notes?: Partial<Record<FieldKey, string | null>>; // where a value came from, beside its field's name
 }) {
   const styles = useStyles();
   const { garage, tyres, vehicles } = lists;
@@ -81,40 +83,40 @@ export function EntryFields({ value, onChange, lists, onListsChanged, focus, not
   return (
     <View style={styles.fields}>
       <Field label="Tyre" focus={focus === 'tyre'} note={notes?.tyre}>
-        <View style={styles.chips}>
+        <Choices>
           {tyres.map((t) => (
-            <Chip key={t.id} label={t.label} sub={t.size} on={value.tyre_kind_id === t.id}
+            <Choice key={t.id} label={t.label} sub={t.size} on={value.tyre_kind_id === t.id}
               onPress={() => set({ tyre_kind_id: value.tyre_kind_id === t.id ? null : t.id })} />
           ))}
           <NewTyre onAdded={(t) => {
             onListsChanged();
             set({ tyre_kind_id: t.id });
           }} />
-        </View>
+        </Choices>
       </Field>
       <Field label="Car" focus={focus === 'car'} note={notes?.car}>
-        <View style={styles.chips}>
+        <Choices>
           {garage.cars.map((c) => (
-            <Chip key={c.id} label={carLong(c)} sub={c.team} on={value.car_id === c.id}
+            <Choice key={c.id} label={carLong(c)} sub={c.team} on={value.car_id === c.id}
               onPress={() => pickCar(value.car_id === c.id ? null : c.id)} />
           ))}
-          {garage.cars.length === 0 && <Text style={styles.note}>No cars yet: add them in Cars, drivers and teams.</Text>}
-        </View>
+          {garage.cars.length === 0 && <Note>No cars yet: add them in Cars, drivers and teams.</Note>}
+        </Choices>
       </Field>
       {vehicles.length > 0 && (
         <Field label="Vehicle" focus={focus === 'vehicle'} note={notes?.vehicle}>
-          <View style={styles.chips}>
+          <Choices>
             {vehicles.map((v) => (
-              <Chip key={v.id} label={v.name} on={value.vehicle_model_id === v.id}
+              <Choice key={v.id} label={v.name} on={value.vehicle_model_id === v.id}
                 onPress={() => set({ vehicle_model_id: value.vehicle_model_id === v.id ? null : v.id })} />
             ))}
-          </View>
+          </Choices>
         </Field>
       )}
       <Field label="Team" focus={focus === 'team'} note={notes?.team}>
-        <View style={styles.chips}>
+        <Choices>
           {garage.teams.map((t) => (
-            <Chip key={t.id} label={t.name} on={value.team_id === t.id}
+            <Choice key={t.id} label={t.name} on={value.team_id === t.id}
               onPress={() => set({ team_id: value.team_id === t.id ? null : t.id })} />
           ))}
           <NewByName placeholder="New team" label="+ New team" onAdd={async (name) => {
@@ -122,7 +124,7 @@ export function EntryFields({ value, onChange, lists, onListsChanged, focus, not
             onListsChanged();
             set({ team_id: t.id });
           }} />
-        </View>
+        </Choices>
       </Field>
       <Field label="Drivers 1 to 4" focus={focus === 'drivers'} note={notes?.drivers}>
         {value.drivers.length > 0 && (
@@ -130,11 +132,11 @@ export function EntryFields({ value, onChange, lists, onListsChanged, focus, not
             {value.drivers.map((id, i) => `${i + 1} ${driverName(id)}`).join('   ')}
           </Text>
         )}
-        <View style={styles.chips}>
+        <Choices>
           {[...first, ...rest].map((d) => {
             const at = value.drivers.indexOf(d.id);
             return (
-              <Chip key={d.id} label={at >= 0 ? `${at + 1} · ${d.name}` : d.name} on={at >= 0}
+              <Choice key={d.id} label={at >= 0 ? `${at + 1} · ${d.name}` : d.name} on={at >= 0}
                 onPress={() => toggleDriver(d.id)} />
             );
           })}
@@ -145,56 +147,21 @@ export function EntryFields({ value, onChange, lists, onListsChanged, focus, not
               set({ drivers: [...value.drivers, d.id] });
             }
           }} />
-        </View>
-        <Text style={styles.note}>Tap them in order: the first tapped is driver 1.</Text>
+        </Choices>
+        <Note>Tap them in order: the first tapped is driver 1.</Note>
       </Field>
     </View>
   );
 }
 
-function Field({ label, focus, note, children }: { label: string; focus?: boolean; note?: string | null; children: ReactNode }) {
-  const styles = useStyles();
-  const tint = useThemeColor({}, 'tint');
-  return (
-    <View style={StyleSheet.flatten([styles.field, focus && { borderColor: tint, borderLeftWidth: 3, paddingLeft: 8 }])}>
-      <View style={styles.fieldHead}>
-        <Text style={StyleSheet.flatten([styles.label, focus && { color: tint, opacity: 1 }])}>{label}</Text>
-        {note ? <Text style={styles.from}>{note}</Text> : null}
-      </View>
-      {children}
-    </View>
-  );
-}
-
-export function Chip({ label, sub, on, onPress, dashed }: {
-  label: string;
-  sub?: string | null;
-  on: boolean;
-  onPress: () => void;
-  dashed?: boolean;
-}) {
-  const styles = useStyles();
-  const tint = useThemeColor({}, 'tint');
-  return (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityState={{ selected: on }}
-      style={StyleSheet.flatten([styles.chip, dashed && styles.dashed, on && { borderColor: tint, borderStyle: 'solid' as const }])}>
-      <Text style={StyleSheet.flatten([styles.chipText, on && { color: tint }])} numberOfLines={1}>{label}</Text>
-      {sub ? <Text style={styles.chipSub} numberOfLines={1}>{sub}</Text> : null}
-    </Pressable>
-  );
-}
-
-/** "+ New …": a chip that turns into a name field with Add. */
+/** "+ New …": a word that turns into a name field with Add. */
 function NewByName({ label, placeholder, onAdd }: { label: string; placeholder: string; onAdd: (name: string) => Promise<void> }) {
   const styles = useStyles();
-  const theme = useTheme();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const tint = useThemeColor({}, 'tint');
-  const text = useThemeColor({}, 'text');
-  if (!open) return <Chip label={label} on={false} onPress={() => setOpen(true)} dashed />;
+  if (!open) return <Choice label={label} on={false} onPress={() => setOpen(true)} add />;
   const add = async () => {
     if (!name.trim()) return;
     setBusy(true);
@@ -211,16 +178,11 @@ function NewByName({ label, placeholder, onAdd }: { label: string; placeholder: 
   };
   return (
     <View style={styles.inline}>
-      <TextInput value={name} onChangeText={setName} placeholder={placeholder} placeholderTextColor={theme.textMuted} autoFocus
-        maxLength={120} onSubmitEditing={add} accessibilityLabel={placeholder}
-        style={StyleSheet.flatten([styles.input, { color: text }])} />
-      <Pressable onPress={add} disabled={busy} accessibilityRole="button" hitSlop={6}>
-        {busy ? <ActivityIndicator color={tint} /> : <Text style={{ color: tint, fontWeight: '600' }}>Add</Text>}
-      </Pressable>
-      <Pressable onPress={() => setOpen(false)} accessibilityRole="button" hitSlop={6}>
-        <Text style={styles.dim}>Cancel</Text>
-      </Pressable>
-      {error && <Text style={styles.error}>{error}</Text>}
+      <Input value={name} onChangeText={setName} placeholder={placeholder} autoFocus maxLength={120} onSubmitEditing={add}
+        accessibilityLabel={placeholder} style={styles.inlineInput} />
+      {busy ? <ActivityIndicator /> : <TextLink onPress={add} label="Add" small />}
+      <TextLink onPress={() => setOpen(false)} label="Cancel" small />
+      {error && <ErrorLine>{error}</ErrorLine>}
     </View>
   );
 }
@@ -228,14 +190,11 @@ function NewByName({ label, placeholder, onAdd }: { label: string; placeholder: 
 /** A tyre typed in place: brand and compound (pressures are added in the garage). */
 function NewTyre({ onAdded }: { onAdded: (t: Tyre) => void }) {
   const styles = useStyles();
-  const theme = useTheme();
   const [open, setOpen] = useState(false);
   const [brand, setBrand] = useState('');
   const [compound, setCompound] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const tint = useThemeColor({}, 'tint');
-  const text = useThemeColor({}, 'text');
-  if (!open) return <Chip label="+ New tyre" on={false} onPress={() => setOpen(true)} dashed />;
+  if (!open) return <Choice label="+ New tyre" on={false} onPress={() => setOpen(true)} add />;
   const add = async () => {
     if (!brand.trim() || !compound.trim()) return setError('Give the brand and the compound.');
     try {
@@ -247,20 +206,15 @@ function NewTyre({ onAdded }: { onAdded: (t: Tyre) => void }) {
       setError((e as Error).message);
     }
   };
-  const input = StyleSheet.flatten([styles.input, { color: text }]);
   return (
     <View style={styles.inline}>
-      <TextInput value={brand} onChangeText={setBrand} placeholder="Brand, e.g. Pirelli" placeholderTextColor={theme.textMuted}
-        autoFocus maxLength={80} accessibilityLabel="Tyre brand" style={input} />
-      <TextInput value={compound} onChangeText={setCompound} placeholder="Compound, e.g. P Zero DHG"
-        placeholderTextColor={theme.textMuted} maxLength={80} onSubmitEditing={add} accessibilityLabel="Tyre compound" style={input} />
-      <Pressable onPress={add} accessibilityRole="button" hitSlop={6}>
-        <Text style={{ color: tint, fontWeight: '600' }}>Add</Text>
-      </Pressable>
-      <Pressable onPress={() => setOpen(false)} accessibilityRole="button" hitSlop={6}>
-        <Text style={styles.dim}>Cancel</Text>
-      </Pressable>
-      {error && <Text style={styles.error}>{error}</Text>}
+      <Input value={brand} onChangeText={setBrand} placeholder="Brand, e.g. Pirelli" autoFocus maxLength={80}
+        accessibilityLabel="Tyre brand" style={styles.inlineInput} />
+      <Input value={compound} onChangeText={setCompound} placeholder="Compound, e.g. P Zero DHG" maxLength={80}
+        onSubmitEditing={add} accessibilityLabel="Tyre compound" style={styles.inlineInput} />
+      <TextLink onPress={add} label="Add" small />
+      <TextLink onPress={() => setOpen(false)} label="Cancel" small />
+      {error && <ErrorLine>{error}</ErrorLine>}
     </View>
   );
 }
@@ -331,8 +285,6 @@ export function EventInfoForm({ info, lists, onListsChanged, focus, onSaved, onC
   const [value, setValue] = useState<Entry>(start.value);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const tint = useThemeColor({}, 'tint');
-  const onTint = useThemeColor({}, 'onTint');
   const prevName = info.previous?.event_name;
   const note = (k: keyof Entry, from: keyof typeof info.from) =>
     start.suggested.has(k) ? `as at ${prevName}` : value[k] === ids(info)[k] ? sourceWords(info.from[from]) : null;
@@ -358,34 +310,25 @@ export function EventInfoForm({ info, lists, onListsChanged, focus, onSaved, onC
           drivers: start.suggested.has('drivers') ? `as at ${prevName}`
             : value.drivers.join() === ids(info).drivers.join() ? sourceWords(info.from.drivers) : null,
         }} />
-      {error && <Text style={styles.error}>{error}</Text>}
-      <View style={styles.buttons}>
-        <Pressable onPress={save} disabled={busy} accessibilityRole="button"
-          style={StyleSheet.flatten([styles.save, { backgroundColor: tint }])}>
-          {busy ? <ActivityIndicator color={onTint} />
-            : <Text style={StyleSheet.flatten([styles.saveText, { color: onTint }])}>Save</Text>}
-        </Pressable>
-        <Pressable onPress={onCancel} hitSlop={8} accessibilityRole="button">
-          <Text style={{ color: tint }}>{cancelLabel}</Text>
-        </Pressable>
-      </View>
+      {error && <ErrorLine>{error}</ErrorLine>}
+      <FormActions>
+        <MainButton label="Save" onPress={save} busy={busy} />
+        <TextLink onPress={onCancel} label={cancelLabel} />
+      </FormActions>
     </View>
   );
 }
 
-/** The checklist of what an event's info is missing, each item a button. */
+/** What an event's info is missing: a red block, then each item as a link to its field in the form. */
 export function MissingList({ missing, onPick }: { missing: MissingKey[]; onPick: (k: MissingKey) => void }) {
   const styles = useStyles();
-  const tint = useThemeColor({}, 'tint');
+  const c = useTheme();
   if (!missing.length) return null;
   return (
     <View style={styles.missing}>
-      <Text style={styles.missingTitle}>Missing</Text>
+      <Block label="Missing" color={c.mark} ink={inkOn(c.mark)} />
       {missing.map((k) => (
-        <Pressable key={k} onPress={() => onPick(k)} accessibilityRole="button" accessibilityLabel={`Fill in: ${MISSING_LABEL[k]}`}
-          style={StyleSheet.flatten([styles.todo, { borderColor: tint }])}>
-          <Text style={StyleSheet.flatten([styles.todoText, { color: tint }])}>☐ {MISSING_LABEL[k]}</Text>
-        </Pressable>
+        <TextLink key={k} onPress={() => onPick(k)} label={MISSING_LABEL[k]} small />
       ))}
     </View>
   );
@@ -413,13 +356,13 @@ export function AskEventInfo({ runIds, refresh, onSaved }: { runIds: number[]; r
         if (!info.missing.length) return null;
         return (
           <View key={info.event_id} style={styles.ask}>
-            <Text style={styles.askLabel}>Event info</Text>
+            <Label>Event info</Label>
             <Text style={styles.askTitle}>What was {info.event_name ?? 'this event'} run with?</Text>
-            <Text style={styles.note}>
+            <Note>
               Missing: {info.missing.map((k) => MISSING_LABEL[k]).join(', ')}.
               {info.season ? ` The rest comes from ${info.season.name}.` : ''}
               {info.previous ? ` Filled in as at ${info.previous.event_name}: check and save.` : ''}
-            </Text>
+            </Note>
             <EventInfoForm info={info} lists={lists} onListsChanged={reload} cancelLabel="Skip"
               onSaved={(saved) => {
                 setDone((d) => ({ ...d, [info.event_id]: saved.missing.length
@@ -436,34 +379,13 @@ export function AskEventInfo({ runIds, refresh, onSaved }: { runIds: number[]; r
 }
 
 const useStyles = themed((c) => ({
-  fields: { gap: 14, backgroundColor: 'transparent' },
-  field: { gap: 6, backgroundColor: 'transparent', borderColor: 'transparent' },
-  fieldHead: { flexDirection: 'row', alignItems: 'baseline', gap: 8, flexWrap: 'wrap', backgroundColor: 'transparent' },
-  label: { fontSize: 11, fontWeight: '700', opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
-  from: { fontSize: 12, opacity: 0.6, fontStyle: 'italic' },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center', backgroundColor: 'transparent' },
-  chip: { borderWidth: 1, borderColor: c.borderStrong, borderRadius: Radius.chip, paddingHorizontal: 12, paddingVertical: 6,
-    maxWidth: '100%', backgroundColor: c.surface },
-  dashed: { borderStyle: 'dashed' },
-  chipText: { fontSize: 14 },
-  chipSub: { fontSize: 11, opacity: 0.6 },
-  order: { fontSize: 14, fontWeight: '600' },
-  inline: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, backgroundColor: 'transparent' },
-  input: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, paddingHorizontal: 10, paddingVertical: 6, fontSize: 15,
-    minWidth: 150, flexGrow: 1, flexShrink: 1, backgroundColor: c.surface },
-  note: { fontSize: 12, opacity: 0.6 },
-  dim: { opacity: 0.6 },
-  error: { color: c.error },
-  form: { gap: 14, backgroundColor: 'transparent' },
-  buttons: { flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: 'transparent' },
-  save: { borderRadius: Radius.control, paddingHorizontal: 18, paddingVertical: 9, minWidth: 80, alignItems: 'center' },
-  saveText: { fontWeight: '600' },
-  missing: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, backgroundColor: 'transparent' },
-  missingTitle: { fontSize: 12, fontWeight: '700', color: c.warning, marginRight: 2 },
-  todo: { borderWidth: 1, borderStyle: 'dashed', borderRadius: Radius.chip, paddingHorizontal: 10, paddingVertical: 4 },
-  todoText: { fontSize: 13, fontWeight: '600' },
-  ask: { borderWidth: 1.5, borderColor: c.borderStrong, borderRadius: Radius.card, padding: 12, gap: 8, backgroundColor: c.surface },
-  askLabel: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
-  askTitle: { fontSize: 17, fontWeight: '700' },
-  doneText: { fontWeight: '600' },
+  fields: { gap: 22 },
+  order: { fontFamily: Type.label.fontFamily, fontSize: 15, letterSpacing: 0.3, color: c.text },
+  inline: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', columnGap: 14, rowGap: 8, width: '100%' },
+  inlineInput: { minWidth: 160, flexGrow: 1, flexShrink: 1, flexBasis: 160 },
+  form: { gap: 22 },
+  missing: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 16, rowGap: 10, marginTop: 14 },
+  ask: { gap: 10, borderTopWidth: 3, borderColor: c.rule, paddingTop: 10, marginTop: 18 },
+  askTitle: { fontFamily: Fonts.display, fontSize: 28, lineHeight: 31, textTransform: 'uppercase', color: c.text },
+  doneText: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 22, color: c.text, marginTop: 10 },
 }));

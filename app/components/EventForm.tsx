@@ -1,10 +1,11 @@
-// An event's name and its first and last day: to make an event (Sessions tab, before an upload) or change one.
+// An event's name and its first and last day: to make an event (Sessions page, before an upload) or change one.
 import { ReactNode, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, TextInput } from 'react-native';
+import { StyleSheet } from 'react-native';
 
-import { Text, View, useThemeColor } from '@/components/Themed';
+import { ErrorLine, Field, FormActions, Input, MainButton, Note } from '@/components/Controls';
+import { TextLink } from '@/components/Programme';
+import { View } from '@/components/Themed';
 import { parseDay, typedDay } from '@/lib/events';
-import { Radius, themed, useTheme } from '@/constants/Theme';
 
 export type EventFormValue = { name: string; start: string | null; end: string | null };
 
@@ -16,15 +17,11 @@ export function EventForm({ initial, submitLabel, onSubmit, onCancel, datesHint,
   datesHint?: string;
   extra?: ReactNode; // more fields, under the name (a planned event's venue)
 }) {
-  const styles = useStyles();
-  const theme = useTheme();
   const [name, setName] = useState(initial?.name ?? '');
   const [start, setStart] = useState(typedDay(initial?.start ?? null));
   const [end, setEnd] = useState(typedDay(initial?.end ?? null));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const tint = useThemeColor({}, 'tint');
-  const text = useThemeColor({}, 'text');
 
   const submit = async () => {
     const s = start.trim() ? parseDay(start) : null;
@@ -44,55 +41,35 @@ export function EventForm({ initial, submitLabel, onSubmit, onCancel, datesHint,
     }
   };
 
-  const input = StyleSheet.flatten([styles.input, { color: text }]);
   return (
     <View style={styles.form}>
-      <Text style={styles.label}>Name</Text>
-      <TextInput value={name} onChangeText={setName} placeholder="e.g. GT4 Germany Hockenheim" placeholderTextColor={theme.textMuted}
-        style={input} maxLength={160} accessibilityLabel="Event name" />
+      <Field label="Name">
+        <Input value={name} onChangeText={setName} placeholder="e.g. GT4 Germany Hockenheim" maxLength={160}
+          accessibilityLabel="Event name" />
+      </Field>
       {extra}
       <View style={styles.dates}>
-        <View style={styles.date}>
-          <Text style={styles.label}>First day</Text>
-          <TextInput value={start} onChangeText={setStart} placeholder="dd/mm/yyyy" placeholderTextColor={theme.textMuted}
-            style={input} maxLength={10} inputMode="numeric" accessibilityLabel="First day" />
-        </View>
-        <View style={styles.date}>
-          <Text style={styles.label}>Last day</Text>
-          <TextInput value={end} onChangeText={setEnd} placeholder="dd/mm/yyyy" placeholderTextColor={theme.textMuted}
-            style={input} maxLength={10} inputMode="numeric" accessibilityLabel="Last day" />
-        </View>
+        <Field label="First day" style={styles.date}>
+          <Input value={start} onChangeText={setStart} placeholder="dd/mm/yyyy" maxLength={10} inputMode="numeric"
+            accessibilityLabel="First day" />
+        </Field>
+        <Field label="Last day" style={styles.date}>
+          <Input value={end} onChangeText={setEnd} placeholder="dd/mm/yyyy" maxLength={10} inputMode="numeric"
+            accessibilityLabel="Last day" />
+        </Field>
       </View>
-      <Text style={styles.hint}>{datesHint ?? 'Leave the dates empty to take them from the logs.'}</Text>
-      {error && <Text style={styles.error}>{error}</Text>}
-      <View style={styles.buttons}>
-        <Pressable onPress={submit} disabled={busy} accessibilityRole="button"
-          style={StyleSheet.flatten([styles.button, { borderColor: tint }])}>
-          {busy ? <ActivityIndicator color={tint} />
-            : <Text style={StyleSheet.flatten([styles.buttonText, { color: tint }])}>{submitLabel}</Text>}
-        </Pressable>
-        {onCancel && (
-          <Pressable onPress={onCancel} accessibilityRole="button" style={styles.cancel}>
-            <Text style={{ color: tint }}>Cancel</Text>
-          </Pressable>
-        )}
-      </View>
+      <Note>{datesHint ?? 'Leave the dates empty to take them from the logs.'}</Note>
+      {error && <ErrorLine>{error}</ErrorLine>}
+      <FormActions>
+        <MainButton label={submitLabel} onPress={submit} busy={busy} />
+        {onCancel && <TextLink onPress={onCancel} label="Cancel" />}
+      </FormActions>
     </View>
   );
 }
 
-const useStyles = themed((c) => ({
-  form: { gap: 6, backgroundColor: 'transparent' },
-  label: { fontSize: 12, opacity: 0.6, textTransform: 'uppercase', letterSpacing: 0.5 },
-  input: { borderWidth: 1, borderColor: c.border, borderRadius: Radius.control, paddingHorizontal: 12, paddingVertical: 9,
-    fontSize: 16, backgroundColor: c.surface },
-  dates: { flexDirection: 'row', gap: 10, backgroundColor: 'transparent' },
-  date: { flex: 1, gap: 6, backgroundColor: 'transparent' },
-  hint: { fontSize: 12, opacity: 0.6 },
-  error: { color: c.error },
-  buttons: { flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 4, backgroundColor: 'transparent' },
-  button: { borderWidth: 1.5, borderRadius: Radius.control, paddingHorizontal: 18, paddingVertical: 9, minWidth: 110,
-    alignItems: 'center' },
-  buttonText: { fontWeight: '700' },
-  cancel: { paddingVertical: 10 },
-}));
+const styles = StyleSheet.create({
+  form: { gap: 14 },
+  dates: { flexDirection: 'row', gap: 20 },
+  date: { flex: 1, minWidth: 0 },
+});
