@@ -299,6 +299,48 @@ def test_the_season_s_car_number_beats_one_found_from_logged_laps(client, fake_s
         assert _known_number(db, "gt4-europe", 2026, ev["id"]) == "70"
 
 
+def test_the_rounds_on_now_are_found_from_the_events_dates(client):
+    """The live check's events on now: each event's days as its folder gives them (by hand, else its logs', else its
+    date), read for every linked event at once."""
+    from datetime import date
+
+    from app import models
+    from app.db import SessionLocal
+    from app.results import models as rm
+    from app.results.sync import _event_days, current_links
+    from app.routers import events
+
+    client.post("/tracks", json={"name": "Test Track"})
+    logged = client.post("/events/folders", json={"name": "Logged"}).json()["id"]
+    _session(client, logged, "FP", (0.97, 0.98), "19/09/2026", "11:30:00")
+    _session(client, logged, "R", (0.97, 0.98), "20/09/2026", "15:00:00")
+    unmatched = client.post("/events/folders", json={"name": "No round"}).json()["id"]
+    with SessionLocal() as db:
+        hand = models.Event(name="By hand", date=date(2026, 1, 1))
+        dated = models.Event(name="Dated", date=date(2026, 10, 4))
+        bare = models.Event(name="No date")
+        db.add_all([hand, dated, bare])
+        db.flush()
+        db.add(models.EventDates(event_id=hand.id, end=date(2026, 8, 2)))
+        ids = [logged, hand.id, dated.id, bare.id]
+        for i, eid in enumerate(ids):
+            db.add(rm.EventResultLink(event_id=eid, series="gt4-europe", year=2026, round_id=str(i)))
+        db.add(rm.EventResultLink(event_id=unmatched, series="gt4-europe", year=2026))
+        db.commit()
+
+        days = _event_days(db, ids)
+        for eid in ids:  # as the events page has them
+            folder = events._folder(db.get(models.Event, eid), events._sessions(db, eid), events._dates_row(db, eid))
+            assert days[eid] == tuple(date.fromisoformat(d) if d else None for d in (folder["start"], folder["end"]))
+        assert days[logged] == (date(2026, 9, 19), date(2026, 9, 20))
+        assert days[hand.id] == (date(2026, 8, 2), date(2026, 8, 2)) and days[bare.id] == (None, None)
+
+        def on(day):
+            return sorted(l.event_id for l in current_links(db, day))
+        assert on(date(2026, 9, 18)) == [logged] and on(date(2026, 9, 22)) == [logged] and on(date(2026, 9, 23)) == []
+        assert on(date(2026, 8, 4)) == [hand.id] and on(date(2026, 10, 3)) == [dated.id]
+
+
 def test_setting_only_the_car_number_leaves_the_round_matched_automatically(client, fake_site):
     from app.db import SessionLocal
     from app.results import models as rm
