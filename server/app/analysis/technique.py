@@ -981,6 +981,17 @@ def _power_slide(tr: dict[str, np.ndarray], a: int, b: int, side: float,
     return None
 
 
+def _median(x: np.ndarray) -> float:
+    """np.median of a short array without NaN, to the last bit, without numpy's overhead on every call."""
+    s = sorted(x.tolist())
+    m = len(s) // 2
+    return s[m] if len(s) % 2 else (s[m - 1] + s[m]) / 2
+
+
+def _np_median(x: np.ndarray) -> float:
+    return float(np.median(x))
+
+
 def _stalls(tr: dict[str, np.ndarray], a: int, b: int, ay: np.ndarray,
             side: float) -> list[tuple[int, int, np.ndarray, float]]:
     """Where the speed, climbing out of a corner (from metre a to b, the next corner's lift or brake point), stops
@@ -996,10 +1007,12 @@ def _stalls(tr: dict[str, np.ndarray], a: int, b: int, ay: np.ndarray,
     acc = np.convolve(acc, np.ones(k) / k, mode="same")
     braking = np.asarray(tr["braking"][a:b + 1], float) > 0.5 if "braking" in tr else np.zeros(b - a + 1, bool)
     gear = np.rint(np.asarray(tr["gear"][a:b + 1], float)) if "gear" in tr else None
+    median = _median if not np.isnan(acc).any() else _np_median
+    starts = np.maximum(np.searchsorted(t[a:b + 1], t[a:b + 1] - STALL_BEFORE_S), 0).tolist()
     out, i = [], 0
     while i < len(acc):
-        i0 = max(int(np.searchsorted(t[a:b + 1], t[a + i] - STALL_BEFORE_S)), 0)
-        was = float(np.median(acc[i0:i])) if i - i0 >= 3 else 0.0
+        i0 = starts[i]
+        was = median(acc[i0:i]) if i - i0 >= 3 else 0.0
         if was < STALL_MIN_ACC or acc[i] >= STALL_SHARE * was or braking[i]:
             i += 1
             continue
@@ -1377,14 +1390,18 @@ def _ideal_gears(shifts: ShiftModel, kmh: np.ndarray) -> tuple[np.ndarray, np.nd
         return next((j for j, g in enumerate(gears) if shifts.ratio[g] * v < up[j]), top)
 
     j = lowest(float(kmh[0]))
-    out = np.empty(len(kmh), int)
-    for k, v in enumerate(np.asarray(kmh, float)):
-        while j < top and shifts.ratio[gears[j]] * v >= up[j]:
+    ratios = [shifts.ratio[g] for g in gears]
+    down = [u - DOWNSHIFT_MARGIN_RPM for u in up]
+    at = []
+    for v in np.asarray(kmh, float).tolist():
+        while j < top and ratios[j] * v >= up[j]:
             j += 1
-        while j > 0 and shifts.ratio[gears[j - 1]] * v < up[j - 1] - DOWNSHIFT_MARGIN_RPM:
+        while j > 0 and ratios[j - 1] * v < down[j - 1]:
             j -= 1
-        out[k] = gears[j]
-    ratio = np.array([shifts.ratio[int(g)] for g in out])
+        at.append(j)
+    at = np.array(at, int)
+    out = np.array(gears, int)[at]
+    ratio = np.array(ratios, float)[at]
     return out, np.minimum(ratio * kmh, shifts.limit)
 
 
