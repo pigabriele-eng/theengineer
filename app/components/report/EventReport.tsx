@@ -18,10 +18,12 @@ import { TrackMap } from '@/components/TrackMap';
 import { useEventParts } from '@/components/weekend/SessionReports';
 import { formatLap } from '@/lib/api';
 import { noPrint } from '@/lib/print';
+import { todayIso } from '@/lib/calendar';
 import { dateRange } from '@/lib/events';
 import { RunNamer, runNamer } from '@/lib/runLabels';
 import { fetchPartReport, Part, PartScope, refreshPartReport } from '@/lib/sessionReports';
 import { TrackShapeData } from '@/lib/trackshape';
+import { defaultStage } from '@/lib/weekendRuns';
 import {
   fetchReport,
   Habit,
@@ -106,6 +108,9 @@ export default function EventReport({ eventId, part, sessionId, embedded }: {
   // embedded, the switcher's pick (whole event, one official session or one run) for the report asked for; a new one
   // drops it
   const [picked, setPicked] = useState<{ of: string; scope: Scope } | null>(null);
+  // opened on one official session (a weekend's session reports): while the weekend is on, the whole event's report
+  // stays out of the switcher, it is for after the weekend (Gabriele, 2026-10-07)
+  const [fromPart] = useState(given != null && isPartScope(given));
   const scope: Scope | null = embedded && picked?.of === givenKey ? picked.scope : given;
   const key = scope ? keyOf(scope) : '';
   const [answer, setAnswer] = useState<ReportAnswer | null>(null);
@@ -345,6 +350,7 @@ export default function EventReport({ eventId, part, sessionId, embedded }: {
       )}
       {folder && folder.id != null && (
         <ScopeBar folder={folder} current={'session' in scope ? scope.session : null}
+          whole={!fromPart || defaultStage(folder, todayIso()) === 'after'}
           part={isPartScope(scope) ? scope.part : null} scope={runScope} pdfName={pdfName} names={names}
           onWhole={() => (embedded ? setPicked({ of: givenKey, scope: { event: folder.id! } })
             : router.setParams({ event: String(folder.id), session: undefined, part: undefined }))}
@@ -419,9 +425,10 @@ function sectionTones(theme: Palette, report: Report): Record<string, string> {
 
 /** What the report is for: the whole event, one of its official sessions (FP1, Q1, R1, every run of it) or one run.
  * A run alone in its session is picked by the session's name only (the same report). */
-function ScopeBar({ folder, current, part, scope, pdfName, names, onWhole, onPart, onPick }: {
+function ScopeBar({ folder, current, whole, part, scope, pdfName, names, onWhole, onPart, onPick }: {
   folder: NonNullable<ReturnType<typeof useEventFolder>>;
   current: number | null; // the run shown, or null
+  whole: boolean; // the whole event can be picked (left out while the weekend is on, for a session's report)
   part: string | null; // the official session shown, or null
   scope: ReportScope; // for the technique check
   pdfName: string;
@@ -446,8 +453,8 @@ function ScopeBar({ folder, current, part, scope, pdfName, names, onWhole, onPar
     // the whole bar stays off the printed page: the headline says what the report is for
     <View style={styles.scope} {...noPrint}>
       <Label>Report for</Label>
-      <TextLink onPress={onWhole} label="Whole event" red={current == null && part == null} small />
-      {parts.length > 0 && <Label muted>or one session</Label>}
+      {whole && <TextLink onPress={onWhole} label="Whole event" red={current == null && part == null} small />}
+      {parts.length > 0 && whole && <Label muted>or one session</Label>}
       {parts.length > 0 && (
         <View style={styles.runs}>
           {/* each official session by its code ("FP1", "Q1", "R1"), in the order they ran */}
