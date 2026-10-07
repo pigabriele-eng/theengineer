@@ -387,3 +387,14 @@ def test_header_drivers_are_matched_whatever_the_order_capitals_and_accents():
     assert days_text(date(2026, 9, 18), date(2026, 9, 20)) == "18-20 Sep 2026"
     assert days_text(date(2026, 9, 30), date(2026, 10, 2)) == "30 Sep - 2 Oct 2026"
     assert days_text(date(2026, 9, 19), None) == "19 Sep 2026" and days_text(None, None) == "no dates"
+
+
+def test_a_round_named_with_its_number_is_not_numbered_twice():
+    from types import SimpleNamespace as NS
+
+    from app.season_match import _round_label
+
+    season = NS(name="GT4 European Series 2026")
+    assert _round_label(season, NS(order=1, name="Round 5 Zandvoort")) == "GT4 European Series 2026, round 5 Zandvoort"
+    assert _round_label(season, NS(order=5, name="Zandvoort")) == "GT4 European Series 2026, round 5 Zandvoort"
+    assert _round_label(season, NS(order=2, name="Rotterdam")) == "GT4 European Series 2026, round 2 Rotterdam"

@@ -95,7 +95,13 @@ def _plural(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
 
 
+ROUND_NAMED = re.compile(r"^\s*(round|rd|r)\s*\d", re.IGNORECASE)  # "Round 5 Zandvoort", "R5 Zandvoort"
+
+
 def _round_label(season: seasons.Season, rnd: seasons.SeasonRound) -> str:
+    """"GT4 European Series 2026, round 5 Zandvoort"; a round whose name already says its number keeps that name."""
+    if ROUND_NAMED.match(rnd.name or ""):
+        return f"{season.name}, {rnd.name[0].lower()}{rnd.name[1:]}"
     return f"{season.name}, round {rnd.order} {rnd.name}"
 
 
