@@ -24,6 +24,7 @@ from contextlib import nullcontext
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
+from fastapi.responses import Response
 from sqlalchemy import DateTime, Integer, LargeBinary, String, delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column
@@ -105,8 +106,28 @@ def sessions_part(db: Session, sessions: list[models.RunSession]) -> list:
             for s in sessions for f in [main_file(s)]]
 
 
+class RawJSON(Response):
+    """An answer sent as the JSON text it is kept as. Returned as a plain value, the kept text would be read back into
+    Python, FastAPI would run every value through its encoder and write it out again, in the event loop every other
+    request waits on: a quarter of a second for the report's grip use (110 kB) on a tenth of a CPU, against a
+    hundredth of that to unpack the text."""
+    media_type = "application/json"
+
+
+def as_json(x) -> bytes:
+    """The answer as the JSON text it is kept and sent as (UTF-8 as FastAPI writes it; NaN and infinity as null)."""
+    return json.dumps(_finite(x), separators=(",", ":"), ensure_ascii=False, default=_plain).encode()
+
+
+def with_fields(text: bytes, **fields) -> bytes:
+    """The JSON object text with these fields added at its end (a copy of a kept answer with a field of its own)."""
+    more = as_json(fields)[1:-1]
+    head = text.rstrip()[:-1]  # without its closing brace
+    return text if not more else head + (b"" if head.rstrip().endswith(b"{") else b",") + more + b"}"
+
+
 def _pack(x) -> bytes:
-    return zlib.compress(json.dumps(_finite(x), separators=(",", ":"), default=_plain).encode(), 6)
+    return zlib.compress(as_json(x), 6)
 
 
 def _plain(x):
@@ -133,22 +154,25 @@ def plain(x):
     return json.loads(json.dumps(_finite(x), default=_plain))
 
 
-def lookup(db: Session, scope: str, sig: str) -> tuple[int, object] | None:
-    """(status, answer) kept for scope when it was made from these inputs, else None."""
+def lookup(db: Session, scope: str, sig: str, raw: bool = False) -> tuple[int, object] | None:
+    """(status, answer) kept for scope when it was made from these inputs, else None. raw: a kept answer (status 200)
+    as its JSON text, not read back into Python."""
     row = db.execute(select(PageCache.signature, PageCache.status, PageCache.body)
                      .where(PageCache.scope == scope)).first()
     if row is None or row.signature != sig:
         return None
     try:
-        return row.status, json.loads(zlib.decompress(row.body))
+        text = zlib.decompress(row.body)
+        return row.status, (text if raw and row.status == 200 else json.loads(text))
     except (zlib.error, ValueError) as e:
         log.warning("Kept answer %s couldn't be read (%s): worked out again", scope, e)
         return None
 
 
-def store(db: Session, scope: str, sig: str, value, status: int = 200) -> None:
-    """Keep the answer (committed with whatever else the request has pending)."""
-    body = _pack(value)
+def store(db: Session, scope: str, sig: str, value, status: int = 200) -> bytes:
+    """Keep the answer (committed with whatever else the request has pending); its JSON text, as kept."""
+    text = as_json(value)
+    body = zlib.compress(text, 6)
     for _ in range(2):
         row = db.scalar(select(PageCache).where(PageCache.scope == scope))
         if row is None:
@@ -157,9 +181,10 @@ def store(db: Session, scope: str, sig: str, value, status: int = 200) -> None:
         row.signature, row.status, row.body = sig, status, body
         try:
             db.commit()
-            return
+            return text
         except IntegrityError:  # another request kept it a moment ago: overwrite that one
             db.rollback()
+    return text
 
 
 def _answer(hit: tuple[int, object]):
@@ -169,20 +194,24 @@ def _answer(hit: tuple[int, object]):
     return value
 
 
-def cached(db: Session, scope: str, sig: Callable[[], str], work: Callable[[], object], locked: bool = True):
+def cached(db: Session, scope: str, sig: Callable[[], str], work: Callable[[], object], locked: bool = True,
+           raw: bool = False):
     """The page's answer: the one kept for scope when sig() still matches (no log read, no wait for the heavy-work
     lock), else work() under the lock, kept for next time. Under the lock it looks again first: another request or
     the prebuild may have just worked it out. locked=False for work that takes the lock itself only when it reads a
     log (it has answers in memory too). sig() is asked again after work(), which can find the track a log names, so
-    the answer is kept under the signature the next request will ask with. A 404 or 422 is kept too."""
-    hit = lookup(db, scope, sig())
+    the answer is kept under the signature the next request will ask with. A 404 or 422 is kept too.
+
+    raw: the answer as its JSON text, kept or just worked out (bytes; an endpoint sends it as RawJSON): the same text
+    either way, read and written once."""
+    hit = lookup(db, scope, sig(), raw)
     if hit is not None:
         return _answer(hit)
     if locked:
         db.commit()  # hands the database connection back while this waits its turn: the pool is small
     with heavy.lock if locked else nullcontext():
         if locked:
-            hit = lookup(db, scope, sig())
+            hit = lookup(db, scope, sig(), raw)
             if hit is not None:
                 return _answer(hit)
         try:
@@ -192,8 +221,8 @@ def cached(db: Session, scope: str, sig: Callable[[], str], work: Callable[[], o
                 store(db, scope, sig(), e.detail, e.status_code)
             raise
         # kept before the lock is let go: an event deleted meanwhile (it takes the lock) leaves no answer behind
-        store(db, scope, sig(), out)
-    return out
+        text = store(db, scope, sig(), out)
+    return text if raw else out
 
 
 def fresh(db: Session, scope: str, sig: str) -> bool:
