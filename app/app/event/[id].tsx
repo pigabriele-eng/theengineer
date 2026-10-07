@@ -27,7 +27,9 @@ import { Text, View } from '@/components/Themed';
 import CoachingDay from '@/components/coaching/CoachingDay';
 import WeekendBefore from '@/components/weekend/Before';
 import WeekendDuring from '@/components/weekend/During';
-import { formatLap } from '@/lib/api';
+import SessionReports from '@/components/weekend/SessionReports';
+import EventReport from '@/components/report/EventReport';
+import { formatLap, prefetch } from '@/lib/api';
 import { todayIso, When, whenOf } from '@/lib/calendar';
 import { MAX_LAPS } from '@/lib/compare';
 import { countryOfAny } from '@/lib/countries';
@@ -43,7 +45,7 @@ import { encodePicks } from '@/lib/compare';
 import { COACHING_SECTIONS } from '@/lib/coachingDay';
 import { EventMode, fetchMode, setMode as saveMode } from '@/lib/eventModes';
 import { noPrint } from '@/lib/print';
-import { face, Fonts, PHOTOS, photoFor, themed, Type, useTheme } from '@/constants/Theme';
+import { face, Fonts, PHOTOS, photoFor, TAP, tapRoom, themed, Type, useTheme } from '@/constants/Theme';
 
 // A run row as the server sends it, with its driver and car ids
 type Run = FolderSession & { driver_id?: number | null; car_id?: number | null };
@@ -102,10 +104,14 @@ export default function EventScreen() {
   const scroll = useRef<ScrollView>(null);
   const topH = useRef(0); // the photo and its folio, above the page's body
   const compareY = useRef(0); // where Side by side starts in the body
+  const reportY = useRef(0); // where the report starts in the body (After)
+  const [reportSections, setReportSections] = useState(0); // how many numbered sections the report has
   // how many times the event came from the server (not counting the chips' changes made here at once): what's
-  // worked out from its runs is asked for again with it; null until the event is read
+  // worked out from its runs is asked for again with it. 1 from the start, and still 1 once the event is first read
+  // (nothing has changed since), so what needs only the event's number (who drove each run, the run names the
+  // timetable can't place, the event's info) is asked for at once, and once a visit.
   const [reads, setReads] = useState(0);
-  const version = folder ? reads : null;
+  const version = Math.max(reads, 1);
   // who drove each run by driving style, asked again whenever the runs change (a driver set, a run added)
   const guess = useDriverGuess(key === NO_EVENT ? null : Number(key), version);
 
@@ -207,6 +213,14 @@ export default function EventScreen() {
   const asked: Stage | null = params.stage === 'before' || params.stage === 'during' || params.stage === 'after'
     ? params.stage : null;
   const stage: Stage = asked ?? defaultStage(folder, todayIso());
+  // the stage is known once the event is read, or at once when the address asks for one
+  const stageKnown = asked != null || folder != null;
+  // Opened on no stage, the page waits for the event's runs to know which; meanwhile the reads that During and After
+  // both make and that need only the event's number start (prefetch, lib/api.ts), so they don't wait for it too.
+  useEffect(() => {
+    if (!isEvent || asked != null || folder != null) return;
+    prefetch(`/events/${key}/info`, `/results/events/${key}`, `/events/${key}/debriefs`, `/reports/events/${key}/parts`);
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps -- once a visit, on opening
   const pickStage = (s: Stage) => router.setParams({ stage: s });
   // a coaching day opens on its own answers (components/coaching/CoachingDay.tsx): no Before, During and After
   const coaching = isEvent && mode === 'coaching';
@@ -277,8 +291,9 @@ export default function EventScreen() {
     </View>
   );
 
-  // Before the weekend: the prep report itself (the lap to aim for, corner by corner, grip, the setup to start with)
-  const before = isEvent && mode != null && eventId != null && folder && !during && !coaching && (
+  // Before the weekend: the prep report itself (the lap to aim for, corner by corner, grip, the setup to start with),
+  // at once when the address asks for Before
+  const before = isEvent && mode != null && eventId != null && stageKnown && !during && !coaching && (
     <WeekendBefore eventId={eventId} car={params.car ?? null} />
   );
 
@@ -346,8 +361,16 @@ export default function EventScreen() {
   const dayStyle = cols === 'across' ? styles.dayAcross : cols === 'half' ? styles.dayHalf : wide ? styles.day : undefined;
 
   // During's own sections come first (lib/weekendRuns.ts duringSections), a coaching day's answers likewise
-  // (lib/coachingDay.ts COACHING_SECTIONS); Before is the prep report alone; After opens on the runs
+  // (lib/coachingDay.ts COACHING_SECTIONS); Before is the prep report alone; After opens on the session reports, then
+  // the runs
   let no = coaching ? COACHING_SECTIONS : during ? duringSections(folder) : 0;
+  // each official session's report (FP1, Q1, R1), at the top of After (in During, among its own sections)
+  const sessionReports = after && eventId != null && (
+    <Section no={++no} title="Session reports"
+      dek="One report per session of the weekend (FP1, Q1, the races), from every run of it; the whole weekend’s is below the runs.">
+      <SessionReports eventId={eventId} />
+    </Section>
+  );
   const runs = folder && showRuns && (
     <Section no={++no} title="Runs" dek={isEvent
       ? 'Day by day, each with its driver and best lap. Tick two to six, then Compare laps at the foot of the screen; tap a name to rename it, a best lap to open the run.'
@@ -404,14 +427,18 @@ export default function EventScreen() {
     </Section>
   );
 
-  // After the weekend: the full report, under the runs
-  const report = after && eventId != null && timed && (
-    <Section no={++no} title="Report" dek="The whole weekend analysed: where the time is, corner by corner, every run.">
-      <View style={styles.quick}>
-        <TextLink href={{ pathname: '/report', params: { event: eventId } }} label="Open the full report" red arrow />
-      </View>
-    </Section>
+  // After the weekend: the full report, under the runs and their Compare bar, its sections numbered on from theirs
+  // (components/report/EventReport.tsx). Tapping a section to see it on the map scrolls up to the map.
+  const reportNo = no + 1;
+  const report = after && eventId != null && stageKnown && (
+    <View onLayout={(e) => (reportY.current = e.nativeEvent.layout.y)}>
+      <EventReport eventId={eventId} embedded firstNo={reportNo} onSections={setReportSections}
+        folder={folder} // the page's own read of the event: the report doesn't read it again
+        onShowMap={(y) => scroll.current?.scrollTo({ y: Math.max(topH.current + reportY.current + y - 12, 0),
+          animated: true })} />
+    </View>
   );
+  if (report) no += reportSections;
 
   const info = eventId != null && hasInfo && (
     <EventInfoCard no={++no} eventId={eventId} version={version}
@@ -455,8 +482,9 @@ export default function EventScreen() {
         {notice && <View style={styles.notice}><Said text={notice} onPress={() => setNotice(null)} /></View>}
         {seasonQuestion}
         {runNameQuestion}
-        {/* the mode decides what the page opens on: nothing until it is known, so a coaching day never shows a weekend first */}
-        {folder && isEvent && mode == null ? <ActivityIndicator style={styles.loading} /> : coaching && eventId != null ? (
+        {/* the mode decides what the page opens on: nothing until it is known, so a coaching day never shows a weekend
+            first (a stage the address asks for waits for it too: it comes quicker than the event) */}
+        {isEvent && mode == null ? (folder && <ActivityIndicator style={styles.loading} />) : coaching && eventId != null ? (
           <CoachingDay eventId={eventId} folder={folder}>
             {runs}
             {sideBySide}
@@ -474,6 +502,7 @@ export default function EventScreen() {
           </WeekendDuring>
         ) : after ? (
           <>
+            {sessionReports}
             {runs}
             {sideBySide}
             {report}
@@ -567,6 +596,9 @@ const MODES: { key: EventMode; label: string }[] = [
   { key: 'weekend', label: 'Race weekend' },
   { key: 'coaching', label: 'Coaching day' },
 ];
+
+// the folio's 13 px words are 13 to 17 px tall: room above and below to a tap target's height
+const MODE_ROOM = Math.ceil((TAP - 13) / 2);
 
 /** The event's mode in the folio, one tap to switch: the one it is in bold over a red underline. Words in a line of
  * text (a folio item is text), each a button. */
@@ -700,23 +732,21 @@ function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, e
             <View style={styles.nameLine}>
               {color && <RunKey color={color} />}
               <DriverTag tag={driverTag(driverState(s, guess, garage))} run={s.name} onPress={() => onOpen('driver')} />
-              <Pressable onPress={onEdit} hitSlop={6} accessibilityRole="button" accessibilityLabel={`Rename ${s.name}`}
+              <Pressable onPress={onEdit} accessibilityRole="button" accessibilityLabel={`Rename ${s.name}`}
                 style={styles.namePress}>
                 <Text style={styles.runName} numberOfLines={1}>{s.name}</Text>
                 <Text style={styles.pencil}>✎</Text>
               </Pressable>
             </View>
           )}
-          {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
-          <Link href={href} asChild>
-            <Pressable style={styles.detailPress} accessibilityRole="link">
-              <Text style={styles.runSub} numberOfLines={2}>{detail}</Text>
-            </Pressable>
-          </Link>
+          {/* words only: the run opens from its best lap, a target the row's height (a second, 17 px link to the
+              same run was too small to tap) */}
+          <Text style={styles.runSub} numberOfLines={2}>{detail}</Text>
           <RunChips run={s} garage={garage} open={open} onOpen={onOpen} />
           <DriverGuessLine guess={guess} mode={guessMode} onPick={onPick} onName={() => onOpen('driver')} />
         </View>
-        {/* while the name is edited, the editor takes the row's width */}
+        {/* while the name is edited, the editor takes the row's width. Link asChild hands its child's style to a web
+            anchor, which can't take a style array: one object */}
         {!editing && (
           <Link href={href} asChild>
             <Pressable style={styles.runBest} accessibilityRole="link" accessibilityLabel={`Open ${s.name}`}>
@@ -809,10 +839,10 @@ const useStyles = themed((c) => ({
   manage: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 18, rowGap: 10, marginLeft: 'auto' },
   managePhone: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 18, rowGap: 10, width: '100%',
     borderTopWidth: 1, borderColor: c.separator, paddingTop: 12 },
-  // the mode switch: a tall tap area around the words (inline padding, the folio's height unchanged)
+  // the mode switch: a tap target's height around the words (inline padding, the folio's height unchanged)
   modeOn: { fontFamily: Type.label.fontFamily, textDecorationLine: 'underline', textDecorationColor: c.mark,
-    paddingVertical: 12 },
-  modeOff: { color: c.textSecondary, paddingVertical: 12 },
+    paddingVertical: MODE_ROOM },
+  modeOff: { color: c.textSecondary, paddingVertical: MODE_ROOM },
   more: { marginTop: 40, borderTopWidth: 3, borderColor: c.rule, paddingTop: 10, gap: 14 },
   moreLinks: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 22, rowGap: 14 },
   band: { marginTop: 20, borderTopWidth: 3, borderColor: c.rule, paddingTop: 10, gap: 12, maxWidth: 680 },
@@ -851,12 +881,13 @@ const useStyles = themed((c) => ({
   runNo: { fontFamily: Fonts.display, fontSize: 24, lineHeight: 28, width: 30, color: c.text },
   runId: { flex: 1, minWidth: 0, gap: 3 },
   nameLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  namePress: { flexDirection: 'row', alignItems: 'baseline', gap: 6, flexShrink: 1 },
+  // Rename: the name's 23 px line with room to a 44 px target above and below; the run's details start under that room
+  namePress: { flexDirection: 'row', alignItems: 'baseline', gap: 6, flexShrink: 1, ...tapRoom(11) },
   runName: { fontFamily: Type.label.fontFamily, fontSize: 17, letterSpacing: 0.3, color: c.text, flexShrink: 1 },
   pencil: { fontFamily: Fonts.label, fontSize: 13, color: c.textMuted },
-  detailPress: { alignSelf: 'stretch' },
-  runSub: { fontFamily: face('label', 400), fontSize: 13, lineHeight: 17, color: c.textSecondary },
-  runBest: { width: 96, alignItems: 'flex-end' },
+  runSub: { fontFamily: face('label', 400), fontSize: 13, lineHeight: 17, color: c.textSecondary, marginTop: 8 },
+  // the run opens from here: as tall as the row, and never under a tap target's height
+  runBest: { width: 96, alignItems: 'flex-end', alignSelf: 'stretch', minHeight: TAP },
   runTime: { fontFamily: Type.label.fontFamily, fontSize: 19, fontVariant: ['tabular-nums'], paddingHorizontal: 5,
     paddingVertical: 1, color: c.text },
   noLap: { fontFamily: face('label', 400), fontSize: 13, color: c.textMuted, paddingTop: 3 },

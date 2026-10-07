@@ -37,8 +37,8 @@ test('the latest run against the event best, or against the next best when it ho
   const b = latestAgainstBest(folder([run(1, 'Q', 102.44), run(3, 'R1', 101.9)]));
   assert.deepEqual([b.latest.session_id, b.best.session_id, b.holdsBest], [3, 1, true]);
   assert.equal(latestAgainstBest(folder([run(1, 'Q', 102.44), run(2, 'FP', null)])), null);
-  assert.equal(duringSections(f), 6);
-  assert.equal(duringSections(folder([run(1, 'Q', 102.44)])), 4);
+  assert.equal(duringSections(f), 7);
+  assert.equal(duringSections(folder([run(1, 'Q', 102.44)])), 5);
 });
 
 test('each driver\'s latest timed run, the most recent first; no driver set counts as one', () => {

@@ -1,20 +1,22 @@
 // A race weekend while it is on (Gabriele, 2026-10-07: "during the race weekend the effort shifts to data
-// comparison"): the answers first, then the runs. Three things for each driver's next run, the latest run against the
-// event's best (where the time is, the traces), the debriefs of every run with a big button to record one for the
+// comparison"): the answers first, then the runs. Three things for each driver's next run, each official session's
+// report (FP1, Q1, R1), the latest run against the event's best (where the time is, the traces), the debriefs of every run with a big button to record one for the
 // latest, and setup changes to try for it. Then the event page's own sections (its runs by day, side by side, what it
 // was run with, its results, a run to add), passed in as children.
 import { Href, Link, useFocusEffect, useRouter } from 'expo-router';
-import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
+import { ReactNode, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, View as Box, StyleSheet } from 'react-native';
 
 import { TopThings } from '@/components/Coaching';
 import { CompareTraces, LineKey, useLapColors, WhereTheTimeIs } from '@/components/CompareViews';
 import { ErrorLine, MainButton, Note } from '@/components/Controls';
 import { Fig, Label, Section, TextLink, useWide } from '@/components/Programme';
 import { IdeasView } from '@/components/SetupIdeas';
+import SessionReports from '@/components/weekend/SessionReports';
 import { Text, View } from '@/components/Themed';
 import { CompareResult, compareLaps, encodePicks, formatLap, signedSeconds } from '@/lib/compare';
 import { dayLabel, eventsApi, Folder } from '@/lib/events';
+import { afterOthers } from '@/lib/loadLast';
 import { fetchEventDebriefs } from '@/lib/weekend';
 import {
   debriefLines, DebriefLine, EventDebrief, LapRef, latestAgainstBest, latestByDriver, latestRun,
@@ -40,15 +42,20 @@ export default function WeekendDuring({ eventId, folder: given, children }: {
   const drivers = useMemo(() => latestByDriver(folder), [folder]);
   const pair = useMemo(() => latestAgainstBest(folder), [folder]);
   const latest = useMemo(() => latestRun(folder), [folder]);
-  // 1 three things, 2 the latest run against the best (3 where the time is, 4 the traces), then debriefs and setup
-  const debriefsNo = pair ? 5 : 3;
+  // 1 three things, 2 the session reports, 3 the latest run against the best (4 where the time is, 5 the traces),
+  // then debriefs and setup (lib/weekendRuns.ts duringSections)
+  const debriefsNo = pair ? 6 : 4;
   return (
     <>
       <Section no={1} title="Three things for next run"
         dek="For each driver’s latest run: the costliest mistakes that repeat, each at a different corner, what to do instead and what it is worth a lap.">
         <ThreeThings eventId={eventId} drivers={drivers} />
       </Section>
-      <LatestAgainstBest no={2} pair={pair} />
+      <Section no={2} title="Session reports"
+        dek="One report per session of the weekend (FP1, Q1, the races), from every run of it.">
+        <SessionReports eventId={eventId} />
+      </Section>
+      <LatestAgainstBest no={3} pair={pair} />
       <Debriefs no={debriefsNo} eventId={eventId} folder={folder} />
       <Section no={debriefsNo + 1} title="Setup suggestions"
         dek={latest ? `For ${latest.name}: changes to try, from what the driver said and what the data show.` : undefined}>
@@ -92,12 +99,36 @@ function ThreeThings({ eventId, drivers }: { eventId: number; drivers: ReturnTyp
 
 // ---------- the latest run against the best ----------
 
+/** True once the section is near the screen (on the web), or once the page's other reads have answered: the heavy
+ * read it needs then loads last, and doesn't hold up the answers above it on the server. Stays true. */
+function useLoadLast(ref: RefObject<Box | null>, on: boolean) {
+  const [go, setGo] = useState(false);
+  useEffect(() => {
+    if (!on || go) return;
+    const stop = afterOthers(() => setGo(true));
+    const node = ref.current as unknown;
+    let seen: IntersectionObserver | undefined;
+    if (typeof IntersectionObserver !== 'undefined' && typeof Element !== 'undefined' && node instanceof Element) {
+      seen = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && setGo(true),
+        { rootMargin: '0px 0px 200px 0px' });
+      seen.observe(node);
+    }
+    return () => {
+      stop();
+      seen?.disconnect();
+    };
+  }, [on, go]); // eslint-disable-line react-hooks/exhaustive-deps -- the ref is the section's, for good
+  return go;
+}
+
 /** The latest run's best lap against the event's best: who, the gap, then where the time is and the traces (one
- * request, nothing to pick), and the full comparison one tap away. Sections `no` to `no + 2`. */
+ * request, nothing to pick, made last: useLoadLast), and the full comparison one tap away. Sections `no` to
+ * `no + 2`. */
 function LatestAgainstBest({ no, pair }: { no: number; pair: ReturnType<typeof latestAgainstBest> }) {
   const styles = useStyles();
   const wide = useWide();
   const colors = useLapColors([0, 1]);
+  const at = useRef<Box>(null); // where the sections start: on the web, a DOM element to watch come into view
   const [data, setData] = useState<CompareResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [focus, setFocus] = useState(0);
@@ -105,8 +136,9 @@ function LatestAgainstBest({ no, pair }: { no: number; pair: ReturnType<typeof l
   const [cursor, setCursor] = useState<number | null>(null);
   const laps = pair ? [pair.latest, pair.best].map(({ session_id, lap }) => ({ session_id, lap })) : [];
   const key = encodePicks(laps);
+  const go = useLoadLast(at, key !== '');
   useEffect(() => {
-    if (!key) return;
+    if (!key || !go) return;
     let live = true;
     setData(null);
     setError(null);
@@ -117,7 +149,7 @@ function LatestAgainstBest({ no, pair }: { no: number; pair: ReturnType<typeof l
     return () => {
       live = false;
     };
-  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps -- the laps, by value
+  }, [key, go]); // eslint-disable-line react-hooks/exhaustive-deps -- the laps, by value
   const step = data?.traces.step_m ?? 5;
   const show = useCallback((code: string | null, at?: number) => {
     setZoom(code);
@@ -135,7 +167,7 @@ function LatestAgainstBest({ no, pair }: { no: number; pair: ReturnType<typeof l
   const waiting = error ? <ErrorLine>{`Can’t compare the two laps: ${error}`}</ErrorLine>
     : <View style={styles.working}><ActivityIndicator /><Note>Placing the two laps on one line…</Note></View>;
   return (
-    <>
+    <Box ref={at}>
       <Section no={no} title="Latest run against the best"
         dek={pair.holdsBest ? 'The latest run holds the event’s best lap: here against the best of the other runs.'
           : 'The latest run’s best lap against the event’s best lap.'}>
@@ -164,7 +196,7 @@ function LatestAgainstBest({ no, pair }: { no: number; pair: ReturnType<typeof l
           <Section no={no + 2} title="Traces">{waiting}</Section>
         </>
       )}
-    </>
+    </Box>
   );
 }
 

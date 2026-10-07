@@ -28,8 +28,9 @@ const MAX_DRIVERS = 4;
 
 export type Lists = { garage: Garage; tyres: Tyre[]; vehicles: Vehicle[] };
 
-/** The garage, tyres and vehicles to pick from, loaded once (and again with reload). */
-export function useLists() {
+/** The garage, tyres and vehicles to pick from, loaded once `on` (and again with reload): the event page's info asks
+ * for them only when its form opens, so a visit doesn't read the garage twice. */
+export function useLists(on = true) {
   const [lists, setLists] = useState<Lists | null>(null);
   const [error, setError] = useState<string | null>(null);
   const reload = useCallback(() => {
@@ -41,7 +42,9 @@ export function useLists() {
       (e) => setError((e as Error).message),
     );
   }, []);
-  useEffect(reload, [reload]);
+  useEffect(() => {
+    if (on) reload();
+  }, [on, reload]);
   return { lists, error, reload };
 }
 

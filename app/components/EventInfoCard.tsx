@@ -1,8 +1,9 @@
 // The event page's "Event info" section: what the event was run with (tyre, car, team, drivers 1 to 4), each from the
 // event itself or from its season, and what is still missing. Tap a missing item (or Edit) for the form.
 import { useEffect, useState } from 'react';
-import { StyleSheet } from 'react-native';
+import { ActivityIndicator, StyleSheet } from 'react-native';
 
+import { ErrorLine } from '@/components/Controls';
 import { EventInfoForm, MissingList, useLists } from '@/components/EventInfoForm';
 import { Section, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
@@ -19,7 +20,7 @@ export function EventInfoCard({ no, eventId, version, onInfo }: {
   const wide = useWide();
   const [info, setInfo] = useState<EventInfo | null>(null);
   const [editing, setEditing] = useState<{ focus: MissingKey | null } | null>(null);
-  const { lists, reload } = useLists();
+  const { lists, error: listsError, reload } = useLists(editing != null); // the lists to pick from, once the form opens
 
   useEffect(() => {
     seasonsApi.info(eventId).then(
@@ -56,7 +57,10 @@ export function EventInfoCard({ no, eventId, version, onInfo }: {
             label={`${season.name}${season.round ? ` · round ${season.round.order}` : ''}`} />
         )}
       </View>
-      {editing && lists ? (
+      {editing && !lists ? (
+        listsError ? <ErrorLine>{`Can’t load the lists to pick from: ${listsError}`}</ErrorLine>
+          : <ActivityIndicator style={styles.loading} />
+      ) : editing && lists ? (
         <View style={styles.form}>
           <EventInfoForm info={info} lists={lists} onListsChanged={reload} focus={editing.focus}
             onCancel={() => setEditing(null)}
@@ -94,6 +98,7 @@ export function EventInfoCard({ no, eventId, version, onInfo }: {
 const useStyles = themed((c) => ({
   links: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 22, rowGap: 10, marginBottom: 16 },
   form: { maxWidth: 900 },
+  loading: { alignSelf: 'flex-start', marginVertical: 12 },
   // wide: the four in a strip split by ink rules
   strip: { flexDirection: 'row', borderTopWidth: 1, borderBottomWidth: 1, borderColor: c.rule },
   cell: { flex: 1, minWidth: 0, paddingVertical: 12, paddingHorizontal: 16, borderRightWidth: 1, borderColor: c.rule, gap: 6 },

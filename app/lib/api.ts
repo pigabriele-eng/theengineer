@@ -1,5 +1,6 @@
 // Client for the The Engineer server (see /server). Set EXPO_PUBLIC_API_URL to point at a deployed server.
 import { accessToken, authEnabled, signOut } from './auth';
+import { counted } from './loadLast';
 
 // Render passes the server's bare host name (theengineer-api.onrender.com), so add https:// when there's no scheme.
 const baseUrl = (process.env.EXPO_PUBLIC_API_URL ?? '').trim() || 'http://localhost:8000';
@@ -36,7 +37,10 @@ export function prefetch(...paths: string[]) {
   }
 }
 
-async function send(path: string, init: RequestInit): Promise<Response> {
+// each request counted while it is on its way, for a heavy read that loads last (lib/loadLast.ts)
+const send = (path: string, init: RequestInit) => counted(ask(path, init));
+
+async function ask(path: string, init: RequestInit): Promise<Response> {
   const token = await accessToken();
   const headers = { ...(init.headers as Record<string, string> | undefined) };
   if (token) headers.Authorization = `Bearer ${token}`;
