@@ -191,7 +191,8 @@ export function Options<T extends string | number>({ options, value, onPick, mul
             // on paper only the ticked and the picked options are left
             <Pressable key={String(o.value)} onPress={() => onPick(o.value)} disabled={disabled} hitSlop={4}
               accessibilityRole="checkbox" accessibilityState={{ checked: on, disabled }} {...(on ? null : noPrint)}
-              style={StyleSheet.flatten([styles.check, disabled && styles.dim])}>
+              style={StyleSheet.flatten([styles.check, o.sub ? styles.checkHitSub : styles.checkHit,
+                disabled && styles.dim])}>
               <View style={StyleSheet.flatten([styles.checkBox, on && styles.checkBoxOn])} />
               <View style={styles.optionWords}>
                 <Text style={StyleSheet.flatten([styles.optionText, on && styles.optionTextOn])}>{o.label}</Text>
@@ -364,9 +365,11 @@ const useStyles = themed((c) => ({
   input: { fontFamily: Fonts.mono, fontSize: 18, fontVariant: ['tabular-nums'], color: c.text, paddingTop: 13,
     marginTop: -8, paddingBottom: 5, paddingHorizontal: 0, borderBottomWidth: 2, borderColor: c.rule, borderRadius: 0,
     minWidth: 0, backgroundColor: 'transparent', outlineWidth: 0 },
-  inputSmall: { fontFamily: Fonts.mono, fontSize: 15, fontVariant: ['tabular-nums'], color: c.text, paddingTop: 3,
-    paddingBottom: 3, paddingHorizontal: 0, borderBottomWidth: 2, borderColor: c.rule, borderRadius: 0, minWidth: 0,
-    backgroundColor: 'transparent', outlineWidth: 0 },
+  // 29 px drawn, a 44 px tap target: 15 px more room above the figures (over the label, when there is one), taken back
+  // by the margin
+  inputSmall: { fontFamily: Fonts.mono, fontSize: 15, fontVariant: ['tabular-nums'], color: c.text, paddingTop: 18,
+    marginTop: -15, paddingBottom: 3, paddingHorizontal: 0, borderBottomWidth: 2, borderColor: c.rule, borderRadius: 0,
+    minWidth: 0, backgroundColor: 'transparent', outlineWidth: 0 },
   boxed: { fontFamily: Fonts.mono, fontSize: 15, lineHeight: 21, color: c.text, borderWidth: 1, borderColor: c.rule,
     borderRadius: 0, padding: 10, minHeight: 64, textAlignVertical: 'top', backgroundColor: 'transparent', outlineWidth: 0 },
   inputFocus: { borderColor: c.mark },
@@ -414,6 +417,9 @@ const useStyles = themed((c) => ({
   bigTextPhone: { fontFamily: Fonts.display, fontSize: 24, lineHeight: 26, textTransform: 'uppercase', color: c.textMuted },
   bigTextOn: { color: c.text },
   check: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, maxWidth: '100%' },
+  // tap targets of 44 px round a ticked option drawn 18 px tall (one line) or 36 px (with its sub line)
+  checkHit: tapRoom(13),
+  checkHitSub: tapRoom(4),
   checkBox: { width: 14, height: 14, borderWidth: 1.5, borderColor: c.rule, marginTop: 1 },
   checkBoxOn: { backgroundColor: c.rule },
 
@@ -423,7 +429,10 @@ const useStyles = themed((c) => ({
   mainPhone: { alignSelf: 'stretch', width: '100%' },
   mainText: { ...Type.link, fontSize: 15, letterSpacing: 1.8, color: c.background },
   actions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 24, rowGap: 14, marginTop: 22 },
-  inline: { fontFamily: Fonts.label, color: c.text, textDecorationLine: 'underline', textDecorationColor: c.mark },
+  // a link inside a sentence: its padding makes a 44 px tap target round the word without moving a line (an inline
+  // box's padding above and below takes no room; the margin takes back the room at its sides)
+  inline: { fontFamily: Fonts.label, color: c.text, textDecorationLine: 'underline', textDecorationColor: c.mark,
+    paddingVertical: 13, paddingHorizontal: 4, marginHorizontal: -4 },
   dim: { opacity: 0.4 },
 
   // the car
