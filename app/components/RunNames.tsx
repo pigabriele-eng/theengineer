@@ -1,4 +1,4 @@
-// "Which session was 03_Q?" on the event page: a run the official timetable can't place by itself, asked with the
+// "Which session was 03_Q?" on the event page: a stint (a run) the official timetable can't place by itself, asked with the
 // sessions it could be as one-tap answers (lib/runNames.ts). Laid out like the season questions above it
 // (SeasonMatch): a thick ink rule, the kind in capitals, the question large, the answers as ink blocks.
 import { useEffect, useState } from 'react';
@@ -55,7 +55,7 @@ function Question({ q, onDone }: { q: RunNameQuestion; onDone: (text: string, le
   const wide = useWide();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const name = q.name || 'this run';
+  const name = q.name || 'this stint';
 
   const send = async (code: string | null) => {
     setBusy(code ?? 'none');
@@ -74,7 +74,7 @@ function Question({ q, onDone }: { q: RunNameQuestion; onDone: (text: string, le
 
   return (
     <View style={styles.question}>
-      <Label style={styles.kind}>Run name</Label>
+      <Label style={styles.kind}>Stint name</Label>
       <Text style={wide ? styles.prompt : styles.promptPhone}>Which session was {name}?</Text>
       {starts ? <Note>{starts}</Note> : null}
       <FormActions style={styles.answers}>
