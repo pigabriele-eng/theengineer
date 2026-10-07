@@ -337,6 +337,10 @@ def calendar_years(series: str) -> list[int]:
 
 def _loop() -> None:
     last_season_check = 0.0
+    try:  # runs already in the app get their names from the timetables loaded so far, right after a restart
+        name_all_runs()
+    except Exception:
+        log.exception("naming runs failed")
     while True:
         try:
             with app_db.SessionLocal() as db:
