@@ -132,6 +132,7 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
             <Stack.Screen name="seasons" options={{ title: 'Seasons', ...NO_BAR }} />
             <Stack.Screen name="drivers/tag" options={{ title: 'Tag drivers' }} />
             <Stack.Screen name="drivers/compare" options={{ title: 'Compare drivers' }} />
+            <Stack.Screen name="drivers/fingerprints" options={{ title: 'Driver fingerprints' }} />
             <Stack.Screen name="compare" options={{ title: 'Compare laps' }} />
           </Stack.Protected>
           <Stack.Protected guard={!signedIn}>
