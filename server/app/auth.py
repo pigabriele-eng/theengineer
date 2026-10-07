@@ -2,12 +2,14 @@
 Supabase Auth.
 
 Off when SUPABASE_URL is not set (local development and the tests). ALLOWED_EMAILS, a comma-separated list,
-lets only those accounts in. Tokens Supabase accepted are remembered for a minute, so analysis calls don't each
-wait for Supabase.
+lets only those accounts in. Tokens Supabase accepted are remembered for a few minutes, so analysis calls don't each
+wait for Supabase; a page's requests sent together with a token not yet remembered ask Supabase once between them.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
 import os
 import threading
 import time
@@ -15,10 +17,11 @@ import time
 import httpx
 from fastapi import Header, HTTPException, Query
 
-TOKEN_TTL_S = 60.0
+TOKEN_TTL_S = 300.0
 _MAX_CACHED = 1000
 _cache: dict[str, tuple[float, dict]] = {}  # sha256 of the token -> (expires at, Supabase user)
 _lock = threading.Lock()
+_asking: dict[str, threading.Lock] = {}  # sha256 of the token -> held while Supabase is asked about it
 
 
 def _bearer(authorization: str | None) -> str | None:
@@ -34,6 +37,21 @@ def _supabase_user(url: str, token: str) -> dict:
     hit = _cache.get(key)
     if hit is not None and hit[0] > now:
         return hit[1]
+    with _lock:
+        asking = _asking.setdefault(key, threading.Lock())
+    with asking:  # the page's other requests wait for this one's answer rather than each asking Supabase
+        hit = _cache.get(key)
+        if hit is not None and hit[0] > time.monotonic():
+            return hit[1]
+        try:
+            return _ask(url, token, key)
+        finally:
+            with _lock:
+                _asking.pop(key, None)
+
+
+def _ask(url: str, token: str, key: str) -> dict:
+    now = time.monotonic()
     try:
         r = httpx.get(f"{url.rstrip('/')}/auth/v1/user", timeout=10,
                       headers={"Authorization": f"Bearer {token}", "apikey": os.environ.get("SUPABASE_ANON_KEY", "")})
@@ -48,8 +66,18 @@ def _supabase_user(url: str, token: str) -> dict:
         if len(_cache) >= _MAX_CACHED:
             for k in [k for k, (expires, _) in _cache.items() if expires <= now] or list(_cache):
                 del _cache[k]
-        _cache[key] = (now + TOKEN_TTL_S, user)
+        _cache[key] = (now + min(TOKEN_TTL_S, _left(token)), user)
     return user
+
+
+def _left(token: str) -> float:
+    """Seconds until the token runs out, from its own exp (already checked by Supabase); TOKEN_TTL_S if unreadable."""
+    try:
+        part = token.split(".")[1]
+        exp = float(json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4)))["exp"])
+    except (IndexError, KeyError, TypeError, ValueError):
+        return TOKEN_TTL_S
+    return max(exp - time.time(), 0.0)
 
 
 def _check(token: str | None) -> dict | None:

@@ -48,7 +48,7 @@ from app.routers.sessions import official_corners
 router = APIRouter(prefix="/technique")
 log = logging.getLogger(__name__)
 
-TECHNIQUE_VERSION = 11  # raise when the check changes, so every kept one is worked out again
+TECHNIQUE_VERSION = 14  # raise when the check changes, so every kept one is worked out again
 # 5: perfect driving on a lap's own line at limits never below that lap's own (local_limits.on_own_line)
 # 6: the driver's inputs and perfect driving's phases with each lap's speed trace
 # 7: the obvious mistakes (exit lifts, power stepped on, soft straight-line braking); the theoretical lap never quicker
@@ -63,6 +63,10 @@ TECHNIQUE_VERSION = 11  # raise when the check changes, so every kept one is wor
 #     laps (with it against without it), pooled over the track's checks
 #     power oversteer (opposite lock on the throttle out of a corner); braking grip left unused up to the turn-in,
 #     against the best braking there on the other laps
+# 12: perfect driving and the realistic target shift up at the ideal revs (insights.targets)
+# 13: a lift from full throttle past the slowest point is a lift on the way out however hard the car corners; the
+#     lifts the comparison with the target names are obvious ones too; every obvious mistake counts in the budget
+# 14: every lift and on/off throttle counts, however small (10 points off the pedal for 0.08 s), whatever it costs
 TRACES_WAIT_S = 3600  # longest the check waits for the logs to be read into lap traces
 HABITS_SHOWN = 12
 DETAILS_KEPT = 16  # laps' full checks kept in memory

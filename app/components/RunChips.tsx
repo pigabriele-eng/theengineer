@@ -467,7 +467,8 @@ const useStyles = themed((c) => ({
   chips: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, rowGap: 6, backgroundColor: 'transparent' },
   chip: { borderBottomWidth: 2, borderColor: c.rule, paddingBottom: 1, maxWidth: 220 },
   chipOn: { borderColor: c.mark },
-  unset: { borderColor: c.borderStrong, opacity: 0.75 },
+  // not set yet: the word in the caption grey (no fading: it must still read at 4.5:1)
+  unset: { borderColor: c.borderStrong },
   chipText: { ...Type.link, fontSize: 13, letterSpacing: 1.2, color: c.text },
   dim: { color: c.textMuted },
   panel: { borderTopWidth: 3, borderColor: c.rule, paddingTop: 10, gap: 10, marginBottom: 10, backgroundColor: 'transparent' },

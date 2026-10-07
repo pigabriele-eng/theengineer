@@ -70,6 +70,6 @@ const useStyles = themed((c) => ({
   codePhone: { ...Type.label, fontSize: 14, letterSpacing: 1.6, color: c.text },
   hero: { flexDirection: 'row', alignItems: 'stretch', marginRight: 10 },
   heroCode: { justifyContent: 'center', borderWidth: 1, borderLeftWidth: 0, borderColor: 'rgba(247,244,236,0.85)',
-    backgroundColor: 'rgba(10,10,10,0.35)', paddingHorizontal: 10 },
+    backgroundColor: 'rgba(10,10,10,0.6)', paddingHorizontal: 10 }, // a scrim as dark as the kicker's: reads on any photo
   heroCodeText: { ...Type.label, fontSize: 15, letterSpacing: 2, color: PHOTO_INK },
 }));

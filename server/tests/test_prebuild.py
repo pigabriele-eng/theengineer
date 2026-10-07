@@ -227,12 +227,15 @@ def test_an_import_is_prebuilt_and_every_page_then_opens_at_once(client, monkeyp
     from app.routers import reports, sessions
 
     monkeypatch.setenv("PREBUILD", "on")
+    done = client.get("/prebuild").json()["done"]  # the pieces this worker's earlier tests ran
     job = upload(client, ("Test day.zip", make_zip({"Test day/01_D1S1/a.ld": log_bytes(),
                                                     "Test day/02_D1S2/b.ld": log_bytes()})))
     assert job["status"] == "done", job
     _wait_tyre_data_and_prebuild()
     (ev,) = [e["id"] for e in client.get("/events").json()]
     sids = job["session_ids"]
+    with app_db.SessionLocal() as db:
+        upload_pieces = set(prebuild.pieces(db, sids))
     for sid in sids:
         assert {f"session:{sid}|{p}" for p in ("analysis", "map", "shape", "tyreprep")} <= _scopes()
         assert f"session:{sid}|insights" not in _scopes()  # no page asks for them
@@ -261,7 +264,10 @@ def test_an_import_is_prebuilt_and_every_page_then_opens_at_once(client, monkeyp
                      f"/report/grip?event={ev}", f"/report/balance?event={ev}", f"/stint?files={quick_laps}"):
             assert client.get(path).status_code == 200, path
     status = client.get("/prebuild").json()
-    assert status["enabled"] and status["queued"] == 0 and status["current"] is None and status["worked"] > 0
+    assert status["enabled"] and status["queued"] == 0 and status["current"] is None
+    # every piece of the import was run by the prebuild, however quickly ("worked" counts only those that took 0.2 s
+    # or more, and on a fast machine none of these short logs' pieces may)
+    assert status["done"] - done >= len(upload_pieces) > 0
     with app_db.SessionLocal() as db:  # and the lap packs the lap and driver comparisons read instead of the logs
         assert {r.session_id for r in db.scalars(select(models.LapPackFile)) if r.path} == set(sids)
 

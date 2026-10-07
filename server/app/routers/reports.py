@@ -37,7 +37,7 @@ from app.routers.sessions import _channel_map, _line, official_corners, read_fil
 router = APIRouter(prefix="/reports")
 log = logging.getLogger(__name__)
 
-REPORT_VERSION = 6  # raise when the advice or the sections change, so every kept report is worked out again
+REPORT_VERSION = 7  # raise when the advice or the sections change, so every kept report is worked out again
 TRACES_VERSION = compact.FORMAT  # raise (in compact.py) when the reduction changes
 IMPORT_WAIT_S = 1800  # longest the report waits for an import that is reading logs
 MAX_LAPS = 250  # the quickest laps of an event the report works from, to keep within the server's memory
@@ -530,8 +530,14 @@ def _quickest(sessions: list[tuple[int, compact.CompactSession]]) -> tuple[list,
     return kept, len(times) - sum(cs.n_laps for _, cs in kept)
 
 
+_PLAIN = frozenset((float, int, str, type(None)))  # exactly these types (not bool, a kind of int, nor numpy's)
+
+
 def _plain(x):
     """JSON that Postgres and the API both take: plain numbers, and no NaN or infinity (None instead)."""
+    if type(x) is list and all(type(v) in _PLAIN for v in x):
+        # a trace: most of what a check holds, so done in one pass (x - x is NaN for NaN and infinity alike)
+        return [None if type(v) is float and v - v != 0 else v for v in x]
     if isinstance(x, dict):
         return {str(k): _plain(v) for k, v in x.items()}
     if isinstance(x, list | tuple):

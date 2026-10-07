@@ -27,6 +27,8 @@ from app.analysis.lapsim import LIMITED_BY, Calibration, SimLap, theoretical_lap
 from app.analysis.limits import CarLimits, car_limits
 from app.analysis.local_limits import PlaceLimits, on_own_line, place_limits
 from app.analysis.scan import channel_scan, lap_medians, scan_medians
+from app.analysis.shifts import ShiftModel
+from app.analysis.technique import ideal_shift_saving, with_ideal_shifts
 from app.analysis.track_shape import TrackShape, on_line, track_shape
 from app.heavy import trim
 from app.importers.motec import LdFile
@@ -220,13 +222,29 @@ def targets(laps: list, reference: dict[str, np.ndarray], lap_time: float,
     load, shaped = on_line(shape, len(traces[0]["speed"]))
     perfect, held, own = place_limits(traces, reference, own=True, load=load, shaped=shaped)
     curvature = reference["curvature"]
+    # perfect driving shifts up at the ideal revs (technique.with_ideal_shifts): the fastest lap it is calibrated on
+    # and every pass it takes through a section, with their early and late upshifts put right
+    shifts = ShiftModel.of([x.trace for x in laps]) if sections else None
+    saved = {}
+    if shifts is not None:
+        for x in laps:
+            fixed = with_ideal_shifts(x.trace, shifts, sections)
+            if fixed is not None:
+                saved[id(x)] = ideal_shift_saving(x.trace, fixed)
+        fixed = with_ideal_shifts(reference, shifts, sections)
+        if fixed is not None and "t" in reference:
+            t = np.asarray(reference["t"], float)
+            t_ideal = t - ideal_shift_saving(reference, fixed)
+            reference_ideal = {**reference, "speed": fixed, "t": t_ideal}
+            lap_time = lap_time * float(t_ideal[-1] - t_ideal[0]) / float(t[-1] - t[0])
+            reference = reference_ideal
     cal = Calibration.of(reference, lap_time, _closed_sim(curvature, own))
     raw, raw_held = _closed_sim(curvature, perfect), _closed_sim(curvature, held)
     cal_p = cal_h = cal
     if sections:
         def best(ts: list[np.ndarray]) -> list[tuple[int, int, float]]:
             return [(s.start, s.end, min(float(t[s.end] - t[s.start]) for t in ts)) for s in sections]
-        passes = best([_times(x) for x in laps])
+        passes = best([_times(x) - saved.get(id(x), 0.0) for x in laps])
         # a flat-out section is only as quick as the speed carried into it: a pass with more (a tow, another lap's
         # exit) is no floor for it, so there the model alone shapes the lap, never quicker than that pass
         floor = [p for p, s in zip(passes, sections, strict=True) if not _flat_out(reference, s)]

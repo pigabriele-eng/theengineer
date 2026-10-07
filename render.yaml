@@ -50,6 +50,15 @@ services:
       - path: /assets/*
         name: Cache-Control
         value: public, max-age=31536000, immutable
+      # What a browser installs the site as an app with (public/manifest.json and public/icons) keeps its names from one
+      # deploy to the next: the browser asks each time whether it changed (a short "no" when not), so a new name or
+      # icon arrives with the deploy.
+      - path: /manifest.json
+        name: Cache-Control
+        value: no-cache
+      - path: /icons/*
+        name: Cache-Control
+        value: no-cache
     routes:
       - type: rewrite
         source: /*

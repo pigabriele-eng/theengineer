@@ -6,7 +6,7 @@ import { ActivityIndicator, Pressable, StyleSheet, TextStyle, ViewStyle } from '
 
 import { useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
-import { face, Fonts, themed, Type, useTheme } from '@/constants/Theme';
+import { face, Fonts, TAP, tapRoom, themed, Type, useTheme } from '@/constants/Theme';
 import { noPrint } from '@/lib/print';
 
 /** A page's name where there is no photo: the Anton headline and its italic line. */
@@ -49,18 +49,19 @@ export function Tabs<K extends string | number | null>({ items, value, onChange,
         {items.map((it) => {
           const on = it.key === value;
           return (
-            // on paper only the picked tab is left, naming what is shown
+            // on paper only the picked tab is left, naming what is shown; the pressable box is a full tap target
             <Pressable key={String(it.key)} onPress={() => onChange(it.key)} disabled={it.disabled} {...(on ? null : noPrint)}
-              accessibilityRole="tab" accessibilityState={{ selected: on, disabled: it.disabled }} hitSlop={4}
-              style={StyleSheet.flatten([big ? styles.tabBig : styles.tab, on && styles.tabOn,
-                (it.dim || it.disabled) && !on && styles.dim])}>
-              <View style={styles.tabRow}>
-                {it.swatch ? <View style={StyleSheet.flatten([styles.tabKey, { backgroundColor: it.swatch }])} /> : null}
-                <Text style={StyleSheet.flatten([big ? styles.tabTextBig : styles.tabText, on && styles.tabTextOn])}>
-                  {it.label}
-                </Text>
+              accessibilityRole="tab" accessibilityState={{ selected: on, disabled: it.disabled }}
+              style={StyleSheet.flatten([big ? styles.tabBigHit : styles.tabHit, (it.dim || it.disabled) && !on && styles.dim])}>
+              <View style={StyleSheet.flatten([big ? styles.tabBig : styles.tab, on && styles.tabOn])}>
+                <View style={styles.tabRow}>
+                  {it.swatch ? <View style={StyleSheet.flatten([styles.tabKey, { backgroundColor: it.swatch }])} /> : null}
+                  <Text style={StyleSheet.flatten([big ? styles.tabTextBig : styles.tabText, on && styles.tabTextOn])}>
+                    {it.label}
+                  </Text>
+                </View>
+                {it.sub ? <Text style={styles.tabSub}>{it.sub}</Text> : null}
               </View>
-              {it.sub ? <Text style={styles.tabSub}>{it.sub}</Text> : null}
             </Pressable>
           );
         })}
@@ -85,14 +86,16 @@ export function Choice({ label, detail, on, onPress, fill, ink, dim, disabled, a
   const styles = useStyles();
   return (
     <Pressable onPress={onPress} disabled={disabled} accessibilityRole="button" accessibilityLabel={accessibilityLabel}
-      accessibilityState={{ selected: on, disabled }} hitSlop={2} {...(on ? null : noPrint)}
-      style={StyleSheet.flatten([styles.pick, on && styles.tabOn, (dim || disabled) && !on && styles.dim])}>
-      <Text style={StyleSheet.flatten([styles.pickLabel, on && styles.tabTextOn])}>{label}</Text>
-      {detail ? (
-        <View style={StyleSheet.flatten([styles.pickDetailBox, fill ? { backgroundColor: fill } : null])}>
-          <Text style={StyleSheet.flatten([styles.pickDetail, fill && ink ? { color: ink } : null])}>{detail}</Text>
-        </View>
-      ) : null}
+      accessibilityState={{ selected: on, disabled }} {...(on ? null : noPrint)}
+      style={StyleSheet.flatten([detail ? styles.pickHit : styles.pickHitBare, (dim || disabled) && !on && styles.dim])}>
+      <View style={StyleSheet.flatten([styles.pick, on && styles.tabOn])}>
+        <Text style={StyleSheet.flatten([styles.pickLabel, on && styles.tabTextOn])}>{label}</Text>
+        {detail ? (
+          <View style={StyleSheet.flatten([styles.pickDetailBox, fill ? { backgroundColor: fill } : null])}>
+            <Text style={StyleSheet.flatten([styles.pickDetail, fill && ink ? { color: ink } : null])}>{detail}</Text>
+          </View>
+        ) : null}
+      </View>
     </Pressable>
   );
 }
@@ -206,9 +209,12 @@ const useStyles = themed((c) => ({
   titlePhone: { ...Type.title, fontSize: 36, lineHeight: 38, color: c.text },
   dek: { ...Type.dek, color: c.textSecondary, maxWidth: 720 },
   dekPhone: { ...Type.dek, fontSize: 16, lineHeight: 22, color: c.textSecondary },
-  groupLabel: { ...Type.label, fontSize: 11, color: c.textMuted, marginBottom: 6 },
+  groupLabel: { ...Type.label, fontSize: 13, color: c.textMuted, marginBottom: 6 },
   tabs: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 18, rowGap: 10, alignItems: 'flex-end' },
   tabsBig: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 22, rowGap: 10, alignItems: 'flex-end' },
+  // a tab is about 23 px tall with its underline (34 px big): room above and below makes it a 44 px tap target
+  tabHit: { minWidth: TAP, ...tapRoom(11) },
+  tabBigHit: { minWidth: TAP, ...tapRoom(5) },
   tab: { paddingBottom: 4, borderBottomWidth: 3, borderColor: 'transparent' },
   tabBig: { paddingBottom: 4, borderBottomWidth: 4, borderColor: 'transparent' },
   tabOn: { borderColor: c.mark },
@@ -217,17 +223,21 @@ const useStyles = themed((c) => ({
   tabText: { ...Type.label, fontSize: 13, letterSpacing: 1.3, color: c.textMuted },
   tabTextBig: { fontFamily: Fonts.display, fontSize: 22, lineHeight: 26, textTransform: 'uppercase', color: c.textMuted },
   tabTextOn: { color: c.text },
-  tabSub: { ...Type.number, fontSize: 12, color: c.textMuted, marginTop: 2 },
+  tabSub: { ...Type.number, fontSize: 13, color: c.textMuted, marginTop: 2 },
   dim: { opacity: 0.45 },
+  // with its figure a pick is a tap target as drawn; a bare name gets room above and below
+  pickHit: { minWidth: TAP },
+  pickHitBare: { minWidth: TAP, ...tapRoom(9) },
   pick: { paddingBottom: 3, borderBottomWidth: 3, borderColor: 'transparent', minWidth: 58, gap: 2 },
   pickLabel: { fontFamily: Fonts.display, fontSize: 18, lineHeight: 21, color: c.textMuted },
   pickDetailBox: { alignSelf: 'flex-start', paddingHorizontal: 0 },
   pickDetail: { ...Type.number, fontSize: 13, color: c.text, paddingHorizontal: 2 },
   box: { borderWidth: 2, borderColor: c.borderStrong, alignItems: 'center', justifyContent: 'center' },
   tick: { fontFamily: face('label', 700), fontSize: 13, lineHeight: 15, color: c.onTint },
-  toggle: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 4 },
+  // 12 px above and below the box (it was 4: the row takes the same room) make it a 44 px tap target
+  toggle: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, marginVertical: -8 },
   toggleLabel: { ...Type.label, fontSize: 13, color: c.text },
-  toggleDetail: { fontFamily: Fonts.body, fontSize: 14, lineHeight: 20, color: c.textSecondary },
+  toggleDetail: { fontFamily: Fonts.body, fontSize: 15, lineHeight: 21, color: c.textSecondary },
   flex: { flex: 1, minWidth: 0 },
   notice: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, borderTopWidth: 1, borderBottomWidth: 1,
     borderColor: c.rule, paddingVertical: 12 },

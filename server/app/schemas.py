@@ -116,6 +116,7 @@ class ImportJobOut(Orm):
     # uploaded ({"already": true, "session_id": the run it is in}), left out before they are read
     already_uploaded: int = 0  # how many of skipped were already uploaded
     untimed: list[dict] = []  # {"session_id", "name", "file", "title", "reason", "fix", ...}: kept, laps not timed
+    eta: dict | None = None  # while it runs: {"stage", "stage_s", "total_s"}, seconds left (app/import_rates.py)
     message: str | None
     created_at: dt.datetime
     finished_at: dt.datetime | None

@@ -9,6 +9,12 @@
 // Every categorical set below was checked with the chart palette validator against its own paper (light #F2EEE3, dark
 // #141311): sector purple/green/yellow on all pairs, the five driving phases, understeer/oversteer, tyre cold/hot and the
 // time-lost ramp in order. Colour never carries a meaning alone: every coloured mark keeps its label, sign or number.
+//
+// Readable (WCAG AA): every colour text is drawn in reads at 4.5:1 or more on the paper and on the darker sheet (`band`,
+// `surfaceRaised`): the inks, the greys, red/green time and the messages. Text on a flat colour block takes whichever
+// ink reads best on it (constants/Theme.ts inkOn), and the blocks the app writes white on (the programme red `mark`,
+// the purple of the event's best) are deep enough for white at 4.5:1. `mark` is for blocks, rules and underlines;
+// red words take `error` or `delta.loss`. scripts/a11y-audit.mjs checks all of it on the built app.
 
 export type Scheme = 'light' | 'dark';
 
@@ -113,7 +119,7 @@ const light: Palette = {
   surfaceRaised: '#E7E1D2',
   text: '#111111',
   textSecondary: '#47433B',
-  textMuted: '#7D776A',
+  textMuted: '#676257',
   rule: '#111111',
   border: '#C5C1B6',
   borderStrong: '#111111',
@@ -122,19 +128,19 @@ const light: Palette = {
   tint: '#111111',
   onTint: '#F2EEE3',
   tintSoft: '#E7E1D2',
-  mark: '#E03A1E',
-  error: '#C8361F',
-  warning: '#8A6400',
-  success: '#0E8A4A',
+  mark: '#D0361C',
+  error: '#B8311A',
+  warning: '#805D00',
+  success: '#0C723D',
   tabBar: '#F2EEE3',
-  tabIconDefault: '#7D776A',
+  tabIconDefault: '#676257',
   tabIconSelected: '#111111',
 
   chart: {
     surface: '#F2EEE3',
     ink: '#111111',
     ink2: '#47433B',
-    muted: '#7D776A',
+    muted: '#676257',
     grid: '#D3CEC1',
     axis: '#111111',
     other: '#B3AD9F',
@@ -156,9 +162,9 @@ const light: Palette = {
     loss: ['#F4D3C9', '#EBA08B', '#E06A4F', '#C8361F', '#8F1D10'],
   },
   delta: {
-    gain: '#0E8A4A',
-    loss: '#E03A1E',
-    even: '#7D776A',
+    gain: '#0C723D',
+    loss: '#B8311A',
+    even: '#676257',
     gainRamp: ['#9ED3B1', '#0E8A4A'],
     lossRamp: ['#F4D3C9', '#8F1D10'],
     gainSteps: ['#DCEBD9', '#BEDCC4', '#97C9A5'],
@@ -172,8 +178,8 @@ const light: Palette = {
     onScale: ['#FFFFFF', '#111111', '#111111', '#111111', '#FFFFFF'] },
   balance: { under: '#1F4FD1', over: '#D0186B', neutral: '#B3AD9F' },
   section: ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'],
-  lap: { fastest: '#7B2FBE', clean: '#111111', outIn: '#7D776A', pit: '#47433B', flag: '#D9A400' },
-  event: { past: '#7D776A', current: '#E03A1E', upcoming: '#111111' },
+  lap: { fastest: '#7B2FBE', clean: '#111111', outIn: '#676257', pit: '#47433B', flag: '#D9A400' },
+  event: { past: '#676257', current: '#D0361C', upcoming: '#111111' },
   status: { good: '#0ca30c', warning: '#fab219', serious: '#ec835a', critical: '#d03b3b', none: '#8a8a86' },
   medal: { gold: '#C99A06', silver: '#A9A79F', bronze: '#A8642A' },
 };
@@ -186,7 +192,7 @@ const dark: Palette = {
   surfaceRaised: '#262420',
   text: '#EDE8DC',
   textSecondary: '#BDB6A6',
-  textMuted: '#8F8878',
+  textMuted: '#928C7C',
   rule: '#EDE8DC',
   border: '#3F3C36',
   borderStrong: '#EDE8DC',
@@ -195,19 +201,19 @@ const dark: Palette = {
   tint: '#EDE8DC',
   onTint: '#141311',
   tintSoft: '#262420',
-  mark: '#EE4A4A',
+  mark: '#D63A3A',
   error: '#EE4A4A',
   warning: '#E0B44A',
   success: '#2FB06A',
   tabBar: '#141311',
-  tabIconDefault: '#8F8878',
+  tabIconDefault: '#928C7C',
   tabIconSelected: '#EDE8DC',
 
   chart: {
     surface: '#141311',
     ink: '#EDE8DC',
     ink2: '#BDB6A6',
-    muted: '#8F8878',
+    muted: '#928C7C',
     grid: '#34312C',
     axis: '#EDE8DC',
     other: '#56524A',
@@ -221,7 +227,7 @@ const dark: Palette = {
     mid: '#2E2B26',
   },
   timing: {
-    best: '#9A58EC',
+    best: '#8E51DA',
     personal: '#167C46',
     slower: '#B48C16',
     slowerTint: '#463A12',
@@ -229,9 +235,9 @@ const dark: Palette = {
     loss: ['#7E3222', '#A83A26', '#CF4A30', '#EE6A4C', '#FF9F84'],
   },
   delta: {
-    gain: '#1E8F52',
+    gain: '#3B9E68',
     loss: '#EE4A4A',
-    even: '#8F8878',
+    even: '#928C7C',
     gainRamp: ['#1A5A36', '#1E8F52'],
     lossRamp: ['#7E3222', '#FF9F84'],
     gainSteps: ['#16271C', '#1B3424', '#21442E'],
@@ -240,11 +246,11 @@ const dark: Palette = {
   phase: { braking: '#CF3550', turnIn: '#CC7C18', mid: '#9085E9', traction: '#1A98AE', throttle: '#46A040' },
   tyre: { cold: '#3F7FE0', ok: '#2AA862', hot: '#E0652A',
     scale: ['#3F7FE0', '#28466E', '#2E2B26', '#6E3F22', '#E0652A'],
-    onScale: ['#FFFFFF', '#EDE8DC', '#EDE8DC', '#EDE8DC', '#FFFFFF'] },
+    onScale: ['#141311', '#EDE8DC', '#EDE8DC', '#EDE8DC', '#141311'] },
   balance: { under: '#5B86F2', over: '#EC4A92', neutral: '#56524A' },
   section: ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'],
-  lap: { fastest: '#9A58EC', clean: '#EDE8DC', outIn: '#8F8878', pit: '#BDB6A6', flag: '#B48C16' },
-  event: { past: '#8F8878', current: '#EE4A4A', upcoming: '#EDE8DC' },
+  lap: { fastest: '#8E51DA', clean: '#EDE8DC', outIn: '#928C7C', pit: '#BDB6A6', flag: '#B48C16' },
+  event: { past: '#928C7C', current: '#EE4A4A', upcoming: '#EDE8DC' },
   status: { good: '#0ca30c', warning: '#fab219', serious: '#ec835a', critical: '#d03b3b', none: '#8a8a86' },
   medal: { gold: '#C99A06', silver: '#A9A79F', bronze: '#A8642A' },
 };

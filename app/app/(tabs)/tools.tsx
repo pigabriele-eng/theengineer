@@ -94,8 +94,13 @@ const GROUPS: { name: string; dek: string; tools: Tool[] }[] = [
   },
   {
     name: 'Events',
-    dek: 'The season and the weekends to come.',
+    dek: 'The season, the weekends to come, and the debriefs after each run.',
     tools: [
+      {
+        href: '/debrief',
+        title: 'Debrief',
+        blurb: 'Record what the driver says after a run, for any run. It comes back transcribed, as points by corner and phase checked against the data. Each weekend page lists its runs’ debriefs.',
+      },
       {
         href: '/tools/calendar',
         title: 'Racing calendar',
@@ -140,7 +145,7 @@ export default function ToolsScreen() {
       <AppearancePicker no={GROUPS.length + 1} />
       {authEnabled && <Account no={GROUPS.length + 2} />}
       <Colophon left="The Engineer · Tools" links={[
-        { label: 'Sessions', href: '/' },
+        { label: 'Weekend', href: '/' },
         { label: 'Garage', href: '/garage' },
         { label: 'Seasons', href: '/seasons' },
       ]} />
