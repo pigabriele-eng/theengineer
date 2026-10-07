@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session, selectinload
 from app import models, plans
 from app.db import get_db
 from app.results import models as rm
-from app.results import predict, run_names, summary, sync
+from app.results import finishes, predict, run_names, summary, sync
 from app.results.venues import venue_key
 
 log = logging.getLogger(__name__)
@@ -179,6 +179,10 @@ def event_overview(db: Session, ev: models.Event) -> dict:
     elif season_number:
         out["car_number"], out["car_number_from"] = season_number, "the season"
     if rnd is None:
+        seen = db.scalar(select(rm.EventRound).where(rm.EventRound.event_id == ev.id))
+        if seen is not None:  # matched to no round any more
+            db.delete(seen)
+            db.commit()
         out["note"] = ("No official results for this circuit on the event's days yet" if year and facts["venue"]
                        else "This event has no circuit or date to match official results to")
         return out
@@ -203,8 +207,13 @@ def event_overview(db: Session, ev: models.Event) -> dict:
         link.series, link.year, link.round_id, link.car_number = series, rnd.year, rnd.round_id, number
     elif link.series != series:  # a car number set by hand on an event first matched to another series
         link.series, link.year, link.round_id = series, rnd.year, rnd.round_id
+    seen = db.scalar(select(rm.EventRound).where(rm.EventRound.event_id == ev.id))
+    if seen is None:
+        seen = rm.EventRound(event_id=ev.id)
+        db.add(seen)
+    seen.series, seen.year, seen.round_id, seen.car_number = series, rnd.year, rnd.round_id, number
     db.commit()
-    try:  # our runs named after the official session each ran in (FP1 run 2, Q1, Race 1)
+    try:  # our runs named after the official session each ran in (FP1 stint 2, Q1, Race 1)
         out["run_names"] = run_names.name_runs(db, ev.id, rnd, number)
         facts = _event_facts(db, ev)
     except Exception:
@@ -303,6 +312,19 @@ def event_run_names(event_id: int, db: Session = Depends(get_db)):
     overview = event_overview(db, _event(db, event_id))
     return overview.get("run_names") or {"offset_h": 0, "named": [], "questions": [],
                                          "note": overview.get("note") or "No official timetable for this event"}
+
+
+@router.get("/finishes")
+def our_finishes(event_ids: str | None = None, db: Session = Depends(get_db)):
+    """Our car's official race results (and, under "qualifying", its qualifying results) for every event linked to an
+    official round, or only ``event_ids`` ("1,2,3"); events without official results are left out."""
+    ids = None
+    if event_ids:
+        try:
+            ids = [int(x) for x in event_ids.split(",") if x.strip()]
+        except ValueError:
+            raise HTTPException(422, "event_ids: numbers separated by commas") from None
+    return finishes.finishes(db, ids)
 
 
 @router.post("/run-names/{session_id}")

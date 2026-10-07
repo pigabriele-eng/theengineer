@@ -133,3 +133,16 @@ class RunNameMark(Base):
     answered: Mapped[bool] = mapped_column(default=False)  # the code is the user's answer to a question
     auto_name: Mapped[str | None] = mapped_column(String(120))  # the name last given from the timetable
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+
+class EventRound(Base):
+    """The official round an event was last matched to and our car in it, as the event's results overview found it
+    (whether set by hand or matched by circuit and days): lists of many events read this instead of matching again."""
+    __tablename__ = "event_rounds"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)  # events.id
+    series: Mapped[str] = mapped_column(String(40))
+    year: Mapped[int] = mapped_column(Integer)
+    round_id: Mapped[str] = mapped_column(String(40))
+    car_number: Mapped[str | None] = mapped_column(String(8))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
