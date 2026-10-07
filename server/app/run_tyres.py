@@ -19,6 +19,7 @@ from app import models
 NEW, USED = "new", "used"
 NEW_WITHIN = 0.004  # a test or practice run whose best lap is within this share of qualifying's best...
 SHORT_RUN = 3  # ...in this many clean laps or fewer: new tyres (a qualifying run); anything else used
+ORDER_PREFIX = re.compile(r"^\d+[_\- ]+")  # a folder's order in front of its name: "03_Q" -> "Q"
 QUALI_NAME = re.compile(r"^(q\d*|qualifying|quali)\b", re.I)
 RACE_NAME = re.compile(r"^(r\d*|race)\b", re.I)
 
@@ -33,12 +34,14 @@ class RunLaps:
 
 
 def kind_of(kind: str, name: str | None) -> str:
-    """qualifying, race or practice (tests too), from the run's kind or, where that was left as a test, its name."""
+    """qualifying, race or practice (tests too), from the run's kind or, where that was left as a test, its name (a
+    folder's order in front of it left out: "03_Q", "04_R1")."""
     if kind in ("qualifying", "race"):
         return kind
-    if name and QUALI_NAME.match(name.strip()):
+    text = ORDER_PREFIX.sub("", (name or "").strip())
+    if QUALI_NAME.match(text):
         return "qualifying"
-    if name and RACE_NAME.match(name.strip()):
+    if RACE_NAME.match(text):
         return "race"
     return "practice"
 

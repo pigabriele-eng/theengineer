@@ -53,7 +53,7 @@ from app.routers.sessions import official_corners
 router = APIRouter(prefix="/technique")
 log = logging.getLogger(__name__)
 
-TECHNIQUE_VERSION = 16  # raise when the check changes, so every kept one is worked out again
+TECHNIQUE_VERSION = 17  # raise when the check changes, so every kept one is worked out again
 # 5: perfect driving on a lap's own line at limits never below that lap's own (local_limits.on_own_line)
 # 6: the driver's inputs and perfect driving's phases with each lap's speed trace
 # 7: the obvious mistakes (exit lifts, power stepped on, soft straight-line braking); the theoretical lap never quicker
@@ -75,6 +75,7 @@ TECHNIQUE_VERSION = 16  # raise when the check changes, so every kept one is wor
 # 15: perfect driving takes only section passes timed as their own speed says (insights.consistent_passes)
 # 16: no perfect lap shown: every lap against laps on the same tyres (run_tyres), the mistakes that repeat are the
 #     obvious ones, and each lap's time without its mistakes
+# 17: a run imported from a folder ("03_Q", "04_R1") is qualifying or a race for its tyres, as its name says
 TRACES_WAIT_S = 3600  # longest the check waits for the logs to be read into lap traces
 HABITS_SHOWN = 12
 DETAILS_KEPT = 16  # laps' full checks kept in memory

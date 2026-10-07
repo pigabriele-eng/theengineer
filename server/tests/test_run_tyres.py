@@ -9,7 +9,9 @@ def test_qualifying_is_new_a_race_used_and_a_test_run_guessed_from_its_laps():
             RunLaps(3, "test", "PT2 stint 1", [149.52, 149.8]),  # short and as quick as qualifying
             RunLaps(4, "test", "PT2 stint 2", [150.9, 151.0, 151.1, 151.3, 151.2]),  # a long run
             RunLaps(5, "test", "FP1 stint 1", [150.8]),  # short, but not as quick
-            RunLaps(6, "test", "Q2", [149.6])]  # named as qualifying, left as a test
+            RunLaps(6, "test", "Q2", [149.6]),  # named as qualifying, left as a test
+            RunLaps(7, "test", "03_Q", [149.7]),  # imported from a folder, its order in front
+            RunLaps(8, "test", "04_R1", [151.5, 151.6])]
     g = guess(runs)
     assert g[1] == {"tyres": NEW, "sure": True, "why": "qualifying: new tyres, low fuel"}
     assert g[2] == {"tyres": USED, "sure": True, "why": "race: the qualifying set"}
@@ -17,6 +19,7 @@ def test_qualifying_is_new_a_race_used_and_a_test_run_guessed_from_its_laps():
     assert g[4]["tyres"] == USED and not g[4]["sure"]
     assert g[5]["tyres"] == USED and not g[5]["sure"]
     assert g[6]["tyres"] == NEW and g[6]["sure"]
+    assert g[7]["tyres"] == NEW and g[7]["sure"] and g[8]["tyres"] == USED and g[8]["sure"]
 
 
 def _o(code, start, end, cost):
