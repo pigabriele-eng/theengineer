@@ -13,10 +13,11 @@ concurrency:
 
 jobs:
   # The server tests in four parallel jobs, each a quarter of the test files by time (see tests/conftest.py), each
-  # with a worker per CPU (pytest-xdist).
-  server-tests:
-    name: server tests (${{ matrix.shard }}/4)
+  # with a worker per CPU (pytest-xdist). Their checks are "server (1/4)" to "server (4/4)".
+  server:
+    name: server (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
+    timeout-minutes: 10  # a part takes under a minute: one that hangs fails here, not after GitHub's 6 hours
     strategy:
       fail-fast: false
       matrix:
@@ -41,18 +42,12 @@ jobs:
       - run: echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - if: matrix.shard == 1
         run: ruff check .
-      - run: pytest -q -n auto --shard ${{ matrix.shard }}/${{ strategy.job-total }}
-
-  # One check for the whole server: green when every part of the tests passed.
-  server:
-    needs: server-tests
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    steps:
-      - run: test "${{ needs.server-tests.result }}" = success
+      # a test still running after 2 minutes prints where every thread is
+      - run: pytest -q -n auto --shard ${{ matrix.shard }}/${{ strategy.job-total }} -o faulthandler_timeout=120 --store-durations && cat tests/durations.json
 
   app:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: app
