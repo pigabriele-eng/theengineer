@@ -51,7 +51,9 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="The Engineer", lifespan=lifespan)
 # Any origin: the app signs in with a bearer token, not cookies.
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# max_age: the browser asks again whether a cross-origin call is allowed (one more round trip before each
+# call with the sign-in token) after 2 hours rather than every 10 minutes (Chrome keeps the answer 2 hours at most).
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], max_age=7200)
 app.middleware("http")(tyre_store.track_requests)  # the tyre data job waits for a quiet moment
 signed_in = [Depends(require_user)]
 for r in (catalog.router, sessions.router, imports.router, debriefs.router, insights.router, tyres.router,

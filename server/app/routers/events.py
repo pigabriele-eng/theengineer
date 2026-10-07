@@ -183,15 +183,22 @@ def _key_event(db: Session, key: str) -> models.Event | None:
 
 def _crew(rows: list[dict], cars: dict[int, str]) -> dict:
     """Who drove an event and in what: its runs' drivers and cars (a car by its model, else its name), each once,
-    the most laps first."""
-    def most_laps(key) -> list:
+    the most laps first; each driver's laps in all ("PIA 84 laps · RAC 71 laps" in the list) and the laps of runs
+    without a driver yet."""
+    def laps_by(key) -> dict:
         laps: dict = {}
         for r in rows:
             if (k := key(r)) is not None:
                 laps[k] = laps.get(k, 0) + r["laps"]
+        return laps
+
+    def most_laps(laps: dict) -> list:
         return sorted(laps, key=lambda k: (-laps[k], str(k)))
-    return {"drivers": most_laps(lambda r: r["driver"]),
-            "cars": [cars[c] for c in most_laps(lambda r: r["car_id"]) if c in cars]}
+    by_driver = laps_by(lambda r: r["driver"])
+    return {"drivers": most_laps(by_driver),
+            "driver_laps": [{"name": d, "laps": by_driver[d]} for d in most_laps(by_driver)],
+            "unassigned_laps": sum(r["laps"] for r in rows if r["driver"] is None),
+            "cars": [cars[c] for c in most_laps(laps_by(lambda r: r["car_id"])) if c in cars]}
 
 
 @router.get("/events/folders")
