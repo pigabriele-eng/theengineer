@@ -105,6 +105,43 @@ def test_a_kept_page_is_worked_out_again_when_its_log_or_laps_change(client, mon
     assert tagged != view
 
 
+def test_the_session_pages_lap_comparisons_are_kept_lap_by_lap(client, monkeypatch):
+    from app import db as app_db, heavy, models
+    from app.routers import sessions
+
+    sid, fid = _session(client, paces=(0.95, 0.97, 0.96, 0.975, 0.98))
+    analysis = client.get(f"/sessions/{sid}/analysis").json()
+    ref = analysis["reference_lap"]
+    laps = [l for l in client.get(f"/sessions/{sid}").json()["laps"] if l["file_id"] == analysis["file_id"]]
+    clean = [l for l in laps if l["clean"] and l["number"] != ref]
+    lap = sorted(clean, key=lambda l: l["time_s"])[0]["number"]  # the pair the page opens on (LapCompare.tsx)
+    other = next(l["number"] for l in clean if l["number"] != lap)
+    with app_db.SessionLocal() as db:
+        assert sessions.default_compare(db.get(models.RunSession, sid)) == (lap, ref)  # the prebuild's pair
+
+    worked = []
+    real = sessions.compare_laps
+    monkeypatch.setattr(sessions, "compare_laps", lambda *a, **k: worked.append(a[1:3]) or real(*a, **k))
+    path = f"/sessions/{sid}/compare"
+    first = {n: client.get(path, params={"lap": n, "reference_lap": ref}).json() for n in (lap, other)}
+    assert first[lap]["lap"] == lap and first[lap]["reference_lap"] == ref and first[lap]["file_id"] == fid
+    # other views are worked out each time and not kept: another reference, step or log, or a lap the log doesn't have
+    assert client.get(path, params={"lap": lap, "reference_lap": other}).json()["reference_lap"] == other
+    assert client.get(path, params={"lap": lap, "reference_lap": ref, "step": 10}).json()["step_m"] == 10
+    assert client.get(path, params={"lap": lap, "file_id": fid + 1}).status_code == 404
+    assert client.get(path, params={"lap": 99, "reference_lap": ref}).status_code == 404
+    assert {s for s in _scopes() if "|compare" in s} == {f"session:{sid}|compare|{n}|{ref}" for n in (lap, other)}
+    assert len(worked) == 5
+
+    def no_log(*a, **k):
+        raise AssertionError("the log was read again")
+    monkeypatch.setattr(sessions, "read_file", no_log)
+    with heavy.lock:  # another job is reading a log: a kept comparison doesn't wait for it
+        for n in (lap, other):
+            assert client.get(path, params={"lap": n, "reference_lap": ref}).json() == first[n]
+    assert len(worked) == 5
+
+
 def test_an_event_deleted_takes_its_kept_pages_with_it(client):
     from app import db as app_db
     from tests.test_event_delete import _ids, _import, references
@@ -166,7 +203,12 @@ def test_an_import_is_prebuilt_and_every_page_then_opens_at_once(client, monkeyp
 
     with app_db.SessionLocal() as db:
         fids = {s.id: s.files[0].id for s in db.scalars(select(models.RunSession))}
+        pairs = {s.id: sessions.default_compare(s) for s in db.scalars(select(models.RunSession))}
+    for sid, (lap, ref) in pairs.items():  # the lap comparison the session page opens on
+        assert f"session:{sid}|compare|{lap}|{ref}" in _scopes()
     with heavy.lock:  # every page answers from what was kept, without waiting for the heavy-work lock
+        for sid, (lap, ref) in pairs.items():
+            assert client.get(f"/sessions/{sid}/compare", params={"lap": lap, "reference_lap": ref}).status_code == 200
         for path in (f"/reports/events/{ev}", f"/technique/events/{ev}", f"/track-grip/events/{ev}",
                      *(f"/reports/sessions/{sid}" for sid in sids), *(f"/technique/sessions/{sid}" for sid in sids)):
             body = client.get(path).json()
