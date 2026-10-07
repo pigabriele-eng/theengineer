@@ -352,7 +352,10 @@ export default function SessionScreen() {
               run={{ id: session.id, name: title, driver_id: (session as Tagged).driver_id, car_id: (session as Tagged).car_id }}
               kind={session.kind} eventId={(session as Tagged).event_id}
               logSession={session.files.map((f) => (f.meta as { event_session?: string }).event_session).find(Boolean)}
-              onChanged={() => api.session(sessionId).then(setSession, (e) => setError(e.message))} />
+              onChanged={() => api.session(sessionId).then(
+                (s) => current.current === sessionId && setSession(s),
+                (e) => current.current === sessionId && setError(e.message),
+              )} />
           </View>
         )}
         <View style={styles.actions} {...noPrint}>
