@@ -165,7 +165,7 @@ def build_page(db: Session) -> dict:
         ev = events.get(ev_id)
         for i, grp in enumerate(g.groups):
             runs = [s.session_id for s in g.sessions if s.group == i]  # to name them all at once on the page
-            if grp.source == "fingerprint" and grp.driver_id is not None:
+            if grp.source in ("fingerprint", "pair") and grp.driver_id is not None and grp.match is not None:
                 found.setdefault(grp.driver_id, []).append({
                     "event_id": ev_id, "event": ev.name if ev else None, "laps": grp.laps,
                     "match": round(grp.match or 0, 2), "session_ids": runs})
@@ -175,7 +175,8 @@ def build_page(db: Session) -> dict:
 
     drivers = []
     for did, rows_ in learned.items():
-        vec = {k: float(np.mean([v.get(k, 0.0) for _, v, _ in rows_])) for k in all_kinds}
+        w = [max(1, min(n, driver_prints.EVENT_LAPS)) for _, _, n in rows_]  # as the matching weighs them
+        vec = {k: float(np.average([v.get(k, 0.0) for _, v, _ in rows_], weights=w)) for k in all_kinds}
         arr = np.array([vec[k] for k in all_kinds])
         evs = []
         for ev_id, _, laps in rows_:
