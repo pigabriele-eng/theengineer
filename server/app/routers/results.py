@@ -198,6 +198,12 @@ def _keep_match(db: Session, event_id: int, series: str, year: int, round_id: st
 
 
 def event_overview(db: Session, ev: models.Event) -> dict:
+    return _overview(db, ev)[0]
+
+
+def _overview(db: Session, ev: models.Event) -> tuple[dict, dict]:
+    """The event's official results (event_overview) and the facts they were matched from (_event_facts), read again
+    after its runs are named."""
     facts = _event_facts(db, ev)
     link = _link(db, ev.id)
     series, year, round_id, season_number = _target(db, ev, facts, link)
@@ -216,7 +222,7 @@ def event_overview(db: Session, ev: models.Event) -> dict:
             db.commit()
         out["note"] = ("No official results for this circuit on the event's days yet" if year and facts["venue"]
                        else "This event has no circuit or date to match official results to")
-        return out
+        return out, facts
     out["round"] = {"year": rnd.year, "round": rnd.order, "round_id": rnd.round_id, "name": rnd.name,
                     "fetched_at": rnd.fetched_at.isoformat() if rnd.fetched_at else None}
     bests = [r["best_lap_s"] for r in facts["rows"] if r["best_lap_s"]]
@@ -252,7 +258,7 @@ def event_overview(db: Session, ev: models.Event) -> dict:
         out["sessions"].append({**summary.car_summary(s, summary.find_car(s, number), logged),
                                 "our_sessions": [{"id": r["id"], "name": r["name"]} for r in ours],
                                 "brands": summary.brand_table(s)[:8]})
-    return out
+    return out, facts
 
 
 def _event(db: Session, event_id: int) -> models.Event:
@@ -277,7 +283,8 @@ def event_prediction(event_id: int, db: Session = Depends(get_db)):
     from app.prep.official import backtest_verdict, prediction_line  # the prep report's wording and trust line
 
     ev = _event(db, event_id)
-    overview = event_overview(db, ev)  # the round, the circuit and our car number, as the Results section has them
+    # the round, the circuit and our car number, as the Results section has them, and our sessions' best laps
+    overview, facts = _overview(db, ev)
     series, year, venue = overview["series"], overview["year"], overview["venue"]
     number = overview["car_number"]
     out: dict = {"event_id": ev.id, "series": series, "series_name": getattr(sync.ADAPTERS.get(series), "NAME", series),
@@ -291,7 +298,8 @@ def event_prediction(event_id: int, db: Session = Depends(get_db)):
         out["note"] = ("Which car is ours? Set our car number in the Results section of the event (or on its "
                        "season) to see the prediction.")
         return out
-    sessions = summary.model_sessions(db, series)
+    rounds = summary._rounds(db, series)  # every round of the series with its sessions and rows: read once
+    sessions = summary.model_sessions(db, series, rounds)
     if not sessions:
         out["note"] = "No official results loaded yet: the server is still reading them from the series' site."
         return out
@@ -300,12 +308,12 @@ def event_prediction(event_id: int, db: Session = Depends(get_db)):
     if rnd is not None:
         venue = rnd.venue or venue
     order = rnd.order if rnd is not None else None
-    team, _ = summary.team_of(summary._rounds(db, series), number, year)
-    driver = summary.our_driver(db, series, number, year)  # earlier seasons: wherever our driver raced
+    team, _ = summary.team_of(rounds, number, year)
+    driver = summary.our_driver(db, series, number, year, rounds)  # earlier seasons: wherever our driver raced
     out["team"], out["driver"] = team, driver
     out["finished"] = order is not None and any(
         s["venue"] == venue and int(s["year"]) == year and s["order"] == order for s in sessions)
-    bests = [] if out["finished"] else [r["best_lap_s"] for r in _event_facts(db, ev)["rows"] if r["best_lap_s"]]
+    bests = [] if out["finished"] else [r["best_lap_s"] for r in facts["rows"] if r["best_lap_s"]]
     try:
         pred = predict.predict_round(sessions, venue, year, car_number=number, team=team, before_order=order,
                                      logged_best_s=min(bests) if bests else None, driver=driver)

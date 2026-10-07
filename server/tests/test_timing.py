@@ -278,3 +278,52 @@ def test_logs_timed_by_older_lap_timing_are_timed_again_once(client, monkeypatch
     timing.check_all_tracks()  # a second start finds nothing to do and reads no log
     timing.wait_idle()
     assert reads == []
+
+
+def test_on_startup_the_logs_are_read_once_and_only_tracks_with_work_are_checked(client, monkeypatch):
+    """check_all_tracks reads every log's row once (not once per track) and schedules only the tracks, and the logs
+    at no track, that have a log to re-time."""
+    from sqlalchemy import event
+
+    import app.db
+    import app.models
+    from app import timing
+
+    a = client.post("/sessions", json={"name": "FP1"}).json()
+    assert client.post(f"/sessions/{a['id']}/files", files={"file": ("a.ld", marked())}).status_code == 201
+    b = client.post("/sessions", json={"name": "FP2"}).json()
+    assert client.post(f"/sessions/{b['id']}/files", files={"file": ("b.ld", marked())}).status_code == 201
+    timing.wait_idle()
+    for name in ("Monza", "Spa"):
+        assert client.post("/tracks", json={"name": name}).status_code in (200, 201)
+    with app.db.SessionLocal() as db:  # FP2's log at no track: no event, a venue that is no track
+        s = db.get(app.models.RunSession, b["id"])
+        s.event = None
+        s.files[0].meta = {**s.files[0].meta, "venue": "Nowhere"}
+        db.commit()
+        tracks = {t.name: t for t in db.query(app.models.Track)}
+        assert [f.session_id for f in timing.files_at(db, tracks["Test Track"])] == [a["id"]]
+        assert [f.session_id for f in timing.files_at(db, None)] == [b["id"]]
+        assert timing.files_at(db, tracks["Monza"]) == []
+        test_track = tracks["Test Track"].id
+
+    scheduled, selects = [], []
+    monkeypatch.setattr(timing, "schedule", scheduled.append)
+
+    def count(conn, cursor, statement, *args):
+        if "FROM logger_files" in statement:
+            selects.append(statement)
+    engine = app.db.SessionLocal.kw["bind"]
+    event.listen(engine, "before_cursor_execute", count)
+    try:
+        timing.check_all_tracks()  # everything up to date: nothing to check
+        assert scheduled == [] and len(selects) == 1
+        with app.db.SessionLocal() as db:  # timed by older code, at the track and at no track
+            for f in db.query(app.models.LoggerFile):
+                f.meta = {k: v for k, v in f.meta.items() if k != "timing_version"}
+            db.commit()
+        selects.clear()
+        timing.check_all_tracks()
+        assert scheduled == [test_track, timing.NO_TRACK] and len(selects) == 1
+    finally:
+        event.remove(engine, "before_cursor_execute", count)

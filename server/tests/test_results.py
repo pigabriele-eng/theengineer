@@ -226,6 +226,27 @@ def test_an_event_has_its_prediction_and_then_predicted_vs_actual(client, fake_s
     assert rows[("Q1", "our_lap")]["actual"] == 102.441
     assert all(r["miss"] is None or r["miss"] == round(r["predicted"] - r["actual"], 3) for r in rows.values())
 
+def test_an_event_s_prediction_reads_the_series_results_once(client, fake_site, monkeypatch):
+    """Before its round is run, our logged best is blended in; the series' rounds are read once and our sessions only
+    as the Results section reads them."""
+    from app.results import summary
+    from app.routers import results
+
+    fake_site.sync(years=[2026])
+    client.post("/tracks", json={"name": "Test Track"})
+    ev = client.post("/events/folders", json={"name": "Next year"}).json()
+    _session(client, ev["id"], "FP1", (0.97, 0.98), "18/09/2027", "10:00:00")
+    client.put(f"/results/events/{ev['id']}/link", json={"car_number": "911"})
+    reads = {"rounds": 0, "facts": 0}
+    rounds, facts = summary._rounds, results._event_facts
+    monkeypatch.setattr(summary, "_rounds", lambda *a: reads.update(rounds=reads["rounds"] + 1) or rounds(*a))
+    monkeypatch.setattr(results, "_event_facts", lambda *a: reads.update(facts=reads["facts"] + 1) or facts(*a))
+    body = client.get(f"/results/events/{ev['id']}/prediction").json()
+    assert not body["finished"] and body["year"] == 2027 and body["team"] == "Team Two"
+    assert body["prediction"]["logged_best"]["event"] == "Next year" and body["prediction"]["logged_best"]["time_s"]
+    assert reads == {"rounds": 1, "facts": 1}
+
+
 def test_a_car_set_by_hand_shows_before_any_results(client):
     ev = client.post("/events/folders", json={"name": "Next round"}).json()
     body = client.put(f"/results/events/{ev['id']}/link", json={"car_number": "12", "year": 2027}).json()
@@ -297,6 +318,48 @@ def test_the_season_s_car_number_beats_one_found_from_logged_laps(client, fake_s
     assert (body["car_number"], body["car_number_from"]) == ("70", "set")
     with SessionLocal() as db:
         assert _known_number(db, "gt4-europe", 2026, ev["id"]) == "70"
+
+
+def test_the_rounds_on_now_are_found_from_the_events_dates(client):
+    """The live check's events on now: each event's days as its folder gives them (by hand, else its logs', else its
+    date), read for every linked event at once."""
+    from datetime import date
+
+    from app import models
+    from app.db import SessionLocal
+    from app.results import models as rm
+    from app.results.sync import _event_days, current_links
+    from app.routers import events
+
+    client.post("/tracks", json={"name": "Test Track"})
+    logged = client.post("/events/folders", json={"name": "Logged"}).json()["id"]
+    _session(client, logged, "FP", (0.97, 0.98), "19/09/2026", "11:30:00")
+    _session(client, logged, "R", (0.97, 0.98), "20/09/2026", "15:00:00")
+    unmatched = client.post("/events/folders", json={"name": "No round"}).json()["id"]
+    with SessionLocal() as db:
+        hand = models.Event(name="By hand", date=date(2026, 1, 1))
+        dated = models.Event(name="Dated", date=date(2026, 10, 4))
+        bare = models.Event(name="No date")
+        db.add_all([hand, dated, bare])
+        db.flush()
+        db.add(models.EventDates(event_id=hand.id, end=date(2026, 8, 2)))
+        ids = [logged, hand.id, dated.id, bare.id]
+        for i, eid in enumerate(ids):
+            db.add(rm.EventResultLink(event_id=eid, series="gt4-europe", year=2026, round_id=str(i)))
+        db.add(rm.EventResultLink(event_id=unmatched, series="gt4-europe", year=2026))
+        db.commit()
+
+        days = _event_days(db, ids)
+        for eid in ids:  # as the events page has them
+            folder = events._folder(db.get(models.Event, eid), events._sessions(db, eid), events._dates_row(db, eid))
+            assert days[eid] == tuple(date.fromisoformat(d) if d else None for d in (folder["start"], folder["end"]))
+        assert days[logged] == (date(2026, 9, 19), date(2026, 9, 20))
+        assert days[hand.id] == (date(2026, 8, 2), date(2026, 8, 2)) and days[bare.id] == (None, None)
+
+        def on(day):
+            return sorted(l.event_id for l in current_links(db, day))
+        assert on(date(2026, 9, 18)) == [logged] and on(date(2026, 9, 22)) == [logged] and on(date(2026, 9, 23)) == []
+        assert on(date(2026, 8, 4)) == [hand.id] and on(date(2026, 10, 3)) == [dated.id]
 
 
 def test_setting_only_the_car_number_leaves_the_round_matched_automatically(client, fake_site):

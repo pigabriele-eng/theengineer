@@ -107,7 +107,7 @@ def test_a_kept_page_is_worked_out_again_when_its_log_or_laps_change(client, mon
     assert tagged != view
 
 
-def test_the_session_pages_lap_comparisons_are_kept_lap_by_lap(client, monkeypatch):
+def test_the_session_pages_lap_comparisons_are_kept_view_by_view(client, monkeypatch):
     from app import db as app_db, heavy, models
     from app.routers import sessions
 
@@ -127,13 +127,19 @@ def test_the_session_pages_lap_comparisons_are_kept_lap_by_lap(client, monkeypat
     path = f"/sessions/{sid}/compare"
     first = {n: client.get(path, params={"lap": n, "reference_lap": ref}).json() for n in (lap, other)}
     assert first[lap]["lap"] == lap and first[lap]["reference_lap"] == ref and first[lap]["file_id"] == fid
-    # other views are worked out each time and not kept: another reference, step or log, or a lap the log doesn't have
-    assert client.get(path, params={"lap": lap, "reference_lap": other}).json()["reference_lap"] == other
-    assert client.get(path, params={"lap": lap, "reference_lap": ref, "step": 10}).json()["step_m"] == 10
+    # another reference or step is kept too, each under its own scope; a log or a lap the session doesn't have (or a
+    # reference it doesn't have, the fastest lap standing in) is worked out each time and not kept
+    picked = client.get(path, params={"lap": lap, "reference_lap": other}).json()
+    assert picked["reference_lap"] == other
+    stepped = client.get(path, params={"lap": lap, "reference_lap": ref, "step": 10}).json()
+    assert stepped["step_m"] == 10
     assert client.get(path, params={"lap": lap, "file_id": fid + 1}).status_code == 404
     assert client.get(path, params={"lap": 99, "reference_lap": ref}).status_code == 404
-    assert {s for s in _scopes() if "|compare" in s} == {f"session:{sid}|compare|{n}|{ref}" for n in (lap, other)}
-    assert len(worked) == 5
+    assert client.get(path, params={"lap": lap, "reference_lap": 99}).json() == first[lap]
+    assert {s for s in _scopes() if "|compare" in s} == {*(f"session:{sid}|compare|{n}|{ref}" for n in (lap, other)),
+                                                          f"session:{sid}|compare|{lap}|{other}",
+                                                          f"session:{sid}|compare|{lap}|{ref}|{fid}|10.0"}
+    assert len(worked) == 6
 
     def no_log(*a, **k):
         raise AssertionError("the log was read again")
@@ -141,7 +147,9 @@ def test_the_session_pages_lap_comparisons_are_kept_lap_by_lap(client, monkeypat
     with heavy.lock:  # another job is reading a log: a kept comparison doesn't wait for it
         for n in (lap, other):
             assert client.get(path, params={"lap": n, "reference_lap": ref}).json() == first[n]
-    assert len(worked) == 5
+        assert client.get(path, params={"lap": lap, "reference_lap": other}).json() == picked
+        assert client.get(path, params={"lap": lap, "reference_lap": ref, "step": 10}).json() == stepped
+    assert len(worked) == 6
 
 
 def test_an_event_deleted_takes_its_kept_pages_with_it(client):
