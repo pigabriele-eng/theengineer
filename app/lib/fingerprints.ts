@@ -55,10 +55,10 @@ export type DriverPrint = {
   driver: string;
   laps: number;
   events: { event_id: number; event: string | null; date: string | null; laps: number; best_s?: number;
-    typical_s?: number; teammates: string[]; gap_to_teammates_s: number | null }[];
+    typical_s?: number; teammates: string[]; gap_to_teammates_s: number | null; session_ids?: number[] }[];
   traits: Trait[];
   advice: Advice[];
-  also_found: { event_id: number; event: string | null; laps: number; match: number }[];
+  also_found: { event_id: number; event: string | null; laps: number; match: number; session_ids?: number[] }[];
 };
 
 export type LapLink = { kind: string; label: string; r: number; laps: number; outcome: boolean; words: string };
@@ -68,7 +68,8 @@ export type FingerprintDb = {
   events: number;
   drivers: DriverPrint[];
   links: LapLink[];
-  unnamed: { event_id: number; event: string | null; label: string; laps: number }[];
+  // a style the app can't name yet: label is its runs' names
+  unnamed: { event_id: number; event: string | null; label: string; laps: number; session_ids?: number[] }[];
   kinds: { kind: string; label: string; explain: string }[];
 };
 

@@ -333,6 +333,8 @@ def set_run(session_id: int, body: RunIn, db: Session = Depends(get_db)):
     if "driver_id" in sent or (body.driver_name or "").strip():
         d, new = _pick_driver(db, body)
         s.driver_id = d.id if d else None
+        from app import driver_prints  # looked up when used: the tests reload it
+        driver_prints.set_by_person(db, [s.id], s.driver_id)
         db.flush()
         if d is not None and s.car_id is not None:
             garage.link_driver(db, d.id, s.car_id)

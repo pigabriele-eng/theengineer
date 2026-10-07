@@ -2,11 +2,14 @@ import { Link, Stack } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 
+import { ErrorLine, FormActions, MainButton } from '@/components/Controls';
+import { Choice, DriverChoice, toPick } from '@/components/DriverPicker';
 import { Notice, PageHead, useText } from '@/components/Picks';
 import PrintButton from '@/components/PrintButton';
 import { Colophon, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { formatLap } from '@/lib/api';
+import { Driver, driversApi } from '@/lib/drivers';
 import { DriverPrint, FingerprintDb, fingerprintsApi, LapLink, Trait } from '@/lib/fingerprints';
 import { themed, useTheme } from '@/constants/Theme';
 
@@ -21,6 +24,7 @@ export default function FingerprintsScreen() {
   const theme = useTheme();
   const [db, setDb] = useState<FingerprintDb | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [drivers, setDrivers] = useState<Driver[]>([]);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(() => {
@@ -34,12 +38,20 @@ export default function FingerprintsScreen() {
       (e) => setError((e as Error).message),
     );
   }, []);
+  const loadDrivers = useCallback(() => {
+    driversApi.list().then(setDrivers, () => setDrivers([]));
+  }, []);
   useEffect(() => {
     load();
+    loadDrivers();
     return () => {
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [load]);
+  }, [load, loadDrivers]);
+  const named = useCallback(() => {
+    load();
+    loadDrivers(); // a new driver may have been added
+  }, [load, loadDrivers]);
 
   let no = 0;
   const next = () => ++no;
@@ -71,7 +83,7 @@ export default function FingerprintsScreen() {
         </View>
       )}
 
-      {db?.drivers.map((d) => <DriverSection key={d.driver_id} no={next()} d={d} />)}
+      {db?.drivers.map((d) => <DriverSection key={d.driver_id} no={next()} d={d} drivers={drivers} onNamed={named} />)}
 
       {db != null && db.links.length > 0 && (
         <Section no={next()} title="What goes with quicker laps"
@@ -97,7 +109,7 @@ export default function FingerprintsScreen() {
 
       {db != null && db.unnamed.length > 0 && (
         <Section no={next()} title="Drivers waiting for a name"
-          dek="Drivers the app tells apart by their style at these events but can't name yet. Answer the question on the event page once, and every run of theirs gets the name.">
+          dek="Drivers the app tells apart by their style at these events but can't name yet. Name one once, and every run in that style gets the name and teaches their fingerprint.">
           <View style={styles.list}>
             {db.unnamed.map((u) => (
               <View key={`${u.event_id}-${u.label}`} style={styles.row}>
@@ -107,6 +119,7 @@ export default function FingerprintsScreen() {
                   </Pressable>
                 </Link>
                 <Text style={t.num}>{u.laps} laps</Text>
+                <NameStyle ids={u.session_ids} label="This is…" drivers={drivers} onNamed={named} />
               </View>
             ))}
           </View>
@@ -135,7 +148,7 @@ export default function FingerprintsScreen() {
 
 /** One driver: their style in words, what it means for lap time, the events it was learned from with the pace
  * against teammates, and where the fingerprint found them without a tag. */
-function DriverSection({ no, d }: { no: number; d: DriverPrint }) {
+function DriverSection({ no, d, drivers, onNamed }: { no: number; d: DriverPrint; drivers: Driver[]; onNamed: () => void }) {
   const styles = useStyles();
   const t = useText();
   const wide = useWide();
@@ -179,6 +192,7 @@ function DriverSection({ no, d }: { no: number; d: DriverPrint }) {
                   </Text>
                 )}
               </View>
+              <NameStyle ids={e.session_ids} label="Not them?" drivers={drivers} onNamed={onNamed} />
             </View>
           ))}
           <Text style={t.small}>The gap compares the average of each side's three quickest laps.</Text>
@@ -194,6 +208,7 @@ function DriverSection({ no, d }: { no: number; d: DriverPrint }) {
                   <Text style={t.num}>{f.laps} laps</Text>
                   <Text style={t.num}>match {Math.round(f.match * 100)} %</Text>
                 </View>
+                <NameStyle ids={f.session_ids} label="Not them?" drivers={drivers} onNamed={onNamed} />
               </View>
             ))}
             <Text style={t.small}>Confirm these on the event page to teach the fingerprint more.</Text>
@@ -201,6 +216,51 @@ function DriverSection({ no, d }: { no: number; d: DriverPrint }) {
         )}
       </View>
     </Section>
+  );
+}
+
+/** "This is…": who drives one of an event's driving styles, picked from the garage or a new name. Every run in
+ * that style gets the driver, as a person's tag that teaches their fingerprint, so a style is named, a wrong one is
+ * put right, or two names for one driver become one. */
+function NameStyle({ ids, label, drivers, onNamed }: {
+  ids: number[] | undefined;
+  label: string;
+  drivers: Driver[];
+  onNamed: () => void;
+}) {
+  const styles = useStyles();
+  const [open, setOpen] = useState(false);
+  const [choice, setChoice] = useState<Choice | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!ids?.length) return null; // an older server
+  if (!open) return <TextLink small label={label} onPress={() => setOpen(true)} />;
+  const ready = choice != null && ('id' in choice || choice.name.trim() !== '');
+  const save = async () => {
+    if (!ready) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await driversApi.assign(toPick(choice), ids);
+      setOpen(false);
+      setChoice(undefined);
+      onNamed();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <View style={styles.name}>
+      <Label small>{`This is… (${ids.length} run${ids.length === 1 ? '' : 's'})`}</Label>
+      <DriverChoice drivers={drivers} value={choice} onChange={setChoice} allowNone={false} />
+      <FormActions>
+        <MainButton label="Name them" onPress={save} busy={busy} disabled={!ready} />
+        <TextLink label="Cancel" onPress={() => setOpen(false)} disabled={busy} />
+      </FormActions>
+      {error && <ErrorLine>{error}</ErrorLine>}
+    </View>
   );
 }
 
@@ -263,4 +323,5 @@ const useStyles = themed((c) => ({
   advice: { gap: 3 },
   gain: { color: c.mark },
   glossary: { gap: 2, maxWidth: 720 },
+  name: { width: '100%', gap: 12, borderLeftWidth: 3, borderColor: c.mark, paddingLeft: 12, marginTop: 4 },
 }));

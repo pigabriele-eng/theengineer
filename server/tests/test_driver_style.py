@@ -336,3 +336,19 @@ def test_a_new_pair_is_asked_about_once_and_known_by_style_after(client):
     got = {s["session_id"]: s for s in client.get(f"/events/{second['event']}/driver-guess").json()["sessions"]}
     assert all(s["auto"] is not None for s in got.values())  # shown as set from the style, with Change
 
+
+    # the fingerprints page names each style's runs, to name or put right in one go: a person's name replaces the
+    # style's, and teaches
+    driver_prints.wait_idle()
+    page = client.get("/drivers/fingerprints").json()
+    side = "A" if anna_first else "B"  # the driver named by the answer: only a person's answer teaches
+    (learned,) = page["drivers"]
+    assert learned["driver"] == ("Anna" if anna_first else "Ben")
+    assert sorted(learned["events"][0]["session_ids"]) == sorted([first[f"{side}1"], first[f"{side}2"]])
+    (found,) = learned["also_found"]
+    assert found["event"] == "Second weekend" and found["session_ids"] == [second[f"{side}3"]]
+    other = pair[1] if anna_first else pair[0]
+    r = client.post("/drivers/assign", json={"driver_id": other, "session_ids": found["session_ids"]})
+    assert r.status_code == 200, r.text
+    got = {s["session_id"]: s for s in client.get(f"/events/{second['event']}/driver-guess").json()["sessions"]}
+    assert got[second[f"{side}3"]]["driver_id"] == other and got[second[f"{side}3"]]["auto"] is None

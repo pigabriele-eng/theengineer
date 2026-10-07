@@ -79,6 +79,7 @@ def assign_driver(body: AssignIn, db: Session = Depends(get_db)):
         raise HTTPException(422, "Pick at least one session or event")
     d = _pick(db, body)
     db.execute(update(models.RunSession).where(models.RunSession.id.in_(ids)).values(driver_id=d.id if d else None))
+    _by_person(db, sorted(ids), d)
     db.commit()
     _style_learns()
     return {"driver": d, "session_ids": sorted(ids)}
@@ -92,9 +93,15 @@ def set_session_driver(session_id: int, body: DriverPick, db: Session = Depends(
         raise HTTPException(404, "Session not found")
     d = _pick(db, body)
     s.driver_id = d.id if d else None
+    _by_person(db, [s.id], d)
     db.commit()
     _style_learns()
     return {"driver": d, "session_ids": [s.id]}
+
+
+def _by_person(db: Session, ids: list[int], d: models.Driver | None) -> None:
+    from app import driver_prints  # looked up when used: the tests reload it
+    driver_prints.set_by_person(db, ids, d.id if d else None)
 
 
 def _style_learns() -> None:

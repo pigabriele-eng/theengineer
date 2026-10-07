@@ -164,15 +164,14 @@ def build_page(db: Session) -> dict:
         per_event[ev_id] = (ep, g)
         ev = events.get(ev_id)
         for i, grp in enumerate(g.groups):
+            runs = [s.session_id for s in g.sessions if s.group == i]  # to name them all at once on the page
             if grp.source == "fingerprint" and grp.driver_id is not None:
                 found.setdefault(grp.driver_id, []).append({
                     "event_id": ev_id, "event": ev.name if ev else None, "laps": grp.laps,
-                    "match": round(grp.match or 0, 2)})
-            elif grp.driver_id is None and g.mode == "groups":
-                runs = [s.session_id for s in g.sessions if s.group == i]
+                    "match": round(grp.match or 0, 2), "session_ids": runs})
+            elif grp.driver_id is None and g.mode in ("groups", "one style") and runs:
                 unnamed.append({"event_id": ev_id, "event": ev.name if ev else None,
-                                "label": driver_prints.runs_text(db, runs) if runs else _label(i, grp, names),
-                                "laps": grp.laps})
+                                "label": driver_prints.runs_text(db, runs), "laps": grp.laps, "session_ids": runs})
 
     drivers = []
     for did, rows_ in learned.items():
@@ -189,6 +188,7 @@ def build_page(db: Session) -> dict:
             ev = events.get(ev_id)
             evs.append({"event_id": ev_id, "event": ev.name if ev else None,
                         "date": ev.date.isoformat() if ev and ev.date else None, "laps": laps, **pace,
+                        "session_ids": [s.session_id for s in g.sessions if s.group in mine],
                         "teammates": sorted({names.get(g.groups[i].driver_id) or _label(i, g.groups[i], names)
                                              for i in others}),
                         "gap_to_teammates_s": round(pace["typical_s"] - mates["typical_s"], 3)

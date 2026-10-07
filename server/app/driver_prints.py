@@ -275,7 +275,10 @@ def page_signature(db: Session) -> str:
     rounds = [list(r) for r in db.execute(select(seasons.SeasonRound.season_id, seasons.SeasonRound.event_id)
                                           .where(seasons.SeasonRound.event_id.in_(evs))
                                           .order_by(seasons.SeasonRound.id))] if evs else []
-    return page_cache.digest(["page", *state, names, events, info, entries, rounds])
+    runs = [list(r) for r in db.execute(select(models.RunSession.id, models.RunSession.name)
+                                        .where(models.RunSession.event_id.in_(evs))
+                                        .order_by(models.RunSession.id))] if evs else []  # the page names runs
+    return page_cache.digest(["page", *state, names, events, info, entries, rounds, runs])
 
 
 def learned(db: Session) -> dict[int, list[tuple[int, dict[str, float], int]]]:
@@ -303,6 +306,13 @@ def set_by_style(db: Session, session_ids: list[int]) -> dict[int, StyleTag]:
     if not session_ids:
         return {}
     return {t.session_id: t for t in db.scalars(select(StyleTag).where(StyleTag.session_id.in_(session_ids)))}
+
+
+def set_by_person(db: Session, session_ids: list[int], driver_id: int | None) -> None:
+    """A person set these runs' driver (not committed): one the style had set becomes theirs, so it teaches now. A
+    clear keeps the style's mark, so the style doesn't set it again."""
+    if driver_id is not None and session_ids:
+        db.execute(delete(StyleTag).where(StyleTag.session_id.in_(list(session_ids))))
 
 
 def tags_of(db: Session, ep: ds.EventPrint, people_only: bool = True) -> dict[int, int | None]:
