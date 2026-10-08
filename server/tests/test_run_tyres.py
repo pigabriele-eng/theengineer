@@ -75,3 +75,21 @@ def test_the_warm_up_before_a_new_set_hard_stops_on_the_straights_of_the_out_lap
     g = guess(runs)
     assert [g[i]["tyres"] for i in range(1, 6)] == [USED, USED, NEW, FRESH, NEW]
     assert "warm-up" in g[3]["why"] and "2 hard stops" in g[3]["why"]
+
+
+def test_pace_is_measured_against_the_driver_on_the_tyres():
+    """Gabriele: two drivers might have very different paces, so judge pace against the driver wearing the tyres.
+    The set's laps add up whoever drove them."""
+    runs = [RunLaps(1, "practice", "FP1 stint 1", [101.5, 101.6], laps=12, driver="Quick"),
+            RunLaps(2, "practice", "FP1 stint 2", [102.4, 102.5], laps=8, driver="Slower"),
+            # 102.0: nowhere near Quick's 101.0 in qualifying, but within 0.4% of Slower's own 101.8
+            RunLaps(3, "practice", "FP2 stint 1", [102.0, 102.3], laps=6, driver="Slower"),
+            RunLaps(4, "practice", "FP2 stint 2", [101.9, 102.0], laps=6, driver="Quick"),  # same set, Quick on it
+            RunLaps(5, "qualifying", "Q1", [101.0], driver="Quick"),
+            RunLaps(6, "qualifying", "Q2", [101.8], driver="Slower")]
+    g = guess(runs)
+    assert [g[i]["tyres"] for i in range(1, 5)] == [USED, USED, NEW, FRESH]
+    assert "Slower's qualifying" in g[3]["why"] and g[4]["set_laps"] == 6
+    # without the drivers, the same laps are measured against the quicker driver's qualifying: no new set seen
+    g = guess([RunLaps(r.session_id, r.kind, r.name, r.times, laps=r.laps) for r in runs])
+    assert g[3]["tyres"] == USED

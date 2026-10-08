@@ -52,6 +52,7 @@ class RunLaps:
     numbers: list[int] | None = None
     laps: int | None = None
     warm_up: int | None = None  # hard stops on the straights of its out lap (warm_up.py); None: not counted
+    driver: str | None = None  # who drove it: pace is measured against their own laps only
 
 
 def kind_of(kind: str, name: str | None) -> str:
@@ -77,14 +78,24 @@ def _step(on_set: int) -> str:
 
 def guess(runs: list[RunLaps]) -> dict[int, dict]:
     """Each run's tyres by session id, the runs given in the order they ran (an event's): {"tyres": level, "label",
-    "pair": new|used, "sure", "why", "set_laps": laps on the set when the run started, when known}."""
+    "pair": new|used, "sure", "why", "set_laps": laps on the set when the run started, when known}.
+
+    Pace is only ever measured against the driver on the tyres (Gabriele: two drivers can be far apart): a lap against
+    that driver's own qualifying best and their own laps on the set before. The set's laps add up whoever drove
+    them."""
     kinds = {r.session_id: kind_of(r.kind, r.name) for r in runs}
     quali = [min(r.times) for r in runs if kinds[r.session_id] == "qualifying" and r.times]
-    q_best = min(quali) if quali else None
+    q_all = min(quali) if quali else None
+    # each driver's own qualifying best; a driver who didn't qualify has none (their own quickest lap would only
+    # measure a run against itself): their runs go by their own laps on the set before
+    refs: dict[str | None, float | None] = {}
+    for d in {r.driver for r in runs if r.driver is not None}:
+        q = [min(r.times) for r in runs if r.driver == d and r.times and kinds[r.session_id] == "qualifying"]
+        refs[d] = min(q) if q else None
     out: dict[int, dict] = {}
     on_set: int | None = None  # laps on the practice set so far; None: its age unknown
-    set_best: float | None = None  # the quickest lap on it (or, its age unknown, in practice so far)
-    seen = 0  # laps on it seen here (or, its age unknown, in practice so far)
+    set_best: dict[str | None, float] = {}  # each driver's quickest lap on it (its age unknown: in practice so far)
+    seen = 0  # laps on it seen here, whoever drove them (its age unknown: in practice so far)
     for r in runs:
         k = kinds[r.session_id]
         if k == "qualifying":
@@ -93,27 +104,33 @@ def guess(runs: list[RunLaps]) -> dict[int, dict]:
         if k == "race":
             out[r.session_id] = _out(FRESH, True, "race: on the qualifying set")
             continue
+        ref = refs.get(r.driver) if r.driver is not None else q_all
+        own = set_best.get(r.driver)
         numbers = r.numbers if r.numbers is not None else list(range(1, len(r.times) + 1))
         early = [t for n, t in zip(numbers, r.times, strict=False) if n <= EARLY_LAPS]
         quick = min(early) if early else None
-        as_quali = (quick is not None and q_best is not None and quick <= q_best * (1 + NEW_WITHIN)
+        as_quali = (quick is not None and ref is not None and quick <= ref * (1 + NEW_WITHIN)
                     and (on_set is None or on_set >= FRESH_UNDER))  # a run as quick on a set still fresh stays on it
-        # quicker than the set's laps so far, once it has done enough of them that the track's own grip coming up
-        # through the first runs isn't taken for a new set
-        beats_set = (quick is not None and set_best is not None and seen >= FRESH_UNDER
-                     and quick <= set_best * (1 - NEW_GAIN))
+        # quicker than the driver's own laps on the set so far, once it has done enough laps that the track's own
+        # grip coming up through the first runs isn't taken for a new set
+        beats_set = (quick is not None and own is not None and seen >= FRESH_UNDER
+                     and quick <= own * (1 - NEW_GAIN))
         # the warm-up (hard stops on the straights of the out lap), then a quick lap early in the run
         warm = [t for n, t in zip(numbers, r.times, strict=False) if n <= WARM_UP_LAPS]
         after_warm_up = (r.warm_up is not None and r.warm_up >= WARM_UP_STOPS and bool(warm)
-                         and ((q_best is not None and min(warm) <= q_best * (1 + WARM_UP_WITHIN))
-                              or (set_best is not None and min(warm) < set_best)))
+                         and ((ref is not None and min(warm) <= ref * (1 + WARM_UP_WITHIN))
+                              or (own is not None and min(warm) < own)))
         done = r.laps if r.laps is not None else len(r.times) + 2  # its out and in laps too
+        whose = f"{r.driver}'s " if r.driver else ""
         if as_quali or beats_set or after_warm_up:
-            why = ("a lap at the start of the run as quick as qualifying" if as_quali
-                   else "a lap at the start of the run clearly quicker than any on the set before" if beats_set
-                   else f"the warm-up on the out lap ({r.warm_up} hard stops on the straights), then a quick lap")
+            why = (f"a lap at the start of the run as quick as {whose}qualifying" if as_quali
+                   else (f"a lap at the start of the run clearly quicker than {whose}laps on the set before" if r.driver
+                    else "a lap at the start of the run clearly quicker than any on the set before")
+                   if beats_set else
+                   f"the warm-up on the out lap ({r.warm_up} hard stops on the straights), then a quick lap")
             out[r.session_id] = _out(NEW, False, why, 0)
-            on_set, set_best, seen = done, min(r.times), done
+            on_set, seen = done, done
+            set_best = {r.driver: min(r.times)} if r.times else {}
             continue
         if on_set is None:
             out[r.session_id] = _out(USED, False, "no new set seen before it: how old the set is isn't known")
@@ -122,7 +139,7 @@ def guess(runs: list[RunLaps]) -> dict[int, dict]:
             on_set += done
         seen += done
         if r.times:
-            set_best = min(r.times) if set_best is None else min(set_best, min(r.times))
+            set_best[r.driver] = min(r.times) if own is None else min(own, min(r.times))
     return out
 
 
@@ -162,7 +179,8 @@ def event_runs(db: Session, sessions: list[models.RunSession]) -> list[list[RunL
             laps = sorted((lap for lap in x.laps if f is not None and lap.file_id == f.id), key=lambda lap: lap.number)
             clean = [lap for lap in laps if lap.clean]
             runs.append(RunLaps(x.id, x.kind.value, x.name, [float(lap.time_s) for lap in clean],
-                                [lap.number for lap in clean], len(laps), warm_up.of(x)))
+                                [lap.number for lap in clean], len(laps), warm_up.of(x),
+                                x.driver.name if x.driver else None))
         out.append(runs)
     return out
 
