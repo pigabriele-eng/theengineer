@@ -86,7 +86,8 @@ def _step(on_set: int) -> str:
 def new_set_rule(series: str | None, name: str | None, track: str | None = None) -> str | None:
     """The new sets the event's series runs, when known (Gabriele, 2026-10-08), by its series or its name:
     "gt4-european" (one in free practice, one per driver in the paid test), "adac" (ADAC GT4 Germany: one in free
-    practice, two in the Thursday test) or "adac-sachsenring" (and one more for the races, in Race 1, Race 2 or split between them)."""
+    practice, two in the Thursday test) or "adac-sachsenring" (and one more for the races, in Race 1, Race 2 or split
+    between them)."""
     text = f"{series or ''} {name or ''}"
     if GT4_EUROPEAN.search(series or "") or GT4_EUROPEAN.search(name or ""):
         return "gt4-european"

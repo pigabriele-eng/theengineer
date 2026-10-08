@@ -149,6 +149,6 @@ def test_adac_thursday_test_has_two_new_sets_one_per_driver():
             RunLaps(4, "practice", "Thursday test stint 4", [82.8, 82.9], laps=6, driver="B", warm_up=2),
             RunLaps(5, "qualifying", "Q1", [82.0], driver="A"), RunLaps(6, "qualifying", "Q2", [82.4], driver="B")]
     g = guess(runs, "adac")
-    assert [g[i]["tyres"] for i in range(1, 5)] == [USED, NEW, FRESH, NEW]  # B carries on on A's set, then has their own
+    assert [g[i]["tyres"] for i in range(1, 5)] == [USED, NEW, FRESH, NEW]  # B goes on on A's set, then their own
     assert "paid test" in g[2]["why"] and "paid test" in g[4]["why"]
     assert not any(g[i]["set_by_driver"] for i in g)
