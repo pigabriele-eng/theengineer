@@ -1,7 +1,7 @@
 // Coaching: the three things for the next run (TopThings) and "did we fix it" (DidWeFix), each for one run. Both load
 // on their own and look again while the server is still checking the laps (lib/coaching.ts). Where they sit on a page
 // is the page's call.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator } from 'react-native';
 
 import { Choice, useText } from '@/components/Picks';
@@ -10,6 +10,7 @@ import { Label, useWide } from '@/components/Programme';
 import { Palette } from '@/constants/Colors';
 import { face, Fonts, phaseColor, themed, Type, useTheme } from '@/constants/Theme';
 import { formatLap } from '@/lib/api';
+import { driverCode } from '@/lib/driverTag';
 import {
   fetchFixed, fetchTop, FixedAnswer, FixedThing, lapKey, Thing, TopAnswer, Verdict, working,
 } from '@/lib/coaching';
@@ -58,8 +59,8 @@ function Waiting({ answer, error }: { answer: { status: TechniqueStatus; error: 
 }
 
 /** The run's three costliest repeated mistakes, each at a different corner: what to do instead and what it's worth.
- * Over the run's own laps, or the laps picked above them (Gabriele, 2026-10-08: "let me quick pick which laps and
- * sessions i want to use for comparison"). */
+ * From the driver's laps among those picked above them (Gabriele, 2026-10-08: "let me quick pick which laps and
+ * sessions i want to use for comparison"); by default each driver's best lap in the latest session. */
 export function TopThings({ sessionId }: { sessionId: number }) {
   const styles = useStyles();
   const [picks, setPicks] = useState<string[] | null>(null); // the laps the three things are worked out over
@@ -68,15 +69,17 @@ export function TopThings({ sessionId }: { sessionId: number }) {
   const wait = <Waiting answer={answer} error={error} />;
   if (!answer || error || working(answer.status) || answer.status === 'failed') return wait;
   const names = new Map(answer.choices.map((r) => [r.id, r.name]));
+  const none = answer.automatic ? 'this lap' : answer.session.laps === 0 ? null : 'the laps picked';
   return (
     <View>
       <View style={styles.headRow}>
         <Text style={styles.head}>Three things for the next run</Text>
         {answer.things.length > 0 && <Text style={styles.headFig}>worth {seconds(answer.gain_s)} a lap</Text>}
       </View>
-      <LapPick answer={answer} sessionId={sessionId} onPicks={setPicks} />
+      <LapPick answer={answer} onPicks={setPicks} />
       {answer.things.length === 0
-        ? <Text style={styles.note}>No mistake repeats on {answer.automatic ? "this run's clean laps" : 'the laps picked'}: nothing to single out.</Text>
+        ? <Text style={styles.note}>{none ? `No mistake on ${none}: nothing to single out.`
+          : `None of ${answer.driver ?? 'this driver'}’s laps is picked: tick one to see the three things.`}</Text>
         : answer.things.map((t) => (
           <ThingRow key={t.key} t={t}
             run={t.lap_session != null && t.lap_session !== sessionId ? names.get(t.lap_session) : undefined} />
@@ -85,31 +88,34 @@ export function TopThings({ sessionId }: { sessionId: number }) {
   );
 }
 
-/** Which laps the three things are worked out over: the runs (the driver's at the event, each with its tyres) and,
- * inside the ones picked, their laps. Shut, one line says which laps; it opens on the run's own laps. Taps wait a
- * moment for the next before the server works the three things out again. */
-function LapPick({ answer, sessionId, onPicks }: { answer: TopAnswer; sessionId: number;
-  onPicks: (picks: string[] | null) => void }) {
+/** Which laps the three things are worked out over: the event's runs (every driver's, each with its tyres) and,
+ * inside the ones picked, their laps. Shut, one line says which laps; it opens on each driver's best lap in the
+ * latest session. Taps wait a moment for the next before the server works the three things out again. */
+function LapPick({ answer, onPicks }: { answer: TopAnswer; onPicks: (picks: string[] | null) => void }) {
   const styles = useStyles();
   const t = useText();
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState<string[] | null>(null); // null: the run's own laps (automatic)
-  const auto = useMemo(() => answer.choices.filter((r) => r.id === sessionId)
-    .flatMap((r) => r.laps.map((x) => lapKey(r.id, x.number))), [answer.choices, sessionId]);
+  const [draft, setDraft] = useState<string[] | null>(null); // null: each driver's best lap in the latest session
+  // the default, as the server picked it (kept while a pick of his own is shown)
+  const [auto, setAuto] = useState<string[]>([]);
+  useEffect(() => {
+    if (answer.automatic) setAuto(answer.picked.map(([r, n]) => lapKey(r, n)));
+  }, [answer]);
   const on = new Set(draft ?? auto);
 
   const key = draft?.join(',') ?? '';
   useEffect(() => {
-    const id = setTimeout(() => onPicks(draft && draft.length >= 2 ? draft : null), 900);
+    const id = setTimeout(() => onPicks(draft && draft.length ? draft : null), 900);
     return () => clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
   const runs = answer.choices;
-  if (runs.length === 0 || runs.reduce((n, r) => n + r.laps.length, 0) < 3) return null; // nothing to choose
+  if (runs.length === 0 || runs.reduce((n, r) => n + r.laps.length, 0) < 2) return null; // nothing to choose
   const set = (next: Set<string>) => {
     const keys = runs.flatMap((r) => r.laps.map((x) => lapKey(r.id, x.number))).filter((k) => next.has(k));
-    setDraft(keys.length === auto.length && keys.every((k, i) => k === auto[i]) ? null : keys);
+    const same = keys.length === auto.length && auto.every((k) => next.has(k));
+    setDraft(same ? null : keys);
   };
   const flipRun = (id: number) => {
     const keys = runs.find((r) => r.id === id)!.laps.map((x) => lapKey(id, x.number));
@@ -122,11 +128,12 @@ function LapPick({ answer, sessionId, onPicks }: { answer: TopAnswer; sessionId:
     if (next.has(k)) next.delete(k); else next.add(k);
     set(next);
   };
-  const own = runs.find((r) => r.id === sessionId);
   const pickedRuns = runs.filter((r) => r.laps.some((x) => on.has(lapKey(r.id, x.number))));
+  const where = answer.default_title ? ` in ${answer.default_title}` : '';
   const summary = draft == null
-    ? `This run's ${auto.length} lap${auto.length === 1 ? '' : 's'}${own?.tyres_label ? ` on ${own.tyres_label.toLowerCase()} tyres` : ''}`
+    ? (auto.length > 1 ? `Each driver’s best lap${where}, compared with each other` : `The best lap${where}`)
     : `${on.size} lap${on.size === 1 ? '' : 's'} from ${pickedRuns.length} run${pickedRuns.length === 1 ? '' : 's'}`;
+  const who = (r: { driver: string | null }) => r.driver ?? 'Driver not set';
   const tyreSet = new Set(pickedRuns.map((r) => r.tyres ?? '?'));
   return (
     <View style={styles.pick}>
@@ -147,17 +154,19 @@ function LapPick({ answer, sessionId, onPicks }: { answer: TopAnswer; sessionId:
             <View style={styles.choices}>
               {runs.map((r) => {
                 const tyres = r.tyres_label ? `${r.tyres_label}${r.tyres_sure === false ? '?' : ''}` : 'Tyres not set';
+                const code = r.driver ? driverCode(r.driver) : '?';
                 return (
-                  <Choice key={r.id} label={r.name} detail={`${tyres} · ${r.laps.length} lap${r.laps.length === 1 ? '' : 's'}`}
+                  <Choice key={r.id} label={r.name}
+                    detail={`${code} · ${tyres} · ${r.laps.length} lap${r.laps.length === 1 ? '' : 's'}`}
                     on={r.laps.some((x) => on.has(lapKey(r.id, x.number)))} onPress={() => flipRun(r.id)}
-                    accessibilityLabel={`${r.name}: ${tyres} tyres, ${r.laps.length} clean laps`} />
+                    accessibilityLabel={`${r.name}, ${who(r)}: ${tyres} tyres, ${r.laps.length} clean laps`} />
                 );
               })}
             </View>
           </View>
           {pickedRuns.map((r) => (
             <View key={r.id} style={styles.pickRow} accessibilityRole="toolbar" accessibilityLabel={`Pick laps of ${r.name}`}>
-              <Text style={styles.pickTitle}>Laps of {r.name}</Text>
+              <Text style={styles.pickTitle}>Laps of {r.name}, {who(r)}</Text>
               <View style={styles.choices}>
                 {r.laps.map((x) => {
                   const k = lapKey(r.id, x.number);
@@ -170,9 +179,9 @@ function LapPick({ answer, sessionId, onPicks }: { answer: TopAnswer; sessionId:
             </View>
           ))}
           <Text style={t.body}>
-            {on.size < 2 ? 'Pick at least two laps: a habit is a mistake that repeats.'
-              : tyreSet.size > 1 ? 'These runs are on different tyres: like for like compares best.'
-                : 'Tick a run for all its laps, then take off the laps you want left out.'}
+            {tyreSet.size > 1 ? 'These runs are on different tyres: like for like compares best.'
+              : 'Tick a run for all its laps, then take off the laps you want left out. The three things come from '
+                + `${answer.driver ?? 'this driver'}’s laps; the other drivers’ show what the same mistake costs them.`}
           </Text>
         </>
       )}
@@ -195,10 +204,16 @@ function ThingRow({ t, run }: { t: Thing; run?: string }) {
         <Text style={styles.title}>{t.title}</Text>
         {t.do ? <Text style={styles.do}>{t.do}</Text> : null}
         {t.what ? <Text style={styles.what}>{t.lap != null ? `${run ? `${run} lap` : 'Lap'} ${t.lap}: ` : ''}{t.what}</Text> : null}
+        {t.others?.length ? (
+          <Text style={styles.what}>
+            Same corner: {t.others.map((o) => `${o.driver ?? 'driver not set'} ${seconds(o.cost_s)}${o.laps > 1 ? ' a lap' : ''}`)
+              .join(', ')}
+          </Text>
+        ) : null}
       </View>
       <View style={styles.gain}>
         <Text style={styles.gainFig}>{seconds(t.gain_s)}</Text>
-        <Text style={styles.gainNote}>on {t.laps} of {t.of} laps</Text>
+        <Text style={styles.gainNote}>{t.of === 1 ? (t.lap != null ? `on lap ${t.lap}` : 'on the lap') : `on ${t.laps} of ${t.of} laps`}</Text>
       </View>
     </View>
   );

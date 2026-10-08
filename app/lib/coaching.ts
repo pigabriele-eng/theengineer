@@ -22,6 +22,7 @@ export type Thing = {
   do?: string; // what to do instead
   lap?: number;
   lap_session?: number; // the run of that lap
+  others?: { driver: string | null; laps: number; cost_s: number }[]; // what it costs the other drivers' picked laps
 };
 
 export type Verdict = 'fixed' | 'better' | 'not yet';
@@ -47,6 +48,7 @@ type Head = { status: TechniqueStatus; error: string | null; progress: { done: n
 export type ChoiceRun = {
   id: number;
   name: string;
+  driver: string | null;
   tyres: string | null;
   tyres_label: string | null;
   tyres_sure: boolean | null;
@@ -58,8 +60,10 @@ export type TopAnswer = Head & {
   things: Thing[];
   gain_s: number;
   choices: ChoiceRun[];
-  picked: [number, number][]; // [run, lap number] of each lap used
-  automatic: boolean; // the run's own laps, nothing picked
+  picked: [number, number][]; // [run, lap number] of each lap used, every driver's
+  automatic: boolean; // nothing picked: each driver's best lap in the event's latest session
+  default_title: string | null; // that session's name
+  driver: string | null; // the run's driver: the three things come from their picked laps
 };
 export type FixedAnswer = Head & {
   session: CoachRun;
@@ -78,7 +82,8 @@ async function get<T>(path: string): Promise<T> {
 /** A lap as the picks hold it: "<run>:<lap number>". */
 export const lapKey = (session: number, lap: number) => `${session}:${lap}`;
 
-/** picks: the laps to work the three things out over ("<run>:<lap number>"); none: the run's own laps. */
+/** picks: the laps to work the three things out over ("<run>:<lap number>"); none: each driver's best lap in the
+ * event's latest session. */
 export const fetchTop = (sessionId: number, picks?: string[] | null) =>
   get<TopAnswer>(`/coaching/sessions/${sessionId}/top${picks ? `?laps=${picks.join(',')}` : ''}`);
 
