@@ -47,12 +47,14 @@ REPORT_VERSION = 11  # raise when the advice or the sections change, so every ke
 TRACES_VERSION = compact.FORMAT  # raise (in compact.py) when the reduction changes
 IMPORT_WAIT_S = 1800  # longest the report waits for an import that is reading logs
 MAX_LAPS = 250  # the quickest laps of an event the report works from, to keep within the server's memory
+PICKS_KEPT = 6  # picked reports kept per event (report_cache rows): each is about as big as the event's
 SCOPE_LEN = 40  # report_cache.scope's length: a session's scope with a longer name keeps a hash of the name
 
 _jobs: queue.Queue[str] = queue.Queue()
 _pending: set[str] = set()  # scopes queued or being worked on in this process
 _lock = threading.Lock()
 _worker: threading.Thread | None = None
+_picks: dict[str, list[int]] = {}  # a picked report's scope -> its runs' ids
 
 
 # ---------- what a report is made from ----------
@@ -102,9 +104,11 @@ def _traces_signature(s: models.RunSession, f: models.LoggerFile, track: models.
                   track.timing_line if track else None, laps])
 
 
-def plan_for(db: Session, kind: str, id_: int, part: str | None = None) -> Plan:
-    """What the report of an event, of one of its official sessions (kind "part", id_ the event's, ``part`` its code)
-    or of one run is made from."""
+def plan_for(db: Session, kind: str, id_: int, part: str | None = None, runs: list[int] | None = None) -> Plan:
+    """What the report of an event, of one of its official sessions (kind "part", id_ the event's, ``part`` its code),
+    of the runs of an event picked by hand (kind "pick", ``runs`` their ids) or of one run is made from."""
+    if kind == "pick":
+        return pick_plan(db, id_, runs or [])
     if kind == "event":
         ev = db.get(models.Event, id_)
         if ev is None:
@@ -125,6 +129,36 @@ def plan_for(db: Session, kind: str, id_: int, part: str | None = None) -> Plan:
     labels = run_labels.label_runs(run_labels.event_runs(db, s))
     return _fill(db, Plan(f"session:{id_}", kind, id_, next(lab.name for lab in labels if lab.id == s.id), None,
                           labels=labels), [s])
+
+
+def pick_scope(event_id: int, runs: list[int]) -> str:
+    """The report of runs picked by hand: "pick:<event id>:<hash of their ids>" (the ids kept in _picks for the job)."""
+    return f"pick:{event_id}:{_hash(sorted(runs))[:16]}"
+
+
+def pick_plan(db: Session, event_id: int, runs: list[int]) -> Plan:
+    """The event's plan with only the runs picked in the report's filter (tyres, session, driver): one report over all
+    their laps, on whatever tyres were picked, called by their labels among all the event's runs."""
+    ev, sessions, labels, _ = _event_parts(db, event_id)
+    want = set(runs)
+    mine = [s for s in sessions if s.id in want]
+    if not mine:
+        raise HTTPException(404, "None of these runs are in this event")
+    scope = pick_scope(event_id, [s.id for s in mine])
+    with _lock:
+        _picks[scope] = sorted(s.id for s in mine)
+    return _fill(db, Plan(scope, "pick", ev.id, ev.name, ev.track, labels=labels), mine)
+
+
+def forget_picks(db: Session, event_id: int, keep: str) -> None:
+    """Only the last few picked reports of an event are kept: each is worked out again if picked again."""
+    rows = db.scalars(select(models.ReportCache).where(models.ReportCache.scope.like(f"pick:{event_id}:%"))
+                      .order_by(models.ReportCache.updated_at.desc())).all()
+    gone = [r for r in rows[PICKS_KEPT:] if r.scope != keep and r.scope not in _pending]
+    for r in gone:
+        db.delete(r)
+    if gone:
+        db.commit()
 
 
 def part_scope(event_id: int, code: str) -> str:
@@ -265,13 +299,16 @@ def _status(plan: Plan, row: models.ReportCache | None) -> str | None:
     return None
 
 
-def report_for(db: Session, kind: str, id_: int, part: str | None = None, brief: bool = False) -> dict:
-    plan = plan_for(db, kind, id_, part)
+def report_for(db: Session, kind: str, id_: int, part: str | None = None, brief: bool = False,
+               runs: list[int] | None = None) -> dict:
+    plan = plan_for(db, kind, id_, part, runs)
     row = db.scalar(select(models.ReportCache).where(models.ReportCache.scope == plan.scope))
     status = _status(plan, row)
     if status is None:
         row = _queue(db, plan, row)
         status = "queued"
+        if kind == "pick":
+            forget_picks(db, id_, plan.scope)
     return _answer(db, plan, row, status, brief)
 
 
@@ -299,6 +336,20 @@ def event_report(event_id: int, brief: bool = False, db: Session = Depends(get_d
     encoder took twice as long over the report's 80 kB (app/page_cache.py RawJSON). ?brief=true: only the status and
     progress, without the report and its runs, for a page that asks again until the report is ready."""
     return page_cache.RawJSON(page_cache.as_json(report_for(db, "event", event_id, brief=brief)))
+
+
+@router.get("/events/{event_id}/pick")
+def event_pick_report(event_id: int, runs: str, brief: bool = False, db: Session = Depends(get_db)):
+    """The report of the event's runs picked in its filter (?runs=3,5,8: the runs of the tyres, sessions and drivers
+    picked), worked out again for just their laps and kept like the event's (the last few picks). ?brief=true as
+    above."""
+    try:
+        ids = sorted({int(x) for x in runs.split(",") if x.strip()})
+    except ValueError:
+        raise HTTPException(422, "runs: run ids, comma separated") from None
+    if not ids:
+        raise HTTPException(422, "Pick at least one run")
+    return page_cache.RawJSON(page_cache.as_json(report_for(db, "pick", event_id, brief=brief, runs=ids)))
 
 
 @router.get("/events/{event_id}/sessions/{code:path}")
@@ -538,6 +589,12 @@ def _wait_for_imports(db: Session, row: models.ReportCache) -> None:
 def plan_of_scope(db: Session, scope: str) -> Plan:
     """The plan a report's scope names: "event:3", "session:12", "part:3:FP1" (or "part:3:#<hash>")."""
     kind, rest = scope.split(":", 1)
+    if kind == "pick":
+        with _lock:
+            runs = _picks.get(scope)
+        if runs is None:  # picked before the server restarted: asked for again by the page, with its runs
+            raise HTTPException(404, "Pick the runs again")
+        return plan_for(db, kind, int(rest.split(":", 1)[0]), runs=runs)
     if kind == "part":
         eid, code = rest.split(":", 1)
         return plan_for(db, kind, int(eid), code)
@@ -679,6 +736,8 @@ def compute(db: Session, plan: Plan) -> dict:
     tyres = {s.id: every.get(s.id) or run_tyres.guess([run_tyres.RunLaps(s.id, s.kind.value, s.name,
                                                                           [float(t) for t in cs.times])])[s.id]
              for s, cs in sessions}
+    if plan.kind == "pick":  # the laps picked by hand: one report over them all, on whatever tyres were picked
+        return _plain(_picked(sessions, tyres, corners))
     groups = {g: [(s.id, cs) for s, cs in sessions if tyres[s.id]["tyres"] == g] for g in run_tyres.LEVELS}
     groups = {g: xs for g, xs in groups.items() if xs}
     del sessions
@@ -705,6 +764,21 @@ def compute(db: Session, plan: Plan) -> dict:
 
 
 CONDITIONS = {g: f"On {run_tyres.LABEL[g].lower()} tyres" for g in run_tyres.LEVELS}
+
+
+def _picked(sessions: list, tyres: dict[int, dict], corners) -> dict:
+    """The report of the runs picked in the filter, its condition naming every tyre level among them."""
+    levels = [g for g in run_tyres.LEVELS if any(tyres[s.id]["tyres"] == g for s, _ in sessions)]
+    rep = _report_of([(s.id, cs) for s, cs in sessions], corners)
+    names = [run_tyres.LABEL[g].lower() for g in levels]
+    label = "On " + (names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]) + " tyres"
+    rep["condition"] = {"tyres": levels[0] if len(levels) == 1 else None, "levels": levels, "label": label,
+                        "laps": rep["laps_analysed"], "runs": sorted(s.id for s, _ in sessions), "others": [],
+                        "picked": True}
+    for r in rep["trends"]["runs"]:
+        r["tyres"] = tyres.get(r["session_id"])
+    rep["summary"] = f"{label}: {rep['summary']}"
+    return rep
 
 
 def _report_of(sessions: list[tuple[int, compact.CompactSession]], corners) -> dict:

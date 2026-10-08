@@ -113,7 +113,9 @@ export type Report = {
   laps_left_out?: number; // a long event is worked out from its quickest laps only
   // the laps it compares, all on the same tyres; with more than one tyre level, the level with the most laps leads
   // and each other level has its own report in others
-  condition?: { tyres: TyreLevel; label: string; laps: number; runs: number[]; others?: Report[] };
+  // (a report of runs picked in the filter: one report over them all, tyres null when they ran on several levels)
+  condition?: { tyres: TyreLevel | null; label: string; laps: number; runs: number[]; others?: Report[];
+    levels?: TyreLevel[]; picked?: boolean };
 };
 
 export type ReportStatus = 'ready' | 'queued' | 'running' | 'failed' | 'empty';
@@ -131,7 +133,7 @@ export type ReportSession = {
 };
 
 export type ReportAnswer = {
-  scope: 'event' | 'session' | 'part'; // part: one official session of the event (id: the event's; lib/sessionReports.ts)
+  scope: 'event' | 'session' | 'part' | 'pick'; // part: one official session of the event (id: the event's; lib/sessionReports.ts)
   id: number;
   title: string;
   part?: string | null; // a part's code ("FP1", "Q1", "03_Q")
@@ -172,6 +174,14 @@ export const fetchReport = (scope: ReportScope) => call<ReportAnswer>(path(scope
 /** How far the report is, without the report itself (?brief): what a page waiting for it asks again and again. */
 export type ReportProgress = Pick<ReportAnswer, 'status' | 'progress' | 'error' | 'stale'>;
 export const fetchReportProgress = (scope: ReportScope) => call<ReportProgress>(`${path(scope)}?brief=true`);
+/** The report of the event's runs picked in its filter (tyres, session, driver), worked out for just their laps. */
+const pickPath = (event: number, runs: number[]) => `/reports/events/${event}/pick?runs=${runs.join(',')}`;
+export const fetchPickReport = (event: number, runs: number[]) => call<ReportAnswer>(pickPath(event, runs));
+export const fetchPickProgress = (event: number, runs: number[]) =>
+  call<ReportProgress>(`${pickPath(event, runs)}&brief=true`);
+/** Every run of the event with its tyres (the driver's pick, else the guess and why), in the order they ran. */
+export type EventTyres = { levels: { key: TyreLevel; label: string }[]; runs: (RunName & { tyres: RunTyres | null })[] };
+export const fetchEventTyres = (event: number) => call<EventTyres>(`/technique/events/${event}/tyres`);
 export const refreshReport = (scope: ReportScope) => call<ReportAnswer>(`${path(scope)}/refresh`, { method: 'POST' });
 
 // The Sessions tab groups sessions by event, with a report for each event.
