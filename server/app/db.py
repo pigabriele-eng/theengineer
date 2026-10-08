@@ -1,7 +1,7 @@
 import os
 from collections.abc import Iterator
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app import connections  # noqa: F401  requests waiting for the heavy-work lock hand their connection back
@@ -20,6 +20,14 @@ DATABASE_URL = database_url(os.environ.get("DATABASE_URL") or "sqlite:///./theen
 
 if DATABASE_URL.startswith("sqlite"):
     engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+
+    @event.listens_for(engine, "connect")
+    def _wal(dbapi_connection, _record) -> None:
+        """Write-ahead logging: a request reading never waits on a background job's commit, nor holds one up (with
+        the default journal two such connections could wait on each other until both gave up: "database is
+        locked"). Postgres, in production, never blocks reads on writes."""
+        if DATABASE_URL != "sqlite://" and ":memory:" not in DATABASE_URL:
+            dbapi_connection.execute("PRAGMA journal_mode=WAL")
 else:
     # A long-lived server behind Supabase's pooler: a small pool, connections checked before use (the pooler
     # drops idle ones) and recycled now and then. Prepared statements are off so the transaction pooler
