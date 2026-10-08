@@ -118,10 +118,13 @@ def test_the_report_calls_runs_by_their_names_in_time_order(client):
     assert [r["short"] for r in body["runs"]] == ["PTS 2", "PTS 1", "Q1 RAC", "Q1 PIA"]
     assert [r["id"] for r in body["runs"]] == [ids[2], ids[0], ids[3], ids[1]]
     assert [s["name"] for s in body["sessions"]] == want
-    # the test runs lead (used tyres: none as quick as qualifying), the new-tyre laps have their own report
-    rep, quali = body["report"], body["report"]["condition"]["other"]
-    assert rep["condition"]["tyres"] == "used" and quali["condition"]["tyres"] == "new"
-    for r, names, sids in ((rep, want[:2], [ids[2], ids[0]]), (quali, want[2:], [ids[3], ids[1]])):
+    # one report per tyre level: the qualifying runs (a new set each) have their own, apart from the test runs
+    reps = [body["report"], *body["report"]["condition"]["others"]]
+    quali = next(r for r in reps if r["condition"]["tyres"] == "new" and r["condition"]["runs"] == sorted(ids[1::2]))
+    assert len(reps) >= 2 and quali["headline"]["fastest"]["session_id"] in (ids[1], ids[3])
+    for r in reps:
+        sids = [i for i in (ids[2], ids[0], ids[3], ids[1]) if i in r["condition"]["runs"]]
+        names = [want[[ids[2], ids[0], ids[3], ids[1]].index(i)] for i in sids]
         trends = r["trends"]["runs"]
         assert [x["run"] for x in trends] == names  # the sessions table, by time of day
         assert [x["session_id"] for x in trends] == sids
@@ -141,5 +144,6 @@ def test_the_report_calls_runs_by_their_names_in_time_order(client):
     # renamed from the official timetable: the report is worked out again under the new name
     client.patch(f"/sessions/{ids[0]}", json={"name": "PT1 stint 1"})
     again = _wait(client, f"/reports/events/{event['id']}")
-    assert [r["run"] for r in again["report"]["trends"]["runs"]][1] == "PT1 stint 1"
+    assert "PT1 stint 1" in {x["run"] for r in (again["report"], *again["report"]["condition"]["others"])
+                             for x in r["trends"]["runs"]}
     assert again["runs"][1]["short"] == "PT1 S1"

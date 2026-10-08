@@ -2,6 +2,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 
+import { TYRE_LABEL, TYRE_LEVELS } from '@/lib/tyreLevels';
 import { Choice, FigRow, Meter, Notice, PageHead, Tabs, useText } from '@/components/Picks';
 import PrintButton from '@/components/PrintButton';
 import { Colophon, Fig, Label, Page, Section, TextLink, useGutter, useWide } from '@/components/Programme';
@@ -380,11 +381,13 @@ const METHOD = [
     'measured on the laps themselves, driver by driver, every event at this track pooled.',
   'The lap without mistakes is the lap\'s own time less what its obvious mistakes cost. Mistakes in the same corner ' +
     'that overlap (a lift and the speed stalling it causes) are one loss, counted once at the most any of them cost.',
-  'Qualifying runs on new tyres with low fuel; the races run on the qualifying set; tests and practice on new tyres ' +
-    'sometimes. So a lap is only ever compared with laps on the same tyres: the best braking at a corner, the best ' +
-    'real passes laid over the lap and the targets the check works from all come from those laps alone. A test or ' +
-    'practice run\'s tyres are guessed from its laps (a short run as quick as qualifying is on new tyres) until you ' +
-    'say which.',
+  'Qualifying is always on a new set with low fuel; the races run on the qualifying set (Fresh); tests and practice ' +
+    'run new sets sometimes. So a lap on new tyres is only ever compared with laps on new tyres, and a lap on any ' +
+    'other set (Fresh, Used, Very used) with those: the best braking at a corner, the best real passes laid over the ' +
+    'lap and the targets the check works from all come from those laps alone. Until you say which, a practice run\'s ' +
+    'tyres are guessed from the event\'s laps in the order they ran: a lap at the start of a run as quick as ' +
+    'qualifying, or clearly quicker than anything on the set before, starts a new set; the runs after it step down ' +
+    'to Fresh, Used (10 laps on the set) and Very used (25).',
   'Shift points come from the event\'s own logs: each gear\'s ratio (engine revs per km/h) and the engine\'s ' +
     'torque at full throttle (the logger\'s engine torque channel), as the car\'s ratios and torque curve are not ' +
     'published. Drive force is torque times the ratio, so the best upshift is where the next gear drives harder, or ' +
@@ -554,11 +557,13 @@ function LapSummary({ check, room }: { check: LapCheck; room: number }) {
   );
 }
 
-/** The run's tyres (new or used): the driver's, or guessed from its laps with a tap to confirm or change. */
+/** The run's tyres (New, Fresh, Used, Very used): the driver's, or guessed from the event's laps with a tap to confirm
+ * or change. */
 function TyresLine({ tyres, onPick }: { tyres: RunTyres; onPick: (t: Tyres) => void }) {
   const t = useText();
   const styles = useStyles();
-  const word = tyres.tyres === 'new' ? 'New tyres' : 'Used tyres';
+  const word = `${TYRE_LABEL[tyres.tyres]} tyres`;
+  const group = tyres.tyres === 'new' ? 'new tyres' : 'tyres that aren\'t new (Fresh, Used, Very used)';
   return (
     <View style={styles.lapBlock}>
       <View style={styles.lapHead}>
@@ -566,12 +571,12 @@ function TyresLine({ tyres, onPick }: { tyres: RunTyres; onPick: (t: Tyres) => v
       </View>
       <Text style={t.body}>
         {tyres.sure ? `${word} (${tyres.why}).` : `${word}, guessed (${tyres.why}). Is that right?`}
-        {tyres.laps != null ? ` Compared with the event's ${tyres.laps} clean laps on ${tyres.tyres} tyres.` : ''}
+        {tyres.laps != null ? ` Compared with the event's ${tyres.laps} clean laps on ${group}.` : ''}
       </Text>
       <View style={styles.laps}>
-        {(['new', 'used'] as Tyres[]).map((k) => (
+        {TYRE_LEVELS.map((k) => (
           <Choice key={k} on={tyres.sure && tyres.tyres === k} onPress={() => onPick(k)}
-            label={k === 'new' ? 'New' : 'Used'} accessibilityLabel={`This run was on ${k} tyres`} />
+            label={TYRE_LABEL[k]} accessibilityLabel={`This run was on ${TYRE_LABEL[k].toLowerCase()} tyres`} />
         ))}
       </View>
     </View>

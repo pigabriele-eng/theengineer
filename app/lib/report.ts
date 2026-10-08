@@ -2,6 +2,7 @@
 // server in the background from every clean lap of an event or of one session.
 import { apiFetch, Session } from '@/lib/api';
 import { apiFetchAgain } from '@/lib/retry';
+import type { RunTyres, TyreLevel } from '@/lib/tyreLevels';
 
 export type ReportScope = { event: number } | { session: number };
 
@@ -76,7 +77,7 @@ export type RunTrend = {
   best_lap: number;
   median: number;
   consistency: number | null;
-  tyres?: { tyres: 'new' | 'used'; sure: boolean; why: string } | null; // the run's, why it is compared with these laps
+  tyres?: RunTyres | null; // the run's, why it is compared with these laps
 };
 
 export type LapRow = { run: string; lap: number; time: number; index_in_run: number };
@@ -110,9 +111,9 @@ export type Report = {
   method: string[];
   corners: { code: string; at_m: number }[];
   laps_left_out?: number; // a long event is worked out from its quickest laps only
-  // the laps it compares, all on the same tyres (qualifying's new tyres and low fuel are a condition of their own);
-  // with both, the used-tyre laps lead and the new-tyre laps have their own report in other
-  condition?: { tyres: 'new' | 'used'; label: string; laps: number; runs: number[]; other?: Report | null };
+  // the laps it compares, all on the same tyres; with more than one tyre level, the level with the most laps leads
+  // and each other level has its own report in others
+  condition?: { tyres: TyreLevel; label: string; laps: number; runs: number[]; others?: Report[] };
 };
 
 export type ReportStatus = 'ready' | 'queued' | 'running' | 'failed' | 'empty';

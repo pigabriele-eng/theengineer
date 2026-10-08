@@ -1,10 +1,12 @@
-"""A run's tyres, new or used, so the mistake detector and the best real passes compare like with like.
+"""A run's tyres, New, Fresh, Used or Very used, so every page compares laps only with laps on similar tyres.
 
-Qualifying is always on new tyres with low fuel, and the races run on the qualifying set: a theoretical race lap
-built from qualifying grip is no use. Paid tests and free practice run new tyres sometimes. So every lap is checked
-only against laps on the same tyres: qualifying is new and a race used, for sure; a test or practice run is guessed
-from its laps (a short run as quick as qualifying was on new tyres, anything else, or any run of an event with no
-qualifying, on used ones) until the driver says which (RunTyres), and the guess is shown as one, never taken silently.
+Gabriele (2026-10-08): qualifying is always on a new set with low fuel; the races run on the qualifying set, so
+always Fresh, never New; in paid tests and practice a new set shows as a much quicker lap at the start of a run
+(after a warm-up lap of heavy braking on the straights). The logs hold no tyre set, so each run is guessed from the
+event's laps in the order they ran: a practice run that starts with a lap as quick as qualifying, or clearly quicker
+than anything on the set before, starts a new set; the runs after it on that set step down to Fresh, Used and Very
+used as its laps add up. Before any new set is seen the set's age is unknown: Used, guessed. The driver's pick
+(RunTyres, at upload or later with one tap) always wins, and a guess is shown as one, never taken silently.
 """
 from __future__ import annotations
 
@@ -16,21 +18,34 @@ from sqlalchemy.orm import Session
 
 from app import models
 
-NEW, USED = "new", "used"
-NEW_WITHIN = 0.004  # a test or practice run whose best lap is within this share of qualifying's best...
-SHORT_RUN = 3  # ...in this many clean laps or fewer: new tyres (a qualifying run); anything else used
+NEW, FRESH, USED, WORN = "new", "fresh", "used", "worn"  # stored as these (RunTyres.tyres, 8 characters)
+LEVELS = (NEW, FRESH, USED, WORN)
+LABEL = {NEW: "New", FRESH: "Fresh", USED: "Used", WORN: "Very used"}
+FRESH_UNDER = 10  # laps already on the set when the run starts: under 10 Fresh...
+USED_UNDER = 25  # ...under 25 Used, 25 or more Very used
+NEW_WITHIN = 0.004  # a run's early lap within this share of qualifying's best: a new set...
+NEW_GAIN = 0.004  # ...or this share quicker than any lap on the set before
+EARLY_LAPS = 3  # "at the start of a run": its first three laps
 ORDER_PREFIX = re.compile(r"^\d+[_\- ]+")  # a folder's order in front of its name: "03_Q" -> "Q"
 QUALI_NAME = re.compile(r"^(q\d*|qualifying|quali)\b", re.I)
 RACE_NAME = re.compile(r"^(r\d*|race)\b", re.I)
 
 
+def pair(level: str) -> str:
+    """New or not: the two-way view of the technique check and the Laps tab (qualifying's grip kept apart)."""
+    return NEW if level == NEW else USED
+
+
 @dataclass
 class RunLaps:
-    """What the guess reads of a run: its kind (SessionKind), its name and its clean laps' times."""
+    """What the guess reads of a run: its kind (SessionKind), its name, its clean laps' times and, when known, their
+    lap numbers and how many laps the run did in all (out and in laps too: the set's mileage)."""
     session_id: int
     kind: str
     name: str | None
     times: list[float]
+    numbers: list[int] | None = None
+    laps: int | None = None
 
 
 def kind_of(kind: str, name: str | None) -> str:
@@ -46,28 +61,56 @@ def kind_of(kind: str, name: str | None) -> str:
     return "practice"
 
 
+def _out(level: str, sure: bool, why: str, on_set: int | None = None) -> dict:
+    return {"tyres": level, "label": LABEL[level], "pair": pair(level), "sure": sure, "why": why, "set_laps": on_set}
+
+
+def _step(on_set: int) -> str:
+    return FRESH if on_set < FRESH_UNDER else USED if on_set < USED_UNDER else WORN
+
+
 def guess(runs: list[RunLaps]) -> dict[int, dict]:
-    """Each run's tyres by session id: {"tyres": new|used, "sure": bool, "why": ...}."""
+    """Each run's tyres by session id, the runs given in the order they ran (an event's): {"tyres": level, "label",
+    "pair": new|used, "sure", "why", "set_laps": laps on the set when the run started, when known}."""
     kinds = {r.session_id: kind_of(r.kind, r.name) for r in runs}
-    # with no qualifying to measure against (a test day), every run is guessed on the same tyres until the driver says
     quali = [min(r.times) for r in runs if kinds[r.session_id] == "qualifying" and r.times]
-    best = min(quali) if quali else None
-    out = {}
+    q_best = min(quali) if quali else None
+    out: dict[int, dict] = {}
+    on_set: int | None = None  # laps on the practice set so far; None: its age unknown
+    set_best: float | None = None  # the quickest lap on it (or, its age unknown, in practice so far)
+    seen = 0  # laps on it seen here (or, its age unknown, in practice so far)
     for r in runs:
         k = kinds[r.session_id]
         if k == "qualifying":
-            out[r.session_id] = {"tyres": NEW, "sure": True, "why": "qualifying: new tyres, low fuel"}
-        elif k == "race":
-            out[r.session_id] = {"tyres": USED, "sure": True, "why": "race: the qualifying set"}
-        elif best is not None and r.times and min(r.times) <= best * (1 + NEW_WITHIN) and len(r.times) <= SHORT_RUN:
-            out[r.session_id] = {"tyres": NEW, "sure": False,
-                                 "why": f"a short run ({len(r.times)} clean lap{'s' if len(r.times) > 1 else ''}) "
-                                        "as quick as qualifying"}
+            out[r.session_id] = _out(NEW, True, "qualifying: always a new set")
+            continue
+        if k == "race":
+            out[r.session_id] = _out(FRESH, True, "race: on the qualifying set")
+            continue
+        numbers = r.numbers if r.numbers is not None else list(range(1, len(r.times) + 1))
+        early = [t for n, t in zip(numbers, r.times, strict=False) if n <= EARLY_LAPS]
+        quick = min(early) if early else None
+        as_quali = (quick is not None and q_best is not None and quick <= q_best * (1 + NEW_WITHIN)
+                    and (on_set is None or on_set >= FRESH_UNDER))  # a run as quick on a set still fresh stays on it
+        # quicker than the set's laps so far, once it has done enough of them that the track's own grip coming up
+        # through the first runs isn't taken for a new set
+        beats_set = (quick is not None and set_best is not None and seen >= FRESH_UNDER
+                     and quick <= set_best * (1 - NEW_GAIN))
+        done = r.laps if r.laps is not None else len(r.times) + 2  # its out and in laps too
+        if as_quali or beats_set:
+            out[r.session_id] = _out(NEW, False, "a lap at the start of the run as quick as qualifying" if as_quali
+                                     else "a lap at the start of the run clearly quicker than any on the set before",
+                                     0)
+            on_set, set_best, seen = done, min(r.times), done
+            continue
+        if on_set is None:
+            out[r.session_id] = _out(USED, False, "no new set seen before it: how old the set is isn't known")
         else:
-            out[r.session_id] = {"tyres": USED, "sure": False,
-                                 "why": "no qualifying to compare with" if best is None
-                                 else "not as quick as qualifying" if r.times and min(r.times) > best * (1 + NEW_WITHIN)
-                                 else "a long run"}
+            out[r.session_id] = _out(_step(on_set), False, f"{on_set} laps on the set before this run", on_set)
+            on_set += done
+        seen += done
+        if r.times:
+            set_best = min(r.times) if set_best is None else min(set_best, min(r.times))
     return out
 
 
@@ -83,8 +126,41 @@ def resolve(db: Session, runs: list[RunLaps]) -> dict[int, dict]:
     """Each run's tyres: the driver's where set (sure), else the guess."""
     out = guess(runs)
     for sid, tyres in stored(db, [r.session_id for r in runs]).items():
-        if sid in out:
-            out[sid] = {"tyres": tyres, "sure": True, "why": "set by you"}
+        if sid in out and tyres in LABEL:
+            out[sid] = {**_out(tyres, True, "set by you"), "guess": out[sid]["tyres"]}
+    return out
+
+
+def event_runs(db: Session, sessions: list[models.RunSession]) -> list[list[RunLaps]]:
+    """Every run of these runs' events, an event at a time, in the order they ran (as the event page lists them)."""
+    from app import run_labels  # here: run_labels reaches the importer, which reaches the reports
+
+    out: list[list[RunLaps]] = []
+    seen: set[int] = set()
+    for s in sessions:
+        if s.id in seen:
+            continue
+        group = run_labels.event_runs(db, s)
+        by_id = {x.id: x for x in group}
+        runs = []
+        for lab in run_labels.label_runs(group):
+            x = by_id[lab.id]
+            seen.add(x.id)
+            f = run_labels._main_file(x)
+            laps = sorted((lap for lap in x.laps if f is not None and lap.file_id == f.id), key=lambda lap: lap.number)
+            clean = [lap for lap in laps if lap.clean]
+            runs.append(RunLaps(x.id, x.kind.value, x.name, [float(lap.time_s) for lap in clean],
+                                [lap.number for lap in clean], len(laps)))
+        out.append(runs)
+    return out
+
+
+def for_runs(db: Session, sessions: list[models.RunSession]) -> dict[int, dict]:
+    """These runs' tyres and every other run's of their events: the driver's, else guessed among the event's runs in
+    the order they ran."""
+    out: dict[int, dict] = {}
+    for runs in event_runs(db, sessions):
+        out.update(resolve(db, runs))
     return out
 
 

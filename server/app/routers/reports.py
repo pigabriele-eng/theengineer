@@ -43,7 +43,7 @@ from app.routers.sessions import _channel_map, _line, official_corners, read_fil
 router = APIRouter(prefix="/reports")
 log = logging.getLogger(__name__)
 
-REPORT_VERSION = 10  # raise when the advice or the sections change, so every kept report is worked out again
+REPORT_VERSION = 11  # raise when the advice or the sections change, so every kept report is worked out again
 TRACES_VERSION = compact.FORMAT  # raise (in compact.py) when the reduction changes
 IMPORT_WAIT_S = 1800  # longest the report waits for an import that is reading logs
 MAX_LAPS = 250  # the quickest laps of an event the report works from, to keep within the server's memory
@@ -663,10 +663,10 @@ def _load(db: Session, item: Item, track: models.Track | None) -> compact.Compac
 
 
 def compute(db: Session, plan: Plan) -> dict:
-    """The report, comparing laps on the same tyres only: each run's own, new or used (run_tyres: the driver's, else
-    guessed from its laps; a practice run can be on new tyres too), so a used-tyre lap is never measured against new
-    tyres' grip. With both, the report leads with the used-tyre laps (the race's condition) and carries the new-tyre
-    laps' own report under condition.other."""
+    """The report, comparing laps on similar tyres only: each run's own, New, Fresh, Used or Very used (run_tyres:
+    the driver's pick, else guessed from the event's laps in the order they ran; a practice run can be on a new set
+    too), so a lap on a worn set is never measured against a new set's grip. One report per tyre level: the one with
+    the most laps leads, the others ride under condition.others, quickest tyres first."""
     corners = official_corners(plan.track)
     sessions = []
     for item in _used(plan):
@@ -675,39 +675,36 @@ def compute(db: Session, plan: Plan) -> dict:
             sessions.append((item.session, cs))
     if not sessions:
         raise ReportError("No clean laps to analyse")
-    tyres = run_tyres.resolve(db, [run_tyres.RunLaps(s.id, s.kind.value, s.name, [float(t) for t in cs.times])
-                                   for s, cs in sessions])
-    groups = {g: [(s.id, cs) for s, cs in sessions if tyres[s.id]["tyres"] == g] for g in CONDITIONS}
+    every = run_tyres.for_runs(db, [s for s, _ in sessions])
+    tyres = {s.id: every.get(s.id) or run_tyres.guess([run_tyres.RunLaps(s.id, s.kind.value, s.name,
+                                                                          [float(t) for t in cs.times])])[s.id]
+             for s, cs in sessions}
+    groups = {g: [(s.id, cs) for s, cs in sessions if tyres[s.id]["tyres"] == g] for g in run_tyres.LEVELS}
     groups = {g: xs for g, xs in groups.items() if xs}
     del sessions
-    lead = run_tyres.USED if run_tyres.USED in groups else run_tyres.NEW
-    out = None
-    other = None
-    for g in sorted(groups, key=lambda g: g != lead):
+    order = sorted(groups, key=lambda g: -sum(cs.n_laps for _, cs in groups[g]))  # the most laps lead
+    made = []
+    for g in order:
         try:
             rep = _report_of(groups.pop(g), corners)
-        except ReportError:
-            if g == lead and groups:  # too little to go on: the other tyres lead
-                lead = next(iter(groups))
-                continue
-            raise
+        except ReportError:  # too few laps on these tyres to go on
+            continue
         rep["condition"] = {"tyres": g, "label": CONDITIONS[g], "laps": rep["laps_analysed"],
                             "runs": sorted(sid for sid, t in tyres.items() if t["tyres"] == g)}
         for r in rep["trends"]["runs"]:  # each run's tyres beside its figures: why it is compared with these laps
             r["tyres"] = tyres.get(r["session_id"])
-        if out is None:
-            out = rep
-        else:
-            other = rep
-    if out is None:
+        made.append(rep)
+    if not made:
         raise ReportError("No clean laps to analyse")
-    out["condition"]["other"] = other
-    for rep in (out, other) if other else ():  # two reports: each says which laps it compares
-        rep["summary"] = f"{rep['condition']['label']}: {rep['summary']}"
+    out, others = made[0], sorted(made[1:], key=lambda r: run_tyres.LEVELS.index(r["condition"]["tyres"]))
+    out["condition"]["others"] = others
+    if others:  # more than one report: each says which laps it compares
+        for rep in made:
+            rep["summary"] = f"{rep['condition']['label']}: {rep['summary']}"
     return _plain(out)
 
 
-CONDITIONS = {run_tyres.USED: "On used tyres", run_tyres.NEW: "On new tyres"}
+CONDITIONS = {g: f"On {run_tyres.LABEL[g].lower()} tyres" for g in run_tyres.LEVELS}
 
 
 def _report_of(sessions: list[tuple[int, compact.CompactSession]], corners) -> dict:

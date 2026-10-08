@@ -53,7 +53,7 @@ from app.routers.sessions import official_corners
 router = APIRouter(prefix="/technique")
 log = logging.getLogger(__name__)
 
-TECHNIQUE_VERSION = 18  # raise when the check changes, so every kept one is worked out again
+TECHNIQUE_VERSION = 19  # raise when the check changes, so every kept one is worked out again
 # 5: perfect driving on a lap's own line at limits never below that lap's own (local_limits.on_own_line)
 # 6: the driver's inputs and perfect driving's phases with each lap's speed trace
 # 7: the obvious mistakes (exit lifts, power stepped on, soft straight-line braking); the theoretical lap never quicker
@@ -77,6 +77,7 @@ TECHNIQUE_VERSION = 18  # raise when the check changes, so every kept one is wor
 #     obvious ones, and each lap's time without its mistakes
 # 17: a run imported from a folder ("03_Q", "04_R1") is qualifying or a race for its tyres, as its name says
 # 18: the result says its shape (RESULT_FORMAT), so one kept in an older shape is worked out again, never read
+# 19: four tyre levels, guessed among the event's runs in the order they ran (run_tyres); new kept apart from the rest
 RESULT_FORMAT = 2  # the shape of a kept result the answers read: 2 with each lap's time without its mistakes (16)
 TRACES_WAIT_S = 3600  # longest the check waits for the logs to be read into lap traces
 HABITS_SHOWN = 12
@@ -267,18 +268,18 @@ def _tyres_out(res: dict | None, session_id: int) -> dict | None:
     t = ((res or {}).get("run_tyres") or {}).get(str(session_id))
     if t is None:
         return None
-    on = ((res or {}).get("tyres") or {}).get(t["tyres"]) or {}
-    return {**t, "laps": on.get("laps")}
+    on = ((res or {}).get("tyres") or {}).get(t.get("pair") or run_tyres.pair(t["tyres"])) or {}
+    return {**t, "label": run_tyres.LABEL.get(t["tyres"]), "pair": run_tyres.pair(t["tyres"]), "laps": on.get("laps")}
 
 
 class TyresIn(BaseModel):
-    tyres: Literal["new", "used"]
+    tyres: Literal["new", "fresh", "used", "worn"]  # run_tyres.LEVELS: New, Fresh, Used, Very used
 
 
 @router.put("/sessions/{session_id}/tyres")
 def set_session_tyres(session_id: int, body: TyresIn, db: Session = Depends(get_db)):
-    """The run's tyres as the driver says (new or used): the check is worked out again with every lap against
-    perfect driving on the same tyres."""
+    """The run's tyres as the driver says (New, Fresh, Used or Very used): the check is worked out again with every
+    lap against laps on similar tyres."""
     s = db.get(models.RunSession, session_id)
     if s is None:
         raise HTTPException(404, "Session not found")
@@ -286,6 +287,20 @@ def set_session_tyres(session_id: int, body: TyresIn, db: Session = Depends(get_
     kind, id_ = _scope_of(s)
     _, _, status = _state(db, kind, id_)
     return {"tyres": body.tyres, "status": status}
+
+
+@router.get("/events/{event_id}/tyres")
+def event_tyres(event_id: int, db: Session = Depends(get_db)):
+    """Every run of the event with its tyres (run_tyres: the driver's pick, else the guess and why), in the order
+    they ran: what the upload and the event page offer to confirm or change with one tap."""
+    from app import run_labels
+
+    runs = list(db.scalars(select(models.RunSession).where(models.RunSession.event_id == event_id)))
+    if not runs and db.get(models.Event, event_id) is None:
+        raise HTTPException(404, "Event not found")
+    tyres = run_tyres.for_runs(db, runs)
+    return {"levels": [{"key": k, "label": run_tyres.LABEL[k]} for k in run_tyres.LEVELS],
+            "runs": [{**lab.out(), "tyres": tyres.get(lab.id)} for lab in run_labels.label_runs(runs)]}
 
 
 @router.get("/sessions/{session_id}")
@@ -539,10 +554,12 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
     times: dict[int, list[float]] = {}
     for x in prep.laps:
         times.setdefault(extras.session_of[x.key], []).append(x.time)
-    tyres = run_tyres.resolve(db, [run_tyres.RunLaps(sid, runs[sid].kind.value if sid in runs else "test",
-                                                     runs[sid].name if sid in runs else None, ts)
-                                   for sid, ts in times.items()])
-    tyres_of = {x.key: tyres[extras.session_of[x.key]]["tyres"] for x in prep.laps}
+    # each run's tyres guessed among every run of the event in the order they ran; the check keeps new tyres
+    # (qualifying's grip) apart from the rest, so each group has laps enough to go on
+    every = run_tyres.for_runs(db, list(runs.values()))
+    tyres = {sid: every.get(sid) or run_tyres.resolve(db, [run_tyres.RunLaps(sid, "test", None, ts)])[sid]
+             for sid, ts in times.items()}
+    tyres_of = {x.key: tyres[extras.session_of[x.key]]["pair"] for x in prep.laps}
     groups = {}
     for g in (run_tyres.NEW, run_tyres.USED):
         xs = [x for x in prep.laps if tyres_of[x.key] == g]

@@ -341,10 +341,17 @@ def test_technique_check_api(client):
     assert client.put(f"/technique/sessions/{ids[1]}/tyres", json={"tyres": "new"}).status_code == 200
     assert client.put(f"/technique/sessions/{ids[0]}/tyres", json={"tyres": "soft"}).status_code == 422
     first = _wait(client, f"/technique/sessions/{ids[0]}")
-    assert first["tyres"] == {"tyres": "used", "sure": True, "why": "set by you", "laps": 3}
+    assert {k: first["tyres"][k] for k in ("tyres", "label", "pair", "sure", "why", "laps")} == \
+        {"tyres": "used", "label": "Used", "pair": "used", "sure": True, "why": "set by you", "laps": 3}
     assert {x["tyres"] for x in first["laps"]} == {"used"}
     ev = client.get(f"/technique/events/{event['id']}").json()
     assert [s["tyres"]["tyres"] for s in ev["sessions"]] == ["used", "new"]
+    # every run's tyres for the event, to confirm or change with one tap; Very used is the same group as Used
+    assert client.put(f"/technique/sessions/{ids[0]}/tyres", json={"tyres": "worn"}).status_code == 200
+    listed = client.get(f"/technique/events/{event['id']}/tyres").json()
+    assert [x["label"] for x in listed["levels"]] == ["New", "Fresh", "Used", "Very used"]
+    assert [(r["id"], r["tyres"]["label"], r["tyres"]["sure"]) for r in listed["runs"]] == \
+        [(ids[0], "Very used", True), (ids[1], "New", True)]
     for x in first["lap"]["trace"]["model"]["best"]["sources"]:  # Run 2's passes lend Run 1's laps nothing
         assert x["kind"] != "pass" or x["run"] != "Run 2"
 
