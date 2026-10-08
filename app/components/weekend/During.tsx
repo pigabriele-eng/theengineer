@@ -41,20 +41,22 @@ export default function WeekendDuring({ eventId, folder: given, children }: {
   const drivers = useMemo(() => latestByDriver(folder), [folder]);
   const pair = useMemo(() => latestAgainstBest(folder), [folder]);
   const latest = useMemo(() => latestRun(folder), [folder]);
-  // 1 three things, 2 the session reports, 3 the latest run against the best (4 where the time is, 5 the traces),
-  // then debriefs and setup (lib/weekendRuns.ts duringSections)
-  const debriefsNo = pair ? 6 : 4;
+  // 1 three things, 2 the latest run against the best (3 where the time is, 4 the traces), then the session reports
+  // just above the debriefs, and setup (Gabriele, 2026-10-08: the comparison before the session reports, the session
+  // reports moved down before the debriefs; lib/weekendRuns.ts duringSections)
+  const reportsNo = pair ? 5 : 3;
+  const debriefsNo = reportsNo + 1;
   return (
     <>
       <Section no={1} title="Three things for next run"
         dek="For each driver’s latest run: the costliest mistakes that repeat, each at a different corner, what to do instead and what it is worth a lap.">
         <ThreeThings eventId={eventId} drivers={drivers} />
       </Section>
-      <Section no={2} title="Session reports"
+      <LatestAgainstBest no={2} pair={pair} />
+      <Section no={reportsNo} title="Session reports"
         dek="One report per session of the weekend (FP1, Q1, the races), from every run of it.">
         <SessionReports eventId={eventId} />
       </Section>
-      <LatestAgainstBest no={3} pair={pair} />
       <Debriefs no={debriefsNo} eventId={eventId} folder={folder} />
       <Section no={debriefsNo + 1} title="Setup suggestions"
         dek={latest ? `For ${latest.name}: changes to try, from what the driver said and what the data show.` : undefined}>
