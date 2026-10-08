@@ -74,7 +74,7 @@ export function ImportLogs({ onProgress, events, into, big = false }: {
   const running = job != null && (job.status === 'queued' || job.status === 'running');
   const sentTo = useRef<Target>(null);
   // how full the file storage is (Supabase's free plan holds 1 GB): read again when an import ends
-  const [stored, setStored] = useState<{ used_mb: number | null; limit_mb: number | null } | null>(null);
+  const [stored, setStored] = useState<Awaited<ReturnType<typeof api.storage>> | null>(null);
   useEffect(() => {
     if (running) return;
     api.storage().then(setStored, () => setStored(null));
@@ -255,6 +255,9 @@ export function ImportLogs({ onProgress, events, into, big = false }: {
         stored.used_mb >= stored.limit_mb * 0.9
           ? <ErrorLine>{`Storage is nearly full: ${stored.used_mb.toLocaleString()} of ${stored.limit_mb.toLocaleString()} MB used. A race weekend takes about 100 MB.`}</ErrorLine>
           : <Note>{`Storage: ${stored.used_mb.toLocaleString()} of ${stored.limit_mb.toLocaleString()} MB used. A race weekend takes about 100 MB.`}</Note>
+      )}
+      {stored?.moving && (
+        <Note>{`Moving your older logs to Backblaze: ${stored.moving.done} of ${stored.moving.total} files. They stay readable meanwhile.`}</Note>
       )}
     </View>
   );

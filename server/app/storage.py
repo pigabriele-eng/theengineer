@@ -14,8 +14,8 @@ LOG_RESERVE_BYTES kept for the reports and lap packs worked out from the logs, i
 stops with a clear message rather than storage failing half way (Gabriele, 2026-10-08: a 727 MB zip).
 
 Backblaze B2 (free: 10 GB) is used when S3_ENDPOINT, S3_BUCKET, S3_KEY_ID and S3_SECRET_KEY are set (Gabriele chose
-it on 2026-10-08 so every weekend fits). With Supabase set too, new files go to B2 and files stored earlier stay in
-Supabase and are read from there (TwoStorages); nothing is moved.
+it on 2026-10-08 so every weekend fits). With Supabase set too, new files go to B2 and files stored earlier are copied
+across in the background on each start and read from Supabase until they are (TwoStorages); Supabase keeps its copies.
 """
 from __future__ import annotations
 
@@ -441,13 +441,68 @@ class S3Storage(RemoteStorage):
 
 
 class TwoStorages:
-    """New files go to `new` (Backblaze B2); files stored before the move stay in `old` (Supabase) and are read and
-    deleted there. Nothing is copied across. If `new` can't be reached on startup (a wrong key, a missing bucket),
-    the server keeps using `old` alone and logs why, so the app keeps working."""
+    """New files go to `new` (Backblaze B2); files stored before the move are copied across in the background
+    (copy_over, Gabriele 2026-10-08: "can we transfer everything on backblaze?") and read from `old` (Supabase) until
+    their copy is there. The Supabase copies are kept as a backup: deleting them is his call. If `new` can't be
+    reached on startup (a wrong key, a missing bucket), the server keeps using `old` alone and logs why, so the app
+    keeps working."""
 
     def __init__(self, new: RemoteStorage, old: RemoteStorage):
         self.new: RemoteStorage | None = new
         self.old = old
+        self.moving: dict | None = None  # {"done": files copied, "total": files to copy} while copy_over runs
+
+    def copy_over(self) -> dict:
+        """Copy every file `old` holds that `new` doesn't, as stored (logs stay compressed). Stops when `new` would
+        get too full for new uploads; a file that fails is tried again on the next start."""
+        log = logging.getLogger(__name__)
+        new = self.new
+        if new is None:
+            return {"copied": 0, "left": 0}
+        have = {name for name, _ in new._list()}
+        todo = [(name, size) for name, size in self.old._list() if name not in have]
+        self.moving = {"done": 0, "total": len(todo)}
+        copied = failed = 0
+        try:
+            for name, size in todo:
+                limit = new.limit()
+                if limit is not None and new.used() + size > limit - LOG_RESERVE_BYTES:
+                    log.warning("Stopped copying to %s: it is nearly full", new.service)
+                    break
+                try:
+                    with self.old._get(name) as r:
+                        body = r.read()
+                        if r.status_code >= 400:
+                            raise self.old._fail("read the file", r)
+                    new._put(name, body)
+                except (StorageError, httpx.HTTPError) as e:
+                    failed += 1
+                    log.warning("Couldn't copy %s to %s: %s", name, new.service, e)
+                    continue
+                with new._used_lock:
+                    if new._used is not None:
+                        new._used += len(body)
+                del body
+                copied += 1
+                self.moving["done"] = copied
+        finally:
+            self.moving = None
+        left = len(todo) - copied
+        log.info("Copied %d files to %s; %d left (%d failed)", copied, new.service, left, failed)
+        return {"copied": copied, "left": left}
+
+    def start_copy(self) -> threading.Thread | None:
+        if self.new is None:
+            return None
+        t = threading.Thread(target=self._copy_quietly, name="storage-copy", daemon=True)
+        t.start()
+        return t
+
+    def _copy_quietly(self) -> None:
+        try:
+            self.copy_over()
+        except Exception:  # listing failed: tried again on the next start
+            logging.getLogger(__name__).exception("Copying files to %s failed", self.current.service)
 
     @property
     def current(self) -> RemoteStorage:
@@ -552,4 +607,13 @@ def usage() -> dict:
     if not isinstance(b, (RemoteStorage, TwoStorages)):  # the local disk: no limit kept
         return {"used_mb": None, "limit_mb": None}
     limit, used = b.limit(), b.used()
-    return {"used_mb": round(used / 1024**2), "limit_mb": round(limit / 1024**2) if limit is not None else None}
+    out = {"used_mb": round(used / 1024**2), "limit_mb": round(limit / 1024**2) if limit is not None else None}
+    if isinstance(b, TwoStorages) and (moving := b.moving):
+        out["moving"] = dict(moving)  # older files being copied to the new storage
+    return out
+
+
+def start_copy() -> None:
+    """On startup, with both storages set: copy the older files to the new one, in the background."""
+    if isinstance(b := backend(), TwoStorages):
+        b.start_copy()

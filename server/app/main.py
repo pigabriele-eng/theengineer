@@ -42,6 +42,7 @@ async def lifespan(_: FastAPI):
     create_tables()
     imports.fail_interrupted()
     storage.backend().setup()
+    storage.start_copy()  # in the background: files kept in Supabase are copied to Backblaze B2 when it's set up
     timing.check_all_tracks()  # in the background: logs timed from an older start/finish line are re-timed
     empty_runs.start()  # in the background: imported runs with no laps (pit-lane logs) are removed
     tyre_store.start()  # summarises logs for the tyre model in the background, older ones first
