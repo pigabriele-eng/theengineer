@@ -179,9 +179,6 @@ const pickPath = (event: number, runs: number[]) => `/reports/events/${event}/pi
 export const fetchPickReport = (event: number, runs: number[]) => call<ReportAnswer>(pickPath(event, runs));
 export const fetchPickProgress = (event: number, runs: number[]) =>
   call<ReportProgress>(`${pickPath(event, runs)}&brief=true`);
-/** Every run of the event with its tyres (the driver's pick, else the guess and why), in the order they ran. */
-export type EventTyres = { levels: { key: TyreLevel; label: string }[]; runs: (RunName & { tyres: RunTyres | null })[] };
-export const fetchEventTyres = (event: number) => call<EventTyres>(`/technique/events/${event}/tyres`);
 export const refreshReport = (scope: ReportScope) => call<ReportAnswer>(`${path(scope)}/refresh`, { method: 'POST' });
 
 // The Sessions tab groups sessions by event, with a report for each event.

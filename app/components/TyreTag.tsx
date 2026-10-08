@@ -26,11 +26,13 @@ const web = Platform.OS === 'web';
 type Rows = Map<number, TyreRow>;
 type State = {
   rows: Rows | null; // null until first read
+  runs: { id: number; driver: string | null }[] | null; // every run of the event in the order they ran, tyres or not
+  picks: number; // picks saved here: what is worked out from the tyres (the Laps tab's suggestions) is asked again
   error: string | null; // the read failed
   saving: ReadonlySet<number>;
   errors: Readonly<Record<number, string>>; // a run's pick that wasn't saved, and why
 };
-const START: State = { rows: null, error: null, saving: new Set(), errors: {} };
+const START: State = { rows: null, runs: null, picks: 0, error: null, saving: new Set(), errors: {} };
 
 const withRow = (rows: Rows | null, row: TyreRow) => new Map(rows ?? []).set(row.id, row);
 const without = (ids: ReadonlySet<number>, id: number) => {
@@ -79,7 +81,8 @@ class EventTyres {
       }
       const keep = [...this.pending].filter(([, from]) => from > no).map(([id]) => id);
       for (const [id, from] of [...this.pending]) if (from <= no) this.pending.delete(id);
-      this.set({ rows: merged(rows, this.state.rows, keep), error: null });
+      this.set({ rows: merged(rows, this.state.rows, keep), runs: t.runs.map(({ id, driver }) => ({ id, driver })),
+        error: null });
     }, (e) => this.set({ error: (e as Error).message })).finally(() => {
       this.reading = null;
       if (this.again) {
@@ -117,7 +120,7 @@ class EventTyres {
     try {
       await setSessionTyres(put.id, put.tyres);
       this.pending.set(id, this.reads + 1);
-      this.set({ saving: without(this.state.saving, id) });
+      this.set({ saving: without(this.state.saving, id), picks: this.state.picks + 1 });
       void this.read(); // the guesses of the runs after it follow from it
       return true;
     } catch (e) {

@@ -1,16 +1,17 @@
 // The event report's filter (Gabriele, 2026-10-08: "we have to add a way to filter"): which runs' laps go into the
 // comparison, picked by tyres, official session and driver. Nothing picked: the report as the server groups it, each
 // tyre level on its own. Picked: the server works the report out again for just those runs (GET
-// /reports/events/{id}/pick).
+// /reports/events/{id}/pick). The runs' tyres are the event's shared ones (components/TyreTag.tsx): a pick on a run's
+// tyres tag shows here at once.
 import { useEffect, useMemo, useState } from 'react';
 import { StyleSheet } from 'react-native';
 
 import { Choice, useText } from '@/components/Picks';
 import { Label } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
+import { useTyreTags } from '@/components/TyreTag';
 import { face, themed } from '@/constants/Theme';
 import { anyPicked, countsFor, FilterPicks, FilterRun, flip, NO_PICKS, pickedRuns } from '@/lib/lapFilter';
-import { EventTyres, fetchEventTyres } from '@/lib/report';
 import { EventParts, fetchParts } from '@/lib/sessionReports';
 import { TYRE_LABEL, TYRE_LEVELS, TyreLevel } from '@/lib/tyreLevels';
 
@@ -21,25 +22,25 @@ export default function LapFilter({ eventId, onRuns, style }: {
 }) {
   const t = useText();
   const styles = useStyles();
-  const [tyres, setTyres] = useState<EventTyres | null>(null);
+  const tags = useTyreTags(eventId);
+  const { rows, runs: all } = tags.state;
   const [parts, setParts] = useState<EventParts | null>(null);
   const [picks, setPicks] = useState<FilterPicks>(NO_PICKS);
 
   useEffect(() => {
     let live = true;
-    fetchEventTyres(eventId).then((x) => live && setTyres(x)).catch(() => undefined);
     fetchParts(eventId).then((x) => live && setParts(x)).catch(() => undefined);
     return () => { live = false; };
   }, [eventId]);
 
   // each run with its tyres, official session and driver
   const runs: FilterRun[] = useMemo(() => {
-    if (!tyres) return [];
+    if (!all) return [];
     const partOf = new Map<number, string>();
     for (const p of parts?.parts ?? []) for (const r of p.runs) partOf.set(r.id, p.code);
-    return tyres.runs.map((r) => ({ id: r.id, tyres: r.tyres?.tyres ?? null, part: partOf.get(r.id) ?? null,
+    return all.map((r) => ({ id: r.id, tyres: rows?.get(r.id)?.level ?? null, part: partOf.get(r.id) ?? null,
       driver: r.driver }));
-  }, [tyres, parts]);
+  }, [all, rows, parts]);
   const levels = TYRE_LEVELS.filter((k) => runs.some((r) => r.tyres === k));
   const sessions = (parts?.parts ?? []).filter((p) => runs.some((r) => r.part === p.code));
   const drivers = [...new Set(runs.map((r) => r.driver).filter((d): d is string => d != null))];
@@ -53,7 +54,7 @@ export default function LapFilter({ eventId, onRuns, style }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
-  if (!tyres || runs.length < 2) return null;
+  if (!all || runs.length < 2) return null;
   const row = (title: string, name: keyof FilterPicks, values: { key: string; label: string }[]) => {
     if (values.length < 2) return null; // nothing to choose
     const counts = countsFor(runs, picks, name, values.map((v) => v.key));

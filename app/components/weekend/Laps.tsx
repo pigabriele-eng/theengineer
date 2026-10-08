@@ -52,7 +52,8 @@ export default function WeekendLaps({ eventId, onShow, version }: {
   const [own, setOwn] = useState<LapPick[]>([]);
 
   // the suggestions, asked again while the server works out their corners or the technique check the mistakes at them
-  // come from is worked out (lib/poll.ts)
+  // come from is worked out (lib/poll.ts), and after a pick on a run's tyres (they pair laps like with like)
+  const picks = tyreTags.state.picks;
   useEffect(() => poll((live) => fetchSuggestions(eventId).then((a) => {
     if (!live()) return false;
     setAnswer(a);
@@ -61,7 +62,7 @@ export default function WeekendLaps({ eventId, onShow, version }: {
   }, (e) => {
     if (live()) setError((e as Error).message);
     return true;
-  })), [eventId]);
+  })), [eventId, picks]);
 
   const suggestions = answer?.suggestions ?? [];
   const picked = shown.kind === 'suggestion' ? suggestions[shown.index] ?? null : null;
