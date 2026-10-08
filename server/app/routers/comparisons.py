@@ -5,6 +5,10 @@ A comparison reads every run of both sides, which takes a while on a small serve
 follows it (runs read so far) until the result is ready. Each run is read under the server's shared lock for log
 reading (app.heavy), so a comparison never holds a log in memory while another request or import does. Jobs and
 their results live in the server's memory: a restart loses them and the app starts again.
+
+The same comparison asked for again (the same names, sessions and laps, in any order, with nothing in them changed
+since) gets the job already queued, running or kept finished, instead of a new one: a page that starts its comparison
+each time it is opened, or two people opening it at once, costs the server one comparison, not one a view.
 """
 import logging
 import threading
@@ -31,6 +35,8 @@ KEEP_FINISHED = 6  # finished comparisons kept for the app to collect
 GONE = "This comparison is no longer on the server (it restarted); start it again"
 
 _jobs: dict[str, dict] = {}
+_keys: dict[str, tuple] = {}  # what each job compares (_same), to hand the same comparison its job again
+_jobs_lock = threading.Lock()  # guards _jobs and _keys between requests and the jobs' threads
 
 
 @router.post("/compare/drivers/jobs", status_code=202)
@@ -38,9 +44,15 @@ def start_comparison(body: CompareIn, db: Session = Depends(get_db)):
     """Start the same comparison as POST /compare/drivers in the background; follow it with GET
     /compare/drivers/jobs/{id}. The sessions are checked now, so a comparison that can't run fails at once."""
     sources, _ = compare_sources(db, body.a, body.b)
-    job = {"id": uuid.uuid4().hex, "status": "queued", "total": len(sources), "done": 0, "current": None,
-           "error": None, "result": None, "finished": None}
-    _jobs[job["id"]] = job
+    key = _same(db, body)
+    with _jobs_lock:
+        for j in list(_jobs.values()):  # the same comparison waiting, at work or done: that one (a failed one again)
+            if _keys.get(j["id"]) == key and j["status"] in ("queued", "running", "done"):
+                return j
+        job = {"id": uuid.uuid4().hex, "status": "queued", "total": len(sources), "done": 0, "current": None,
+               "error": None, "result": None, "finished": None}
+        _jobs[job["id"]] = job
+        _keys[job["id"]] = key
     threading.Thread(target=_work, args=(job, body), name=f"comparison-{job['id'][:8]}", daemon=True).start()
     return job
 
@@ -88,9 +100,28 @@ def _run(job: dict, body: CompareIn) -> None:
 
 def _trim() -> None:
     """Keep the latest finished comparisons only: each result is about 0.1 MB."""
-    finished = sorted((j for j in list(_jobs.values()) if j["finished"] is not None), key=lambda j: j["finished"])
-    for j in finished[:-KEEP_FINISHED]:
-        _jobs.pop(j["id"], None)
+    with _jobs_lock:
+        finished = sorted((j for j in _jobs.values() if j["finished"] is not None), key=lambda j: j["finished"])
+        for j in finished[:-KEEP_FINISHED]:
+            _jobs.pop(j["id"], None)
+            _keys.pop(j["id"], None)
+
+
+def _same(db: Session, body: CompareIn) -> tuple:
+    """What a comparison is of, the same whatever order its sessions and laps were given in: each side's name, its
+    sessions and picked laps, and each session's logs and laps as stored now (a run timed again, a log added, is
+    another comparison)."""
+    def side(s) -> tuple:
+        return (s.label.strip(), tuple(sorted(set(s.session_ids))),
+                tuple(sorted((p.session_id, tuple(sorted(set(p.laps)))) for p in s.laps)))
+
+    ids = sorted({*body.a.session_ids, *body.b.session_ids, *(p.session_id for p in [*body.a.laps, *body.b.laps])})
+    stored = []
+    for sid in ids:
+        s = db.get(models.RunSession, sid)
+        stored.append((sid, tuple(sorted(f.id for f in s.files)) if s else (),
+                       tuple(sorted((l.file_id, l.number, l.time_s, l.clean) for l in s.laps)) if s else ()))
+    return side(body.a), side(body.b), tuple(stored)
 
 
 def _log_date(text: str | None) -> date | None:

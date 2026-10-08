@@ -262,8 +262,8 @@ def _grip(x: LapSummary, sections: list, limits: CarLimits) -> None:
 
 # ---------- reading the runs ----------
 
-def _slim(data: SessionData) -> SessionData:
-    return replace(data, channels={k: v for k, v in data.channels.items() if k in ROLES})
+def _slim(data: SessionData, extra: tuple[str, ...] = ()) -> SessionData:
+    return replace(data, channels={k: v for k, v in data.channels.items() if k in ROLES or k in extra})
 
 
 REFERENCE_ROLES = ("distance", "t", "speed", "throttle", "ax", "braking", "curvature", "phase")
@@ -283,8 +283,9 @@ def _reference(data: SessionData, src: RunSource, lap: Lap, corners: list[Corner
     return _Reference(src.name, lap.number, line, length, {k: full[k] for k in keep if k in full}, sections, numbering)
 
 
-def _read_packed(run: PackedRun, src: RunSource, ref: _Reference | None, corners: list[CornerSpec] | None
-                 ) -> tuple[_Reference | None, list[LapSummary], list[Lap]]:
+def _read_packed(run: PackedRun, src: RunSource, ref: _Reference | None, corners: list[CornerSpec] | None,
+                 summarise: Callable = _summarise, extra: tuple[str, ...] = ()
+                 ) -> tuple[_Reference | None, list, list[Lap]]:
     """_read's work on one run, from its lap pack and compact traces instead of its log."""
     clean = run.clean_laps()
     laps = []
@@ -293,14 +294,16 @@ def _read_packed(run: PackedRun, src: RunSource, ref: _Reference | None, corners
         ref = _reference(run.window(lap.number), src, lap, corners,
                          lambda l, line, length: run.trace(l.number, line, length, REFERENCE_ROLES))
     for i, lap in enumerate(clean):
-        laps.append(_summarise(run.trace(lap.number, ref.line, ref.align_length, LAP_ROLES), src, lap, i,
-                               ref.sections))
+        laps.append(summarise(run.trace(lap.number, ref.line, ref.align_length, (*LAP_ROLES, *extra)), src, lap, i,
+                              ref.sections))
     return ref, laps, clean
 
 
 def _read(sources: list[RunSource], corners: list[CornerSpec] | None,
-          progress: Callable[[int, str], None] | None) -> tuple[_Reference | None, list[LapSummary], list[dict]]:
-    """Every source, one at a time, reduced to its laps' summaries."""
+          progress: Callable[[int, str], None] | None, summarise: Callable = _summarise,
+          extra: tuple[str, ...] = ()) -> tuple[_Reference | None, list, list[dict]]:
+    """Every source, one at a time, reduced to its laps' summaries (summarise(trace, source, lap, index, sections):
+    _summarise, or another reduction of each lap's trace with `extra` roles too, as the report's Drivers section's)."""
     ref: _Reference | None = None
     laps: list[LapSummary] = []
     runs: list[dict] = []
@@ -310,7 +313,7 @@ def _read(sources: list[RunSource], corners: list[CornerSpec] | None,
         packed = src.packed() if src.packed is not None else None
         if packed is not None:  # no log to read, so no lock to wait for
             try:
-                ref, got, clean = _read_packed(packed, src, ref, corners)
+                ref, got, clean = _read_packed(packed, src, ref, corners, summarise, extra)
                 laps += got
             except NotCovered:  # not all there after all: from the log
                 packed = None
@@ -318,7 +321,7 @@ def _read(sources: list[RunSource], corners: list[CornerSpec] | None,
             with heavy.lock:  # one log in memory at a time, across this job, imports and requests
                 run = src.load()
                 clean = [l for l in run.data.laps if l.clean]
-                data = _slim(run.data) if clean else None
+                data = _slim(run.data, extra) if clean else None
                 run.data.channels, run.ld = {}, None
                 del run
                 if data is not None:
@@ -327,7 +330,7 @@ def _read(sources: list[RunSource], corners: list[CornerSpec] | None,
                         ref = _reference(data, src, min(clean, key=lambda l: l.time), corners)
                     for i, lap in enumerate(clean):
                         tr = aligned_trace(data, lap, ref.line, ref.align_length)
-                        laps.append(_summarise(tr, src, lap, i, ref.sections))
+                        laps.append(summarise(tr, src, lap, i, ref.sections))
                         del tr
                     del data
                 heavy.release_memory()  # also when the lock is held further out, as by POST /compare/drivers
