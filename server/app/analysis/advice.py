@@ -39,8 +39,9 @@ from app.analysis.insights import (
 from app.analysis.laps import Section
 from app.analysis.scan import scan_medians
 
-QUICK_SHARE = 0.1  # the quick passes are the quickest tenth of all passes of a section
+QUICK_SHARE = 0.1  # the top 10 %: the tenth of a section's passes that beat the laps around them by the most
 MIN_QUICK = 3
+NEIGHBOURS = 2  # laps each side in the same run a pass is judged against (tyres, fuel and track alike)
 TOP_GAINS = 3
 MAX_ADVICE = 3
 MAX_SPEED_ADVICE = 2  # of those, at most this many are "carry more speed"
@@ -177,9 +178,27 @@ def _pass_rows(prep: Prepared, s: Section, points: list[Habit]) -> list[dict]:
 
 # ---------- per section ----------
 
-def _quick(times: np.ndarray) -> np.ndarray:
+def _against_neighbours(times: np.ndarray, runs: list[str], index: np.ndarray) -> np.ndarray:
+    """Each pass's time less the median of the same section on the laps around it in its run (NEIGHBOURS each side,
+    itself included): what the driver did there, with the tyres, the fuel and the track as they were on those laps.
+    Gabriele (2026-10-08): the plain quickest passes "might be caused by tire degradation, fuel level or track
+    condition"."""
+    out = np.empty(len(times))
+    for run in dict.fromkeys(runs):
+        at = np.array([i for i, r in enumerate(runs) if r == run])
+        at = at[np.argsort(index[at], kind="stable")]
+        for j, i in enumerate(at):
+            near = at[max(0, j - NEIGHBOURS):j + NEIGHBOURS + 1]
+            out[i] = times[i] - float(np.median(times[near]))
+    return out
+
+
+def _quick(times: np.ndarray, runs: list[str] | None = None, index: np.ndarray | None = None) -> np.ndarray:
+    """The top 10 %: the passes that beat the laps around them in their run by the most (_against_neighbours); by
+    their plain time when the runs aren't known."""
     k = max(MIN_QUICK, round(len(times) * QUICK_SHARE))
-    return np.argsort(times)[:min(k, len(times))]
+    rank = times if runs is None or index is None else _against_neighbours(times, runs, index)
+    return np.argsort(rank, kind="stable")[:min(k, len(times))]
 
 
 def _link(r: float | None, p: float | None) -> str | None:
@@ -329,7 +348,7 @@ def _section(prep: Prepared, s: Section, prev: str | None, realistic, brake_unit
     laps = prep.laps
     runs = [x.run for x in laps]
     times = np.array([r["time"] for r in rows])
-    quick = _quick(times)
+    quick = _quick(times, runs, np.array([x.index_in_run for x in laps]))
     typical_t = float(np.median(times))
     quick_t = float(np.median(times[quick]))
     gain = max(typical_t - quick_t, 0.0)
@@ -716,7 +735,9 @@ METHOD = [
     "timed line to line.",
     "Sections run from the fast point before a corner to the same point before the next one, so each holds the "
     "braking, the corner and the straight after it. They carry the track's official corner numbers.",
-    "The top 10% are the quickest tenth of all passes of a section (at least three). Typical is the median pass. "
+    "The top 10% are the tenth of a section's passes (at least three) that beat the same section on the two laps "
+    "either side in their run by the most, so tyre wear, fuel and the track's grip on those laps don't pick them. "
+    "Typical is the median pass. "
     "Distances are metres from the start/finish line.",
     "The link says how strongly a habit goes with a quicker section lap to lap within the same run, so tyre and "
     "fuel changes through a run don't count: strong above 0.6, clear from 0.3. It shows what goes with a quicker "
