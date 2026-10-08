@@ -12,6 +12,7 @@ from app import models
 from app.db import get_db
 from app.routers.setups import _suggestions
 from app.setup import chat, sheet
+from app.setup import track as _track  # noqa: F401  (its warm-up keeps the setup log after each upload)
 from app.setup.models import SessionSetup, SetupChat
 from app.setup.templates import BMW_M4_GT4_EVO
 

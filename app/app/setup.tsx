@@ -115,7 +115,8 @@ export default function SetupToolScreen() {
                 <Text style={t.body}>What is the car doing? Pick one below or type it, for example “understeer mid-corner in T6”.</Text>
               )}
               {!showAll && chat.messages.length > RECENT && (
-                <TextLink small label={`Show the earlier ${chat.messages.length - RECENT} messages`}
+                <TextLink small label={chat.messages.length - RECENT === 1 ? 'Show the earlier message'
+                  : `Show the earlier ${chat.messages.length - RECENT} messages`}
                   onPress={() => setShowAll(true)} />
               )}
               {(showAll ? chat.messages : chat.messages.slice(-RECENT)).map((m, i, shown) => (
@@ -155,6 +156,15 @@ export default function SetupToolScreen() {
               <View style={styles.block}>
                 <Text style={t.sub}>Working on</Text>
                 {chat.problem_labels.map((p) => <Text key={p.label} style={t.body}>{p.label}</Text>)}
+              </View>
+            )}
+            {chat.pending_titles.length > 0 && (
+              <View style={styles.block}>
+                <Text style={t.sub}>Trying on the next run</Text>
+                <Text style={t.body}>
+                  {chat.pending_titles.join('; ')}. Logged on its setup sheet by itself when its logs come in, then
+                  you're told what it did.
+                </Text>
               </View>
             )}
             {chat.limit_labels.length > 0 && (
@@ -253,6 +263,7 @@ function RunLog({ sessionId }: { sessionId: number }) {
             : 'Not logged yet. Log the setup once as a baseline; after that each run copies the last.'}
         </Text>
       )}
+      {sheet.exists && sheet.notes ? <Text style={t.body}>{sheet.notes}</Text> : null}
       {sheet.exists && (
         <Text style={t.body}>
           {sheet.changes.length > 0
@@ -297,6 +308,7 @@ function ChangeCard({ ch }: { ch: Change }) {
       {ch.expected ? <Line label="Expect" text={ch.expected} /> : null}
       {ch.watch ? <Line label="Watch" text={ch.watch} /> : null}
       {ch.history ? <Line label="Your log" text={ch.history.text} /> : null}
+      {ch.car ? <Line label="On this car" text={ch.car} /> : null}
       {!ch.why && !ch.expected && <Text style={t.note}>No reason given.</Text>}
     </View>
   );

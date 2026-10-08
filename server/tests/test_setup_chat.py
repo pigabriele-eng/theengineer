@@ -119,8 +119,8 @@ def test_tried_helped_and_gone():
 def test_quick_replies_offer_the_limit_of_the_change_on_the_table():
     st = turn(new_state(), UNDERSTEER_MID)
     labels = [q["label"] for q in quick_replies(st)]
-    assert labels == ["Already on the softest front bar", "Tried it, it helped", "Tried it, no better",
-                      "Something else"]
+    assert labels == ["Already on the softest front bar", "Trying it next run", "Tried it, it helped",
+                      "Tried it, no better", "Something else"]
     st = turn(st, quick_replies(st)[0]["action"])
     assert st["limits"] == [{"row": "arb", "axle": "front", "want": "softer"}]
 
@@ -206,3 +206,48 @@ def test_problems_after_an_answer():
     assert problems_after(st, action={"type": "reset"}) == []
     assert [p["kind"] for p in problems_after(st, text="and oversteer on exit")] == ["understeer", "oversteer"]
     assert problems_after(st, action={"type": "skip"}) == st["problems"]
+
+
+def test_uploads_carry_the_setup_log_the_change_tried_and_report_what_it_did(client):
+    import app.db
+    from app import models
+    from app.setup import track
+    from tests.test_setup import _upload
+
+    event = client.post("/events", json={"name": "Spa weekend"}).json()
+    a = client.post("/sessions", json={"name": "FP1", "event_id": event["id"]}).json()
+    _upload(client, a["id"])
+    client.put(f"/sessions/{a['id']}/setup", json={"values": {"arb_front": 3, "arb_rear": 2, "wing": 3}})
+    r = client.post("/setup/chat", json={"event_id": event["id"], "session_id": a["id"], "set_session": True,
+                                         "text": "understeer mid-corner"}).json()
+    assert r["current"]["lever"] == "arb_front_softer"
+    assert "Trying it next run" in [q["label"] for q in r["quick_replies"]]
+    r = client.post("/setup/chat", json={"event_id": event["id"], "action": {"type": "trying"},
+                                         "said": "Trying it next run"}).json()
+    assert r["pending_titles"] == ["Front anti-roll bar softer"]
+
+    b = client.post("/sessions", json={"name": "FP2", "event_id": event["id"]}).json()
+    _upload(client, b["id"])
+    with app.db.SessionLocal() as db:
+        track.track(db, db.get(models.RunSession, b["id"]))
+    sheet = client.get(f"/sessions/{b['id']}/setup").json()
+    assert sheet["exists"] and sheet["copied_from_session_id"] == a["id"]
+    assert sheet["values"] == {"arb_front": 2, "arb_rear": 2, "wing": 3}  # carried over, with the change on it
+    assert [c["text"] for c in sheet["changes"]] == ["Anti-roll bar front 3 → 2"]
+    assert "Carried over from FP1" in sheet["notes"]
+
+    r = client.get(f"/setup/chat?event_id={event['id']}").json()
+    said = [m["text"] for m in r["messages"] if m["from"] == "tool"]
+    assert any(t.startswith("Logged on FP2") for t in said)
+    assert said[-1].startswith("FP2 with front anti-roll bar softer, against FP1: best lap ±0.00 s")
+    assert r["pending_titles"] == [] and r["current"]["on_run"] == "FP2"
+    r = client.post("/setup/chat", json={"event_id": event["id"], "action": {"type": "tried", "result": "helped"}}
+                    ).json()
+    assert r["tried"] == [{"lever": "arb_front_softer", "title": "Front anti-roll bar softer", "result": "helped"}]
+
+    # a run that already has a sheet keeps it, and an old run is left alone
+    with app.db.SessionLocal() as db:
+        s = db.get(models.RunSession, b["id"])
+        assert track.carry_over(db, s) is None
+        from datetime import UTC, datetime, timedelta
+        assert not track._recent(s, datetime.now(UTC) + timedelta(days=4))

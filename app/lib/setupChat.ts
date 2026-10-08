@@ -15,6 +15,8 @@ export type Change = {
   watch: string;
   another_way: boolean;
   history?: { times: number; text: string }; // what the logged runs say about this change
+  car?: string; // what is known about the adjustment on this car (and what is not)
+  on_run?: string; // the run it was tried on, when the tool is reporting what it did
 };
 
 export type ChatMessage = { from: 'you' | 'tool'; text: string; at: string; change?: Change };
@@ -30,6 +32,7 @@ export type SetupChat = {
   current: Change | null;
   messages: ChatMessage[];
   limit_labels: (Limit & { label: string })[];
+  pending_titles: string[]; // changes being tried on the next run, logged on it when its logs come in
   problem_labels: { kind: string; phase: string | null; label: string }[];
   quick_replies: QuickReply[];
   notes: string[];

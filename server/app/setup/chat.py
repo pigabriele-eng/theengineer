@@ -71,6 +71,36 @@ PROBLEMS: tuple[dict, ...] = (
     {"kind": "ride", "phase": None, "label": "Bottoming or kerbs"},
 )
 
+# What is known about each adjustment on the M4 GT4 G82, Evo and non-Evo alike (research of 2026-10-08:
+# reference/bmw-m4-gt4-evo/car.md section 8 and setup-adjustments.json in the project files). Shown with each change,
+# so a step on an estimate reads as one. Nothing found makes the Evo's ranges differ; its new splitter and flicks may
+# move the aero balance, so the wing that balances it may not be the non-Evo's.
+CAR_FACTS: dict[str, str] = {
+    "ride_height": "BoP minimum 155.0 mm front, 160.0 mm rear at the reference points, on every 2025-26 ADAC sheet "
+                   "and every SRO sheet found (GT4 European's own tables aren't public). Set on the KW spring perches.",
+    "spring": "H&R springs, three rates front and rear; mixing sets front to rear should be allowed for this car "
+              "(check the technical form). The rates aren't public: read them off the springs.",
+    "spring_rate": "The H&R rates aren't public: read them off the springs.",
+    "bump": "KW dials set low-speed bump only. The click range isn't public; count from fully closed.",
+    "rebound": "KW dials set low-speed rebound only. The click range isn't public; count from fully closed.",
+    "camber": "Shims. Rear static camber is limited to -3.5° in both series (the BoP can change it); Pirelli's older "
+              "GT4 books advise -3.5° front, -3.0° rear at most.",
+    "toe": "Rear by shims, front on the track rods. The ranges aren't public.",
+    "wing": "6 positions. Which end gives the most downforce isn't public: this tool takes 6 as the most. The Evo's "
+            "new splitter may want a different wing from the non-Evo.",
+    "arb": "5 positions front and rear. 1 = softest is the sim's numbering; check it on the car.",
+    "brake_balance": "AP pedal box with a balance bar. Your logs ran 52-58 % front (Monza 52.6-57.3, Misano and "
+                     "Zandvoort about 54.5-55.3, Hockenheim about 57-58).",
+    "pressure_cold": "GT4 European: 1.30 bar minimum starting pressure, checked on the grid. Pirelli's older GT4 "
+                     "books: 1.4 bar minimum, 2.0 bar hot target; the DHG book isn't public.",
+}
+
+
+def car_note(lever: Lever) -> str:
+    rows = list(dict.fromkeys(t.row for opt in lever.options for t in opt))
+    return " ".join(CAR_FACTS[r] for r in rows if r in CAR_FACTS and not (r == "spring_rate" and "spring" in rows))
+
+
 # ---------- limits ----------
 
 # One limit: a row of the sheet that can't go further one way, on one axle or both (axle None).
@@ -210,6 +240,8 @@ GENERIC_LIMIT = re.compile(r"already (there|at|on|done|set|maxed|the)|at (the |i
                            r"maxed( out)?|bottomed( out)?|out of (range|adjustment)|that'?s the (limit|end)", re.I)
 TRIED_BAD = re.compile(r"didn'?t (help|work|change)|did not (help|work)|no (better|change|difference)|not better|"
                        r"worse|did nothing|made no|no improvement|doesn'?t (help|work)", re.I)
+TRYING = re.compile(r"(we'?ll|will|going to|let'?s|gonna) (try|do|put|run)|trying (it|that)|try it next|"
+                    r"next run", re.I)
 TRIED_ONLY = re.compile(r"\s*(we )?tried (it|that)( already)?\s*\.?\s*", re.I)
 TRIED_GOOD = re.compile(r"\b(helped|better|improved|works|worked|fixed|cured|solved)\b", re.I)
 GONE = re.compile(r"(problem|it'?s|that'?s) (is )?(gone|fixed|solved|sorted)|all good|no more (under|over)steer",
@@ -329,6 +361,8 @@ def read_reply(text: str) -> list[dict]:
         actions.append({"type": "tried", "result": "helped"})
     elif TRIED_ONLY.fullmatch(text):
         actions.append({"type": "tried", "result": "no_better"})
+    elif TRYING.search(text):
+        actions.append({"type": "trying"})
     if not actions:
         problem = read_problem(text)
         if problem:
@@ -406,10 +440,13 @@ def next_change(state: dict, template: Template = BMW_M4_GT4_EVO, values: dict |
         made_another_way = opt is not lever.options[0]
         return {"lever": key, "title": lever.title, "kind": lever.kind,
                 "changes": [c["text"] for c in changes],
+                # the field values to log on the next run's sheet, where the run's sheet gave a value to step from
+                "fields": {c["key"]: c["to"] for c in changes if c.get("to") is not None},
                 "why": reason or _why(lever, state.get("problems", [])),
                 "expected": lever.expected, "watch": lever.cost,
                 "another_way": made_another_way, "limits": option_limits(opt), "score": score,
                 "history": evidence(lever, past or [], state.get("problems", []), template),
+                "car": car_note(lever),
                 "ruled_out_before": [BY_KEY[k].title for k in ruled_out]}
     return None
 
@@ -481,7 +518,10 @@ def evidence(lever: Lever, past: list[dict], problems: list[dict], template: Tem
 
 def new_state(variant: str = "evo") -> dict:
     return {"variant": variant if variant in VARIANTS else "evo", "session_id": None, "problems": [], "limits": [],
-            "tried": [], "skipped": [], "current": None, "messages": []}
+            "tried": [], "skipped": [], "current": None, "messages": [],
+            # changes the engineer is trying on the next run, logged on its sheet when its logs come in
+            # (app.setup.track), then each with the run it went on, until its effect has been reported
+            "pending": [], "applied": []}
 
 
 def _say(state: dict, who: str, text: str, change: dict | None = None) -> None:
@@ -498,6 +538,8 @@ def quick_replies(state: dict) -> list[dict]:
         out = []
         for lim in cur.get("limits", [])[:2]:
             out.append({"label": already_label(lim), "action": {"type": "limit", "limit": lim}})
+        if not any(p["lever"] == cur["lever"] for p in state.get("pending", [])) and not cur.get("on_run"):
+            out.append({"label": "Trying it next run", "action": {"type": "trying"}})
         out += [{"label": "Tried it, it helped", "action": {"type": "tried", "result": "helped"}},
                 {"label": "Tried it, no better", "action": {"type": "tried", "result": "no_better"}},
                 {"label": "Something else", "action": {"type": "skip"}}]
@@ -560,11 +602,18 @@ def turn(state: dict, action: dict, template: Template = BMW_M4_GT4_EVO, values:
     elif kind == "tried" and cur:
         state["tried"] = [*state["tried"], {"lever": cur["lever"], "title": cur["title"],
                                             "result": action.get("result", "no_better")}]
+        state["pending"] = [p for p in state["pending"] if p["lever"] != cur["lever"]]
         if action.get("result") == "helped":
             state["current"] = None
             _say(state, "tool", f"Good: keep {cur['title'].lower()}. Is there some of the problem left?")
             return state
         lead.append(f"Noted: {cur['title'].lower()} made no difference, so I won't offer it again.")
+    elif kind == "trying" and cur:
+        state["pending"] = [*[p for p in state["pending"] if p["lever"] != cur["lever"]],
+                            {k: cur.get(k) for k in ("lever", "title", "changes", "fields")}]
+        _say(state, "tool", f"Noted: {_lc(cur['title'])} on the next run. When its logs come in I'll log the change "
+                            "on its setup sheet and tell you what it did.")
+        return state
     elif kind == "skip" and cur:
         state["skipped"] = [*state["skipped"], cur["lever"]]
         lead.append("All right, something else.")
@@ -634,5 +683,6 @@ def view(state: dict) -> dict:
     return {**state, "variant_label": VARIANTS.get(state["variant"], state["variant"]),
             "variants": [{"key": k, "label": v} for k, v in VARIANTS.items()],
             "limit_labels": [{**lim, "label": limit_label(lim)} for lim in state["limits"]],
+            "pending_titles": [p["title"] for p in state["pending"]],
             "problem_labels": [{**p, "label": _uc(problem_label(p))} for p in state["problems"]],
             "quick_replies": quick_replies(state), "problem_choices": list(PROBLEMS)}
