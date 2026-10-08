@@ -73,8 +73,8 @@ export function debriefLines(folder: Folder | null | undefined, debriefs: EventD
 }
 
 /** How many numbered sections the During view puts before the event page's own (Runs, Side by side, ...): three
- * things, the session reports, the latest run against the best (with where the time is and the traces when there are
- * two timed runs), debriefs. */
+ * things, the fastest runs of the latest session against each other (with where the time is and the traces when
+ * there are two timed runs: latestAgainstBest says whether), the session reports, debriefs. */
 export const duringSections = (folder: Folder | null | undefined) => (latestAgainstBest(folder) ? 6 : 4);
 
 export type Stage = 'before' | 'during' | 'after';
