@@ -4,7 +4,7 @@
 // (components/TyrePicks.tsx TyreRowView), a second saves one and closes them: two taps, no menu. Escape or the tag again
 // closes them too. Every list of an event's runs reads the event's tyres once (GET /technique/events/{id}/tyres) into
 // one shared state, so a pick shows at once wherever the run is listed (the weekend page's runs, its side by side, the
-// During tab's Run comparison and the Laps tab, the home page, the run page, the hold menu's Tyres), and the event's
+// During tab's latest session and the Laps tab, the home page, the run page, the hold menu's Tyres), and the event's
 // tyres are read again after it: a run's pick changes the guesses of the runs after it on the same set. Runs in no
 // event have no tag (the tyres are guessed and set per event). What the tag says and what a tap sends: lib/tyreTag.ts.
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
