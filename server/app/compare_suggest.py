@@ -58,7 +58,7 @@ from app.routers import lapcompare
 router = APIRouter()
 log = logging.getLogger(__name__)
 
-VERSION = 1  # raise when what is suggested changes, so every kept answer is worked out again
+VERSION = 2  # raise when what is suggested changes, so every kept answer is worked out again
 LIMIT = 5  # suggestions at most
 PER_TYRES = 2  # teammates' pairs on one tyre state at most (the quickest driver against the next two)
 CORNERS_SHOWN = 3
@@ -106,6 +106,7 @@ class Run:
     driver: str | None
     laps: list[tuple[int, float]] = field(default_factory=list)  # its clean laps: (number, time)
     tyres_sure: bool = True  # false: run_tyres' guess (a test or practice run nobody said the tyres of)
+    level: str | None = None  # run_tyres' four: new, fresh, used, worn (paired here as new or not)
 
 
 def _best(run: Run) -> tuple[int, float]:
@@ -114,8 +115,8 @@ def _best(run: Run) -> tuple[int, float]:
 
 def _lap(run: Run, number: int, time_s: float, role: str = "best") -> dict:
     return {"session_id": run.id, "lap": number, "time": round(time_s, 3), "run": run.name, "session": run.session,
-            "kind": run.kind, "tyres": run.tyres, "tyres_sure": run.tyres_sure, "driver": run.driver,
-            "driver_id": run.driver_id, "role": role}
+            "kind": run.kind, "tyres": run.tyres, "tyres_sure": run.tyres_sure, "tyres_level": run.level,
+            "driver": run.driver, "driver_id": run.driver_id, "role": role}
 
 
 def _pair(kind: str, tyres: str, a: dict, b: dict, **extra) -> dict:
@@ -246,14 +247,15 @@ def _runs(db: Session, sessions: list[models.RunSession]) -> tuple[list[Run], li
         runs.append(Run(s.id, lab.stored, part.title if part else lab.stored, kind, "used", s.driver_id,
                         s.driver.name if s.driver else None, [(l.number, l.time_s) for l in laps if l.clean]))
     # each run's tyres as every page has them: the driver's, else the guess from the session type and the laps
-    tyres = run_tyres.resolve(db, [run_tyres.RunLaps(r.id, r.kind, r.name, [t for _, t in r.laps]) for r in runs])
+    tyres = run_tyres.for_runs(db, sessions)
     for r in runs:
-        r.tyres, r.tyres_sure = tyres[r.id]["tyres"], tyres[r.id]["sure"]
+        t = tyres.get(r.id) or run_tyres.guess([run_tyres.RunLaps(r.id, r.kind, r.name, [x for _, x in r.laps])])[r.id]
+        r.tyres, r.tyres_sure, r.level = t["pair"], t["sure"], t["tyres"]
     by_run = {r.id: r for r in runs}
 
     def run_out(r: Run) -> dict:
         return {"id": r.id, "name": r.name, "driver": r.driver, "driver_id": r.driver_id, "kind": r.kind,
-                "tyres": r.tyres, "tyres_sure": r.tyres_sure,
+                "tyres": r.tyres, "tyres_sure": r.tyres_sure, "tyres_level": r.level,
                 "laps": [{"number": l.number, "time": l.time_s, "clean": l.clean} for l in laps_of[r.id]]}
 
     listed = [{"code": p.code, "title": p.title,

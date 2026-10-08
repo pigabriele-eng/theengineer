@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 
 import { Tabs } from '@/components/Picks';
+import { TYRE_LABEL, TYRE_LEVELS, TYRE_STEPS } from '@/lib/tyreLevels';
 import PrintButton from '@/components/PrintButton';
 import {
   B, Colophon, Fig, Folio, Hero, Label, Page, Section, Swatch, TextLink, useGutter, useWide,
@@ -88,8 +89,8 @@ const reportPhoto = (track: string | null | undefined): Photo => {
  * `onSections` says how many there are), hand it the event it has already read (`folder`), and bring the map into
  * view when a section is tapped to see it there (`onShowMap`, with the map's place in the report, where the browser
  * can't). */
-/** A condition's tab: the tyres and what runs on them. */
-const tyresWord = (r: Report) => (r.condition?.tyres === 'new' ? 'New tyres' : 'Used tyres');
+/** A condition's tab: the tyres its laps ran on (New, Fresh, Used, Very used). */
+const tyresWord = (r: Report) => `${TYRE_LABEL[r.condition?.tyres ?? 'used']} tyres`;
 
 export default function EventReport({
   eventId, part, sessionId, embedded, firstNo = 1, onSections, folder: hostFolder, onShowMap, parts: hostParts,
@@ -186,11 +187,13 @@ export default function EventReport({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
-  // the laps on used tyres (practice and races) lead; qualifying's new tyres and low fuel have their own report
-  const [onNew, setOnNew] = useState(false);
+  // one report per tyre level: the one with the most laps opens, the others a tap away (newest tyres first)
+  const [level, setLevel] = useState<string | null>(null);
   const lead = answer?.report ?? null;
-  const other = lead?.condition?.other ?? null;
-  const report = onNew && other ? other : lead;
+  const byLevel = useMemo(() => (lead ? [lead, ...(lead.condition?.others ?? [])] : [])
+    .sort((a, b) => TYRE_LEVELS.indexOf(a.condition?.tyres ?? 'used') - TYRE_LEVELS.indexOf(b.condition?.tyres ?? 'used')),
+  [lead]);
+  const report = byLevel.find((r) => r.condition?.tyres === level) ?? lead;
   // every run by its own name ("FP1 stint 1", "Q1 · Gabriele Piana"), never a number
   const names = useMemo(() => runNamer(answer), [answer]);
   const mapAt = useRef<Box>(null); // the map, embedded: on the web a DOM element to bring into view
@@ -262,10 +265,10 @@ export default function EventReport({
         report ? <>Fastest <B>{formatLap(report.headline.fastest.time)}</B></> : null,
         report ? (report.numbering === 'official' ? 'Official corner numbers' : 'Corners numbered from the log') : null,
       ]} />
-      {lead && other && (
-        <Tabs big value={report === other ? 'other' : 'lead'} onChange={(k) => setOnNew(k === 'other')}
+      {report && byLevel.length > 1 && (
+        <Tabs big value={report.condition?.tyres ?? 'used'} onChange={setLevel}
           style={styles.condition} label="Each lap compared only with laps on the same tyres"
-          items={[lead, other].map((r, i) => ({ key: i ? 'other' : 'lead', label: tyresWord(r),
+          items={byLevel.map((r) => ({ key: r.condition?.tyres ?? 'used', label: tyresWord(r),
             sub: `${r.laps_analysed} laps · fastest ${formatLap(r.headline.fastest.time)}` }))} />
       )}
     </View>
@@ -955,8 +958,8 @@ function Trends({ report, names }: { report: Report; names: RunNamer }) {
               <Text style={styles.td}>{formatLap(r.median)}</Text>
               <Text style={styles.td}>{r.consistency != null ? `${r.consistency.toFixed(1)}%` : '–'}</Text>
               {r.tyres && (
-                <Text style={styles.td} accessibilityLabel={`${r.tyres.tyres} tyres, ${r.tyres.why}`}>
-                  {r.tyres.tyres === 'new' ? 'New' : 'Used'}{r.tyres.sure ? '' : ' (guessed)'}
+                <Text style={styles.td} accessibilityLabel={`${TYRE_LABEL[r.tyres.tyres]} tyres, ${r.tyres.why}`}>
+                  {TYRE_LABEL[r.tyres.tyres]}{r.tyres.sure ? '' : ' (guessed)'}
                 </Text>
               )}
             </View>
@@ -966,9 +969,11 @@ function Trends({ report, names }: { report: Report; names: RunNamer }) {
       <Text style={styles.note}>
         Consistency is 100% when every clean lap matches the session&apos;s best, 10 points off for each 1% the median
         lap is slower.
-        {tr.runs.some((r) => r.tyres) ? ' Laps are compared only with laps on the same tyres. A run\'s tyres are ' +
-          'guessed from its laps (a short run as quick as qualifying is on new tyres) until you set them on its ' +
-          'technique check.' : ''}
+        {tr.runs.some((r) => r.tyres) ? ' Laps are compared only with laps on the same tyres. Until you set a ' +
+          'run\'s tyres, they are guessed from the event\'s laps in the order they ran: qualifying is a new set, a ' +
+          'race the qualifying set (Fresh); in practice a lap at the start of a run as quick as qualifying, or clearly ' +
+          'quicker than anything on the set before, starts a new set, and the runs after it step down to Fresh, Used ' +
+          `(${TYRE_STEPS.fresh}+ laps on the set) and Very used (${TYRE_STEPS.used}+).` : ''}
         {tr.consistency != null ? ` Across all ${report.laps_analysed} laps: ${tr.consistency.toFixed(1)}%.` : ''}
       </Text>
       {longest >= 2 && (

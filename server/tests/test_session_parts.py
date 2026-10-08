@@ -102,7 +102,7 @@ def test_a_session_report_covers_that_session_s_runs_only(client):
     piana = client.post("/drivers", json={"name": "Gabriele Piana"}).json()
     rackl = client.post("/drivers", json={"name": "Max Rackl"}).json()
     runs = [("FP1 stint 2", rackl["id"], "10:40:00", (0.97, 0.99, 0.98)),
-            ("Q1", piana["id"], "14:00:00", (0.95, 0.96)),
+            ("Q1", piana["id"], "14:00:00", (0.99, 1.0)),  # quicker than practice: practice on the same tyres
             ("FP1 stint 1", piana["id"], "10:00:00", (0.96, 0.975, 0.97))]
     ids = {}
     for name, driver, at, paces in runs:

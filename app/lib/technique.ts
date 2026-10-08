@@ -2,6 +2,7 @@
 // driving mistakes, what each cost, what the lap would have been without them, and the ones that repeat across the
 // session and the event. Every lap is compared only with laps on the same tyres (PUT .../tyres sets a run's).
 // The server works it out in the background for every clean lap of an event (or of a session in no event).
+import type { RunTyres as RunTyresLevel, TyreLevel } from '@/lib/tyreLevels';
 import { apiFetch } from '@/lib/api';
 
 export type TechniqueStatus = 'ready' | 'queued' | 'running' | 'failed' | 'empty';
@@ -38,10 +39,10 @@ export type ObviousMistake = {
   repeats?: { laps: number; of: number } | null; // on how many of the session's clean laps
 };
 
-export type Tyres = 'new' | 'used';
-/** A run's tyres: the driver's (sure), or guessed from its laps until the driver confirms (qualifying is new, a race
- * used, for sure); with how many of the event's clean laps are on them. */
-export type RunTyres = { tyres: Tyres; sure: boolean; why: string; laps?: number | null };
+export type Tyres = TyreLevel; // a lap's own tyres here are new or not ('new' | 'used': the check keeps new apart)
+/** A run's tyres: the driver's (sure), or guessed from the event's laps until the driver confirms (qualifying is new,
+ * a race Fresh, for sure); with how many of the event's clean laps it is compared with. */
+export type RunTyres = RunTyresLevel;
 
 export type InputRole = 'speed' | 'throttle' | 'brake' | 'steer' | 'gear' | 'rpm';
 /** The driver's inputs at the speed trace's points (every step_m metres): throttle %, brake pressure, steering,
