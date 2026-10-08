@@ -4,6 +4,7 @@ import {
   ActivityIndicator, LayoutChangeEvent, Pressable, ScrollView, StyleSheet, useWindowDimensions, View as Box,
 } from 'react-native';
 
+import { Tabs } from '@/components/Picks';
 import PrintButton from '@/components/PrintButton';
 import {
   B, Colophon, Fig, Folio, Hero, Label, Page, Section, Swatch, TextLink, useGutter, useWide,
@@ -87,6 +88,9 @@ const reportPhoto = (track: string | null | undefined): Photo => {
  * `onSections` says how many there are), hand it the event it has already read (`folder`), and bring the map into
  * view when a section is tapped to see it there (`onShowMap`, with the map's place in the report, where the browser
  * can't). */
+/** A condition's tab: the tyres and what runs on them. */
+const tyresWord = (r: Report) => (r.condition?.tyres === 'new' ? 'Qualifying · new tyres' : 'Race pace · used tyres');
+
 export default function EventReport({
   eventId, part, sessionId, embedded, firstNo = 1, onSections, folder: hostFolder, onShowMap, parts: hostParts,
 }: {
@@ -182,7 +186,11 @@ export default function EventReport({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
-  const report = answer?.report ?? null;
+  // the laps on used tyres (practice and races) lead; qualifying's new tyres and low fuel have their own report
+  const [onNew, setOnNew] = useState(false);
+  const lead = answer?.report ?? null;
+  const other = lead?.condition?.other ?? null;
+  const report = onNew && other ? other : lead;
   // every run by its own name ("FP1 stint 1", "Q1 · Gabriele Piana"), never a number
   const names = useMemo(() => runNamer(answer), [answer]);
   const mapAt = useRef<Box>(null); // the map, embedded: on the web a DOM element to bring into view
@@ -254,6 +262,12 @@ export default function EventReport({
         report ? <>Fastest <B>{formatLap(report.headline.fastest.time)}</B></> : null,
         report ? (report.numbering === 'official' ? 'Official corner numbers' : 'Corners numbered from the log') : null,
       ]} />
+      {lead && other && (
+        <Tabs big value={report === other ? 'other' : 'lead'} onChange={(k) => setOnNew(k === 'other')}
+          style={styles.condition} label="Laps compared, each only with laps on the same tyres"
+          items={[lead, other].map((r, i) => ({ key: i ? 'other' : 'lead', label: tyresWord(r),
+            sub: `${r.laps_analysed} laps · fastest ${formatLap(r.headline.fastest.time)}` }))} />
+      )}
     </View>
   );
 
@@ -1036,6 +1050,7 @@ function RelationRow({ r }: { r: Relation }) {
 }
 
 const useStyles = themed((c) => ({
+  condition: { marginTop: 18 },
   // text
   para: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 25, color: c.text },
   note: { ...Type.dek, fontSize: 15, lineHeight: 21, color: c.textSecondary, marginTop: 6 },
