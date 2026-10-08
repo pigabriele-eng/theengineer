@@ -2,7 +2,9 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
 
+import { BestInEachCorner } from '@/components/BestInEachCorner';
 import { CompareTraces, LineKey, SectionTable, useLapColors, WhereTheTimeIs } from '@/components/CompareViews';
+import { TheoreticalLaps, useTheoreticalLines, useTheoreticals } from '@/components/TheoreticalLaps';
 import { Choice, PageHead, useText } from '@/components/Picks';
 import PrintButton from '@/components/PrintButton';
 import { Colophon, Page, Section, TextLink, useWide } from '@/components/Programme';
@@ -21,11 +23,14 @@ import {
   signedSeconds,
   TrackGroup,
 } from '@/lib/compare';
+import { asSession } from '@/lib/compareFlags';
 import { keepFold, openFirst, pickedTrack, visitFolds } from '@/lib/compareFolds';
 import { face, Fonts, TAP, themed, Type, useTheme } from '@/constants/Theme';
 import { eventsApi } from '@/lib/events';
 import { currentEvent } from '@/lib/openCurrent';
 import { noPrint } from '@/lib/print';
+import { bestFlags, bestInEachCorner, flagWords, lapKey, MIN_GAIN_S } from '@/lib/sessionLaps';
+import { flipKey, onGraph } from '@/lib/theoretical';
 import { codeOf } from '@/lib/driverTag';
 import { a11yState } from '@/lib/a11yState';
 
@@ -189,6 +194,25 @@ export default function CompareScreen() {
   const pickColors = useLapColors(picks.map((p) => p.slot));
   const focus = data ? Math.max(0, shown!.picks.findIndex((p) => keyOf(p) === focusKey)) : 0;
   const stale = busy || (shown != null && encodePicks(shown.picks) !== encodePicks(picks));
+  // the stint and combined theoretical laps of the laps shown, worked out after them; on the graph once added
+  const shownLaps = (shown?.picks ?? []).map(({ session_id, lap }) => ({ session_id, lap }));
+  const theo = useTheoreticals(shownLaps, data != null);
+  const [theoOn, setTheoOn] = useState<string[]>([]);
+  const colorOfSession = (id: number) => {
+    const i = shown?.picks.findIndex((p) => p.session_id === id) ?? -1;
+    return i >= 0 ? colors.laps[i] : null;
+  };
+  const lineOf = useTheoreticalLines(colorOfSession);
+  const extra = data ? onGraph(theo.answer, theoOn, data.traces.distance).map((g) => ({ ...g, ...lineOf(g) })) : [];
+  // the laps holding the best time in a corner, flagged as on the During tab (lib/compareFlags.ts), and the best in
+  // each corner; only for the laps shown (not while other laps are being compared)
+  const asLaps = useMemo(() => (data ? asSession(data) : null), [data]);
+  const flags = useMemo(() => (asLaps ? bestFlags(asLaps) : new Map()), [asLaps]);
+  const corners = useMemo(() => (asLaps ? bestInEachCorner(asLaps) : []), [asLaps]);
+  const colorOfLap = (l: { session_id: number; lap: number }) => {
+    const i = shown?.picks.findIndex((p) => p.session_id === l.session_id && p.lap === l.lap) ?? -1;
+    return i >= 0 ? colors.laps[i] : null;
+  };
   const pdfName = ['Compare laps', ...picks.map((p) => `${sessions.get(p.session_id)?.name ?? `Session ${p.session_id}`} L${p.lap}`)]
     .join(' · ');
 
@@ -244,6 +268,11 @@ export default function CompareScreen() {
                   <Text style={styles.removeText}>✕</Text>
                 </Pressable>
               </View>
+              {!stale && flags.has(lapKey(p)) && (
+                <View style={styles.flag}>
+                  <Text style={styles.flagText}>{flagWords(flags.get(lapKey(p)), 'these laps')}</Text>
+                </View>
+              )}
               {/* every lap of the run, one tap to switch to it (its quickest clean lap on the purple block), and one
                   tap to add another lap of the same run: laps of one run against each other */}
               {s && (
@@ -351,10 +380,17 @@ export default function CompareScreen() {
         <View style={StyleSheet.flatten([styles.results, stale && styles.stale])}
           onLayout={(e) => (resultsY.current = e.nativeEvent.layout.y)}>
           <WhereTheTimeIs no={2} data={data} colors={colors} focus={focus} onFocus={onFocus} onShow={showSection} />
-          <SectionTable no={3} data={data} colors={colors} onPick={showSection} />
+          <Section no={3} title="Best in each corner"
+            dek={`The quickest of these laps in each section and what it gained on the fastest lap (${MIN_GAIN_S.toFixed(2)} s or more); tap one to zoom the traces to it.`}>
+            <BestInEachCorner rows={corners} colorOf={colorOfLap} onPress={(b) => showSection(b.code)}
+              action={() => ({ words: 'Zoom →', checkbox: false })} />
+          </Section>
+          <SectionTable no={4} data={data} colors={colors} onPick={showSection} />
+          <TheoreticalLaps answer={theo.answer} error={theo.error} waiting={false} on={theoOn}
+            onFlip={(k) => setTheoOn((on) => flipKey(on, k))} colorOfSession={colorOfSession} />
           <View onLayout={(e) => (tracesY.current = e.nativeEvent.layout.y)} style={styles.transparent}>
-            <CompareTraces no={4} data={data} colors={colors} zoom={zoom} onZoom={setZoom} cursor={cursor}
-              onCursor={setCursor} />
+            <CompareTraces no={5} data={data} colors={colors} zoom={zoom} onZoom={setZoom} cursor={cursor}
+              onCursor={setCursor} extra={extra} />
           </View>
         </View>
       )}
@@ -365,6 +401,9 @@ export default function CompareScreen() {
 
 const useStyles = themed((c) => ({
   grow: { flex: 1, minWidth: 0, backgroundColor: 'transparent' },
+  // a lap's flag, as on the During tab: a rule in the "better" colour and the words beside it (never the colour alone)
+  flag: { marginTop: 6, marginLeft: 24, borderLeftWidth: 3, borderColor: c.success, paddingLeft: 8 },
+  flagText: { fontFamily: face('body', 600), fontSize: 16, lineHeight: 22, color: c.success },
   left: { alignSelf: 'flex-start' },
   headRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 10, borderBottomWidth: 1, borderColor: c.rule,
     paddingBottom: 5 },

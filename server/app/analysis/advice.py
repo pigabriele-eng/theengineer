@@ -307,7 +307,7 @@ def _sentence(h: Habit, t: float, q: float, brake_unit: str, prev: str | None) -
         return f"Drive out at {q:.1f} km/h (typical {t:.1f})"
     if key == "entry_speed":
         where = f"the exit of {prev}" if prev else "the corner before"
-        return f"Flat out: its time is set by {where}. The quick passes start it at {q:.1f} km/h against {t:.1f}"
+        return f"Flat out: its time is set by {where}. The top 10% of passes start it at {q:.1f} km/h against {t:.1f}"
     return f"{h.label}: {q:.1f} against {t:.1f}"
 
 
@@ -394,8 +394,8 @@ def _section(prep: Prepared, s: Section, prev: str | None, realistic, brake_unit
     elif main is not None and gain >= 0.05:
         place = {"braking": "under braking", "entry": "on entry", "mid-corner": "mid-corner", "exit": "on the exit",
                  "full throttle": "on the straight after it"}[main]
-        headline = (f"The quick passes gain {gain:.2f} s here, most of it {place}, with no one habit standing out: "
-                    "compare the speed traces")
+        headline = (f"The top 10% of passes gain {gain:.2f} s here, most of it {place}, with no one habit "
+                    "standing out: compare the speed traces")
     else:
         headline = None
     habits.sort(key=lambda h: (not h["used"], {"strong": 0, "clear": 1}.get(h["link"], 2), -(h["worth_s"] or 0)))
@@ -427,8 +427,8 @@ def _section(prep: Prepared, s: Section, prev: str | None, realistic, brake_unit
 def _loss_line(sec: dict) -> str:
     parts = sorted(((k, v) for k, v in sec["where"].items() if v >= 0.02), key=lambda kv: -kv[1])
     if not parts:
-        return "A typical pass is as quick as the quick passes here."
-    return "A typical pass loses " + ", ".join(f"{v:.2f} s on {k}" for k, v in parts) + " to the quick passes."
+        return "A typical pass is as quick as the top 10% here."
+    return "A typical pass loses " + ", ".join(f"{v:.2f} s on {k}" for k, v in parts) + " to the top 10% of passes."
 
 
 # ---------- what goes with lap time ----------
@@ -702,12 +702,12 @@ def _summary(fastest: LapRecord, typical: float, gains: list[dict], where_total:
     out = f"The fastest lap is {fastest.run} lap {fastest.number} ({lap_text(fastest.time)})."
     if gains:
         names = ", ".join(f"{g['code']} ({g['seconds']:.2f} s)" for g in gains)
-        out += (f" A typical lap ({lap_text(typical)}) gains most by driving like the quickest passes in {names}")
+        out += (f" A typical lap ({lap_text(typical)}) gains most by driving like the top 10% of passes in {names}")
         main = max(where_total.items(), key=lambda kv: kv[1])
         out += f"; across the lap, most of that time is on {main[0]}." if main[1] > 0 else "."
     if n_laps < MIN_LAPS_FOR_TRENDS:
         out += (f" With {n_laps} clean laps the link between each habit and the time can't be measured yet, so the "
-                "advice compares the quickest passes with the rest.")
+                "advice compares the top 10% of passes with the rest.")
     return out
 
 
@@ -716,12 +716,12 @@ METHOD = [
     "timed line to line.",
     "Sections run from the fast point before a corner to the same point before the next one, so each holds the "
     "braking, the corner and the straight after it. They carry the track's official corner numbers.",
-    "Quick passes are the quickest tenth of all passes of a section (at least three). Typical is the median pass. "
+    "The top 10% are the quickest tenth of all passes of a section (at least three). Typical is the median pass. "
     "Distances are metres from the start/finish line.",
     "The link says how strongly a habit goes with a quicker section lap to lap within the same run, so tyre and "
     "fuel changes through a run don't count: strong above 0.6, clear from 0.3. It shows what goes with a quicker "
     "pass, not what causes it.",
-    "Where the time goes splits the gap between a typical pass and the quick passes by what the quickest pass was "
+    "Where the time goes splits the gap between a typical pass and the top 10% by what the quickest pass was "
     "doing at each metre: braking in a straight line, braking into the turn (entry), mid-corner, on the throttle "
     "while turning (exit) and full throttle.",
     "What goes with lap time compares every clean lap's time with the engine's measures of the lap and with every "

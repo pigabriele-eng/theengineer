@@ -189,7 +189,7 @@ def test_braking_where_the_quickest_passes_brake_harder_is_no_setup_change():
                    _row("T6", 49, car=0.13, where="trail", brake=brake)],
                   [("slow", 0.1, 0.2, 0.0), ("medium", None, None, None), ("fast", None, None, None)])
     notes = advise(a, bar_model(None))["notes"]
-    assert notes == ["Brakes need no setup change. Into T2-T5 and T6 the quickest passes use 7 bar more pressure: "
+    assert notes == ["Brakes need no setup change. Into T2-T5 and T6 the top 10% of passes use 7 bar more pressure: "
                      "the time is in how hard the pedal goes on. ABS works in 30 % of all braking."]
 
 
@@ -215,7 +215,7 @@ def test_car_limits_split_the_lap():
     assert [s["where"] for s in out["sections"]] == ["braking", None, None]  # too small to say where
     assert out["total_car"] == 0.21
     assert "2.00 s off the theoretical lap: 0.60 s is driving" in out["text"]
-    assert "In T2 the quickest passes already beat the realistic target." in out["text"]
+    assert "In T2 the top 10% of passes already beat the realistic target." in out["text"]
 
 
 def test_best_sections_beating_the_realistic_target_leave_the_car_nothing():

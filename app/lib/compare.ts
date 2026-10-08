@@ -1,6 +1,7 @@
 // Client for the Compare screen: laps from any sessions at one track (GET /compare/sessions, POST /compare/laps).
 import { apiFetch, CornerNumbering, formatLap } from '@/lib/api';
 import { byScheme } from '@/constants/Theme';
+import type { TheoreticalAnswer } from '@/lib/theoretical';
 
 export const MIN_LAPS = 2;
 export const MAX_LAPS = 6;
@@ -97,6 +98,14 @@ export const fetchPickable = () => request<{ tracks: TrackGroup[] }>('/compare/s
 
 export const compareLaps = (laps: { session_id: number; lap: number }[]) =>
   request<CompareResult>('/compare/laps', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ laps }),
+  });
+
+// the stint and combined theoretical laps of the laps compared (lib/theoretical.ts)
+export const fetchTheoretical = (laps: { session_id: number; lap: number }[]) =>
+  request<TheoreticalAnswer>('/compare/theoretical', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ laps }),
