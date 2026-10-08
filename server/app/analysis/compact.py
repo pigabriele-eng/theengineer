@@ -20,7 +20,7 @@ from app.heavy import release_memory
 from app.analysis.align import CHUNK, MAX_OFFSET_M, TrackLine, lap_position, track_line
 from app.analysis.channels import math_channels
 from app.analysis.insights import LapRecord, Prepared, targets
-from app.analysis.laps import MASTER_HZ, CornerSpec, SessionData, lap_length, load_session, make_sections
+from app.analysis.laps import MASTER_HZ, CornerSpec, Section, SessionData, lap_length, load_session, make_sections
 from app.analysis.scan import lap_medians
 from app.importers.motec import LdFile
 
@@ -277,11 +277,31 @@ class Extras:
     units: dict[str, str] = field(default_factory=dict)
 
 
+@dataclass
+class Laid:
+    """Every clean lap on the fastest lap's line, its sections, without the car's limits worked out yet."""
+    line: TrackLine | None
+    reference: LapRecord
+    laps: list[LapRecord]
+    sections: list[Section]
+    numbering: str
+
+    @property
+    def length(self) -> int:
+        return len(self.reference.trace["t"])
+
+    def prepared(self) -> Prepared:
+        """The car's limits and the theoretical lap from all of the laps (what prepare_compact returns)."""
+        t = targets(self.laps, self.reference.trace, self.reference.time, self.sections)
+        return t.prepared(self.line, self.reference, self.laps, self.sections, self.numbering)
+
+
 def prepare_compact(sessions: list[tuple[int | None, CompactSession]], corners: list[CornerSpec] | None = None,
-                    consume: bool = False) -> tuple[Prepared, Extras] | None:
+                    consume: bool = False, limits: bool = True) -> tuple[Prepared | Laid, Extras] | None:
     """The engine's preparation (insights.prepare) from compact sessions: every clean lap on the fastest lap's line,
     the car's limits and the theoretical lap. Session names must be unique. consume: each session's traces are let go
-    once its laps are on the line (for a caller that loaded them for this alone), so they are never held twice."""
+    once its laps are on the line (for a caller that loaded them for this alone), so they are never held twice.
+    limits=False: the laps laid on the line only (Laid), for a caller that works the limits out from some of them."""
     with_laps = [(sid, s) for sid, s in sessions if s.n_laps]
     if not with_laps:
         return None
@@ -306,5 +326,5 @@ def prepare_compact(sessions: list[tuple[int | None, CompactSession]], corners: 
         extras.units = {**s.units, **extras.units}
     assert reference is not None
     sections, numbering = make_sections(reference.trace, corners)
-    t = targets(laps, reference.trace, reference.time, sections)
-    return t.prepared(line, reference, laps, sections, numbering), extras
+    laid = Laid(line, reference, laps, sections, numbering)
+    return (laid.prepared() if limits else laid), extras
