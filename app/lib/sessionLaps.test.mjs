@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  addPick, bestFlags, bestInEachCorner, defaultPicks, fastestSections, flagWords, flipPick, gapWords, lapKey,
+  addPick, bestFlags, bestInEachCorner, defaultPicks, dropPick, fastestSections, flagWords, flipPick, gapWords, lapKey,
   MAX_PICKS,
 } from './sessionLaps.ts';
 
@@ -81,4 +81,9 @@ test('a tap puts a lap on the traces or takes it off; a seventh says to take one
   assert.deepEqual(addPick(full, { session_id: 9, lap: 2 }), { picks: full, full: false });
   assert.deepEqual(addPick(full, { session_id: 1, lap: 2 }), { picks: full, full: true });
   assert.deepEqual(addPick([], { session_id: 1, lap: 2 }).picks, [{ session_id: 1, lap: 2, slot: 0 }]);
+  // the × on a lap above the traces: off them, the others keep their colours, down to none
+  const two = [{ session_id: 1, lap: 2, slot: 0 }, { session_id: 2, lap: 5, slot: 1 }];
+  assert.deepEqual(dropPick(two, { session_id: 1, lap: 2 }), [{ session_id: 2, lap: 5, slot: 1 }]);
+  assert.deepEqual(dropPick(dropPick(two, { session_id: 1, lap: 2 }), { session_id: 2, lap: 5 }), []);
+  assert.deepEqual(dropPick(two, { session_id: 3, lap: 1 }), two); // not on them: nothing changes
 });

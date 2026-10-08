@@ -24,7 +24,7 @@ import { afterOthers } from '@/lib/loadLast';
 import { poll } from '@/lib/poll';
 import { fetchLatestSession } from '@/lib/sessionCompare';
 import {
-  addPick, bestFlags, bestInEachCorner, defaultPicks, fastestSections, flagWords, flipPick, gapWords,
+  bestFlags, bestInEachCorner, defaultPicks, dropPick, fastestSections, flagWords, flipPick, gapWords,
   isFastest, lapKey, LapPick, LapRef, LatestSession, MAX_PICKS, MIN_GAIN_S, seconds, SessionLap, SessionRun,
 } from '@/lib/sessionLaps';
 import { TYRE_LABEL } from '@/lib/tyreLevels';
@@ -91,10 +91,17 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
     setFull(r.full ? 'laps' : null);
     if (!r.full) setOwn({ key: sessionKey, picks: r.picks });
   };
-  const add = (l: LapRef) => {
-    const r = addPick(picks, l);
+  // a corner's best lap: on the traces with a tap, off them with another (Gabriele, 2026-10-08: "please allow to
+  // remove a trace as well")
+  const flipCorner = (l: LapRef) => {
+    const r = flipPick(picks, l);
     setFull(r.full ? 'corners' : null);
     if (!r.full) setOwn({ key: sessionKey, picks: r.picks });
+  };
+  // a lap taken off the traces from its key above them
+  const remove = (l: LapRef) => {
+    setFull(null);
+    setOwn({ key: sessionKey, picks: dropPick(picks, l) });
   };
   const palette = useLapColors([0, 1, 2, 3, 4, 5]).laps;
   const colorOf = (l: LapRef) => {
@@ -214,7 +221,7 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
         </View>
       </Section>
       <Section no={no + 1} title="Best in each corner"
-        dek={`The session’s quickest lap in each section and what it gained on the fastest lap (${MIN_GAIN_S.toFixed(2)} s or more); tap one to put it on the traces.`}>
+        dek={`The session’s quickest lap in each section and what it gained on the fastest lap (${MIN_GAIN_S.toFixed(2)} s or more); tap one to put it on the traces, again to take it off.`}>
         {working ? finding : !fast ? <Note>{answer.note ?? 'Two clean laps are needed to compare the corners.'}</Note> : (
           <View style={styles.list}>
             {bestInEachCorner(answer).map((b) => {
@@ -222,8 +229,9 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
               const color = colorOf(ref);
               const who = `${b.run.name} · lap ${b.lap.number} · ${b.run.driver ?? 'driver not set'}`;
               return (
-                <Pressable key={b.code} onPress={() => add(ref)} accessibilityRole="button" style={styles.corner}
-                  accessibilityLabel={`${b.code}: ${b.fastest ? 'the fastest lap is the quickest here' : `${who}, ${seconds(b.gain)} on the fastest lap`}. ${color ? 'On the traces' : 'Put it on the traces'}`}>
+                <Pressable key={b.code} onPress={() => flipCorner(ref)} accessibilityRole="checkbox"
+                  {...a11yState({ checked: color != null })} style={styles.corner}
+                  accessibilityLabel={`${b.code}: ${b.fastest ? 'the fastest lap is the quickest here' : `${who}, ${seconds(b.gain)} on the fastest lap`}, on the traces`}>
                   <Text style={styles.code}>{b.code}</Text>
                   <View style={styles.grow}>
                     <Text style={styles.cornerWho}>{b.fastest ? 'The fastest lap itself' : who}</Text>
@@ -231,7 +239,7 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
                   </View>
                   <View style={styles.cornerState}>
                     {color && <LineKey color={color} />}
-                    <Text style={styles.cornerGo}>{color ? 'On the traces' : 'Add →'}</Text>
+                    <Text style={styles.cornerGo}>{color ? 'On the traces · Remove ×' : 'Add →'}</Text>
                   </View>
                 </Pressable>
               );
@@ -244,17 +252,52 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
         {current && data ? (
           <>
             <WhereTheTimeIs no={no + 2} data={data} colors={colors} focus={focus} onFocus={setFocus} onShow={show} />
+            <OnTraces picks={picks} runs={answer.runs} colorOf={colorOf} onRemove={remove} />
             <CompareTraces no={no + 3} data={data} colors={colors} zoom={zoom} onZoom={setZoom}
               cursor={cursor} onCursor={setCursor} />
           </>
         ) : (
           <>
             <Section no={no + 2} title="Where the time is">{waiting}</Section>
+            <OnTraces picks={picks} runs={answer.runs} colorOf={colorOf} onRemove={remove} />
             <Section no={no + 3} title="Traces">{waiting}</Section>
           </>
         )}
       </Box>
     </>
+  );
+}
+
+/** The laps on the traces, each with its colour and an × that takes it off them (Gabriele, 2026-10-08: "please allow
+ * to remove a trace as well"), down to none; the traces need two. */
+function OnTraces({ picks, runs, colorOf, onRemove }: {
+  picks: LapPick[];
+  runs: SessionRun[];
+  colorOf: (l: LapRef) => string | null;
+  onRemove: (l: LapRef) => void;
+}) {
+  const styles = useStyles();
+  if (picks.length === 0) return null;
+  return (
+    <View style={styles.onTraces}>
+      <Label style={styles.onTracesLabel}>On the traces</Label>
+      <View style={styles.chips}>
+        {picks.map((p) => {
+          const run = runs.find((r) => r.id === p.session_id);
+          const name = run?.name ?? 'a run';
+          const color = colorOf(p);
+          return (
+            <Pressable key={`${p.session_id}:${p.lap}`} onPress={() => onRemove(p)} accessibilityRole="button"
+              accessibilityLabel={`Take lap ${p.lap} of ${name} (${run?.driver ?? 'driver not set'}) off the traces`}
+              style={styles.chip}>
+              {color && <LineKey color={color} />}
+              <Text style={styles.chipText}>{`${name} · L${p.lap} · ${codeOf(run?.driver) ?? 'No driver'}`}</Text>
+              <Text style={styles.chipX}>×</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
   );
 }
 
@@ -354,4 +397,13 @@ const useStyles = themed((c) => ({
   gain: { ...Type.number, fontSize: 15, color: c.success, marginTop: 2 },
   cornerState: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   cornerGo: { ...Type.link, fontSize: 13, color: c.text },
+
+  // the laps on the traces: a key each, an × to take it off
+  onTraces: { marginTop: 28, maxWidth: 820 },
+  onTracesLabel: { color: c.text, marginBottom: 8 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: TAP, paddingHorizontal: 12,
+    borderWidth: 1, borderColor: c.rule },
+  chipText: { fontFamily: face('label', 600), fontSize: 16, color: c.text },
+  chipX: { fontFamily: face('label', 700), fontSize: 20, lineHeight: 22, color: c.text },
 }));
