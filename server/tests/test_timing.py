@@ -216,7 +216,7 @@ def test_a_single_upload_puts_the_session_at_its_track(client):
     assert listed == {"FP1": "Test Track", "FP2": "Test Track", "FP3": "Test Track"}
 
 
-def test_logs_timed_by_older_lap_timing_are_timed_again_once(client, monkeypatch):
+def test_logs_timed_by_older_lap_timing_are_timed_again_once(client, monkeypatch, settle):
     """The live Zandvoort data: older lap timing took two pulses of the dash's marker 3 s apart for a lap. In a pit
     log that was the log's only "lap", clean and the best of the event; in a run it cut a lap in two. On startup
     each log timed by older lap timing is timed again, once: the pit log's run is then an empty run and goes,
@@ -246,6 +246,8 @@ def test_logs_timed_by_older_lap_timing_are_timed_again_once(client, monkeypatch
     assert client.post(f"/sessions/{ids['03_debriefed']}/debriefs", json={"transcript": "Pit stop practice"}
                        ).status_code == 201
     tyre_store.stop()  # its summaries are checked below, not made
+    # the import's reports count each log's warm-up in the background, writing its meta: done before this rewrites it
+    settle()
     with app.db.SessionLocal() as db:  # what older code left: no timing version, tyre data up to date
         for f in db.query(app.models.LoggerFile):
             f.meta = {k: v for k, v in f.meta.items() if k != "timing_version"}
