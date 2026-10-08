@@ -13,6 +13,7 @@ import {
 } from '@/components/Programme';
 import { Bars, LineChart, LineSeries, useChartColors } from '@/components/ReportCharts';
 import { Balance } from '@/components/report/Balance';
+import DriversCompare, { hasTwoDrivers } from '@/components/report/DriversCompare';
 import { GripReport } from '@/components/report/GripReport';
 import LapFilter from '@/components/report/LapFilter';
 import { GripBalance, LapsScope, TyreCorners, useQuickLaps } from '@/components/report/QuickLaps';
@@ -131,6 +132,7 @@ export default function EventReport({
   const [focus, setFocus] = useState<string | null>(null);
   const [topH, setTopH] = useState(0);
   const [mapY, setMapY] = useState(0);
+  const [driversY, setDriversY] = useState(0);
   const [shape, setShape] = useState<TrackShapeData | null>(null); // the track's shape, once the map has it
   const scroll = useRef<ScrollView>(null);
   const router = useRouter();
@@ -241,7 +243,16 @@ export default function EventReport({
     : byLevel.find((r) => r.condition?.tyres === level) ?? lead;
   // every run by its own name ("FP1 stint 1", "Q1 · Gabriele Piana"), never a number
   const names = useMemo(() => runNamer(answer), [answer]);
+  // who drove each run, and each run's id by its name, for the Drivers section
+  const drivers = useMemo(() => new Map((answer?.sessions ?? []).map((s) => [s.id, s.driver ?? null])), [answer]);
+  const driverOf = useCallback((id: number) => drivers.get(id) ?? null, [drivers]);
+  const runIds = useMemo(() => new Map((answer?.runs ?? []).map((r) => [r.name, r.id])), [answer]);
+  const runIdOf = useCallback((run: string) => runIds.get(run), [runIds]);
+  const runName = useCallback((id: number) => names.byId(id)?.name
+    ?? answer?.sessions.find((s) => s.id === id)?.name ?? 'a run', [names, answer]);
   const mapAt = useRef<Box>(null); // the map, embedded: on the web a DOM element to bring into view
+  const driversAt = useRef<Box>(null); // the Drivers section, likewise
+  const driversHead = useRef(0); // how far down its section the Drivers section's body starts: under its heading
   const showOnMap = (code: string) => {
     setFocus(code);
     if (!embedded) {
@@ -254,6 +265,20 @@ export default function EventReport({
     // the map's top at the top of the screen (on a phone the map and the list under it are taller than the screen)
     if (node?.scrollIntoView) node.scrollIntoView({ behavior: 'smooth', block: 'start' });
     else onShowMap?.(mapY);
+  };
+  // the filter bar's "Compare drivers": the Drivers section into view, as a section is brought to the map
+  const showDrivers = () => {
+    if (!embedded) {
+      scroll.current?.scrollTo({ y: Math.max(topH + driversY - 12, 0), animated: true });
+      return;
+    }
+    const node = driversAt.current as unknown as {
+      scrollIntoView?: (o: object) => void; style?: { scrollMarginTop: string } } | null;
+    if (node?.scrollIntoView) {
+      // the section's heading in view too, above its body
+      if (node.style) node.style.scrollMarginTop = `${driversHead.current + 12}px`;
+      node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else onShowMap?.(driversY);
   };
   // how many numbered sections there are, for the page around it to number its own on from them
   const count = useRef(0);
@@ -294,6 +319,8 @@ export default function EventReport({
     : folder ? dateRange(folder.start, folder.end) : null;
   const runWord = (n: number) => (isPart ? (n === 1 ? 'run' : 'runs') : n === 1 ? 'session' : 'sessions');
   const pdfName = [kindName, isPart ? folder?.name : answer?.title ?? folder?.name].filter(Boolean).join(' · ');
+  // two drivers or more in the report's runs (on any tyres, whatever the lap filter picks): the Drivers section
+  const driversOn = report != null && !('session' in scope) && hasTwoDrivers(byLevel, driverOf);
 
   const top = (
     <View onLayout={(e: LayoutChangeEvent) => setTopH(e.nativeEvent.layout.height)}>
@@ -319,6 +346,20 @@ export default function EventReport({
     const h = report.headline;
     sections.push({ title: 'The lap', dek: 'The fastest lap, and what a typical clean lap does.',
       body: <TheLap report={report} names={names} width={Math.min(width, 1240) - 2 * gutter} /> });
+    if (driversOn) {
+      sections.push({ title: 'Drivers',
+        dek: 'Two drivers on the same tyres, corner by corner: how each brakes, turns and gets back on the throttle, ' +
+          'then their lap times on one tyre age and fuel load.',
+        onLayout: (e) => setDriversY(e.nativeEvent.layout.y),
+        body: (
+          <Box ref={driversAt} onLayout={(e) => {
+            driversHead.current = e.nativeEvent.layout.y;
+          }}>
+            <DriversCompare levels={byLevel} driverOf={driverOf} shown={picking ? null : report.condition?.tyres ?? null}
+              runName={runName} runIdOf={runIdOf} gripEvent={isEvent ? (scope as { event: number }).event : null} />
+          </Box>
+        ) });
+    }
     sections.push({ title: report.gains.length === 3 ? 'Top three gains' : 'Where to gain',
       dek: `Where a typical lap (${formatLap(h.typical)}) gives the most away to the top 10% of passes.`,
       body: <Gains report={report} onPick={showOnMap} /> });
@@ -451,6 +492,11 @@ export default function EventReport({
               sub: `${r.laps_analysed} laps · fastest ${formatLap(r.headline.fastest.time)}` }))} />
         )}
         {isEvent && <View {...noPrint}><LapFilter eventId={scope.event} onRuns={setPickRuns} style={styles.condition} /></View>}
+        {driversOn && (
+          <View {...noPrint}>
+            <TextLink label="Compare drivers" onPress={showDrivers} arrow />
+          </View>
+        )}
         {picking && report?.condition && (
           <Text style={styles.para}>
             <B>{report.condition.label}</B>{` · ${report.laps_analysed} laps · fastest ${formatLap(report.headline.fastest.time)}`}
