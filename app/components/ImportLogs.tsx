@@ -25,7 +25,7 @@ import { namingApi, NewEvent } from '@/lib/eventNaming';
 import { warmResults } from '@/lib/finishes';
 import { dateRange, eventsApi, FolderSummary } from '@/lib/events';
 import { uploadRunIds } from '@/lib/tyrePicks';
-import { PickedFile, sendImport, sizeOf } from '@/lib/upload';
+import { PickedFile, Retry, sendImport, sizeOf } from '@/lib/upload';
 import { Fonts, inkOn, themed, Type, useTheme } from '@/constants/Theme';
 
 // The browser's file dialog filters by extension. iOS and Android filter by MIME type only, and a .ld log has
@@ -33,7 +33,11 @@ import { Fonts, inkOn, themed, Type, useTheme } from '@/constants/Theme';
 const ACCEPT = Platform.OS === 'web' ? ['.zip', '.ld', '.ldx', '.csv', '.txt'] : ['*/*'];
 const WEB = Platform.OS === 'web'; // a folder can be dropped there, and becomes an event as a zip does
 const POLL_MS = 1500;
-const MAX_POLL_FAILURES = 20; // about half a minute without an answer
+// about three minutes without an answer: long enough for the server to restart (a deploy, or Render's free plan
+// waking it), after which an import it was running is sent again (RESENDS)
+const MAX_POLL_FAILURES = 120;
+const RESENDS = 2;
+const RESTARTED = 'The server restarted'; // the start of a job's message when a restart ended it (imports.INTERRUPTED)
 const LISTED = 5; // names shown per group before "and N more"
 const CHECKING = 'Checking '; // the server's `current` while it checks the logs (server/app/routers/imports.py)
 
@@ -64,6 +68,9 @@ export function ImportLogs({ onProgress, events, into, big = false }: {
   const [made, setMade] = useState<{ order: number[]; events: NewEvent[] } | null>(null); // events the upload made
   const [settled, setSettled] = useState<Record<number, Settled>>({}); // named, skipped or put into another event
   const failures = useRef(0);
+  const [retry, setRetry] = useState<Retry | null>(null); // the upload cut off, being sent again
+  const files = useRef<PickedFile[]>([]); // the files of the upload, to send again after a server restart
+  const resends = useRef(0);
   const running = job != null && (job.status === 'queued' || job.status === 'running');
   const sentTo = useRef<Target>(null);
 
@@ -76,6 +83,14 @@ export function ImportLogs({ onProgress, events, into, big = false }: {
         failures.current = 0;
         setError(null);
         if (next.done !== job.done || next.status !== job.status) onProgress();
+        // a restart ended the import (the files it had are gone with it): sent again, the logs it took in left out
+        if (next.status === 'failed' && next.message?.startsWith(RESTARTED) && resends.current < RESENDS
+          && files.current.length) {
+          resends.current += 1;
+          onProgress();
+          send(files.current, true);
+          return;
+        }
         setJob(next);
         if (next.status === 'done' && next.session_ids.length) afterImport(next.id);
       } catch (e) {
@@ -127,22 +142,25 @@ export function ImportLogs({ onProgress, events, into, big = false }: {
   };
 
   // picked or dropped, the same upload; a dropped folder's files are named with their path in it
-  const send = async (files: PickedFile[]) => {
+  const send = async (picked: PickedFile[], again = false) => {
+    files.current = picked;
+    if (!again) resends.current = 0;
     setError(null);
     setJob(null);
     setLanded(null);
     setMade(null);
     setSettled({});
-    setSending({ files: files.length, loaded: 0, total: sizeOf(files),
-      zipBytes: sizeOf(files.filter((f) => /\.zip$/i.test(f.name))) });
+    setSending({ files: picked.length, loaded: 0, total: sizeOf(picked),
+      zipBytes: sizeOf(picked.filter((f) => /\.zip$/i.test(f.name))) });
     try {
       failures.current = 0;
       sentTo.current = target;
-      setJob(await sendImport(files, target?.id ?? null, (s) => setSending((x) => x && { ...x, ...s })));
+      setJob(await sendImport(picked, target?.id ?? null, (s) => setSending((x) => x && { ...x, ...s }), setRetry));
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setSending(null);
+      setRetry(null);
     }
   };
 
@@ -213,6 +231,18 @@ export function ImportLogs({ onProgress, events, into, big = false }: {
       )}
       {job && !running && landed && !into && (
         <TextLink href={{ pathname: '/event/[id]', params: { id: landed.id } }} label={`Open ${landed.name}`} red arrow />
+      )}
+      {retry && (
+        <View accessibilityLiveRegion="polite">
+          <Note>
+            {`The connection to the server was cut (it may be restarting): sending the files again in ${retry.wait_s} s, try ${retry.attempt} of ${retry.of}.`}
+          </Note>
+        </View>
+      )}
+      {resends.current > 0 && sending && (
+        <View accessibilityLiveRegion="polite">
+          <Note>The server restarted while importing: sending the files again. Logs it already took in are left out.</Note>
+        </View>
       )}
       {error && <ErrorLine>{error}</ErrorLine>}
     </View>
