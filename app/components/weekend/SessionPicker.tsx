@@ -132,5 +132,5 @@ const useStyles = themed((c) => ({
   addHeadText: { ...Type.link, fontSize: 14, color: c.text, textDecorationLine: 'underline' },
   group: { marginTop: 8 },
   groupLabel: { color: c.textSecondary, marginBottom: 2 },
-  done: { minHeight: TAP, justifyContent: 'center', alignSelf: 'flex-start', marginTop: 6 },
+  done: { minHeight: TAP, minWidth: TAP, justifyContent: 'center', alignSelf: 'flex-start', marginTop: 6 },
 }));
