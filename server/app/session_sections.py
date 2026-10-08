@@ -7,6 +7,11 @@ folder's name such as "05_R2" when the runs aren't named after the timetable) th
 timed run, with every clean lap of it by stint (run) in the order they ran, and each lap's time in each section of the
 lap comparison. The app puts each lap against the fastest one and flags the sections where it was quicker.
 
+Another session instead, and stints of other sessions mixed in (Gabriele, 2026-10-08: "quickly select other sessions or
+runs to compare. Standard it should open the latest session but should be possible to tap the session and change it"):
+?part=<code> and ?add=<run ids>. Every answer lists the event's sessions to pick from ("sessions", in the order they
+ran, each with its stints) and which one is the latest.
+
 The latest upload: a run's upload is the import it came in (every run of one zip counts as uploaded at once), else
 the time its log was stored; of the runs uploaded last, the one driven last. Out-laps, in-laps and laps off the pace
 are not clean and are left out (counted in "left_out"). Real laps only: never a theoretical or ideal lap.
@@ -30,7 +35,7 @@ import threading
 import time
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
@@ -122,13 +127,54 @@ def _signature(db: Session, event_id: int, part: run_parts.Part, by_id: dict[int
                               page_cache.sessions_part(db, mine)])
 
 
-def _scope(event_id: int) -> str:
-    return f"event:{event_id}|latest-session-sections"  # "event:<id>|...": deleted with the event
+def _scope(event_id: int, picked: str | None = None, add: tuple[int, ...] = ()) -> str:
+    """Where the answer is kept ("event:<id>|...": deleted with the event): the latest session's in one place, another
+    session's or a mix's in its own."""
+    if picked is None and not add:
+        return f"event:{event_id}|latest-session-sections"
+    return f"event:{event_id}|session-sections|{picked or ''}|{','.join(map(str, add))}"
 
 
-def base(event_id: int, part: run_parts.Part, by_id: dict[int, models.RunSession]) -> dict:
+def timed_parts(sessions: list[models.RunSession], labels: list[run_labels.RunLabel]) -> list[run_parts.Part]:
+    """The event's sessions with a timed run, in the order they ran, each with its timed runs only."""
+    by_id = {s.id: s for s in sessions}
+    out = []
+    for p in run_parts.parts(sessions, labels):
+        runs = [lab for lab in p.runs if lab.id in by_id and _timed(by_id[lab.id])]
+        if runs:
+            out.append(run_parts.Part(p.code, p.title, p.official, runs))
+    return out
+
+
+def choices(parts: list[run_parts.Part], by_id: dict[int, models.RunSession]) -> list[dict]:
+    """The sessions to pick from, in the order they ran: each with its clean laps, its drivers and its stints."""
+    out = []
+    for p in parts:
+        runs = []
+        for lab in p.runs:
+            s = by_id[lab.id]
+            runs.append({"id": s.id, "name": lab.name, "short": lab.short,
+                         "driver": s.driver.name if s.driver else None,
+                         "laps": sum(1 for l in _laps(s) if l.clean)})
+        drivers = list(dict.fromkeys(r["driver"] for r in runs if r["driver"]))
+        out.append({"code": p.code, "title": p.title, "laps": sum(r["laps"] for r in runs), "drivers": drivers,
+                    "runs": runs})
+    return out
+
+
+def mixed(part: run_parts.Part, parts: list[run_parts.Part], add: list[int]) -> tuple[run_parts.Part, list[int]]:
+    """The session with the stints of other sessions added after its own, in the order they ran; the ids added (runs
+    of the session itself or without a timed lap left out)."""
+    own, wanted = set(part.ids), set(add)
+    extra = [lab for p in parts for lab in p.runs if lab.id in wanted and lab.id not in own]
+    return run_parts.Part(part.code, part.title, part.official, [*part.runs, *extra]), [lab.id for lab in extra]
+
+
+def base(event_id: int, part: run_parts.Part, by_id: dict[int, models.RunSession],
+         session_of: dict[int, str] | None = None) -> dict:
     """The answer without the section times: the session, its clean laps by stint in the order they ran, how many
-    laps aren't clean, and its fastest lap (the first set on a tie)."""
+    laps aren't clean, and its fastest lap (the first set on a tie). session_of: each run's session ("FP1"), for the
+    stints of other sessions mixed in."""
     runs, left_out = [], 0
     for lab in part.runs:
         s = by_id[lab.id]
@@ -138,6 +184,7 @@ def base(event_id: int, part: run_parts.Part, by_id: dict[int, models.RunSession
         if clean:
             runs.append({"id": s.id, "name": lab.name, "short": lab.short,
                          "driver": s.driver.name if s.driver else None, "driver_id": s.driver_id,
+                         "session": (session_of or {}).get(s.id, part.title),
                          "laps": [{"number": l.number, "time": round(l.time_s, 3), "sections": None} for l in clean]})
     every = [(r["id"], l) for r in runs for l in r["laps"]]
     best = min(every, key=lambda x: x[1]["time"]) if every else None
@@ -149,7 +196,8 @@ def base(event_id: int, part: run_parts.Part, by_id: dict[int, models.RunSession
 
 def _empty(event_id: int) -> dict:
     return {"event_id": event_id, "status": "empty", "session": None, "runs": [], "left_out": 0, "fastest": None,
-            "sections": None, "numbering": None, "progress": None, "note": None}
+            "sections": None, "numbering": None, "progress": None, "note": None, "added": [], "latest": None,
+            "sessions": []}
 
 
 # ---------- the section times ----------
@@ -277,29 +325,51 @@ def _job(scope: str, sig: str, answer: dict, progress: dict) -> None:
 
 
 @router.get("/events/{event_id}/latest-session/sections")
-def latest_session_sections(event_id: int, db: Session = Depends(get_db)):
-    """The latest session's clean laps by stint, each with its time in each section of the lap comparison (in
-    "sections" order; null while worked out, or when it couldn't be placed on the fastest lap's line). "status":
-    "working" while the section times are worked out (the laps listed already; ask again), "ready" once they are,
-    "empty" when the event has no timed run."""
+def latest_session_sections(event_id: int, part: str | None = None,
+                            add: str | None = Query(None, description="runs of other sessions to mix in, e.g. 3,12"),
+                            db: Session = Depends(get_db)):
+    """The latest session's clean laps by stint (?part=<code>: that session's instead; ?add=: with these runs of other
+    sessions after its own), each with its time in each section of the lap comparison (in "sections" order; null while
+    worked out, or when it couldn't be placed on the fastest lap's line). "status": "working" while the section times
+    are worked out (the laps listed already; ask again), "ready" once they are, "empty" when the event has no timed
+    run. "sessions": the event's sessions to pick from, in the order they ran; "latest": the latest one's code;
+    "added": the runs mixed in."""
     if db.get(models.Event, event_id) is None:
         raise HTTPException(404, "Event not found")
+    try:
+        wanted = sorted({int(x) for x in (add or "").split(",") if x.strip()})
+    except ValueError:
+        raise HTTPException(422, "add: run ids separated by commas, e.g. 3,12") from None
     sessions = _sessions(db, event_id)
-    part, _ = latest_part(db, sessions)
-    if part is None:
+    latest, labels = latest_part(db, sessions)
+    if latest is None:
         return _empty(event_id)
     by_id = {s.id: s for s in sessions}
-    sig = _signature(db, event_id, part, by_id)
-    scope = _scope(event_id)
+    parts = timed_parts(sessions, labels)
+    if part is None or part == latest.code:
+        chosen = next((p for p in parts if p.code == latest.code), latest)
+    else:
+        chosen = next((p for p in parts if p.code == part), None)
+        if chosen is None:
+            raise HTTPException(404, f"No session {part} with a timed run in this event")
+    if not wanted and chosen.code == latest.code:
+        picked, added, scope = latest, [], _scope(event_id)
+    else:
+        picked, added = mixed(chosen, parts, wanted)
+        scope = _scope(event_id, chosen.code, tuple(added))
+    extra = {"added": added, "latest": latest.code, "sessions": choices(parts, by_id)}
+    sig = _signature(db, event_id, picked, by_id)
     hit = page_cache.lookup(db, scope, sig)
     if hit is not None and hit[0] == 200:
-        return hit[1]
-    answer = base(event_id, part, by_id)
+        return {**hit[1], **extra}
+    session_of = {lab.id: p.title for p in parts for lab in p.runs}
+    answer = {**base(event_id, picked, by_id, session_of), **extra}
     with _lock:
         job = _working.get(scope)
         if job is None or not job["thread"].is_alive():  # (one at a time: after one for older laps, the next ask)
             progress = {"done": 0, "total": 0}
-            thread = threading.Thread(target=_job, args=(scope, sig, copy.deepcopy(answer), progress),
+            kept = {k: v for k, v in answer.items() if k not in extra}  # the pickers are read afresh each time
+            thread = threading.Thread(target=_job, args=(scope, sig, copy.deepcopy(kept), progress),
                                       name="latest-session-sections", daemon=True)
             job = _working[scope] = {"sig": sig, "progress": progress, "thread": thread}
             thread.start()

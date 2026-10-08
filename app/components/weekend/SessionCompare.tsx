@@ -16,17 +16,19 @@ import { TickBox, useText } from '@/components/Picks';
 import { Label, Section, TextLink } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { TyreChoices, TyreTag, TyreTags, useTyreTags } from '@/components/TyreTag';
+import { SessionPicker } from '@/components/weekend/SessionPicker';
 import { face, TAP, themed, Type } from '@/constants/Theme';
 import { CompareResult, compareLaps, encodePicks, formatLap } from '@/lib/compare';
 import { codeOf } from '@/lib/driverTag';
 import type { Folder } from '@/lib/events';
 import { afterOthers } from '@/lib/loadLast';
 import { poll } from '@/lib/poll';
-import { fetchLatestSession } from '@/lib/sessionCompare';
+import { fetchLatestSession, PickedSession, sessionOf } from '@/lib/sessionCompare';
 import {
   bestFlags, bestInEachCorner, defaultPicks, dropPick, fastestSections, flagWords, flipPick, gapWords,
-  isFastest, lapKey, LapPick, LapRef, LatestSession, MAX_PICKS, MIN_GAIN_S, seconds, SessionLap, SessionRun,
+  isFastest, lapKey, LapPick, LapRef, MAX_PICKS, MIN_GAIN_S, seconds, SessionLap, SessionRun,
 } from '@/lib/sessionLaps';
+import { LATEST, queryOf, SessionChoice, SessionPick } from '@/lib/sessionPick';
 import { TYRE_LABEL } from '@/lib/tyreLevels';
 import { tyreTag } from '@/lib/tyreTag';
 import { sessionCompareSections } from '@/lib/weekendRuns';
@@ -62,22 +64,45 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
   const traces = useRef<Box>(null);
   const tags = useTyreTags(eventId); // the event's tyres, shared with the page's run list
 
+  // the session compared: the latest at first, another or stints of others mixed in with the picker
+  // (components/weekend/SessionPicker.tsx), for this visit; a stint ticked is asked for a moment after the last tick
+  const [pick, setPick] = useState<SessionPick>(LATEST);
+  const [asked, setAsked] = useState<SessionPick>(LATEST);
+  useEffect(() => {
+    if (pick.part !== asked.part) {
+      setAsked(pick);
+      return;
+    }
+    const id = setTimeout(() => setAsked(pick), 800);
+    return () => clearTimeout(id);
+  }, [pick]); // eslint-disable-line react-hooks/exhaustive-deps -- the pick, as tapped
+  const askedKey = queryOf(asked);
+  // the sessions to pick from, as the last answer listed them (kept while another is read)
+  const [menu, setMenu] = useState<{ sessions: SessionChoice[]; latest: string | null } | null>(null);
+
   // the session's laps at once, their section times once worked out (asked again meanwhile, lib/poll.ts); read again
   // when the event's runs change (an upload)
-  const [answer, setAnswer] = useState<LatestSession | null>(null);
+  const [answer, setAnswer] = useState<PickedSession | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
+  const shownKey = useRef(askedKey);
   useEffect(() => {
-    const stop = poll((wanted) => fetchLatestSession(eventId).then((a) => {
+    if (shownKey.current !== askedKey) {
+      shownKey.current = askedKey;
+      setAnswer(null); // another session: not the last one's laps meanwhile
+      setFailed(null);
+    }
+    const stop = poll((wanted) => fetchLatestSession(eventId, asked).then((a) => {
       if (!wanted()) return false;
       setAnswer(a);
       setFailed(null);
+      if (a.sessions) setMenu({ sessions: a.sessions, latest: a.latest ?? null });
       return a.status === 'working';
     }, (e) => {
       if (wanted()) setFailed((e as Error).message);
       return false;
     }));
     return stop;
-  }, [eventId, folder]);
+  }, [eventId, folder, askedKey]); // eslint-disable-line react-hooks/exhaustive-deps -- the pick, by its query
 
   // the laps on the traces: each stint's fastest at first, then as tapped (for this session's laps only)
   const sessionKey = answer?.session ? `${answer.session.code}|${answer.runs.map((r) => r.id).join(',')}` : '';
@@ -149,14 +174,21 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
 
   // four sections once the event has a timed run, else one, as the page numbers them (lib/weekendRuns.ts)
   const four = sessionCompareSections(folder) === 4;
-  const title = answer?.session ? `${answer.session.title}: every lap` : 'Latest session: every lap';
+  const mixedIn = answer?.added?.length ?? 0;
+  const title = answer?.session
+    ? `${answer.session.title}${mixedIn ? ` + ${mixedIn} ${mixedIn === 1 ? 'stint' : 'stints'}` : ''}: every lap`
+    : 'Latest session: every lap';
+  const tyreText = (id: number) => tyreTag(tags.rowOf(id), TYRE_LABEL)?.text ?? 'Tyres not set';
+  const picker = menu && menu.sessions.length > 0 ? (
+    <SessionPicker sessions={menu.sessions} latest={menu.latest} pick={pick} onPick={setPick} tyres={tyreText} />
+  ) : null;
   if (!answer || answer.status === 'empty' || answer.runs.length === 0) {
-    const body = failed ? <ErrorLine>{`Can’t read the latest session: ${failed}`}</ErrorLine>
+    const body = failed ? <ErrorLine>{`Can’t read ${asked.part ?? 'the latest session'}: ${failed}`}</ErrorLine>
       : !answer ? <ActivityIndicator style={styles.left} />
         : <Note>No timed run yet: every lap of the latest session shows here once its log is uploaded.</Note>;
     return (
       <>
-        <Section no={no} title={title}>{body}</Section>
+        <Section no={no} title={title}>{picker}{body}</Section>
         {four && <Section no={no + 1} title="Best in each corner">{body}</Section>}
         {four && <Section no={no + 2} title="Where the time is">{body}</Section>}
         {four && <Section no={no + 3} title="Traces">{body}</Section>}
@@ -179,7 +211,6 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
   const flagged = flags.size;
   const leftOut = answer.left_out === 0 ? 'every lap is clean'
     : `${answer.left_out} ${answer.left_out === 1 ? 'lap' : 'laps'} that aren’t clean left out`;
-  const tyreText = (id: number) => tyreTag(tags.rowOf(id), TYRE_LABEL)?.text ?? 'Tyres not set';
   const waiting = error ? <ErrorLine>{`Can’t compare the laps: ${error}`}</ErrorLine>
     : laps.length < 2 ? <Note>Put at least two laps on the traces: tap them in the list above.</Note>
       : <View style={styles.working}><ActivityIndicator /><Note>Placing the laps on one line…</Note></View>;
@@ -187,6 +218,7 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
     <>
       <Section no={no} title={title}
         dek={`Every clean lap of the session, stint by stint, against its fastest lap (${leftOut}). A flag marks a lap with the session’s best time in a corner, and what it gained there on the fastest lap; tap a lap to put it on the traces or take it off.`}>
+        {picker}
         {fastest && fastRun && (
           <Text style={StyleSheet.flatten([t.body, styles.summary])}>
             <Text style={t.strong}>{`Fastest: ${formatLap(fastest.time)}`}</Text>
@@ -200,7 +232,7 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
         <View style={styles.list}>
           {answer.runs.map((r) => (
             <View key={r.id} style={styles.stint}>
-              <StintHead run={r} tags={tags} />
+              <StintHead run={r} tags={tags} from={sessionOf(r) !== answer.session?.title ? sessionOf(r) : null} />
               {r.laps.map((l) => {
                 const ref = { session_id: r.id, lap: l.number };
                 return (
@@ -302,14 +334,14 @@ function OnTraces({ picks, runs, colorOf, onRemove }: {
 }
 
 /** A stint's head: its name, its driver and its tyres (a tap on them opens the four levels under it). */
-function StintHead({ run, tags }: { run: SessionRun; tags: TyreTags }) {
+function StintHead({ run, tags, from }: { run: SessionRun; tags: TyreTags; from?: string | null }) {
   const styles = useStyles();
   const t = useText();
   const best = Math.min(...run.laps.map((l) => l.time));
   return (
     <>
       <View style={styles.stintHead}>
-        <Label style={styles.stintName}>{run.name}</Label>
+        <Label style={styles.stintName}>{from ? `${run.name} · from ${from}` : run.name}</Label>
         <View style={styles.who}>
           <Text style={t.body}>{`${run.driver ?? 'Driver not set'} ·`}</Text>
           {tags.rowOf(run.id) ? <TyreTag tags={tags} id={run.id} run={run.name} size={16} />

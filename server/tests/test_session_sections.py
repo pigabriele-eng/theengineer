@@ -146,3 +146,48 @@ def test_one_clean_lap_and_warm_up(client, monkeypatch):
     res = client.get(f"/events/{event['id']}/latest-session/sections").json()
     assert res["status"] == "ready" and res["note"].startswith("One clean lap")
     assert res["runs"][0]["laps"][0]["sections"] is None and res["sections"] is None
+
+
+def test_another_session_and_stints_mixed_in(client, monkeypatch):
+    track = client.post("/tracks", json={"name": "Test ring", "corners": CORNERS}).json()
+    event = client.post("/events", json={"name": "Round 8", "track_id": track["id"]}).json()
+    anna, bo = (client.post("/drivers", json={"name": n}).json() for n in ("Anna Berg", "Bo Lind"))
+    q = _run(client, event, "Q1", anna)
+    _upload(client, q, (1.0, 0.99))
+    s1, s2 = _run(client, event, "R1 stint 1", anna), _run(client, event, "R1 stint 2", bo)
+    _upload(client, s1, (1.0, 0.99, 0.985))
+    _upload(client, s2, (0.975, 0.97), monkeypatch, _late_apex)
+    _run(client, event, "FP1 stint 1")  # no log: not a session to pick
+    url = f"/events/{event['id']}/latest-session/sections"
+
+    first = client.get(url).json()
+    assert first["latest"] == "R1" and first["added"] == []
+    # the sessions to pick from, in the order they ran, each with its stints, laps and drivers
+    assert [(c["code"], c["drivers"], [r["id"] for r in c["runs"]]) for c in first["sessions"]] == [
+        ("Q1", ["Anna Berg"], [q]), ("R1", ["Anna Berg", "Bo Lind"], [s1, s2])]
+    assert first["sessions"][1]["laps"] == sum(r["laps"] for r in first["sessions"][1]["runs"]) > 0
+    assert all(r["session"] == "R1" for r in first["runs"])
+    assert ss.wait_idle(120)
+    latest = client.get(url).json()
+    assert latest["status"] == "ready" and latest["sessions"] == first["sessions"]
+    assert client.get(url, params={"part": "R1"}).json() == latest  # the latest, picked: the same answer
+
+    # another session
+    qa = client.get(url, params={"part": "Q1"}).json()
+    assert qa["session"]["code"] == "Q1" and [r["id"] for r in qa["runs"]] == [q] and qa["latest"] == "R1"
+    # ... with a stint of another session mixed in after its own, named with its session
+    mix = client.get(url, params={"part": "Q1", "add": f"{s2},{q}"}).json()
+    assert mix["added"] == [s2]  # Q1's own run isn't added again
+    assert [(r["id"], r["session"]) for r in mix["runs"]] == [(q, "Q1"), (s2, "R1")]
+    every = [(r["id"], l["number"], l["time"]) for r in mix["runs"] for l in r["laps"]]
+    quickest = min(every, key=lambda x: x[2])  # the quickest of all these laps, whichever session
+    assert (mix["fastest"]["session_id"], mix["fastest"]["lap"]) == quickest[:2]
+    assert ss.wait_idle(120)
+    ready = client.get(url, params={"part": "Q1", "add": str(s2)}).json()
+    assert ready["status"] == "ready" and [s["code"] for s in ready["sections"]] == ["T1", "T2"]
+    assert all(l["sections"] is not None for r in ready["runs"] for l in r["laps"])
+    # the latest session's answer is kept apart from the picked ones
+    assert client.get(url).json() == latest
+
+    assert client.get(url, params={"part": "FP9"}).status_code == 404
+    assert client.get(url, params={"add": "3,x"}).status_code == 422
