@@ -43,7 +43,7 @@ from app.setup.models import SessionSetup
 router = APIRouter(prefix="/prep")
 log = logging.getLogger(__name__)
 
-PREP_VERSION = 4  # raise when the report changes, so every kept one is worked out again
+PREP_VERSION = 5  # raise when the report changes, so every kept one is worked out again
 STEPS_PER_EVENT = 4  # report, technique check, tyre prep, setups and balance
 
 _jobs: queue.Queue[str] = queue.Queue()
@@ -323,7 +323,7 @@ def compute(db: Session, p: prep_plan.Plan, progress, step) -> dict:
     """Gather every past event, one at a time, then write the report. Each event's report and technique check are
     asked for only when their turn comes (waiting for one asks for it), so no other job of ours holds its memory while
     this one reads a log."""
-    events, observations, summaries = [], [], []
+    events = []
     for pe in p.past:
         year = pe.info.start[:4] if pe.info.start else "undated"
         ev = {"id": pe.id, "name": pe.info.event.name, "start": pe.info.start, "end": pe.info.end, "year": year,
@@ -339,9 +339,7 @@ def compute(db: Session, p: prep_plan.Plan, progress, step) -> dict:
         progress(f"Tyre and quali prep of {gather.label(pe)}")
         ev["tyreprep"], ev["tyreprep_note"] = gather.tyre_prep(db, pe)
         step()
-        ev["runs"], ev["remarks"], sums, obs = gather.setups(db, pe, progress)
-        observations += obs
-        summaries += [(year, sid, s) for sid, s in sums.items()]
+        ev["runs"], ev["remarks"], _, _ = gather.setups(db, pe, progress)
         step()
         events.append(ev)
     progress("The pooled tyre model")
@@ -349,7 +347,7 @@ def compute(db: Session, p: prep_plan.Plan, progress, step) -> dict:
     tyre_model = gather.pooled_tyre_model(db, p, tracks)
     grip = prep_track_grip.summarise(prep_track_grip.gather(db, p, progress))
     progress("Writing the report")
-    setup = gather.recommend_setup(p, events, observations, summaries)
-    out = brief.build(_target(p), {"key": p.car, "label": p.car_label}, events, tyre_model, setup)
+    # no setup suggestions in the report (gather.recommend_setup): they are the setup tool's, on demand
+    out = brief.build(_target(p), {"key": p.car, "label": p.car_label}, events, tyre_model)
     out["track_grip"] = grip
     return out

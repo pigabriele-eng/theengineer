@@ -1,20 +1,18 @@
-// The report's car balance and setup direction section, advice first: the setup changes to try (each with its
-// reason and expected effect), then the balance per section on entry, mid-corner and exit. For one session or a whole
-// event.
+// The report's car balance section: how the car is balanced, per section and by corner speed, on entry, mid-corner
+// and exit, and how it is measured. For one session or a whole event. No setup advice: GET /report/balance also
+// carries the setup changes to try (headline, recommendations, notes, checks), but those are the setup tool's, on
+// demand, and are never shown in a report.
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable } from 'react-native';
 
-import { TextLink } from '@/components/Programme';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
 import {
   BalanceCell,
   BalanceReport,
   balanceWords,
-  BarModel,
   degrees,
   fetchBalance,
-  Recommendation,
   SPEED_LABEL,
   Strength,
 } from '@/lib/balance';
@@ -71,7 +69,7 @@ export function Balance({ session, event, bare }: Props) {
 
   return (
     <View style={styles.root}>
-      {!bare && <Text style={styles.h1}>Car balance and setup</Text>}
+      {!bare && <Text style={styles.h1}>Car balance</Text>}
       {busy && (
         <View style={styles.busy}>
           <ActivityIndicator />
@@ -96,87 +94,10 @@ function ReportView({ r }: { r: BalanceReport }) {
         {r.reference.run} lap {r.reference.lap})
       </Text>
       {r.quickest_laps && <Text style={styles.dim}>{quickestLapsLine(r.quickest_laps)}</Text>}
-      <Text style={styles.headline}>{nb(r.headline)}</Text>
-
-      {r.recommendations.length > 0 && (
-        <View style={styles.section}>
-          <Text style={styles.h2}>Setup changes to try</Text>
-          {r.recommendations.map((rec, i) => (
-            <RecommendationCard key={rec.key} rec={rec} index={i} />
-          ))}
-        </View>
-      )}
-      {r.notes.map((n) => (
-        <Text key={n} style={styles.note}>
-          {nb(n)}
-        </Text>
-      ))}
-
       <BalanceTable r={r} />
-
-      {r.checks.length > 0 && (
-        <View style={styles.section}>
-          <Text style={styles.h2}>Numbers to check after a change</Text>
-          <View style={styles.checks}>
-            {r.checks.map((c) => (
-              <View key={c.label} style={styles.check}>
-                <Text style={styles.checkLabel}>{c.label}</Text>
-                <Text style={styles.checkValue}>{nb(c.value)}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
-      )}
 
       <Method r={r} />
     </>
-  );
-}
-
-function RecommendationCard({ rec, index }: { rec: Recommendation; index: number }) {
-  const styles = useStyles();
-  const tint = useThemeColor({}, 'tint');
-  return (
-    <View style={[styles.card, index === 0 && { borderColor: tint }]}>
-      <View style={styles.cardHead}>
-        <Text style={styles.cardNumber}>{index + 1}</Text>
-        <Text style={styles.cardTitle}>{rec.title}</Text>
-      </View>
-      <Labelled label="Why" text={rec.why} />
-      <Labelled label="Expect" text={rec.expect} />
-      {rec.watch && <Labelled label="Watch" text={rec.watch} />}
-      {rec.model && <ModelLine model={rec.model} />}
-    </View>
-  );
-}
-
-function Labelled({ label, text }: { label: string; text: string }) {
-  const styles = useStyles();
-  return (
-    <View style={styles.labelled}>
-      <Text style={styles.label}>{label}</Text>
-      <Text style={styles.body}>{nb(text)}</Text>
-    </View>
-  );
-}
-
-function ModelLine({ model }: { model: BarModel }) {
-  const styles = useStyles();
-  const [a, b] = model.llt_front_share;
-  const [ra, rb] = model.roll_gradient;
-  return (
-    <View style={styles.model}>
-      <Text style={styles.label}>Vehicle model</Text>
-      <Text style={styles.body}>
-        {nb(
-          `${model.car}, ${model.axle} bar setting ${model.from} → ${model.to} of ${model.positions}: front share of ` +
-            `lateral load transfer ${a.toFixed(1)} % → ${b.toFixed(1)} %, roll gradient ${ra.toFixed(2)} → ` +
-            `${rb.toFixed(2)} °/g.`,
-        )}
-      </Text>
-      <Text style={styles.small}>{nb(model.note)}</Text>
-      <TextLink href="/tools/vehicle" label="Open the vehicle model" arrow small />
-    </View>
   );
 }
 
@@ -298,6 +219,9 @@ function BalanceTable({ r }: { r: BalanceReport }) {
   );
 }
 
+// The method notes that are about the setup advice (server/app/analysis/setup_advice.py method()), left out here
+const ADVICE_NOTES = ['Bar changes are run through', 'Read from the data alone'];
+
 function Method({ r }: { r: BalanceReport }) {
   const styles = useStyles();
   const m = r.method;
@@ -336,7 +260,7 @@ function Method({ r }: { r: BalanceReport }) {
           />
         )}
       </View>
-      {m.notes.map((n) => (
+      {m.notes.filter((n) => !ADVICE_NOTES.some((a) => n.startsWith(a))).map((n) => (
         <Text key={n} style={styles.small}>
           • {nb(n)}
         </Text>
@@ -370,7 +294,6 @@ const useStyles = themed((c) => ({
   h1: { fontSize: 20, fontWeight: '700' },
   h2: { ...Type.label, fontSize: 13, color: c.text, borderTopWidth: 3, borderColor: c.rule, paddingTop: 6, marginTop: 12 },
   h3: { ...Type.label, color: c.text, marginTop: 8 },
-  headline: { fontFamily: Fonts.body, fontSize: 19, lineHeight: 25, fontWeight: '600', color: c.text },
   section: { gap: 10, marginTop: 12 },
   body: { lineHeight: 20 },
   note: { lineHeight: 20, opacity: 0.85 },
@@ -378,13 +301,6 @@ const useStyles = themed((c) => ({
   dim: { opacity: 0.6 },
   flag: { fontSize: 12, lineHeight: 17, fontWeight: '700' },
   error: { color: c.error },
-  card: { gap: 8, borderTopWidth: 3, borderColor: c.rule, paddingTop: 10 },
-  cardHead: { flexDirection: 'row', gap: 10, alignItems: 'baseline' },
-  cardNumber: { fontFamily: Fonts.display, fontSize: 20, lineHeight: 22, color: c.background, backgroundColor: c.rule, paddingHorizontal: 7, paddingTop: 3 },
-  cardTitle: { fontFamily: Fonts.body, fontSize: 18, lineHeight: 24, fontWeight: '600', flexShrink: 1, color: c.text },
-  labelled: { gap: 2 },
-  label: { ...Type.label, fontSize: 11, color: c.textSecondary },
-  model: { gap: 4, borderTopWidth: 1, borderColor: c.separator, paddingTop: 8 },
   // the two views: 44 px tap targets around their underlined names, the one not shown in the caption grey
   toggle: { flexDirection: 'row', gap: 8 },
   toggleHit: { minWidth: TAP, marginRight: 6, ...tapRoom(13) },

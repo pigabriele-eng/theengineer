@@ -60,19 +60,6 @@ export type QualiEvent = {
   sims: number;
 };
 
-export type Suggestion = {
-  rank: number;
-  title: string;
-  changes: { text: string }[];
-  reason: string;
-  data_shows: string | null;
-  confirmed: string[];
-  expected: string | null;
-  watch: string;
-  agreement: 'both' | 'driver' | 'data' | 'disagree';
-  disagree: string[];
-};
-
 export type SetupRun = {
   event_id: number;
   year: string;
@@ -108,14 +95,6 @@ export type PrepReport = {
     note: string | null };
   technique: { name: string | null; laps: number; years: string[];
     habits: { code: string; phase: string; title: string; text: string; cost_per_lap_s: number }[] }[];
-  recommendation: {
-    baseline: { event: string; year: string; session: string; session_id: number; best_s: number } | null;
-    template_name: string;
-    suggestions: Suggestion[];
-    recurring: { label: string; text: string }[];
-    remarks: number;
-    notes: string[];
-  } | null;
   track_grip?: PrepTrackGrip | null; // reports kept before it existed lack it
   notes: string[];
   method: string[];

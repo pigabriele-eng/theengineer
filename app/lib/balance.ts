@@ -1,4 +1,6 @@
-// Client for the report's car balance and setup direction section (GET /report/balance?session=<id> or ?event=<id>).
+// Client for the car balance (GET /report/balance?session=<id> or ?event=<id>). The response also carries setup advice
+// (headline, recommendations, notes, checks): the report's Car balance section never shows it (components/report/
+// Balance.tsx), setup suggestions being the setup tool's, on demand.
 // Balance values are degrees of steering against the car's own normal at the same cornering g: + more understeer
 // (the front pushes), − more oversteer (the rear slides). Corners are official numbers only (T1, T2-T5, T8/T9...).
 import { apiFetchAgain } from '@/lib/retry';
