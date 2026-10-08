@@ -2,6 +2,7 @@ import { Stack, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { StyleSheet, useWindowDimensions } from 'react-native';
 
+import { useBackTo } from '@/components/Back';
 import { onFill } from '@/components/PrepParts';
 import PrintButton from '@/components/PrintButton';
 import { Block, Colophon, InsetPhoto, Label, Page, useGutter, useWide } from '@/components/Programme';
@@ -18,6 +19,8 @@ export default function PrepScreen() {
   const params = useLocalSearchParams<{ event?: string; car?: string }>();
   const eventId = params.event ? Number(params.event) : null;
   const [answer, setAnswer] = useState<PrepAnswer | null>(null);
+  // the masthead's Back, opened fresh: up to the event, by its name once the report has it
+  useBackTo(eventId != null ? { id: eventId, name: answer?.event.id === eventId ? answer.event.name : null } : null);
   if (eventId == null) {
     return (
       <Page>

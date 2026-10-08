@@ -1,6 +1,7 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { StyleSheet, useWindowDimensions } from 'react-native';
 
+import { useBackTo } from '@/components/Back';
 import { onFill } from '@/components/PrepParts';
 import PrintButton from '@/components/PrintButton';
 import { Block, Colophon, Label, Page, useGutter } from '@/components/Programme';
@@ -24,6 +25,9 @@ export default function QualiScreen() {
   // the event's sessions, to switch between the whole event and one session without going back
   const sessionEvent = useSessionEvent(session);
   const folder = useEventFolder(event ?? sessionEvent);
+  // the masthead's Back, opened fresh: up to the event
+  const backEvent = event ?? sessionEvent;
+  useBackTo(backEvent != null ? { id: backEvent, name: folder?.id === backEvent ? folder.name : null } : null);
 
   if (event == null && session == null) {
     return (
