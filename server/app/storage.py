@@ -1,4 +1,4 @@
-"""Where uploaded logger files and debrief recordings live: the local disk, or Supabase Storage.
+"""Where uploaded logger files and debrief recordings live: the local disk, Supabase Storage or Backblaze B2.
 
 The database keeps each file's storage key (LoggerFile.path, Debrief.audio_path). Code that reads a file asks
 for a local path with `local_path(key)`: on the local disk that is the file itself; with Supabase it is a copy
@@ -12,20 +12,29 @@ free plan's 50 MB per-file limit; the cached copy is the plain file.
 The free plan also holds 1 GB in all (STORAGE_LIMIT_MB, default 1024): a log that would take the bucket past it, less
 LOG_RESERVE_BYTES kept for the reports and lap packs worked out from the logs, isn't stored (StorageFull), so an upload
 stops with a clear message rather than storage failing half way (Gabriele, 2026-10-08: a 727 MB zip).
+
+Backblaze B2 (free: 10 GB) is used when S3_ENDPOINT, S3_BUCKET, S3_KEY_ID and S3_SECRET_KEY are set (Gabriele chose
+it on 2026-10-08 so every weekend fits). With Supabase set too, new files go to B2 and files stored earlier stay in
+Supabase and are read from there (TwoStorages); nothing is moved.
 """
 from __future__ import annotations
 
 import gzip
+import hashlib
+import hmac
 import logging
 import os
 import threading
 import shutil
+import urllib.parse
 import uuid
 import zlib
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from functools import cache
 from pathlib import Path
 from typing import Protocol
+from xml.etree import ElementTree
 
 import httpx
 
@@ -122,40 +131,43 @@ class LocalStorage:
         return out
 
 
-class SupabaseStorage:
-    """Supabase Storage through its REST API, with a local cache of the files read."""
+class RemoteStorage:
+    """Files kept by a storage service, with a local cache of the files read. Logs are stored gzip-compressed (their
+    object name ends in .gz); the cached copy is the plain file. A service class says how to store, read, delete and
+    list one object."""
 
-    def __init__(self, url: str, service_key: str, bucket: str, cache_dir: Path, client: httpx.Client | None = None):
-        self.api = f"{url.rstrip('/')}/storage/v1"
-        self.bucket = bucket
+    service = "Storage"
+    limit_mb_default: float = LIMIT_MB_DEFAULT
+
+    def __init__(self, cache_dir: Path):
         self.cache_dir = cache_dir
-        # new secret keys (sb_secret_...) go on the apikey header only; the legacy service_role JWT on both
-        headers = {"apikey": service_key}
-        if not service_key.startswith("sb_"):
-            headers["Authorization"] = f"Bearer {service_key}"
-        self.client = client or httpx.Client(timeout=httpx.Timeout(30, read=300))
         self._used: int | None = None  # bytes stored, once listed (used())
         self._used_lock = threading.Lock()
-        self.client.headers.update(headers)
+
+    # ---- what each service does ----
+
+    def _put(self, name: str, body: bytes) -> None:
+        raise NotImplementedError
+
+    def _get(self, name: str):
+        """A context manager giving the streamed response (status_code, read(), text, iter_bytes())."""
+        raise NotImplementedError
+
+    def _remove(self, name: str) -> None:
+        raise NotImplementedError
+
+    def _list(self) -> Iterator[tuple[str, int]]:
+        """(object name, bytes) for every object, a page at a time."""
+        raise NotImplementedError
+
+    # ---- the same for every service ----
 
     @staticmethod
     def _object(key: str) -> str:
         return f"{key}.gz" if key.lower().endswith(COMPRESSED_SUFFIXES) else key
 
-    def _url(self, key: str) -> str:
-        return f"{self.api}/object/{self.bucket}/{self._object(key)}"
-
-    @staticmethod
-    def _fail(what: str, r: httpx.Response) -> StorageError:
-        return StorageError(f"Supabase Storage couldn't {what} ({r.status_code}): {r.text[:300]}")
-
-    def setup(self) -> None:
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        if self.client.get(f"{self.api}/bucket/{self.bucket}").status_code == 200:
-            return
-        r = self.client.post(f"{self.api}/bucket", json={"id": self.bucket, "name": self.bucket, "public": False})
-        if r.status_code >= 400 and "already exists" not in r.text.lower():
-            raise self._fail(f"create the bucket '{self.bucket}'", r)
+    def _fail(self, what: str, r: httpx.Response) -> StorageError:
+        return StorageError(f"{self.service} couldn't {what} ({r.status_code}): {r.text[:300]}")
 
     def save(self, data: bytes, suffix: str) -> str:
         key = _new_key(suffix)
@@ -176,36 +188,23 @@ class SupabaseStorage:
         self._write_cache(key, _chunks(path))
         return key
 
+    def limit(self) -> int | None:
+        return limit_bytes(self.limit_mb_default)
+
     def used(self) -> int:
         """Bytes the bucket holds, from its listing once, then kept up to date as files are stored and deleted."""
         with self._used_lock:
             if self._used is None:
-                total = 0
-                for offset in range(0, LIST_LIMIT, LIST_PAGE):
-                    r = self.client.post(f"{self.api}/object/list/{self.bucket}", json={
-                        "prefix": "", "limit": LIST_PAGE, "offset": offset,
-                        "sortBy": {"column": "name", "order": "asc"}})
-                    if r.status_code >= 400:
-                        raise self._fail("list the files", r)
-                    page = r.json()
-                    total += sum(s for o in page if isinstance(s := (o.get("metadata") or {}).get("size"), int))
-                    if len(page) < LIST_PAGE:
-                        break
-                self._used = total
+                self._used = sum(size for _, size in self._list())
             return self._used
 
     def _upload(self, key: str, body: bytes) -> None:
-        limit = limit_bytes()
+        limit = self.limit()
         if limit is not None and key.endswith(LOG_SUFFIXES):
             used = self.used()
             if used + len(body) > limit - LOG_RESERVE_BYTES:
                 raise StorageFull(full_words(used, limit, len(body)))
-        r = self.client.post(self._url(key), content=body, headers={"Content-Type": "application/octet-stream"})
-        if r.status_code == 413:
-            raise StorageError(f"The file is {len(body) / 1e6:.0f} MB, more than the storage takes per file "
-                               "(50 MB on Supabase's free plan)")
-        if r.status_code >= 400:
-            raise self._fail("store the file", r)
+        self._put(self._object(key), body)
         with self._used_lock:
             if self._used is not None:
                 self._used += len(body)
@@ -217,10 +216,10 @@ class SupabaseStorage:
             return p
         except FileNotFoundError:
             pass
-        with self.client.stream("GET", self._url(key)) as r:
+        with self._get(self._object(key)) as r:
             if r.status_code >= 400:
                 r.read()
-                # older Storage versions answer 400 with a "not found" body for a missing object
+                # older Supabase Storage versions answer 400 with a "not found" body for a missing object
                 if r.status_code == 404 or "not found" in r.text.lower():
                     raise FileNotFoundError(f"Stored file {key} not found")
                 raise self._fail("read the file", r)
@@ -230,33 +229,23 @@ class SupabaseStorage:
             return self._write_cache(key, r.iter_bytes())
 
     def delete(self, key: str) -> None:
-        r = self.client.delete(self._url(key))
-        # older Storage versions answer 400 with a "not found" body for a missing object
-        if r.status_code >= 400 and r.status_code != 404 and "not found" not in r.text.lower():
-            raise self._fail("delete the file", r)
+        self._remove(self._object(key))
         with self._used_lock:
             self._used = None  # listed again when next needed
         (self.cache_dir / key).unlink(missing_ok=True)
 
     def sizes(self, keys: list[str]) -> dict[str, int]:
-        """From the bucket's listing (keys are at its top level), a page of LIST_PAGE files per request."""
+        """From the bucket's listing (keys are at its top level), stopping once every key is found."""
         wanted = {self._object(k): k for k in keys}
         out: dict[str, int] = {}
-        for offset in range(0, LIST_LIMIT, LIST_PAGE):
-            if not wanted:
-                break
-            r = self.client.post(f"{self.api}/object/list/{self.bucket}", json={
-                "prefix": "", "limit": LIST_PAGE, "offset": offset, "sortBy": {"column": "name", "order": "asc"}})
-            if r.status_code >= 400:
-                raise self._fail("list the files", r)
-            page = r.json()
-            for o in page:
-                key = wanted.pop(o.get("name"), None)
-                size = (o.get("metadata") or {}).get("size")
-                if key is not None and isinstance(size, int):
-                    out[key] = size
-            if len(page) < LIST_PAGE:
-                break
+        if not wanted:
+            return out
+        for name, size in self._list():
+            key = wanted.pop(name, None)
+            if key is not None:
+                out[key] = size
+                if not wanted:
+                    break
         return out
 
     def _write_cache(self, key: str, chunks, decompressor=None) -> Path:
@@ -296,10 +285,222 @@ class SupabaseStorage:
             total -= size
 
 
+class SupabaseStorage(RemoteStorage):
+    """Supabase Storage through its REST API (free plan: 1 GB in all, 50 MB per file)."""
+
+    service = "Supabase Storage"
+
+    def __init__(self, url: str, service_key: str, bucket: str, cache_dir: Path, client: httpx.Client | None = None):
+        super().__init__(cache_dir)
+        self.api = f"{url.rstrip('/')}/storage/v1"
+        self.bucket = bucket
+        # new secret keys (sb_secret_...) go on the apikey header only; the legacy service_role JWT on both
+        headers = {"apikey": service_key}
+        if not service_key.startswith("sb_"):
+            headers["Authorization"] = f"Bearer {service_key}"
+        self.client = client or httpx.Client(timeout=httpx.Timeout(30, read=300))
+        self.client.headers.update(headers)
+
+    def _url(self, name: str) -> str:
+        return f"{self.api}/object/{self.bucket}/{name}"
+
+    def setup(self) -> None:
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        if self.client.get(f"{self.api}/bucket/{self.bucket}").status_code == 200:
+            return
+        r = self.client.post(f"{self.api}/bucket", json={"id": self.bucket, "name": self.bucket, "public": False})
+        if r.status_code >= 400 and "already exists" not in r.text.lower():
+            raise self._fail(f"create the bucket '{self.bucket}'", r)
+
+    def _put(self, name: str, body: bytes) -> None:
+        r = self.client.post(self._url(name), content=body, headers={"Content-Type": "application/octet-stream"})
+        if r.status_code == 413:
+            raise StorageError(f"The file is {len(body) / 1e6:.0f} MB, more than the storage takes per file "
+                               "(50 MB on Supabase's free plan)")
+        if r.status_code >= 400:
+            raise self._fail("store the file", r)
+
+    def _get(self, name: str):
+        return self.client.stream("GET", self._url(name))
+
+    def _remove(self, name: str) -> None:
+        r = self.client.delete(self._url(name))
+        # older Storage versions answer 400 with a "not found" body for a missing object
+        if r.status_code >= 400 and r.status_code != 404 and "not found" not in r.text.lower():
+            raise self._fail("delete the file", r)
+
+    def _list(self) -> Iterator[tuple[str, int]]:
+        for offset in range(0, LIST_LIMIT, LIST_PAGE):
+            r = self.client.post(f"{self.api}/object/list/{self.bucket}", json={
+                "prefix": "", "limit": LIST_PAGE, "offset": offset, "sortBy": {"column": "name", "order": "asc"}})
+            if r.status_code >= 400:
+                raise self._fail("list the files", r)
+            page = r.json()
+            for o in page:
+                if isinstance(size := (o.get("metadata") or {}).get("size"), int):
+                    yield o.get("name"), size
+            if len(page) < LIST_PAGE:
+                return
+
+
+def sign_v4(method: str, url: httpx.URL, headers: dict[str, str], payload_hash: str, key_id: str, secret: str,
+            region: str, amz_date: str, service: str = "s3") -> str:
+    """The Authorization header of an AWS Signature Version 4 request (what S3-compatible services such as Backblaze
+    B2 check). `headers` are the headers signed, `host` and `x-amz-date` among them."""
+    def quote(s: str, safe: str = "-_.~") -> str:
+        return urllib.parse.quote(s, safe=safe)
+
+    query = sorted((quote(k), quote(v)) for k, v in url.params.multi_items())
+    signed = sorted((k.lower(), " ".join(str(v).split())) for k, v in headers.items())
+    names = ";".join(k for k, _ in signed)
+    canonical = "\n".join([method, quote(url.path or "/", "/-_.~"), "&".join(f"{k}={v}" for k, v in query),
+                           "".join(f"{k}:{v}\n" for k, v in signed), names, payload_hash])
+    scope = f"{amz_date[:8]}/{region}/{service}/aws4_request"
+    to_sign = "\n".join(["AWS4-HMAC-SHA256", amz_date, scope, hashlib.sha256(canonical.encode()).hexdigest()])
+    key = f"AWS4{secret}".encode()
+    for part in (amz_date[:8], region, service, "aws4_request"):
+        key = hmac.new(key, part.encode(), hashlib.sha256).digest()
+    signature = hmac.new(key, to_sign.encode(), hashlib.sha256).hexdigest()
+    return f"AWS4-HMAC-SHA256 Credential={key_id}/{scope}, SignedHeaders={names}, Signature={signature}"
+
+
+S3_NS = "{http://s3.amazonaws.com/doc/2006-03-01/}"
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+
+
+class S3Storage(RemoteStorage):
+    """An S3-compatible bucket, here Backblaze B2 (free: 10 GB in all, no per-file limit that matters): S3_ENDPOINT
+    (https://s3.<region>.backblazeb2.com), S3_BUCKET, S3_KEY_ID and S3_SECRET_KEY. The bucket is made, private, in
+    Backblaze's website; the key needs only that bucket."""
+
+    service = "Backblaze B2"
+    limit_mb_default = 9500  # Backblaze's free 10 GB are decimal: 10^10 bytes is 9,537 MB as counted here
+
+    def __init__(self, endpoint: str, bucket: str, key_id: str, secret: str, cache_dir: Path,
+                 region: str | None = None, client: httpx.Client | None = None):
+        super().__init__(cache_dir)
+        self.endpoint = endpoint.rstrip("/")
+        if "://" not in self.endpoint:
+            self.endpoint = f"https://{self.endpoint}"
+        self.bucket, self.key_id, self.secret = bucket, key_id, secret
+        host = httpx.URL(self.endpoint).host
+        # s3.eu-central-003.backblazeb2.com: the region is the second part
+        self.region = region or (host.split(".")[1] if host.startswith("s3.") and host.count(".") >= 2 else "us-east-1")
+        self.client = client or httpx.Client(timeout=httpx.Timeout(30, read=300))
+
+    def _request(self, method: str, name: str = "", params: dict | None = None, body: bytes = b"",
+                 stream: bool = False):
+        url = httpx.URL(f"{self.endpoint}/{self.bucket}" + (f"/{name}" if name else ""), params=params)
+        payload = hashlib.sha256(body).hexdigest() if body else EMPTY_SHA256
+        headers = {"host": url.netloc.decode(), "x-amz-content-sha256": payload,
+                   "x-amz-date": datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")}
+        headers["Authorization"] = sign_v4(method, url, headers, payload, self.key_id, self.secret, self.region,
+                                           headers["x-amz-date"])
+        del headers["host"]  # httpx sends it
+        if stream:
+            return self.client.stream(method, url, headers=headers)
+        return self.client.request(method, url, headers=headers, content=body or None)
+
+    def setup(self) -> None:
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        r = self._request("HEAD")
+        if r.status_code == 404:
+            raise StorageError(f"Backblaze B2 has no bucket '{self.bucket}': make it in Backblaze's website (private)")
+        if r.status_code >= 400:
+            raise StorageError(f"Backblaze B2 refused the bucket '{self.bucket}' ({r.status_code}): check S3_KEY_ID "
+                               "and S3_SECRET_KEY, and that the key may use this bucket")
+
+    def _put(self, name: str, body: bytes) -> None:
+        r = self._request("PUT", name, body=body)
+        if r.status_code >= 400:
+            raise self._fail("store the file", r)
+
+    def _get(self, name: str):
+        return self._request("GET", name, stream=True)
+
+    def _remove(self, name: str) -> None:
+        r = self._request("DELETE", name)
+        if r.status_code >= 400 and r.status_code != 404:
+            raise self._fail("delete the file", r)
+
+    def _list(self) -> Iterator[tuple[str, int]]:
+        token = None
+        for _ in range(0, LIST_LIMIT, LIST_PAGE):
+            params = {"list-type": "2", "max-keys": str(LIST_PAGE)}
+            if token:
+                params["continuation-token"] = token
+            r = self._request("GET", params=params)
+            if r.status_code >= 400:
+                raise self._fail("list the files", r)
+            root = ElementTree.fromstring(r.content)
+            for o in root.iter(f"{S3_NS}Contents"):
+                yield o.findtext(f"{S3_NS}Key"), int(o.findtext(f"{S3_NS}Size") or 0)
+            token = root.findtext(f"{S3_NS}NextContinuationToken")
+            if root.findtext(f"{S3_NS}IsTruncated") != "true" or not token:
+                return
+
+
+class TwoStorages:
+    """New files go to `new` (Backblaze B2); files stored before the move stay in `old` (Supabase) and are read and
+    deleted there. Nothing is copied across. If `new` can't be reached on startup (a wrong key, a missing bucket),
+    the server keeps using `old` alone and logs why, so the app keeps working."""
+
+    def __init__(self, new: RemoteStorage, old: RemoteStorage):
+        self.new: RemoteStorage | None = new
+        self.old = old
+
+    @property
+    def current(self) -> RemoteStorage:
+        return self.new or self.old
+
+    def setup(self) -> None:
+        self.old.setup()
+        try:
+            self.new.setup()
+        except (StorageError, httpx.HTTPError) as e:
+            logging.getLogger(__name__).error("New files stay in %s: %s", self.old.service, e)
+            self.new = None
+
+    def save(self, data: bytes, suffix: str) -> str:
+        return self.current.save(data, suffix)
+
+    def save_file(self, path: Path, suffix: str) -> str:
+        return self.current.save_file(path, suffix)
+
+    def local_path(self, key: str) -> Path:
+        if self.new is not None:
+            try:
+                return self.new.local_path(key)
+            except FileNotFoundError:
+                pass
+        return self.old.local_path(key)
+
+    def delete(self, key: str) -> None:
+        if self.new is not None:
+            self.new.delete(key)
+        self.old.delete(key)
+
+    def sizes(self, keys: list[str]) -> dict[str, int]:
+        out = self.new.sizes(keys) if self.new is not None else {}
+        return out | self.old.sizes([k for k in keys if k not in out])
+
+    def used(self) -> int:
+        return self.current.used()
+
+    def limit(self) -> int | None:
+        return self.current.limit()
+
+
 @cache
-def _backend(storage_dir: str, url: str | None, key: str | None, bucket: str) -> Storage:
-    if url and key:
-        return SupabaseStorage(url, key, bucket, Path(storage_dir) / "cache")
+def _backend(storage_dir: str, url: str | None, key: str | None, bucket: str,
+             s3: tuple[str, ...] | None = None) -> Storage:
+    cache_dir = Path(storage_dir) / "cache"
+    supabase = SupabaseStorage(url, key, bucket, cache_dir) if url and key else None
+    if s3:
+        b2 = S3Storage(*s3, cache_dir=cache_dir)
+        return TwoStorages(b2, supabase) if supabase else b2
+    if supabase:
+        return supabase
     if url:
         logging.getLogger(__name__).warning("SUPABASE_SERVICE_ROLE_KEY isn't set: files are stored on the local disk "
                                             "in %s, which a hosted server may lose on restart", storage_dir)
@@ -307,8 +508,10 @@ def _backend(storage_dir: str, url: str | None, key: str | None, bucket: str) ->
 
 
 def backend() -> Storage:
-    return _backend(os.environ.get("STORAGE_DIR", "./storage"), os.environ.get("SUPABASE_URL"),
-                    os.environ.get("SUPABASE_SERVICE_ROLE_KEY"), os.environ.get("STORAGE_BUCKET") or "logs")
+    env = os.environ.get
+    s3 = (env("S3_ENDPOINT"), env("S3_BUCKET"), env("S3_KEY_ID"), env("S3_SECRET_KEY"))
+    return _backend(env("STORAGE_DIR", "./storage"), env("SUPABASE_URL"), env("SUPABASE_SERVICE_ROLE_KEY"),
+                    env("STORAGE_BUCKET") or "logs", tuple(v.strip() for v in s3) if all(s3) else None)
 
 
 def save(data: bytes, suffix: str) -> str:
@@ -331,9 +534,9 @@ def sizes(keys: list[str]) -> dict[str, int]:
     return backend().sizes(keys)
 
 
-def limit_bytes() -> int | None:
-    """The most Supabase Storage holds (STORAGE_LIMIT_MB, default the free plan's 1 GB; 0 for no limit)."""
-    mb = float(os.environ.get("STORAGE_LIMIT_MB") or LIMIT_MB_DEFAULT)
+def limit_bytes(default_mb: float = LIMIT_MB_DEFAULT) -> int | None:
+    """The most the storage service holds (STORAGE_LIMIT_MB, default its free plan's; 0 for no limit)."""
+    mb = float(os.environ.get("STORAGE_LIMIT_MB") or default_mb)
     return int(mb * 1024**2) if mb > 0 else None
 
 
@@ -346,7 +549,7 @@ def full_words(used: int, limit: int, size: int) -> str:
 def usage() -> dict:
     """What the storage holds and can hold, in MB (None when unknown or unlimited)."""
     b = backend()
-    if not isinstance(b, SupabaseStorage):  # the local disk: no limit kept
+    if not isinstance(b, (RemoteStorage, TwoStorages)):  # the local disk: no limit kept
         return {"used_mb": None, "limit_mb": None}
-    limit, used = limit_bytes(), b.used()
+    limit, used = b.limit(), b.used()
     return {"used_mb": round(used / 1024**2), "limit_mb": round(limit / 1024**2) if limit is not None else None}
