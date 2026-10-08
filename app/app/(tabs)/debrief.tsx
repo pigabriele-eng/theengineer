@@ -141,7 +141,7 @@ export default function DebriefScreen() {
           ) : (
             <View style={wide ? styles.setupMain : undefined}>
               <Label muted small>Session</Label>
-              <Text style={StyleSheet.flatten([t.note, styles.gapTop])}>Create a session on the Sessions page first.</Text>
+              <Text style={StyleSheet.flatten([t.note, styles.gapTop])}>Upload a run’s log on the Upload page first.</Text>
             </View>
           )}
           <Tabs label="Who is talking" value={mode} onChange={setMode}

@@ -91,15 +91,8 @@ export type SeasonFields = {
   rounds?: RoundFields[];
 };
 
-// The checklist's keys, in the order the server sends them, and how the app says them.
+// The checklist's keys, in the order the server sends them.
 export type MissingKey = 'tyre brand' | 'compound' | 'car' | 'team' | 'drivers';
-export const MISSING_LABEL: Record<MissingKey, string> = {
-  'tyre brand': 'Tyre brand',
-  compound: 'Compound',
-  car: 'Car',
-  team: 'Team',
-  drivers: 'Drivers',
-};
 
 export type InfoSource = 'event' | 'season' | 'runs' | 'car' | null;
 export type InfoIds = Entry; // the same fields, by id
@@ -129,9 +122,6 @@ export type EventInfo = {
   // what the previous event of the same car was run with, to fill the form from
   previous?: (InfoIds & { event_id: number; event_name: string }) | null;
 };
-
-// Only the fields sent change; null (or no drivers) means: take it from the season.
-export type InfoFields = Partial<InfoIds> & { season_id?: number | null };
 
 // The series' site, as the results module reads it
 export type Series = { key: string; name: string; years: number[] };
@@ -203,8 +193,6 @@ export const seasonsApi = {
   remove: (id: number) => call<{ deleted: number; events_removed: number }>(`/seasons/${id}`, { method: 'DELETE' }),
   fillEntry: (id: number, row: EntryRow) => call<Season>(`/seasons/${id}/fill-entry`, send('POST', row)),
   info: (eventId: number) => call<EventInfo>(`/events/${eventId}/info`),
-  setInfo: (eventId: number, body: InfoFields) => call<EventInfo>(`/events/${eventId}/info`, send('PUT', body)),
-  infoForRuns: (runIds: number[]) => call<EventInfo[]>(`/event-info/for-runs?ids=${runIds.join(',')}`),
 };
 
 // The series' site through the results module. A server without it answers 404 (NotThere): the season is then
@@ -255,7 +243,3 @@ export async function ourEntry(series: string, year: number, cal: SeriesCalendar
   }
   return null;
 }
-
-/** What a field's value is when the event doesn't set it: "from the season", "from the runs", "from the car". */
-export const sourceWords = (s: InfoSource) =>
-  s === 'season' ? 'from the season' : s === 'runs' ? 'from the runs' : s === 'car' ? 'from the car' : null;

@@ -2,11 +2,11 @@
 // very used'"). Right under an upload's result, one row per stint of the upload in the order they ran, named as the
 // event page names it, with its driver: New · Fresh · Used · Very used, the app's guess ticked and marked as a guess
 // (with its short why) until the driver taps. A tap saves that row at once; "Confirm all" saves every row still a guess
-// (lib/tyrePicks.ts confirmAll: never over a pick the driver made); leaving it changes nothing. The same row opens from
-// a run's hold menu on the event page (RunTyresPanel). In the programme's way: under a thick ink rule, the four levels
-// as the technique check's own picks (components/Picks.tsx Choice), no chips.
+// (lib/tyrePicks.ts confirmAll: never over a pick the driver made); leaving it changes nothing. The same row opens
+// under a run from the tyres tag on its row, or from its hold menu (components/TyreTag.tsx). In the programme's way:
+// under a thick ink rule, the four levels as the technique check's own picks (components/Picks.tsx Choice), no chips.
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable } from 'react-native';
+import { ActivityIndicator } from 'react-native';
 
 import { ErrorLine, FormActions, MainButton, Note, Said } from '@/components/Controls';
 import { DriverTag } from '@/components/DriverTag';
@@ -19,7 +19,7 @@ import { TYRE_LABEL, TYRE_LEVELS, TyreLevel } from '@/lib/tyreLevels';
 import {
   afterConfirm, choiceSpeech, confirmAll, confirmedWords, guesses, picked, rowNote, TyreRow, TyresPut, uploadRows,
 } from '@/lib/tyrePicks';
-import { Fonts, TAP, themed, Type, useTheme } from '@/constants/Theme';
+import { Fonts, themed, Type, useTheme } from '@/constants/Theme';
 
 type Group = { id: number; name: string | null; rows: TyreRow[] };
 const NONE: TyreRow[] = [];
@@ -29,7 +29,7 @@ const tagOf = (driver: string | null) => (driver ? { text: codeOf(driver)!, kind
 
 /** One stint: its driver and name (left out under a run's own row: `bare`), the four levels (the one tapped saved at
  * once) and, under them, the guess and why or "Confirmed". */
-function TyreRowView({ row, onPick, saving, error, last, bare }: {
+export function TyreRowView({ row, onPick, saving, error, last, bare }: {
   row: TyreRow;
   onPick: (level: TyreLevel) => void;
   saving: boolean;
@@ -120,7 +120,7 @@ export function UploadTyres({ runIds, refresh }: { runIds: number[]; refresh?: u
 
   if (!groups || !rows.length) return null;
   if (skipped) {
-    return <Note style={styles.skipped}>Tyres left as guessed: change a run’s from its hold menu on the event page.</Note>;
+    return <Note style={styles.skipped}>Tyres left as guessed: tap a run’s tyres on its row to change them.</Note>;
   }
 
   const confirm = async () => {
@@ -178,45 +178,6 @@ export function UploadTyres({ runIds, refresh }: { runIds: number[]; refresh?: u
   );
 }
 
-/** From a run's hold menu on the event page: that run's row, under it. */
-export function RunTyresPanel({ eventId, id, name, onClose }: {
-  eventId: number;
-  id: number;
-  name: string;
-  onClose: () => void;
-}) {
-  const styles = useStyles();
-  const c = useTheme();
-  const [row, setRow] = useState<TyreRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let live = true;
-    eventTyres(eventId).then((t) => live && setRow(uploadRows(t.runs, [id])),
-      (e) => live && setError((e as Error).message));
-    return () => {
-      live = false;
-    };
-  }, [eventId, id]);
-  const state = useTyreRows(row ?? NONE);
-  const r = state.rows[0];
-  return (
-    <View style={styles.panel}>
-      <View style={styles.panelHead}>
-        <Label style={styles.panelName}>{`Tyres · ${name}`}</Label>
-        <Pressable onPress={onClose} accessibilityRole="button" accessibilityLabel={`Close the tyres of ${name}`}
-          style={styles.close}>
-          <Text style={styles.closeText}>Close</Text>
-        </Pressable>
-      </View>
-      {error ? <ErrorLine>{error}</ErrorLine>
-        : !row ? <ActivityIndicator color={c.text} style={styles.loading} />
-          : !r ? <Note>The app has no tyres for this run.</Note>
-            : <TyreRowView row={r} last bare saving={state.saving.has(r.id)} error={state.errors[r.id] ?? null}
-                onPick={(k) => state.pick(r, k)} />}
-    </View>
-  );
-}
-
 const useStyles = themed((c) => ({
   box: { gap: 10, borderTopWidth: 3, borderColor: c.rule, paddingTop: 10, marginTop: 18, maxWidth: 760 },
   title: { fontFamily: Fonts.display, fontSize: 28, lineHeight: 31, textTransform: 'uppercase', color: c.text },
@@ -230,11 +191,4 @@ const useStyles = themed((c) => ({
   guess: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 22, color: c.textSecondary },
   confirmed: { fontFamily: Type.label.fontFamily, fontSize: 16, lineHeight: 22, letterSpacing: 0.3, color: c.text },
   skipped: { marginTop: 18 },
-
-  panel: { borderTopWidth: 3, borderColor: c.rule, maxWidth: 520, marginBottom: 6 },
-  panelHead: { flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderColor: c.rule },
-  panelName: { flex: 1 },
-  close: { minHeight: TAP, minWidth: TAP, alignItems: 'flex-end', justifyContent: 'center' },
-  closeText: { ...Type.link, fontSize: 13, color: c.textSecondary },
-  loading: { alignSelf: 'flex-start', marginVertical: 12 },
 }));

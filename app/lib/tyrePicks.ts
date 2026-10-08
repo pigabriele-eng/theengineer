@@ -4,8 +4,9 @@
 // requests are in lib/eventTyres.ts, the rows in components/TyrePicks.tsx.
 import type { RunTyres, TyreLevel } from './tyreLevels';
 
-/** A run's tyres as GET /technique/events/{id}/tyres has them: with the driver's own pick, the app's guess beside it. */
-export type ServerTyres = RunTyres & { guess?: TyreLevel };
+/** A run's tyres as GET /technique/events/{id}/tyres has them: with the driver's own pick, the app's guess beside it,
+ * and whether the driver set them (`set_by_driver`; an older server leaves it out). */
+export type ServerTyres = RunTyres & { guess?: TyreLevel; set_by_driver?: boolean };
 
 /** A run of GET /technique/events/{id}/tyres (server/app/routers/technique.py event_tyres), in the order they ran. */
 export type TyresRun = {
@@ -30,10 +31,12 @@ export type TyreRow = {
   why: string; // the guess's short why ("qualifying: always a new set", "12 laps on the set before this run")
 };
 
-/** Whether the driver set these tyres: the server then sends its own guess beside the pick ("set by you"). A
- * qualifying or race run comes back sure by rule (qualifying on a new set, the races on its set) without anybody
- * having said so: that is still the app's pick, offered to confirm like any other guess. */
-export const isMine = (t: ServerTyres) => t.guess !== undefined || t.why === 'set by you';
+/** Whether the driver set these tyres: the server says so (`set_by_driver`); a server older than that flag sends its
+ * own guess beside the driver's pick ("set by you"). A qualifying or race run comes back sure by rule (qualifying on a
+ * new set, the races on its set) without anybody having said so: that is still the app's pick, offered to confirm like
+ * any other guess. */
+export const isMine = (t: ServerTyres) =>
+  t.set_by_driver ?? (t.guess !== undefined || t.why === 'set by you');
 
 /** A run's row, or null when the server has no tyres for it. */
 export function rowOf(run: TyresRun): TyreRow | null {

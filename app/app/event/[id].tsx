@@ -7,10 +7,9 @@ import { DeleteEvent } from '@/components/DeleteEvent';
 import { DeleteRuns, deletedLine } from '@/components/DeleteRuns';
 import { DriverGuessLine, useDriverGuess } from '@/components/DriverGuess';
 import { DriverTag } from '@/components/DriverTag';
-import { ErrorLine, FormActions, Input, MainButton, Note, Said, Tick } from '@/components/Controls';
+import { ErrorLine, Note, Said, Tick } from '@/components/Controls';
 import { EventCompare, Pick, RunKey } from '@/components/EventCompare';
 import { EventForm } from '@/components/EventForm';
-import { EventInfoCard } from '@/components/EventInfoCard';
 import { HeroCountry } from '@/components/Flag';
 import { MoveSessions } from '@/components/MoveSessions';
 import { Tabs } from '@/components/Picks';
@@ -23,9 +22,11 @@ import { ResultsPanel } from '@/components/ResultsPanel';
 import { RunNameQuestions } from '@/components/RunNames';
 import { byTouch, closesRows, RunPanel, SwipeRow, useRunActions } from '@/components/RunActions';
 import { SeasonMatch } from '@/components/SeasonMatch';
-import { filledNote, localPick, PickerKind, RunChips, RunNameEditor, RunPicker, useGarage } from '@/components/RunChips';
+import {
+  filledNote, localPick, PickerKind, RunChips, RunNameEditor, RunPicker, useEventDrivers, useGarage,
+} from '@/components/RunChips';
 import { Text, View } from '@/components/Themed';
-import { RunTyresPanel } from '@/components/TyrePicks';
+import { TyreChoices, TyreTag, TyreTags, useTyreTags } from '@/components/TyreTag';
 import CoachingDay from '@/components/coaching/CoachingDay';
 import WeekendBefore from '@/components/weekend/Before';
 import WeekendDuring from '@/components/weekend/During';
@@ -63,9 +64,9 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** One event as a race programme: its track on the photo with the event's facts under it, the links to its report and
  * analyses (the Prediction, and Predicted vs actual once the weekend has begun), then numbered sections: its runs by
- * day (each with its best lap and the gap to the event's best), any two to six runs side by side, what it was run with, its official results, and a run to add by hand (logs are uploaded on the Upload page). Runs are relabelled,
- * tagged, ticked and moved here. /event/none holds the runs in no event. ?compare=3,12 keeps the runs side by side in
- * the address. */
+ * day (each with its driver, tyres, best lap and the gap to the event's best), any two to six runs side by side and its
+ * official results (runs come from logs, uploaded on the Upload page). Runs are relabelled, tagged, ticked and moved
+ * here. /event/none holds the runs in no event. ?compare=3,12 keeps the runs side by side in the address. */
 export default function EventScreen() {
   const styles = useStyles();
   const wide = useWide();
@@ -82,12 +83,12 @@ export default function EventScreen() {
   const [panel, setPanel] = useState<Panel | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  // the run whose driver or car list is open, and what a pick did to other runs (said under the run picked)
+  // the run whose driver list is open, and what a pick did to other runs (said under the run picked)
   const [open, setOpen] = useState<{ id: number; what: PickerKind } | null>(null);
   const [runNote, setRunNote] = useState<{ id: number; text: string } | null>(null);
   const { garage, reload: reloadGarage } = useGarage();
-  const [eventDrivers, setEventDrivers] = useState<number[]>([]); // the event's drivers 1 to 4, offered first
-  const [hasInfo, setHasInfo] = useState(true); // the server answers for the event's info (an older one doesn't)
+  // the event's drivers 1 to 4 (its info, else its season's entry), offered first in a run's driver list
+  const eventDrivers = useEventDrivers(key === NO_EVENT ? null : Number(key));
   // a race weekend or a coaching day (lib/eventModes.ts): switched with one tap in the folio
   const [mode, setModeState] = useState<EventMode | null>(null);
   useEffect(() => {
@@ -114,11 +115,13 @@ export default function EventScreen() {
   // how many times the event came from the server (not counting the chips' changes made here at once): what's
   // worked out from its runs is asked for again with it. 1 from the start, and still 1 once the event is first read
   // (nothing has changed since), so what needs only the event's number (who drove each run, the run names the
-  // timetable can't place, the event's info) is asked for at once, and once a visit.
+  // timetable can't place, the event's drivers) is asked for at once, and once a visit.
   const [reads, setReads] = useState(0);
   const version = Math.max(reads, 1);
   // who drove each run by driving style, asked again whenever the runs change (a driver set, a run added)
   const guess = useDriverGuess(key === NO_EVENT ? null : Number(key), version);
+  // each run's tyres, on its row with one tap to change them: read with the event's runs (none for runs in no event)
+  const tyreTags = useTyreTags(key === NO_EVENT ? null : Number(key), version);
 
   const loadNo = useRef(0); // the latest load: an older one's answer, coming in late, is dropped
   const load = useCallback(() => {
@@ -169,8 +172,7 @@ export default function EventScreen() {
     if (p) scroll.current?.scrollTo({ y: Math.max(topH.current - 12, 0), animated: true });
   };
 
-  // a run's driver or car: the chip changes at once, the server's answer follows (with the logger's other runs
-  // when the car went on them too)
+  // a run's driver: the chip changes at once, the server's answer follows
   const patchRuns = (patch: (r: Run) => Run) =>
     setFolder((f) => f && { ...f, days: f.days.map((d) => ({ ...d, sessions: d.sessions.map((r) => patch(r as Run)) })) });
   const pickFor = async (s: Run, fields: RunFields) => {
@@ -317,7 +319,7 @@ export default function EventScreen() {
   // (components/weekend/Laps.tsx). A suggestion tapped scrolls down to its comparison.
   const lapsTab = laps && eventId != null && (
     <View onLayout={(e) => (lapsY.current = e.nativeEvent.layout.y)}>
-      <WeekendLaps eventId={eventId}
+      <WeekendLaps eventId={eventId} version={version}
         onShow={(y) => scroll.current?.scrollTo({ y: Math.max(topH.current + lapsY.current + y - 12, 0), animated: true })} />
     </View>
   );
@@ -421,7 +423,7 @@ export default function EventScreen() {
                   onOpen={(what) => setOpen(what ? { id: s.id, what } : null)} onPick={(fields) => pickFor(s, fields)}
                   note={runNote?.id === s.id ? runNote.text : null} onNoteClose={() => setRunNote(null)}
                   guess={guess?.sessions.find((g) => g.session_id === s.id)} guessMode={guess?.mode}
-                  inEvent={isEvent} onDeleted={runDeleted} />
+                  inEvent={isEvent} onDeleted={runDeleted} tags={isEvent ? tyreTags : null} />
               ))}
             </View>
           );
@@ -467,13 +469,8 @@ export default function EventScreen() {
   );
   if (report) no += reportSections;
 
-  const info = eventId != null && hasInfo && (
-    <EventInfoCard no={++no} eventId={eventId} version={version}
-      onInfo={(i) => {
-        setHasInfo(i != null);
-        setEventDrivers(i?.resolved.drivers.map((d) => d.id) ?? []);
-      }} />
-  );
+  // what the event was run with (tyre, car, team, drivers) comes from its season (Tools › Seasons): no section of its
+  // own here (Gabriele, 2026-10-08: "remove event info")
 
   const results = eventId != null && (
     <Section no={++no} title="Results" dek="The official timing sheets of the round, with our car among them.">
@@ -481,12 +478,8 @@ export default function EventScreen() {
     </Section>
   );
 
-  // logs are uploaded on the Upload page (Gabriele, 2026-10-07: "remove upload window in the event window")
-  const addRun = folder && (
-    <Section no={++no} title="Add a run" dek="A run made by hand, to upload a log to later or to hold a debrief." print={false}>
-      <AddSession eventId={eventId} onAdded={load} />
-    </Section>
-  );
+  // runs come only from logs, uploaded on the Upload page (Gabriele, 2026-10-07: "remove upload window in the event
+  // window"; 2026-10-08: "remove add a run by hand"): runs made by hand before still show among the others
 
   // the ticked runs' best laps, opened together on the lap comparison: one tap from the bar
   const tickedLaps = picks.map((p) => sessions.find((s) => s.id === p.id))
@@ -515,17 +508,13 @@ export default function EventScreen() {
           <CoachingDay eventId={eventId} folder={folder}>
             {runs}
             {sideBySide}
-            {info}
             {results}
-            {addRun}
           </CoachingDay>
         ) : during && eventId != null ? (
           <WeekendDuring eventId={eventId} folder={folder}>
             {runs}
             {sideBySide}
-            {info}
             {results}
-            {addRun}
           </WeekendDuring>
         ) : after ? (
           <>
@@ -533,15 +522,12 @@ export default function EventScreen() {
             {runs}
             {sideBySide}
             {report}
-            {info}
             {results}
-            {addRun}
           </>
         ) : laps ? lapsTab : isEvent ? before : (
           <>
             {runs}
             {sideBySide}
-            {addRun}
           </>
         )}
         {more}
@@ -707,11 +693,12 @@ function DayHead({ days, date }: { days: Folder['days']; date: string | null }) 
 
 // ---------- one run ----------
 
-/** One run: tick it for side by side, tap its name to rename it in place, its driver or car to set them, its best lap
- * (a purple block for the event's best, else a red bar for the gap to it) or its laps to open it. Swiped left it shows
- * Delete; held, a menu of Delete, Change driver, Rename and Tyres (components/RunActions.tsx). */
+/** One run: tick it for side by side, tap its name to rename it in place, its driver to set it, its tyres to change
+ * them (the four levels open under it), its best lap (a purple block for the event's best, else a red bar for the gap
+ * to it) or its laps to open it. Swiped left it shows Delete; held, a menu of Delete, Change driver, Rename and Tyres
+ * (components/RunActions.tsx; Tyres opens the same four levels). */
 function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, editing, onEdit, onSaved, garage,
-  eventDrivers, open, onOpen, onPick, note, onNoteClose, guess, guessMode, inEvent, onDeleted }: {
+  eventDrivers, open, onOpen, onPick, note, onNoteClose, guess, guessMode, inEvent, onDeleted, tags }: {
   s: Run;
   no: number;
   color: string | null; // its colour in side by side, when ticked
@@ -734,13 +721,13 @@ function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, e
   guessMode?: EventGuess['mode'];
   inEvent: boolean;
   onDeleted: (d: RunsDeleted) => void;
+  tags: TyreTags | null; // the event's tyres tags (none for runs in no event)
 }) {
   const styles = useStyles();
   const wide = useWide();
   const c = useTheme();
-  const [tyres, setTyres] = useState(false); // the hold menu's Tyres: the run's four levels under it
   const run = useRunActions({ onDriver: () => onOpen('driver'), onRename: () => !editing && onEdit(),
-    onTyres: inEvent && s.event_id != null ? () => setTyres(true) : undefined });
+    onTyres: inEvent && tags ? () => tags.show(s.id) : undefined });
   const detail = [
     KIND_NAMES[s.kind],
     s.log_session && !s.name.includes(s.log_session) ? s.log_session : null,
@@ -763,14 +750,19 @@ function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, e
               <RunNameEditor id={s.id} name={s.name} kind={s.kind} logSession={s.log_session} onSaved={onSaved}
                 onCancel={onEdit} save={(id, body) => eventsApi.updateSession(id, body)} />
             ) : (
+              // the driver and the name together (the name shortened rather than parted from its driver), then the
+              // tyres, on the same line where it has room, else under them
               <View style={styles.nameLine}>
-                {color && <RunKey color={color} />}
-                <DriverTag tag={driverTag(driverState(s, guess, garage))} run={s.name} onPress={() => onOpen('driver')} />
-                <Pressable onPress={onEdit} accessibilityRole="button" accessibilityLabel={`Rename ${s.name}`}
-                  style={styles.namePress} {...run.hold}>
-                  <Text style={styles.runName} numberOfLines={1}>{s.name}</Text>
-                  <Text style={styles.pencil}>✎</Text>
-                </Pressable>
+                <View style={styles.nameWho}>
+                  {color && <RunKey color={color} />}
+                  <DriverTag tag={driverTag(driverState(s, guess, garage))} run={s.name} onPress={() => onOpen('driver')} />
+                  <Pressable onPress={onEdit} accessibilityRole="button" accessibilityLabel={`Rename ${s.name}`}
+                    style={styles.namePress} {...run.hold}>
+                    <Text style={styles.runName} numberOfLines={1}>{s.name}</Text>
+                    <Text style={styles.pencil}>✎</Text>
+                  </Pressable>
+                </View>
+                {tags && <TyreTag tags={tags} id={s.id} run={s.name} />}
               </View>
             )}
             {/* words only: the run opens from its best lap, a target the row's height (a second, 17 px link to the
@@ -809,14 +801,10 @@ function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, e
       </SwipeRow>
       <RunPanel run={run} id={s.id} name={s.name} inEvent={inEvent} onDeleted={onDeleted}
         style={wide ? styles.under : styles.underPhone} />
-      {tyres && s.event_id != null && (
-        <View style={wide ? styles.under : styles.underPhone}>
-          <RunTyresPanel eventId={s.event_id} id={s.id} name={s.name} onClose={() => setTyres(false)} />
-        </View>
-      )}
+      {tags && <TyreChoices tags={tags} id={s.id} name={s.name} style={wide ? styles.under : styles.underPhone} />}
       {open && garage && (
         <View style={wide ? styles.under : styles.underPhone}>
-          <RunPicker what={open} run={s} garage={garage} onPick={onPick} onClose={() => onOpen(null)}
+          <RunPicker run={s} garage={garage} onPick={onPick} onClose={() => onOpen(null)}
             eventDrivers={eventDrivers} />
         </View>
       )}
@@ -825,48 +813,6 @@ function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, e
           <Said text={note} onPress={onNoteClose} />
         </View>
       )}
-    </View>
-  );
-}
-
-/** A run made by hand in this event (no logs yet: to upload one to it, or for a debrief). */
-function AddSession({ eventId, onAdded }: { eventId: number | null; onAdded: () => void }) {
-  const styles = useStyles();
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  if (!open) {
-    return (
-      <View style={styles.addLink}>
-        <TextLink onPress={() => setOpen(true)} label="+ Add a run by hand" small />
-      </View>
-    );
-  }
-  const add = async () => {
-    setBusy(true);
-    try {
-      await eventsApi.createSession({ name: name.trim() || 'New session', kind: 'practice', event_id: eventId });
-      setName('');
-      setOpen(false);
-      setError(null);
-      onAdded();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <View style={styles.addForm}>
-      <Label>A run by hand</Label>
-      <Input value={name} onChangeText={setName} placeholder="Label, e.g. FP2" maxLength={120} onSubmitEditing={add}
-        accessibilityLabel="The run's label" autoFocus />
-      {error && <ErrorLine>{error}</ErrorLine>}
-      <FormActions>
-        <MainButton label="Add" onPress={add} busy={busy} />
-        <TextLink onPress={() => setOpen(false)} label="Cancel" />
-      </FormActions>
     </View>
   );
 }
@@ -926,7 +872,8 @@ const useStyles = themed((c) => ({
   runTick: { paddingTop: 3 },
   runNo: { fontFamily: Fonts.display, fontSize: 24, lineHeight: 28, width: 30, color: c.text },
   runId: { flex: 1, minWidth: 0, gap: 3 },
-  nameLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  nameLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 10, rowGap: 0 },
+  nameWho: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1, minWidth: 0 },
   // Rename: the name's 23 px line with room to a 44 px target above and below; the run's details start under that room
   namePress: { flexDirection: 'row', alignItems: 'baseline', gap: 6, flexShrink: 1, ...tapRoom(11) },
   runName: { fontFamily: Type.label.fontFamily, fontSize: 17, letterSpacing: 0.3, color: c.text, flexShrink: 1 },
@@ -944,10 +891,6 @@ const useStyles = themed((c) => ({
   // side by side
   quick: { gap: 6 },
   quickRuns: { fontFamily: face('label', 400), fontSize: 13, color: c.textSecondary },
-
-  // upload, a run by hand
-  addLink: { marginTop: 18 },
-  addForm: { marginTop: 20, gap: 10, maxWidth: 420, borderTopWidth: 1, borderColor: c.rule, paddingTop: 10 },
 
   // the ticked runs: a strip on the paper at the foot of the screen
   bar: { borderTopWidth: 3, borderColor: c.rule, backgroundColor: c.background, paddingVertical: 10 },

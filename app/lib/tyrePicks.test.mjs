@@ -12,8 +12,10 @@ import {
 const run = (id, name, tyres, extra = {}) => ({
   id, name, short: name, day: null, date: '2026-09-19', time: '13:05', driver: 'Gabriele Piana', tyres, ...extra,
 });
-const guess = (level, why, sure = false) => ({ tyres: level, label: level, pair: level === 'new' ? 'new' : 'used', sure, why, set_laps: null });
-const mine = (level, theirGuess) => ({ ...guess(level, 'set by you', true), guess: theirGuess });
+const guess = (level, why, sure = false) => ({
+  tyres: level, label: level, pair: level === 'new' ? 'new' : 'used', sure, why, set_laps: null, set_by_driver: false,
+});
+const mine = (level, theirGuess) => ({ ...guess(level, 'set by you', true), guess: theirGuess, set_by_driver: true });
 const event = [
   run(1, '03_Q', guess('new', 'qualifying: always a new set', true)),
   run(2, '03_Q (2)', guess('new', 'qualifying: always a new set', true), { driver: 'Max Rackl' }),
@@ -27,6 +29,13 @@ test('the driver’s pick against the app’s guess', () => {
   assert.equal(isMine(event[3].tyres), true); // set by the driver: the server sends its guess beside it
   assert.equal(isMine(event[0].tyres), false); // qualifying, sure by rule: still the app's pick to confirm
   assert.equal(isMine(event[2].tyres), false);
+  // the server's flag decides; a server older than it: the guess sent beside the pick, or its "set by you"
+  assert.equal(isMine({ ...event[3].tyres, set_by_driver: false }), false);
+  assert.equal(isMine({ ...event[0].tyres, set_by_driver: true }), true);
+  const { set_by_driver: _a, ...older } = event[3].tyres;
+  assert.equal(isMine(older), true);
+  const { set_by_driver: _b, ...olderGuess } = event[2].tyres;
+  assert.equal(isMine(olderGuess), false);
   assert.deepEqual(rowOf(event[3]), { id: 4, name: '04_R1', driver: 'Gabriele Piana', level: 'used', mine: true, why: '' });
   assert.equal(rowOf(event[4]), null);
 });

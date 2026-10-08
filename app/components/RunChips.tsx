@@ -1,8 +1,9 @@
-// A run's driver, car and name, each one or two taps away: on the event page's run rows and the session page.
+// A run's driver and name, each one or two taps away: on the event page's run rows and the session page.
 // Tap the driver chip for a short list (the event's drivers 1 to 4 first, then the drivers of the run's car, then the
-// rest, and "New driver"), tap a name and it's set. The car chip works the same way; setting the car on one run of a
-// weekend fits the run's logger to the car, and every other run from that logger gets it too. Tap the run's name to
-// rename it in place.
+// rest, and "New driver"), tap a name and it's set. The run's car is only shown, never changed here (Gabriele,
+// 2026-10-08: "remove the option to change quickly car in the run fields because thats a fixed value per season"):
+// a season remembers its car (Tools › Seasons). Tap the run's name to rename it in place. On the session page the
+// run's tyres are beside its driver, a tap to change them (components/TyreTag.tsx).
 import { Link, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, TextInput } from 'react-native';
@@ -10,23 +11,13 @@ import { ActivityIndicator, Pressable, StyleSheet, TextInput } from 'react-nativ
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { SessionKind } from '@/lib/api';
 import { eventsApi, KIND_NAMES, QUICK_LABELS } from '@/lib/events';
-import {
-  carLong,
-  carShort,
-  carsFor,
-  driversFor,
-  Garage,
-  garageApi,
-  GarageCar,
-  GarageDriver,
-  RunFields,
-  RunSet,
-} from '@/lib/garage';
+import { TyreChoices, TyreTag, useTyreTags } from '@/components/TyreTag';
+import { carShort, driversFor, Garage, garageApi, GarageDriver, RunFields, RunSet } from '@/lib/garage';
 import { Fonts, themed, Type, useTheme } from '@/constants/Theme';
 import { seasonsApi } from '@/lib/seasons';
 import { noPrint } from '@/lib/print';
 
-export type PickerKind = 'driver' | 'car';
+export type PickerKind = 'driver';
 export type RunRef = { id: number; name: string; driver_id?: number | null; driver?: string | null; car_id?: number | null };
 
 const KINDS: SessionKind[] = ['practice', 'qualifying', 'race', 'test'];
@@ -59,7 +50,7 @@ export function filledNote(r: RunSet) {
     `${r.logger} too. That logger is linked to the car, so its next uploads get the car by themselves.`;
 }
 
-/** The driver and car chips of a run. */
+/** The driver chip of a run, and its car in words (set by its season, not here). */
 export function RunChips({ run, garage, open, onOpen }: {
   run: RunRef;
   garage: Garage | null;
@@ -81,12 +72,7 @@ export function RunChips({ run, garage, open, onOpen }: {
           {driver ? driver.name : '+ Driver'}
         </Text>
       </Pressable>
-      <Pressable onPress={() => onOpen(open === 'car' ? null : 'car')} hitSlop={4} style={chip('car', !!car)}
-        accessibilityRole="button" accessibilityLabel={car ? `Car ${car.name}: change` : `Set the car of ${run.name}`}>
-        <Text style={StyleSheet.flatten([styles.chipText, !car && styles.dim])} numberOfLines={1}>
-          {car ? carShort(car) : '+ Car'}
-        </Text>
-      </Pressable>
+      {car && <Text style={styles.car} numberOfLines={1} accessibilityLabel={`Car ${car.name}`}>{carShort(car)}</Text>}
     </View>
   );
 }
@@ -101,18 +87,16 @@ export function useEventDrivers(eventId: number | null | undefined) {
   return ids;
 }
 
-/** The short list a chip opens: tap one and it's set. eventDrivers: the event's drivers 1 to 4, offered first. */
-export function RunPicker({ what, run, garage, onPick, onClose, eventDrivers }: {
-  what: PickerKind;
+/** The short list the driver chip opens: tap one and it's set. eventDrivers: the event's drivers 1 to 4, offered
+ * first. */
+export function RunPicker({ run, garage, onPick, onClose, eventDrivers }: {
   run: RunRef;
   garage: Garage;
   onPick: (fields: RunFields) => Promise<void> | void;
   onClose: () => void;
   eventDrivers?: number[];
 }) {
-  return what === 'driver'
-    ? <DriverList run={run} garage={garage} onPick={onPick} onClose={onClose} eventDrivers={eventDrivers ?? []} />
-    : <CarList run={run} garage={garage} onPick={onPick} onClose={onClose} />;
+  return <DriverList run={run} garage={garage} onPick={onPick} onClose={onClose} eventDrivers={eventDrivers ?? []} />;
 }
 
 function DriverList({ run, garage, onPick, onClose, eventDrivers }: {
@@ -183,92 +167,6 @@ function DriverList({ run, garage, onPick, onClose, eventDrivers }: {
             <Pressable onPress={() => onPick({ driver_id: null })} accessibilityRole="button"
               style={StyleSheet.flatten([styles.option, styles.unset])}>
               <Text style={StyleSheet.flatten([styles.optionText, styles.dim])}>No driver</Text>
-            </Pressable>
-          )}
-        </View>
-      )}
-      <GarageLink />
-    </View>
-  );
-}
-
-function CarList({ run, garage, onPick, onClose }: {
-  run: RunRef;
-  garage: Garage;
-  onPick: (fields: RunFields) => Promise<void> | void;
-  onClose: () => void;
-}) {
-  const styles = useStyles();
-  const theme = useTheme();
-  const [adding, setAdding] = useState(false);
-  const [number, setNumber] = useState('');
-  const [model, setModel] = useState(garage.models[0] ?? '');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const tint = useThemeColor({}, 'tint');
-  const text = useThemeColor({}, 'text');
-  const { first, rest } = carsFor(garage, run.driver_id);
-  const add = async () => {
-    if (!number.trim() && !model.trim()) return setError('Give the car a number or a model.');
-    setBusy(true);
-    try {
-      const r = await garageApi.addCar({ number: number.trim() || null, model: model.trim() || null });
-      await onPick({ car_id: r.car.id });
-    } catch (e) {
-      setError((e as Error).message);
-      setBusy(false);
-    }
-  };
-  const option = (c: GarageCar) => {
-    const on = c.id === run.car_id;
-    return (
-      <Pressable key={c.id} onPress={() => onPick({ car_id: c.id })} accessibilityRole="button"
-        accessibilityState={{ selected: on }} style={StyleSheet.flatten([styles.option, on && styles.optionOn])}>
-        <Text style={styles.optionText}>{carLong(c)}</Text>
-        {c.team && <Text style={styles.optionSub}>{c.team}</Text>}
-      </Pressable>
-    );
-  };
-  return (
-    <View style={styles.panel}>
-      <PanelHead title={`Which car in ${run.name}?`} onClose={onClose} />
-      {[...first, ...rest].length > 0 && <View style={styles.options}>{[...first, ...rest].map(option)}</View>}
-      {adding ? (
-        <View style={styles.newCar}>
-          <View style={styles.inputRow}>
-            <TextInput value={number} onChangeText={setNumber} placeholder="No." placeholderTextColor={theme.textMuted} autoFocus
-              maxLength={8} accessibilityLabel="Car number" onSubmitEditing={add}
-              style={StyleSheet.flatten([styles.input, styles.number, { color: text }])} />
-            <TextInput value={model} onChangeText={setModel} placeholder="Model" placeholderTextColor={theme.textMuted}
-              maxLength={100} accessibilityLabel="Car model" onSubmitEditing={add}
-              style={StyleSheet.flatten([styles.input, { color: text }])} />
-            <Pressable onPress={add} disabled={busy} accessibilityRole="button"
-              style={StyleSheet.flatten([styles.button, { borderColor: tint }])}>
-              {busy ? <ActivityIndicator color={tint} />
-                : <Text style={StyleSheet.flatten([styles.buttonText, { color: tint }])}>Add</Text>}
-            </Pressable>
-          </View>
-          {garage.models.length > 1 && (
-            <View style={styles.options}>
-              {garage.models.map((m) => (
-                <Pressable key={m} onPress={() => setModel(m)} style={StyleSheet.flatten([styles.small, m === model && styles.smallOn])}>
-                  <Text style={styles.smallText}>{m}</Text>
-                </Pressable>
-              ))}
-            </View>
-          )}
-          {error && <Text style={styles.error}>{error}</Text>}
-        </View>
-      ) : (
-        <View style={styles.options}>
-          <Pressable onPress={() => setAdding(true)} accessibilityRole="button"
-            style={StyleSheet.flatten([styles.option, styles.unset])}>
-            <Text style={StyleSheet.flatten([styles.optionText, { color: tint }])}>+ New car</Text>
-          </Pressable>
-          {run.car_id != null && (
-            <Pressable onPress={() => onPick({ car_id: null })} accessibilityRole="button"
-              style={StyleSheet.flatten([styles.option, styles.unset])}>
-              <Text style={StyleSheet.flatten([styles.optionText, styles.dim])}>No car</Text>
             </Pressable>
           )}
         </View>
@@ -370,14 +268,15 @@ export function RunNameEditor({ id, name, kind, logSession, onSaved, onCancel, s
   );
 }
 
-/** The session page's top: the run's name (tap it to rename) and kind, its driver and car chips, and their lists. */
+/** The session page's top: the run's name (tap it to rename) and kind, its driver chip and its list, its car in words
+ * and, for a run of an event, its tyres (a tap opens their four levels under the line). */
 export function RunHeader({ run, kind, logSession, onChanged, eventId, bare = false }: {
   run: RunRef;
   kind: SessionKind;
   logSession?: string | null;
   onChanged: () => void;
   eventId?: number | null; // its event: the event's drivers 1 to 4 are offered first
-  bare?: boolean; // the page's headline already names the run: one line of kind, Rename, driver and car
+  bare?: boolean; // the page's headline already names the run: one line of kind, Rename, driver, car and tyres
 }) {
   const styles = useStyles();
   const { garage, reload } = useGarage();
@@ -389,6 +288,8 @@ export function RunHeader({ run, kind, logSession, onChanged, eventId, bare = fa
   const tint = useThemeColor({}, 'tint');
   const theme = useTheme();
   const shown = { ...run, ...local };
+  // read again for each run shown (the page switches runs in place)
+  const tyreTags = useTyreTags(eventId, run.id);
   const pick = async (fields: RunFields) => {
     setOpen(null);
     setLocal((l) => ({ ...l, ...localPick(garage, fields) }));
@@ -423,6 +324,7 @@ export function RunHeader({ run, kind, logSession, onChanged, eventId, bare = fa
             <Text style={styles.chipText}>Rename</Text>
           </Pressable>
           <RunChips run={shown} garage={garage} open={open} onOpen={setOpen} />
+          <View style={styles.tyres}><TyreTag tags={tyreTags} id={run.id} run={run.name} size={15} /></View>
         </View>
       ) : (
         <View style={styles.titleLine}>
@@ -438,9 +340,9 @@ export function RunHeader({ run, kind, logSession, onChanged, eventId, bare = fa
       )}
       {(!bare || editing) && <RunChips run={shown} garage={garage} open={open} onOpen={setOpen} />}
       {open && garage && (
-        <RunPicker what={open} run={shown} garage={garage} onPick={pick} onClose={() => setOpen(null)}
-          eventDrivers={eventDrivers} />
+        <RunPicker run={shown} garage={garage} onPick={pick} onClose={() => setOpen(null)} eventDrivers={eventDrivers} />
       )}
+      <TyreChoices tags={tyreTags} id={run.id} name={run.name} />
       {note && (
         <Pressable onPress={() => setNote(null)}>
           <Text style={styles.notice}>{note}</Text>
@@ -450,13 +352,15 @@ export function RunHeader({ run, kind, logSession, onChanged, eventId, bare = fa
   );
 }
 
-// The race programme: no boxes or chips. A driver or car is underlined capitals (red while its list is open, faint
+// The race programme: no boxes or chips. A driver is underlined capitals (red while its list is open, faint
 // when unset), a list opens under a thick ink rule, inputs are a single ink rule, the picked option is underlined red.
 const useStyles = themed((c) => ({
   header: { gap: 8, backgroundColor: 'transparent' },
   titleLine: { flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', backgroundColor: 'transparent' },
   bareLine: { flexDirection: 'row', alignItems: 'center', columnGap: 16, rowGap: 8, flexWrap: 'wrap',
     backgroundColor: 'transparent' },
+  // the tyres tag at the foot of the chips' 44 px, its words on their line
+  tyres: { minHeight: 44, justifyContent: 'flex-end', paddingBottom: 1, backgroundColor: 'transparent' },
   titlePress: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 },
   title: { fontFamily: Fonts.display, fontSize: 30, lineHeight: 32, textTransform: 'uppercase', flexShrink: 1, color: c.text },
   pencil: { fontSize: 15 },
@@ -473,6 +377,8 @@ const useStyles = themed((c) => ({
   unset: { borderColor: c.borderStrong },
   chipText: { ...Type.link, fontSize: 13, letterSpacing: 1.2, color: c.text },
   dim: { color: c.textMuted },
+  // the run's car, in words only (its season sets it): at the foot of the chips' 44 px, on their line
+  car: { ...Type.label, fontSize: 13, letterSpacing: 1.2, color: c.textSecondary, alignSelf: 'flex-end', paddingBottom: 3 },
   panel: { borderTopWidth: 3, borderColor: c.rule, paddingTop: 10, gap: 10, marginBottom: 10, backgroundColor: 'transparent' },
   panelHead: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: 'transparent' },
   panelTitle: { flex: 1, fontFamily: Fonts.body, fontWeight: '600', fontSize: 17, color: c.text },
@@ -481,16 +387,13 @@ const useStyles = themed((c) => ({
   option: { borderBottomWidth: 3, borderColor: c.separator, paddingBottom: 2, minHeight: 44, justifyContent: 'flex-end' },
   optionOn: { borderColor: c.mark },
   optionText: { ...Type.link, fontSize: 14, color: c.text },
-  optionSub: { fontFamily: Fonts.label, fontSize: 11, color: c.textMuted },
   small: { borderBottomWidth: 2, borderColor: c.separator, paddingBottom: 1, minHeight: 44, justifyContent: 'flex-end' },
   smallOn: { borderColor: c.mark },
   smallText: { ...Type.label, fontSize: 13, letterSpacing: 1, color: c.text },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 14, flexWrap: 'wrap', backgroundColor: 'transparent' },
   input: { flex: 1, minWidth: 120, borderBottomWidth: 1, borderColor: c.rule, paddingHorizontal: 0, paddingVertical: 10,
     fontFamily: Fonts.body, fontSize: 16, backgroundColor: 'transparent' },
-  number: { flex: 0, minWidth: 64, width: 64 },
   nameInput: { fontFamily: Fonts.label, fontSize: 17 },
-  newCar: { gap: 10, backgroundColor: 'transparent' },
   button: { borderBottomWidth: 2, borderColor: c.rule, paddingBottom: 1, minWidth: 44, minHeight: 44, alignItems: 'center',
     justifyContent: 'flex-end' },
   buttonText: { ...Type.link },

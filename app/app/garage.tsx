@@ -19,8 +19,8 @@ type Editing = { kind: Kind; id: number | null } | null; // id null: a new one
 type CatalogLists = { vehicles: Vehicle[]; tyres: Tyre[] };
 
 /** Cars (number, model, vehicle, team, logger, drivers), drivers (team, cars), teams, and the vehicles and tyres the
- * cars and events pick from: add, change and remove them here, one numbered section each. Runs are tagged on the event
- * page and the session page, with the driver and car chips. */
+ * cars and events pick from: add, change and remove them here, one numbered section each. A run's driver is tagged on
+ * the event page and the session page; its car comes from its season (Seasons). */
 export default function GarageScreen() {
   const styles = useStyles();
   const [garage, setGarage] = useState<Garage | null>(null);
@@ -60,7 +60,7 @@ export default function GarageScreen() {
     <Page>
       <Stack.Screen options={{ title: 'Cars, drivers and teams' }} />
       <PageTitle kicker="Tools" title="Garage"
-        dek="Your cars, drivers and teams, and the vehicles and tyres they run on. Tag a run’s driver and car on the event page, under the run." />
+        dek="Your cars, drivers and teams, and the vehicles and tyres they run on. Tag a run’s driver on the event page, under the run; its car comes from its season." />
       {!garage && !error && <ActivityIndicator style={styles.loading} />}
       {error && <View style={styles.top}><ErrorLine>{error}</ErrorLine></View>}
       {notice && <View style={styles.top}><Said text={notice} onPress={() => setNotice(null)} /></View>}

@@ -5,7 +5,8 @@
 // each driver against their last session, the best lap against a typical one; like with like on tyres, real laps
 // only), each with the corners where most of the gap is and what the technique check found wrong there on the slower
 // lap; 02 to 05 the comparison itself, the first suggestion's already open (the laps, where the time is, the section
-// times, the traces); 06 the weekend's laps to pick by hand.
+// times, the traces); 06 the weekend's laps to pick by hand, each run with its tyres a tap to change
+// (components/TyreTag.tsx).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, LayoutChangeEvent, Pressable, StyleSheet } from 'react-native';
 
@@ -16,6 +17,7 @@ import { SubFoldHead } from '@/components/Fold';
 import { Choice } from '@/components/Picks';
 import { Fig, Section, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
+import { TyreChoices, TyreTag, TyreTags, useTyreTags } from '@/components/TyreTag';
 import { CompareResult, compareLaps, encodePicks, formatLap, MAX_LAPS, MIN_LAPS, signedSeconds } from '@/lib/compare';
 import { codeOf } from '@/lib/driverTag';
 import { fetchSuggestions, PickRun, PickSession, SuggestedLap, Suggestion, Suggestions } from '@/lib/lapSuggestions';
@@ -34,9 +36,15 @@ const ANSWERS_KEPT = 8;
 const tag = (driver: string | null) => (driver ? { text: codeOf(driver)!, kind: 'known' as const, name: driver }
   : { text: 'Driver?', kind: 'none' as const, name: null });
 
-/** The Laps tab. `onShow(y)`: scroll the page to y within the tab (the comparison, once a suggestion is tapped). */
-export default function WeekendLaps({ eventId, onShow }: { eventId: number; onShow?: (y: number) => void }) {
+/** The Laps tab. `onShow(y)`: scroll the page to y within the tab (the comparison, once a suggestion is tapped).
+ * `version`: the page's reads of the event's runs (their tyres are read again with them). */
+export default function WeekendLaps({ eventId, onShow, version }: {
+  eventId: number;
+  onShow?: (y: number) => void;
+  version?: number;
+}) {
   const styles = useStyles();
+  const tyreTags = useTyreTags(eventId, version);
   const [answer, setAnswer] = useState<Suggestions | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [shown, setShown] = useState<Shown>({ kind: 'suggestion', index: 0 });
@@ -134,7 +142,7 @@ export default function WeekendLaps({ eventId, onShow }: { eventId: number; onSh
           onTraces={toTraces} />
       </View>
 
-      <PickYourOwn sessions={answer?.sessions ?? null} picks={own} onPicks={setOwn}
+      <PickYourOwn sessions={answer?.sessions ?? null} picks={own} onPicks={setOwn} tags={tyreTags}
         onCompare={() => show({ kind: 'own', laps: own })} />
     </>
   );
@@ -295,11 +303,12 @@ function Comparison({ laps, picked, data, error, waiting, answer, onTraces }: {
 
 // ---------- laps picked by hand ----------
 
-function PickYourOwn({ sessions, picks, onPicks, onCompare }: {
+function PickYourOwn({ sessions, picks, onPicks, onCompare, tags }: {
   sessions: PickSession[] | null;
   picks: LapPick[];
   onPicks: (p: LapPick[]) => void;
   onCompare: () => void;
+  tags: TyreTags;
 }) {
   const styles = useStyles();
   // the latest session open, the others folded
@@ -327,7 +336,7 @@ function PickYourOwn({ sessions, picks, onPicks, onCompare }: {
             <SubFoldHead title={p.title} facts={facts} open={opened.has(p.code)} onToggle={() => toggle(p.code)}
               what={`the laps of ${p.title}`} />
             {opened.has(p.code) && p.runs.map((r) => (
-              <RunLaps key={r.id} run={r} picks={picks}
+              <RunLaps key={r.id} run={r} picks={picks} tags={tags}
                 onToggle={(lap) => onPicks(toggleLap(picks, { session_id: r.id, lap }, MAX_LAPS))} />
             ))}
           </View>
@@ -350,7 +359,12 @@ function PickYourOwn({ sessions, picks, onPicks, onCompare }: {
   );
 }
 
-function RunLaps({ run, picks, onToggle }: { run: PickRun; picks: LapPick[]; onToggle: (lap: number) => void }) {
+function RunLaps({ run, picks, onToggle, tags }: {
+  run: PickRun;
+  picks: LapPick[];
+  onToggle: (lap: number) => void;
+  tags: TyreTags;
+}) {
   const styles = useStyles();
   const theme = useTheme();
   const clean = run.laps.filter((l) => l.clean);
@@ -361,8 +375,11 @@ function RunLaps({ run, picks, onToggle }: { run: PickRun; picks: LapPick[]; onT
       <View style={styles.pickRunHead}>
         <DriverTag tag={tag(run.driver)} run={run.name} />
         <Text style={styles.pickRunName} numberOfLines={1}>{run.name}</Text>
-        <Text style={styles.pickRunTyres}>{tyreWords(run)}</Text>
+        {/* the tyres a tap to change, as on the run rows; the suggestions' own words until they are read */}
+        {tags.rowOf(run.id) ? <TyreTag tags={tags} id={run.id} run={run.name} />
+          : <Text style={styles.pickRunTyres}>{tyreWords(run)}</Text>}
       </View>
+      <TyreChoices tags={tags} id={run.id} name={run.name} />
       <View style={styles.lapChoices}>
         {run.laps.map((l) => {
           const on = picks.some((p) => p.session_id === run.id && p.lap === l.number);

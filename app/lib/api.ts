@@ -210,7 +210,6 @@ const json = (body: unknown): RequestInit => ({
 export const api = {
   sessions: () => request<Session[]>('/sessions'),
   session: (id: number) => request<SessionDetail>(`/sessions/${id}`),
-  createSession: (body: { name: string; kind: SessionKind }) => request<Session>('/sessions', json(body)),
   analysis: (id: number) => request<Analysis>(`/sessions/${id}/analysis`),
   compare: (id: number, lap: number, reference?: number) =>
     request<LapCompare>(`/sessions/${id}/compare?lap=${lap}${reference != null ? `&reference_lap=${reference}` : ''}`),
