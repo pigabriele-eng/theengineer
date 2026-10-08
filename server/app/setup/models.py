@@ -36,3 +36,14 @@ class SetupRunSummary(Base):
     signature: Mapped[str] = mapped_column(String(120))
     data: Mapped[dict] = mapped_column(JSON, default=dict)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class SetupChat(Base):
+    """The setup tool's conversation for one event (event_id None: runs outside any event): the car variant, the
+    run it reads, the problems, the limits stated ("already at the minimum ride height"), what was tried and the
+    messages (app.setup.chat)."""
+    __tablename__ = "setup_chats"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[int | None] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), unique=True)
+    state: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)

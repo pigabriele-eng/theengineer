@@ -47,12 +47,13 @@ const today = () => {
 
 // The app's activities (Gabriele, 2026-10-07): race weekends, coaching days, the drivers (fingerprints and habits),
 // then uploading and the tools. Seasons sit on the Weekend list and under Tools; a debrief is recorded from the
-// weekend page and from each run.
-type NavKey = 'weekend' | 'coaching' | 'drivers' | 'upload' | 'tools';
+// weekend page and from each run. Setup (2026-10-08) is a tool of its own, away from the reports.
+type NavKey = 'weekend' | 'coaching' | 'drivers' | 'setup' | 'upload' | 'tools';
 const NAV: { key: NavKey; label: string; href: Href }[] = [
   { key: 'weekend', label: 'Weekend', href: '/' },
   { key: 'coaching', label: 'Coaching', href: '/coaching' },
   { key: 'drivers', label: 'Drivers', href: '/drivers' },
+  { key: 'setup', label: 'Setup', href: '/setup' },
   { key: 'upload', label: 'Upload', href: '/upload' },
   { key: 'tools', label: 'Tools', href: '/tools' },
 ];
@@ -62,6 +63,7 @@ const NAV: { key: NavKey; label: string; href: Href }[] = [
 export function navOf(pathname: string, coaching = false): NavKey {
   if (pathname.startsWith('/coaching') || (coaching && pathname.startsWith('/event/'))) return 'coaching';
   if (pathname.startsWith('/drivers')) return 'drivers';
+  if (pathname === '/setup') return 'setup';
   if (pathname.startsWith('/upload')) return 'upload';
   if (pathname.startsWith('/tools') || pathname.startsWith('/garage') || pathname.startsWith('/seasons')) return 'tools';
   return 'weekend';

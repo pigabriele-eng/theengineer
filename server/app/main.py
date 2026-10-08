@@ -20,6 +20,7 @@ from app.routers import stint as stint_tool
 from app.routers import track_grip, trackshape
 from app.routers import driver_style, habits
 from app.routers import event_debriefs
+from app.routers import setup_chat
 from app.vehicle import tyre_store
 from app import results
 
@@ -71,6 +72,7 @@ app.include_router(trackshape.router, dependencies=signed_in)
 app.include_router(report_grip.router, dependencies=signed_in)
 app.include_router(report_balance.router, dependencies=signed_in)
 app.include_router(setups.router, dependencies=signed_in)
+app.include_router(setup_chat.router, dependencies=signed_in)
 app.include_router(tyreprep.router, dependencies=signed_in)
 for r in (drivers.router, comparisons.router):
     app.include_router(r, dependencies=signed_in)

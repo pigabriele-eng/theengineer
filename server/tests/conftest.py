@@ -178,8 +178,9 @@ def client(tmp_path, monkeypatch):
     import app.setup.results
     import app.setup.sheet
     import app.setup.suggest
+    import app.routers.setup_chat
     for m in (app.setup.models, app.setup.results, app.setup.sheet, app.setup.suggest, app.setup.data,
-              app.routers.setups):
+              app.routers.setups, app.routers.setup_chat):
         importlib.reload(m)
     import app.laptags
     import app.routers.stint

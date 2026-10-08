@@ -142,6 +142,7 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
             <Stack.Screen name="garage" options={{ title: 'Cars, drivers and teams' }} />
             <Stack.Screen name="seasons" options={{ title: 'Seasons', ...NO_BAR }} />
             <Stack.Screen name="coaching" options={{ title: 'Coaching', ...NO_BAR }} />
+            <Stack.Screen name="setup" options={{ title: 'Setup', ...NO_BAR }} />
             <Stack.Screen name="drivers/index" options={{ title: 'Drivers', ...NO_BAR }} />
             <Stack.Screen name="drivers/tag" options={{ title: 'Tag drivers' }} />
             <Stack.Screen name="drivers/compare" options={{ title: 'Compare drivers' }} />
