@@ -165,3 +165,32 @@ def test_the_report_calls_runs_by_their_names_in_time_order(client):
     assert client.get(f"/reports/events/{event['id']}/pick?runs=").status_code == 422
     assert client.get(f"/reports/events/{event['id']}/pick?runs=a,b").status_code == 422
     assert client.get(f"/reports/events/{event['id']}/pick?runs=999999").status_code == 404
+
+
+def test_the_report_and_check_are_worked_out_again_when_the_series_new_sets_change(client):
+    """The tyres' guess follows the new sets the event's series runs (run_tyres.new_set_rule): setting the event's
+    series to one with other new sets makes the report and the technique check stale, a pick's level or not."""
+    import app.db
+    from app import run_tyres
+    from app.routers import reports
+
+    event = client.post("/events", json={"name": "Paul Ricard"}).json()
+    s = client.post("/sessions", json={"event_id": event["id"], "name": "FP1"}).json()
+    r = client.post(f"/sessions/{s['id']}/files", files={"file": ("run.ld", write_ld(simulate(paces=(0.97, 0.98))[0]))})
+    assert r.status_code == 201, r.text
+
+    def signatures():
+        with app.db.SessionLocal() as db:
+            return (reports.plan_for(db, "event", event["id"]).signature,
+                    reports.plan_for(db, "event", event["id"], tyres_as=run_tyres.pair).signature)
+
+    before = signatures()
+    with app.db.SessionLocal() as db:
+        db.get(models.Event, event["id"]).series = "GT4 European Series"
+        db.commit()
+    gt4e = signatures()
+    assert gt4e[0] != before[0] and gt4e[1] != before[1]
+    with app.db.SessionLocal() as db:
+        db.get(models.Event, event["id"]).series = "GT4 European"  # the same new sets: nothing to work out again
+        db.commit()
+    assert signatures() == gt4e
