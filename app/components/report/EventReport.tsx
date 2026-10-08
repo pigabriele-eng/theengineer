@@ -45,6 +45,7 @@ import {
   ReportScope,
   SectionReport,
 } from '@/lib/report';
+import { a11yState } from '@/lib/a11yState';
 import {
   deltaColor, Fonts, lossStep, Palette, phaseColor, Photo, PHOTOS, photoFor, TAP, tapRoom, themed, Type, useTheme,
 } from '@/constants/Theme';
@@ -565,7 +566,7 @@ function ScopeBar({ folder, current, whole, part, scope, pdfName, names, onWhole
             const on = partOn(p);
             return (
               <Pressable key={p.code} onPress={() => onPart(p.code)} accessibilityRole="button"
-                accessibilityLabel={`${p.title} report`} accessibilityState={{ selected: on }}
+                accessibilityLabel={`${p.title} report`} {...a11yState({ selected: on }, 'button')}
                 style={styles.runHit}>
                 <View style={StyleSheet.flatten([styles.run, on && styles.runOn])}>
                   <Text style={StyleSheet.flatten([styles.runText, on && styles.runTextOn])}>{p.code}</Text>
@@ -586,7 +587,7 @@ function ScopeBar({ folder, current, whole, part, scope, pdfName, names, onWhole
               const run = names.byId(s.id);
               return (
                 <Pressable key={s.id} onPress={() => onPick(s.id)} accessibilityRole="button"
-                  accessibilityLabel={`Report for ${run?.name ?? s.name}`} accessibilityState={{ selected: on }}
+                  accessibilityLabel={`Report for ${run?.name ?? s.name}`} {...a11yState({ selected: on }, 'button')}
                   style={styles.runHit}>
                   <View style={StyleSheet.flatten([styles.run, on && styles.runOn])}>
                     <Text style={StyleSheet.flatten([styles.runText, on && styles.runTextOn])}>

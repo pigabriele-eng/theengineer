@@ -20,6 +20,7 @@ import { Block, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { noPrint } from '@/lib/print';
 import { Corner } from '@/lib/tyres';
+import { a11yState } from '@/lib/a11yState';
 import { face, Fonts, tapRoom, themed, Type, useTheme } from '@/constants/Theme';
 
 // ---------- the page's opening ----------
@@ -190,7 +191,7 @@ export function Options<T extends string | number>({ options, value, onPick, mul
           return (
             // on paper only the ticked and the picked options are left
             <Pressable key={String(o.value)} onPress={() => onPick(o.value)} disabled={disabled} hitSlop={4}
-              accessibilityRole="checkbox" accessibilityState={{ checked: on, disabled }} {...(on ? null : noPrint)}
+              accessibilityRole="checkbox" {...a11yState({ checked: on, disabled })} {...(on ? null : noPrint)}
               style={StyleSheet.flatten([styles.check, o.sub ? styles.checkHitSub : styles.checkHit,
                 disabled && styles.dim])}>
               <View style={StyleSheet.flatten([styles.checkBox, on && styles.checkBoxOn])} />
@@ -205,7 +206,7 @@ export function Options<T extends string | number>({ options, value, onPick, mul
         return (
           <Pressable key={String(o.value)} onPress={() => onPick(o.value)} disabled={disabled} hitSlop={4}
             accessibilityRole={big ? 'tab' : 'radio'} {...(on ? null : noPrint)}
-            accessibilityState={big ? { selected: on, disabled } : { checked: on, disabled }}
+            {...a11yState(big ? { selected: on, disabled } : { checked: on, disabled })}
             style={StyleSheet.flatten([big ? (wide ? null : styles.bigHitPhone) : o.sub ? styles.optionHitSub
               : styles.optionHit, disabled && styles.dim])}>
             <View style={StyleSheet.flatten([big ? (wide ? styles.bigOption : styles.bigOptionPhone) : styles.option,
@@ -234,7 +235,7 @@ export function MainAction({ label, onPress, busy, disabled }: { label: string; 
   const wide = useWide();
   return (
     <Pressable onPress={onPress} disabled={busy || disabled} accessibilityRole="button"
-      accessibilityState={{ disabled: busy || disabled, busy }} {...noPrint}
+      {...a11yState({ disabled: busy || disabled, busy })} {...noPrint}
       style={StyleSheet.flatten([styles.main, wide ? null : styles.mainPhone, (disabled && !busy) && styles.dim])}>
       {busy ? <ActivityIndicator color={c.background} /> : <Text style={styles.mainText}>{label}</Text>}
     </Pressable>

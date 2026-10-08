@@ -25,6 +25,7 @@ import { Text, View } from '@/components/Themed';
 import { Fonts, Focus, Photo, Space, TAP, tapRoom, themed, Type, useTheme, WIDE } from '@/constants/Theme';
 import { useKnownMode } from '@/lib/eventModes';
 import { noPrint, printFill, printHead } from '@/lib/print';
+import { a11yState } from '@/lib/a11yState';
 
 /** True on a wide screen (desktop, tablet): pages take their multi-column layout. */
 export function useWide() {
@@ -82,9 +83,10 @@ export function Masthead() {
   const nav = (
     <View style={wide ? styles.nav : styles.navPhone} accessibilityRole="tablist">
       {NAV.map((n) => (
-        // Link asChild hands its child's style to a web anchor, which can't take a style array: one object
+        // Link asChild hands its child's style to a web anchor, which can't take a style array: one object. On the
+        // web it is a link, so the page it is on says so as a link does (aria-current)
         <Link key={n.key} href={n.href} asChild>
-          <Pressable accessibilityRole="tab" accessibilityState={{ selected: n.key === on }} hitSlop={6}
+          <Pressable accessibilityRole="tab" {...a11yState({ selected: n.key === on }, 'link')} hitSlop={6}
             style={StyleSheet.flatten([styles.navItem, n.key === on && styles.navOn])}>
             <Text style={wide ? styles.navText : styles.navTextPhone}>{n.label}</Text>
           </Pressable>

@@ -27,6 +27,7 @@ import { eventsApi } from '@/lib/events';
 import { currentEvent } from '@/lib/openCurrent';
 import { noPrint } from '@/lib/print';
 import { codeOf } from '@/lib/driverTag';
+import { a11yState } from '@/lib/a11yState';
 
 // A picked lap keeps its colour slot for as long as it is picked.
 type Pick = { session_id: number; lap: number; slot: number };
@@ -295,7 +296,7 @@ export default function CompareScreen() {
               return (
                 <View key={g.key} style={styles.group}>
                   <Pressable onPress={() => toggle(g.key)} style={styles.trackHead} accessibilityRole="button"
-                    accessibilityState={{ expanded: open }} aria-expanded={open /* the web reads only this one */}
+                    {...a11yState({ expanded: open })}
                     accessibilityLabel={`${name}, ${count}${picked ? `, ${picked} picked` : ''}`}
                     accessibilityHint={`${open ? 'Folds' : 'Opens'} the sessions at ${name}`}>
                     <View style={styles.trackWords}>

@@ -34,6 +34,7 @@ import {
   trendMark,
   trendSentence,
 } from '@/lib/habitView';
+import { a11yState } from '@/lib/a11yState';
 
 const FRESH_MS = 5_000; // a poll takes an answer at most this old: trackers polling together share one request
 const SHOWN = 8;
@@ -245,7 +246,7 @@ function StatRow({ row, cols, stacked }: { row: StatRowData; cols: Col[]; stacke
       style={stacked ? styles.flex : wide ? styles.cellWide : styles.cellPhone} />
   ));
   return (
-    <Pressable onPress={() => setOpen(!open)} accessibilityRole="button" accessibilityState={{ expanded: open }}
+    <Pressable onPress={() => setOpen(!open)} accessibilityRole="button" {...a11yState({ expanded: open })}
       accessibilityHint="Shows how it changed" style={styles.row}>
       {stacked ? (
         <>
@@ -309,7 +310,7 @@ function HabitItem({ habit, cols, events }: { habit: HabitRow; cols: Col[]; even
   const wide = useWide();
   const [open, setOpen] = useState(false);
   return (
-    <Pressable onPress={() => setOpen(!open)} accessibilityRole="button" accessibilityState={{ expanded: open }}
+    <Pressable onPress={() => setOpen(!open)} accessibilityRole="button" {...a11yState({ expanded: open })}
       style={styles.row}>
       <Text style={styles.rowLabel}>{habit.label}</Text>
       <Text style={t.note}>{habit.do}</Text>

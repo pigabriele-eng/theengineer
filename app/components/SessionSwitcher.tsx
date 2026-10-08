@@ -10,6 +10,7 @@ import { dateRange, dayTitle, eventsApi, Folder, FolderSession } from '@/lib/eve
 import { noPrint } from '@/lib/print';
 import { Fonts, TAP, tapRoom, themed, Type } from '@/constants/Theme';
 import { codeOf } from '@/lib/driverTag';
+import { a11yState } from '@/lib/a11yState';
 
 /** An event with its sessions by day: null when there is none (eventId null) or until it is loaded. While eventId
  * is not known yet (undefined) the last event is kept, so a screen switching between sessions doesn't flicker. */
@@ -89,7 +90,7 @@ export function SessionSwitcher({ folder, current, onPick, onWhole, onlyTimed = 
       {onWhole && (
         <View style={styles.row}>
           <Pressable onPress={onWhole} style={run(current == null)} accessibilityRole="tab"
-            accessibilityState={{ selected: current == null }}>
+            {...a11yState({ selected: current == null })}>
             <Text style={StyleSheet.flatten([styles.name, current == null && styles.nameOn])}>Whole event</Text>
             <Text style={styles.detail}>{formatLap(folder.best_lap_s)}</Text>
           </Pressable>
@@ -103,7 +104,7 @@ export function SessionSwitcher({ folder, current, onPick, onWhole, onlyTimed = 
               const on = s.id === current;
               return (
                 <Pressable key={s.id} onPress={() => !on && onPick(s)} style={run(on)} accessibilityRole="tab"
-                  accessibilityState={{ selected: on }}
+                  {...a11yState({ selected: on })}
                   accessibilityLabel={`${s.name}${s.driver ? `, ${s.driver}` : ''}, best ${formatLap(s.best_lap_s)}`}>
                   <Text style={StyleSheet.flatten([styles.name, on && styles.nameOn, s.best_lap_s == null && styles.dim])}
                     numberOfLines={1}>

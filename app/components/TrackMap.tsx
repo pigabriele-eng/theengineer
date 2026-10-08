@@ -22,6 +22,7 @@ import {
 import { featureMid, featureSpan, TrackShapeData } from '@/lib/trackshape';
 import { noPrint } from '@/lib/print';
 import { Plane, Point, toFrame } from '@/lib/zoom';
+import { a11yState } from '@/lib/a11yState';
 import { byScheme, Fonts, TAP, themed, Type } from '@/constants/Theme';
 
 type Props = {
@@ -283,7 +284,7 @@ export function TrackMap({ session, event, highlight, marks, selectedMark, marks
             <Pressable
               key={m}
               accessibilityRole="button"
-              accessibilityState={{ selected: mode === m }}
+              {...a11yState({ selected: mode === m }, 'button')}
               onPress={() => setMode(m)}
               {...(mode === m ? null : noPrint)}
               style={styles.toggleHit}>

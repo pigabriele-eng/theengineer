@@ -8,6 +8,7 @@ import { useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { face, Fonts, TAP, tapRoom, themed, Type, useTheme } from '@/constants/Theme';
 import { noPrint } from '@/lib/print';
+import { a11yState } from '@/lib/a11yState';
 
 /** A page's name where there is no photo: the Anton headline and its italic line. */
 export function PageHead({ title, dek, children }: { title: string; dek?: ReactNode; children?: ReactNode }) {
@@ -51,7 +52,7 @@ export function Tabs<K extends string | number | null>({ items, value, onChange,
           return (
             // on paper only the picked tab is left, naming what is shown; the pressable box is a full tap target
             <Pressable key={String(it.key)} onPress={() => onChange(it.key)} disabled={it.disabled} {...(on ? null : noPrint)}
-              accessibilityRole="tab" accessibilityState={{ selected: on, disabled: it.disabled }}
+              accessibilityRole="tab" {...a11yState({ selected: on, disabled: it.disabled })}
               style={StyleSheet.flatten([big ? styles.tabBigHit : styles.tabHit, (it.dim || it.disabled) && !on && styles.dim])}>
               <View style={StyleSheet.flatten([big ? styles.tabBig : styles.tab, on && styles.tabOn])}>
                 <View style={styles.tabRow}>
@@ -87,7 +88,7 @@ export function Choice({ label, detail, on, onPress, fill, ink, dim, disabled, a
   const styles = useStyles();
   return (
     <Pressable onPress={onPress} disabled={disabled} accessibilityRole="button" accessibilityLabel={accessibilityLabel}
-      accessibilityState={{ selected: on, disabled }} {...(on ? null : noPrint)}
+      {...a11yState({ selected: on, disabled }, 'button')} {...(on ? null : noPrint)}
       style={StyleSheet.flatten([detail ? styles.pickHit : styles.pickHitBare, disabled && !on && styles.dim])}>
       <View style={StyleSheet.flatten([styles.pick, on && styles.tabOn])}>
         <Text style={StyleSheet.flatten([styles.pickLabel, on && styles.tabTextOn])}>{label}</Text>
@@ -120,7 +121,7 @@ export function Toggle({ on, onChange, label, detail }: { on: boolean; onChange:
   detail?: string }) {
   const styles = useStyles();
   return (
-    <Pressable onPress={() => onChange(!on)} accessibilityRole="checkbox" accessibilityState={{ checked: on }}
+    <Pressable onPress={() => onChange(!on)} accessibilityRole="checkbox" {...a11yState({ checked: on })}
       style={styles.toggle} hitSlop={4}>
       <TickBox on={on} />
       <View style={styles.flex}>
@@ -161,7 +162,7 @@ export function MainAction({ label, onPress, disabled, busy }: { label: string; 
   const c = useTheme();
   return (
     <Pressable onPress={onPress} disabled={disabled || busy} accessibilityRole="button"
-      accessibilityState={{ disabled: disabled || busy, busy }} {...noPrint}
+      {...a11yState({ disabled: disabled || busy, busy })} {...noPrint}
       style={StyleSheet.flatten([styles.action, (disabled || busy) && styles.actionOff])}>
       {busy ? <ActivityIndicator color={c.onTint} /> : <Text style={styles.actionText}>{label}</Text>}
     </Pressable>

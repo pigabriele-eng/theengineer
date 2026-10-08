@@ -19,6 +19,7 @@ import { TYRE_LABEL, TyreLevel } from '@/lib/tyreLevels';
 import { codeOf } from '@/lib/driverTag';
 import { choiceSpeech, picked, rowOf, TyreRow } from '@/lib/tyrePicks';
 import { merged, tagSpeech, tapSends, toggled, tyreTag } from '@/lib/tyreTag';
+import { a11yState } from '@/lib/a11yState';
 import { Fonts, TAP, tapRoom, themed, Type } from '@/constants/Theme';
 
 const web = Platform.OS === 'web';
@@ -188,7 +189,7 @@ export function TyreTag({ tags, id, run, size = 17 }: { tags: TyreTags; id: numb
   const open = tags.open === id;
   return (
     <Pressable ref={tags.tagRef(id)} onPress={() => tags.toggle(id)} accessibilityRole="button"
-      accessibilityLabel={tagSpeech(tag, run)} accessibilityState={{ expanded: open }} style={styles.press}>
+      accessibilityLabel={tagSpeech(tag, run)} {...a11yState({ expanded: open })} style={styles.press}>
       <Text numberOfLines={1} style={StyleSheet.flatten([tag.mine ? styles.mine : styles.guess, open && styles.open,
         { fontSize: size }])}>
         {tag.text}

@@ -13,7 +13,12 @@
 //   overflow  nothing wider than the window and no text cut off at its edge, at 390 px and at 1100 px with 200% zoom
 //             (a 550 px window at device scale 2).
 //   focus     each of the first 10 stops of the Tab key shows a visible change (outline, shadow, border or background).
-// A page's score is the mean of the six checks' pass shares. Prints a table and saves every failure as JSON.
+//   states    every tick box, radio and switch says whether it is on (aria-checked), and what a control tells the phone
+//             about itself (React Native's accessibilityState, read from the React props that drew it) reaches the web
+//             too: open or folded (aria-expanded: a button that opens a disclosure, like a run's tyre tag), ticked
+//             (aria-checked) and picked (aria-selected; aria-pressed on a button, aria-current on a link).
+//             react-native-web reads only the aria-* props, never accessibilityState (lib/a11yState.ts gives both).
+// A page's score is the mean of the seven checks' pass shares. Prints a table and saves every failure as JSON.
 //
 // Usage, from app/ after a web export:
 //   node scripts/a11y-audit.mjs --dist dist [--port 8832] [--pages "home=/,event=/event/1"] [--out a11y.json] [--merge]
@@ -44,16 +49,17 @@ const DEFAULT_PAGES = {
   upload: '/upload',
 };
 
-const CHECKS = ['contrast', 'size', 'targets', 'names', 'overflow', 'focus'];
+const CHECKS = ['contrast', 'size', 'targets', 'names', 'overflow', 'focus', 'states'];
 const MIN_TARGET = 44;
 
-// The windows each page is opened in, and what is checked in each: sizes, targets and names don't depend on the
-// scheme, so they are checked in Light only.
+// The windows each page is opened in, and what is checked in each: sizes, targets, names and states don't depend on
+// the scheme, so they are checked in Light only.
 const RUNS = [
   { id: '390 light', width: 390, height: 844, scheme: 'light', phone: true,
-    checks: ['contrast', 'size', 'targets', 'names', 'overflow'] },
+    checks: ['contrast', 'size', 'targets', 'names', 'overflow', 'states'] },
   { id: '390 dark', width: 390, height: 844, scheme: 'dark', phone: true, checks: ['contrast'] },
-  { id: '1100 light', width: 1100, height: 900, scheme: 'light', checks: ['contrast', 'size', 'targets', 'names', 'focus'] },
+  { id: '1100 light', width: 1100, height: 900, scheme: 'light',
+    checks: ['contrast', 'size', 'targets', 'names', 'focus', 'states'] },
   { id: '1100 dark', width: 1100, height: 900, scheme: 'dark', checks: ['contrast'] },
   { id: '1100 at 200%', width: 550, height: 450, scale: 2, scheme: 'light', checks: ['overflow'] },
 ];
@@ -292,9 +298,50 @@ function collect({ phone, sampleSvg }) {
       h: Math.round(r.height * 10) / 10 });
   }
 
+  // states: the accessibilityState a control was drawn with is in the props of the React components between it and the
+  // element above it (Pressable, View, Text); the attributes the web needs for each part of it
+  const fiberKey = (e) => Object.keys(e).find((k) => k.startsWith('__reactFiber$'));
+  const declared = (e) => {
+    const key = fiberKey(e);
+    for (let f = key ? e[key].return : null; f && f.tag !== 3 && !(f.stateNode instanceof Element); f = f.return) {
+      const s = f.memoizedProps?.accessibilityState;
+      if (s && typeof s === 'object') return s;
+    }
+    return null;
+  };
+  const TICKED = ['checkbox', 'radio', 'switch'];
+  const states = [];
+  for (const e of document.body.querySelectorAll('*')) {
+    const role = e.getAttribute('role');
+    const s = declared(e);
+    if (!TICKED.includes(role) && !s) continue;
+    const r = e.getBoundingClientRect();
+    // a disabled one still says whether it is ticked: not left out like a target
+    if (r.width <= 0 || r.height <= 0 || cs(e).visibility !== 'visible' || clippedAway(e, r)) continue;
+    if (opacity(e, null) <= 0.02) continue;
+    const want = []; // [attribute, the value it should have, or null for any]
+    if (TICKED.includes(role) || s?.checked != null) {
+      want.push(['aria-checked', s?.checked != null ? String(s.checked) : null]);
+    }
+    if (s?.expanded != null) want.push(['aria-expanded', String(s.expanded)]);
+    // picked: a browser keeps aria-selected only on a tab, an option, a row or a cell; a picked button is pressed, a
+    // picked link the page it is on, and a radio, tick box or switch says it by aria-checked alone
+    if (s?.selected != null && !TICKED.includes(role)) {
+      if (role === 'button') want.push(['aria-pressed', String(s.selected)]);
+      else if (role === 'link') want.push(['aria-current', s.selected ? 'page' : 'false']);
+      else want.push(['aria-selected', String(s.selected)]);
+    }
+    const label = (e.getAttribute('aria-label') || e.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 50);
+    for (const [attr, value] of want) {
+      const got = e.getAttribute(attr);
+      states.push({ role: role || e.tagName.toLowerCase(), label, attr, want: value ?? 'true or false', got,
+        pass: got != null && (value == null || got === value) });
+    }
+  }
+
   // overflow: wider than the window, or text past its edge outside a sideways scroller
   const docWidth = Math.max(document.documentElement.scrollWidth, document.body.scrollWidth);
-  return { phone, width: W, texts, targets, overflow: { docWidth, cut } };
+  return { phone, width: W, texts, targets, states, overflow: { docWidth, cut } };
 }
 
 // Runs in the page with all text hidden: the pixels behind each text that needs them, from a screenshot of the
@@ -512,6 +559,7 @@ async function audit(browser, base, name, path, run) {
       result.overflow = [{ run: run.id, docWidth: o.docWidth, width: got.width, cut: o.cut.slice(0, 10),
         pass: o.docWidth <= got.width + 1 && o.cut.length === 0 }];
     }
+    if (run.checks.includes('states')) result.states = got.states;
     if (run.checks.includes('focus')) {
       result.focus = (await focusStops(page)).map((s) => ({ ...s, pass: s.visible }));
     }
@@ -536,20 +584,21 @@ function score(runs) {
   return { score: Math.round(total * 1000) / 10, cats };
 }
 
-const pct = (c) => (c.total ? `${Math.round((c.pass / c.total) * 100)}%` : 'n/a');
-const failsOf = (c) => (c.total ? `${c.total - c.pass}/${c.total}` : '-');
+// (an audit saved before a check existed has none of it)
+const pct = (c) => (c?.total ? `${Math.round((c.pass / c.total) * 100)}%` : 'n/a');
+const failsOf = (c) => (c?.total ? `${c.total - c.pass}/${c.total}` : '-');
 
 function table(pages) {
   const head = '| page | score | contrast fails | size fails (<12 px / phone body <16) | targets <44 px | unnamed controls | ' +
-    'overflow (390 / 200%) | focus not visible |';
-  const rows = [head, '|---|---|---|---|---|---|---|---|'];
+    'overflow (390 / 200%) | focus not visible | states missing |';
+  const rows = [head, '|---|---|---|---|---|---|---|---|---|'];
   for (const [name, p] of Object.entries(pages)) {
     const c = p.cats;
     const tiny = c.size.fails.filter((f) => f.tiny).length;
     const body = c.size.fails.filter((f) => f.body).length;
     const ov = p.runs.filter((r) => r.overflow).map((r) => (r.overflow[0].pass ? 'ok' : 'over')).join(' / ');
     rows.push(`| ${name} | ${p.score} | ${failsOf(c.contrast)} | ${failsOf(c.size)} (${tiny} / ${body}) | ` +
-      `${failsOf(c.targets)} | ${failsOf(c.names)} | ${ov || '-'} | ${failsOf(c.focus)} |`);
+      `${failsOf(c.targets)} | ${failsOf(c.names)} | ${ov || '-'} | ${failsOf(c.focus)} | ${failsOf(c.states)} |`);
   }
   return rows.join('\n');
 }
@@ -557,8 +606,8 @@ function table(pages) {
 function compare(beforeFile, afterFile) {
   const a = JSON.parse(readFileSync(beforeFile, 'utf8')).pages;
   const b = JSON.parse(readFileSync(afterFile, 'utf8')).pages;
-  const rows = ['| page | before | after | contrast | size | targets | names | overflow | focus |',
-    '|---|---|---|---|---|---|---|---|---|'];
+  const rows = ['| page | before | after | contrast | size | targets | names | overflow | focus | states |',
+    '|---|---|---|---|---|---|---|---|---|---|'];
   for (const name of Object.keys({ ...a, ...b })) {
     const x = a[name];
     const y = b[name];
@@ -629,7 +678,7 @@ async function main() {
   }
   writeFileSync(out, JSON.stringify(doc, null, 1));
   console.log(table(doc.pages));
-  console.log(`\nscore = mean of the six checks' pass shares; details in ${out}`);
+  console.log(`\nscore = mean of the seven checks' pass shares; details in ${out}`);
 }
 
 main().catch((e) => {

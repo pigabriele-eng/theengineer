@@ -18,6 +18,7 @@ import {
 } from '@/lib/balance';
 import { quickestLapsLine } from '@/lib/grip';
 import { noPrint } from '@/lib/print';
+import { a11yState } from '@/lib/a11yState';
 import { byScheme, Fonts, TAP, tapRoom, themed, Type } from '@/constants/Theme';
 
 // bare: inside a report section that already names it, so without its own heading
@@ -160,7 +161,7 @@ function BalanceTable({ r }: { r: BalanceReport }) {
             onPress={() => setQuick(o.label === 'Quickest passes')}
             {...(o.on ? null : noPrint)}
             accessibilityRole="tab"
-            accessibilityState={{ selected: o.on }}
+            {...a11yState({ selected: o.on })}
             style={styles.toggleHit}>
             <View style={[styles.toggleItem, o.on && { borderColor: tint }]}>
               <Text style={o.on ? { color: tint } : styles.toggleOff}>{o.label}</Text>

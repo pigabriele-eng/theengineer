@@ -11,6 +11,7 @@ import { todayIso } from '@/lib/calendar';
 import { Driver, driversApi } from '@/lib/drivers';
 import { dateRange, dayLabel, dayTitle, Folder } from '@/lib/events';
 import { firstOpen, loadBlocks, Outing, outingsOf, withoutDriver } from '@/lib/tagging';
+import { a11yState } from '@/lib/a11yState';
 import { Fonts, themed, Type } from '@/constants/Theme';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -109,7 +110,7 @@ export default function TagDriversScreen() {
     const who = o.driver ?? driverName(o.driver_id);
     return (
       <Pressable key={o.id} onPress={() => toggle([o.id], !on)} style={styles.row} accessibilityRole="checkbox"
-        accessibilityState={{ checked: on }} accessibilityLabel={`${o.name}, ${who ?? 'no driver'}`}>
+        {...a11yState({ checked: on })} accessibilityLabel={`${o.name}, ${who ?? 'no driver'}`}>
         <Tick on={on} />
         <View style={styles.rowText}>
           <Text style={styles.rowTitle} numberOfLines={2}>{o.name}</Text>
@@ -138,7 +139,7 @@ export default function TagDriversScreen() {
       <View key={b.key} style={styles.block}>
         <View style={styles.head}>
           <Pressable onPress={() => flip(b.key)} style={styles.headText} accessibilityRole="button"
-            aria-expanded={isOpen} accessibilityLabel={`${b.name}, ${summary}`}>
+            {...a11yState({ expanded: isOpen })} accessibilityLabel={`${b.name}, ${summary}`}>
             <Text style={styles.chevron}>{isOpen ? '−' : '+'}</Text>
             <View style={styles.headWords}>
               <Text style={wide ? styles.blockTitle : styles.blockTitlePhone} numberOfLines={2}>{b.name}</Text>

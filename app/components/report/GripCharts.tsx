@@ -12,6 +12,7 @@ import { ResetZoom, usePlaneZoom, useZoom, ZoomArea, ZoomPlane } from '@/compone
 import { byScheme, chartPlate, Fonts, inkOn, ramp, TAP, tapRoom, themed, Type } from '@/constants/Theme';
 import { noPrint } from '@/lib/print';
 import { isZoomed, pixelOf, Plane, Range, shownRange } from '@/lib/zoom';
+import { a11yState } from '@/lib/a11yState';
 
 // Slots 1 and 2 of the validated chart palette, a grey for context, ink, and two one-hue ramps (grip in blue,
 // traction control in orange), each stepped for its own mode; status colours for the verdicts.
@@ -440,7 +441,7 @@ export function GripMap({ x, y, step, modes, labels, describe }: {
       <View style={styles.tabs} accessibilityRole="tablist">
         {modes.map((m, i) => (
           <Pressable key={m.key} onPress={() => setMode(i)} {...(i === mode ? null : noPrint)} accessibilityRole="tab"
-            accessibilityState={{ selected: i === mode }} style={styles.tabHit}>
+            {...a11yState({ selected: i === mode })} style={styles.tabHit}>
             <View style={i === mode ? [styles.tab, { borderColor: c.ink }] : styles.tab}>
               <Text style={i === mode ? styles.tabOn : styles.tabText}>{m.label}</Text>
             </View>

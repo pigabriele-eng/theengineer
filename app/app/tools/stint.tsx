@@ -38,6 +38,7 @@ import {
   TAGS,
   Words,
 } from '@/lib/stint';
+import { a11yState } from '@/lib/a11yState';
 import { face, Fonts, inkOn, Palette, phaseColor, themed, Type, useTheme } from '@/constants/Theme';
 
 const ALL = 'all';
@@ -390,7 +391,7 @@ function Picker({ events, ticked, open, setOpen, toggle, track }: {
               const empty = f.laps === 0;
               return (
                 <Pressable key={f.id} onPress={() => toggle(f.id)} disabled={(empty || other) && !on}
-                  accessibilityRole="checkbox" accessibilityState={{ checked: on, disabled: (empty || other) && !on }}
+                  accessibilityRole="checkbox" {...a11yState({ checked: on, disabled: (empty || other) && !on })}
                   style={StyleSheet.flatten([styles.logRow, (empty || other) && !on && styles.dim])}>
                   <TickBox on={on} />
                   <View style={styles.flex}>
@@ -530,7 +531,7 @@ function PhaseTable({ fits, fade, stint, wide }: {
             return (
               <Pressable key={p.key} onPress={() => setPhase(p.key)} disabled={wide || stint == null}
                 accessibilityLabel={`${p.label}: grip ${fixed(g?.level, 2)} g, ${signed(gp, 1)} %, balance ${signed(b?.change)}°`}
-                accessibilityState={{ selected: on }}
+                {...a11yState({ selected: on })}
                 style={StyleSheet.flatten([styles.phaseRow, on && styles.phaseRowOn])}>
                 <View style={StyleSheet.flatten([styles.phaseCol, styles.phaseName])}>
                   <View style={StyleSheet.flatten([styles.phaseKey, { backgroundColor: phaseColor(theme, p.key) }])} />
@@ -773,7 +774,7 @@ function LapList({ stint, onTag, tagging }: {
                     const suggested = !l.tag && l.suggestion?.options.includes(t);
                     return (
                       <Pressable key={t} onPress={() => onTag(stint, l, on ? null : t)} disabled={busy}
-                        hitSlop={4} accessibilityRole="button" accessibilityState={{ selected: on }}
+                        hitSlop={4} accessibilityRole="button" {...a11yState({ selected: on }, 'button')}
                         accessibilityLabel={on ? `Clear the ${TAG_WORDS[t]} tag on lap ${l.lap}`
                           : `Tag lap ${l.lap} ${TAG_WORDS[t]}`}
                         style={StyleSheet.flatten([styles.tagBox, suggested && styles.tagSuggested,

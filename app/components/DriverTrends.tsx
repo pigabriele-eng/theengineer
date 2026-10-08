@@ -23,6 +23,7 @@ import {
   TechniqueRow,
   valueWords,
 } from '@/lib/drivers';
+import { a11yState } from '@/lib/a11yState';
 import { face, Fonts, themed, Type, useTheme } from '@/constants/Theme';
 
 type Colors = Record<Side, string>;
@@ -73,7 +74,7 @@ export function SectionDeltaChart({ result, colors, selected, onSelect }: {
               onHoverIn={() => setHover(s.code)}
               onHoverOut={() => setHover((h) => (h === s.code ? null : h))}
               accessibilityRole="button"
-              accessibilityState={{ selected: isOn }}
+              {...a11yState({ selected: isOn }, 'button')}
               accessibilityLabel={sectionWords(s, labels)}
               style={StyleSheet.flatten([
                 styles.barRow,

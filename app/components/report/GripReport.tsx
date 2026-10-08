@@ -18,6 +18,7 @@ import {
   Verdict,
 } from '@/lib/grip';
 import { noPrint } from '@/lib/print';
+import { a11yState } from '@/lib/a11yState';
 
 import { ChartColors, Dumbbell, GgDiagram, GripMap, inkOn, LegendItem, ramp, Scatter, useChartColors } from './GripCharts';
 import { Fonts, legibleFill, TAP, tapRoom, themed, Type } from '@/constants/Theme';
@@ -326,7 +327,7 @@ function GgBlock({ data, c, sectionAt }: { data: GripResult; c: ChartColors; sec
       <View style={styles.tabs} accessibilityRole="tablist">
         {lim.bands_kmh.map((b, i) => (
           <Pressable key={i} onPress={() => setBand(i)} {...(i === band ? null : noPrint)} accessibilityRole="tab"
-            accessibilityState={{ selected: i === band }} style={styles.tabHit}>
+            {...a11yState({ selected: i === band })} style={styles.tabHit}>
             <View style={i === band ? [styles.tab, { borderColor: c.ink }] : styles.tab}>
               <Text style={i === band ? styles.tabOn : styles.tabText}>{label(b)}</Text>
             </View>

@@ -26,6 +26,7 @@ import {
 } from '@/lib/lapsFirst';
 import { poll } from '@/lib/poll';
 import { DETECTED_CORNERS_NOTE } from '@/lib/api';
+import { a11yState } from '@/lib/a11yState';
 import { face, Fonts, TAP, themed, Type, useTheme } from '@/constants/Theme';
 
 type LapPick = { session_id: number; lap: number };
@@ -156,7 +157,7 @@ function SuggestionRow({ no, s, on, onPress }: { no: number; s: Suggestion; on: 
   const colors = useLapColors([0, 1]);
   const words = suggestionSpeech(s, codeOf, formatLap);
   return (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityState={{ selected: on }}
+    <Pressable onPress={onPress} accessibilityRole="button" {...a11yState({ selected: on }, 'button')}
       accessibilityLabel={`${words}${on ? ' On show below.' : ''}`} accessibilityHint="Shows this comparison below"
       style={StyleSheet.flatten([styles.row, on && styles.rowOn])}>
       <Text style={styles.rowNo}>{String(no).padStart(2, '0')}</Text>

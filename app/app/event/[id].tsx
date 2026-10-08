@@ -50,6 +50,7 @@ import { encodePicks } from '@/lib/compare';
 import { COACHING_SECTIONS } from '@/lib/coachingDay';
 import { EventMode, fetchMode, setMode as saveMode } from '@/lib/eventModes';
 import { noPrint } from '@/lib/print';
+import { a11yState } from '@/lib/a11yState';
 import { face, Fonts, PHOTOS, photoFor, TAP, tapRoom, themed, Type, useTheme } from '@/constants/Theme';
 
 // A run row as the server sends it, with its driver and car ids
@@ -622,7 +623,7 @@ function ModeSwitch({ mode, onChange }: { mode: EventMode; onChange: (m: EventMo
       {MODES.map((m, i) => (
         <Text key={m.key}>
           {i > 0 ? ' / ' : ''}
-          <Text onPress={() => onChange(m.key)} accessibilityRole="radio" accessibilityState={{ checked: m.key === mode }}
+          <Text onPress={() => onChange(m.key)} accessibilityRole="radio" {...a11yState({ checked: m.key === mode })}
             style={m.key === mode ? styles.modeOn : styles.modeOff}>{m.label}</Text>
         </Text>
       ))}

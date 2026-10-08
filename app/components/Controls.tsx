@@ -10,6 +10,7 @@ import { useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { Fonts, TAP, tapRoom, themed, Type, useTheme } from '@/constants/Theme';
 import { noPrint } from '@/lib/print';
+import { a11yState } from '@/lib/a11yState';
 
 /** The head of a page without a photo (it keeps the bar above it): a grey kicker, the page's name in Anton and its
  * italic line. */
@@ -78,10 +79,12 @@ export function Choice({ label, sub, on, onPress, add, disabled }: {
   disabled?: boolean;
 }) {
   const styles = useStyles();
+  const role = add ? 'button' : 'radio';
   return (
     // on paper only the picked word is left; the pressable box is a full tap target around the word
-    <Pressable onPress={onPress} disabled={disabled} accessibilityRole={add ? 'button' : 'radio'}
-      accessibilityState={{ selected: on, checked: add ? undefined : on, disabled }} {...(on && !add ? null : noPrint)}
+    <Pressable onPress={onPress} disabled={disabled} accessibilityRole={role}
+      {...a11yState(add ? { disabled } : { selected: on, checked: on, disabled }, role)}
+      {...(on && !add ? null : noPrint)}
       style={StyleSheet.flatten([styles.choiceHit, disabled && styles.dim])}>
       <View style={StyleSheet.flatten([styles.choice, on && styles.choiceOn, add && styles.choiceAdd])}>
         <Text style={StyleSheet.flatten([styles.choiceText, (on || add) && styles.choiceTextOn])} numberOfLines={1}>
@@ -118,7 +121,7 @@ export function Tick({ on, onPress, disabled, label, size = 22 }: {
   if (!onPress) return box;
   return (
     <Pressable onPress={onPress} disabled={disabled} accessibilityRole="checkbox"
-      accessibilityState={{ checked: on, disabled }} accessibilityLabel={label}
+      {...a11yState({ checked: on, disabled })} accessibilityLabel={label}
       style={tapRoom(Math.max(0, (TAP - size) / 2), Math.max(0, (TAP - size) / 2))}>
       {box}
     </Pressable>
@@ -140,7 +143,7 @@ export function MainButton({ label, sub, onPress, busy, disabled, danger, style 
   const c = useTheme();
   return (
     <Pressable onPress={onPress} disabled={disabled || busy} accessibilityRole="button" {...noPrint}
-      accessibilityLabel={sub ? `${label}: ${sub}` : label} accessibilityState={{ disabled: disabled || busy, busy }}
+      accessibilityLabel={sub ? `${label}: ${sub}` : label} {...a11yState({ disabled: disabled || busy, busy })}
       style={StyleSheet.flatten([styles.main, danger && styles.mainDanger, (disabled && !busy) && styles.dim, style])}>
       {busy ? <ActivityIndicator color={c.background} /> : (
         <>
