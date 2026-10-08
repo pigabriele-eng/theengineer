@@ -220,9 +220,12 @@ def _fill(db: Session, plan: Plan, sessions: list[models.RunSession]) -> Plan:
     # the tyres the driver set on its runs: the report compares laps on the same tyres only
     tyres = sorted((sid, plan.tyres_as(t) if plan.tyres_as else t)
                    for sid, t in run_tyres.stored(db, [i.session.id for i in plan.items if i.signature]).items())
+    # and the new sets the event's series runs, which move the tyres' guess (run_tyres.new_set_rule)
+    ev = next((s.event for s in sessions if s.event_id is not None), None)
+    rule = run_tyres.new_set_rule(ev.series, ev.name, ev.track.name if ev.track else None) if ev else None
     plan.signature = _hash([REPORT_VERSION, plan.scope, corners,
                             [(i.session.id, i.name, i.session.driver.name if i.session.driver else None, i.signature,
-                              warm_up.of(i.session)) for i in plan.items if i.signature], tyres])
+                              warm_up.of(i.session)) for i in plan.items if i.signature], tyres, rule])
     return plan
 
 
