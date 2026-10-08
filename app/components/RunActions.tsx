@@ -1,7 +1,8 @@
 // A run row's quick actions (Gabriele, 2026-10-07: "Quick hold/swipe to delete runs in phone app"): swipe the row to
-// the left for a red Delete, or hold it for a small menu (Delete, Change driver, Rename). Delete always asks first,
+// the left for a red Delete, or hold it for a small menu (Delete, Change driver, Rename and, on the event page, Tyres:
+// components/TyrePicks.tsx). Delete always asks first,
 // with the confirm the ticked runs' Delete… uses (components/DeleteRuns.tsx), so a stray swipe never loses a run.
-// Never the only way: screen readers get the same three as actions on the row's link, the keyboard on the web opens
+// Never the only way: screen readers get the same as actions on the row's link, the keyboard on the web opens
 // the menu with the menu key or Shift+F10, and ticking runs then Delete… stays. The numbers behind the swipe and the
 // one open row are in lib/swipe.ts. React Native's own PanResponder and Animated, already in the web bundle: no new
 // dependency.
@@ -18,9 +19,9 @@ import { RunsDeleted } from '@/lib/deleteRuns';
 import { dragOffset, HOLD_MS, isMenuKey, openRows, REVEAL, settlesOpen, takesSwipe } from '@/lib/swipe';
 import { TAP, themed, Type } from '@/constants/Theme';
 
-export type RunAction = 'delete' | 'driver' | 'rename';
+export type RunAction = 'delete' | 'driver' | 'rename' | 'tyres';
 const ACTIONS: RunAction[] = ['delete', 'driver', 'rename'];
-const WORDS: Record<RunAction, string> = { delete: 'Delete', driver: 'Change driver', rename: 'Rename' };
+const WORDS: Record<RunAction, string> = { delete: 'Delete', driver: 'Change driver', rename: 'Rename', tyres: 'Tyres' };
 
 const web = Platform.OS === 'web';
 // a phone or tablet's browser: holding a row there must not start selecting its words
@@ -36,14 +37,20 @@ export const closesRows = web ? {} : { onTouchStart: () => rows.touchedPage() };
 
 /** A run row's actions, its menu and its confirm: what's open under the row (`shown`), the hold that opens the menu
  * (`hold`, spread on the row's own buttons and links) and the actions for screen readers (`a11y`, spread on the row's
- * link). */
-export function useRunActions({ onDriver, onRename }: { onDriver: () => void; onRename: () => void }) {
+ * link). With `onTyres` the menu has Tyres too (a run of an event). */
+export function useRunActions({ onDriver, onRename, onTyres }: {
+  onDriver: () => void;
+  onRename: () => void;
+  onTyres?: () => void;
+}) {
   const [shown, setShown] = useState<'menu' | 'delete' | null>(null);
   const byKeys = useRef(false); // the menu was opened from the keyboard: it takes the focus
+  const actions: RunAction[] = onTyres ? [...ACTIONS, 'tyres'] : ACTIONS;
   const act = (a: RunAction) => {
     if (a === 'delete') return setShown('delete');
     setShown(null);
     if (a === 'driver') onDriver();
+    else if (a === 'tyres') onTyres?.();
     else onRename();
   };
   const openMenu = (keys = false) => {
@@ -52,16 +59,17 @@ export function useRunActions({ onDriver, onRename }: { onDriver: () => void; on
   };
   return {
     shown,
+    actions,
     act,
     openMenu,
     byKeys: byKeys.current,
     close: () => setShown(null),
     hold: { onLongPress: () => openMenu(), delayLongPress: HOLD_MS },
     a11y: {
-      accessibilityActions: ACTIONS.map((a) => ({ name: a, label: WORDS[a] })),
+      accessibilityActions: actions.map((a) => ({ name: a, label: WORDS[a] })),
       onAccessibilityAction: (e: AccessibilityActionEvent) => {
-        const a = e.nativeEvent.actionName;
-        if (a !== 'delete' && a !== 'driver' && a !== 'rename') return;
+        const a = actions.find((x) => x === e.nativeEvent.actionName);
+        if (!a) return;
         act(a);
         if (a === 'delete') AccessibilityInfo.announceForAccessibility('Delete this run? The confirm is under the run.');
       },
@@ -219,7 +227,11 @@ export function RunPanel({ run, id, name, inEvent, onDeleted, style }: {
   style?: ViewStyle;
 }) {
   if (run.shown === 'menu') {
-    return <View style={style}><RunMenu name={name} onAction={run.act} onClose={run.close} focus={run.byKeys} /></View>;
+    return (
+      <View style={style}>
+        <RunMenu name={name} actions={run.actions} onAction={run.act} onClose={run.close} focus={run.byKeys} />
+      </View>
+    );
   }
   if (run.shown === 'delete') {
     return (
@@ -235,10 +247,11 @@ export function RunPanel({ run, id, name, inEvent, onDeleted, style }: {
   return null;
 }
 
-/** The menu a hold opens: the run's name and Close over a rule, then Delete…, Change driver and Rename, each a full
- * line to tap. */
-function RunMenu({ name, onAction, onClose, focus }: {
+/** The menu a hold opens: the run's name and Close over a rule, then Delete…, Change driver, Rename (and Tyres), each
+ * a full line to tap. */
+function RunMenu({ name, actions, onAction, onClose, focus }: {
   name: string;
+  actions: RunAction[];
   onAction: (a: RunAction) => void;
   onClose: () => void;
   focus: boolean; // opened from the keyboard: the focus goes to its first line
@@ -259,10 +272,10 @@ function RunMenu({ name, onAction, onClose, focus }: {
           <Text style={styles.menuCloseText}>Close</Text>
         </Pressable>
       </View>
-      {ACTIONS.map((a, i) => (
+      {actions.map((a, i) => (
         <Pressable key={a} ref={i === 0 ? first : undefined} onPress={() => onAction(a)} accessibilityRole="button"
-          accessibilityLabel={`${WORDS[a]} ${name}`}
-          style={i < ACTIONS.length - 1 ? styles.menuItem : styles.menuLast}>
+          accessibilityLabel={a === 'tyres' ? `Tyres of ${name}` : `${WORDS[a]} ${name}`}
+          style={i < actions.length - 1 ? styles.menuItem : styles.menuLast}>
           <Text style={a === 'delete' ? styles.menuDanger : styles.menuText}>{WORDS[a]}{a === 'delete' ? '…' : ''}</Text>
         </Pressable>
       ))}

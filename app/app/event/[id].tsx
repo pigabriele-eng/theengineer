@@ -25,6 +25,7 @@ import { byTouch, closesRows, RunPanel, SwipeRow, useRunActions } from '@/compon
 import { SeasonMatch } from '@/components/SeasonMatch';
 import { filledNote, localPick, PickerKind, RunChips, RunNameEditor, RunPicker, useGarage } from '@/components/RunChips';
 import { Text, View } from '@/components/Themed';
+import { RunTyresPanel } from '@/components/TyrePicks';
 import CoachingDay from '@/components/coaching/CoachingDay';
 import WeekendBefore from '@/components/weekend/Before';
 import WeekendDuring from '@/components/weekend/During';
@@ -708,7 +709,7 @@ function DayHead({ days, date }: { days: Folder['days']; date: string | null }) 
 
 /** One run: tick it for side by side, tap its name to rename it in place, its driver or car to set them, its best lap
  * (a purple block for the event's best, else a red bar for the gap to it) or its laps to open it. Swiped left it shows
- * Delete; held, a menu of Delete, Change driver and Rename (components/RunActions.tsx). */
+ * Delete; held, a menu of Delete, Change driver, Rename and Tyres (components/RunActions.tsx). */
 function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, editing, onEdit, onSaved, garage,
   eventDrivers, open, onOpen, onPick, note, onNoteClose, guess, guessMode, inEvent, onDeleted }: {
   s: Run;
@@ -737,7 +738,9 @@ function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, e
   const styles = useStyles();
   const wide = useWide();
   const c = useTheme();
-  const run = useRunActions({ onDriver: () => onOpen('driver'), onRename: () => !editing && onEdit() });
+  const [tyres, setTyres] = useState(false); // the hold menu's Tyres: the run's four levels under it
+  const run = useRunActions({ onDriver: () => onOpen('driver'), onRename: () => !editing && onEdit(),
+    onTyres: inEvent && s.event_id != null ? () => setTyres(true) : undefined });
   const detail = [
     KIND_NAMES[s.kind],
     s.log_session && !s.name.includes(s.log_session) ? s.log_session : null,
@@ -806,6 +809,11 @@ function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, e
       </SwipeRow>
       <RunPanel run={run} id={s.id} name={s.name} inEvent={inEvent} onDeleted={onDeleted}
         style={wide ? styles.under : styles.underPhone} />
+      {tyres && s.event_id != null && (
+        <View style={wide ? styles.under : styles.underPhone}>
+          <RunTyresPanel eventId={s.event_id} id={s.id} name={s.name} onClose={() => setTyres(false)} />
+        </View>
+      )}
       {open && garage && (
         <View style={wide ? styles.under : styles.underPhone}>
           <RunPicker what={open} run={s} garage={garage} onPick={onPick} onClose={() => onOpen(null)}

@@ -4,7 +4,7 @@ import { test } from 'node:test';
 
 import {
   askedTab, cornerSpeech, cornerWords, lapWords, mistakeNotes, mistakeWords, openingTab, suggestionSpeech,
-  suggestionTitle, toggleLap,
+  suggestionTitle, toggleLap, tyreWords,
 } from './lapsFirst.ts';
 
 const lap = (extra = {}) => ({
@@ -65,4 +65,11 @@ test('laps ticked by hand: on, off, at most six', () => {
   assert.deepEqual(toggleLap([], a, 6), [a]);
   assert.deepEqual(toggleLap([a, b], { session_id: 1, lap: 2 }, 6), [b]);
   assert.deepEqual(toggleLap([a], b, 1), [a]);
+});
+
+test('a lap’s tyres by their level, a guess said so', () => {
+  assert.equal(tyreWords({ tyres: 'used', tyres_sure: true, tyres_label: 'Fresh' }), 'Fresh tyres');
+  assert.equal(tyreWords({ tyres: 'used', tyres_sure: false, tyres_label: 'Very used' }), 'Very used tyres (guess)');
+  assert.equal(tyreWords({ tyres: 'new', tyres_sure: false }), 'new tyres (guess)'); // a server without the levels
+  assert.equal(lapWords(lap({ run: '05_R2 (2)', lap: 8, tyres: 'used', tyres_label: 'Fresh' })), '05_R2 (2) · lap 8 · Fresh tyres');
 });

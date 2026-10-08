@@ -20,7 +20,7 @@ import { CompareResult, compareLaps, encodePicks, formatLap, MAX_LAPS, MIN_LAPS,
 import { codeOf } from '@/lib/driverTag';
 import { fetchSuggestions, PickRun, PickSession, SuggestedLap, Suggestion, Suggestions } from '@/lib/lapSuggestions';
 import {
-  cornerWords, lapWords, mistakeNotes, mistakeWords, suggestionSpeech, suggestionTitle, toggleLap,
+  cornerWords, lapWords, mistakeNotes, mistakeWords, suggestionSpeech, suggestionTitle, toggleLap, tyreWords,
 } from '@/lib/lapsFirst';
 import { poll } from '@/lib/poll';
 import { DETECTED_CORNERS_NOTE } from '@/lib/api';
@@ -361,7 +361,7 @@ function RunLaps({ run, picks, onToggle }: { run: PickRun; picks: LapPick[]; onT
       <View style={styles.pickRunHead}>
         <DriverTag tag={tag(run.driver)} run={run.name} />
         <Text style={styles.pickRunName} numberOfLines={1}>{run.name}</Text>
-        <Text style={styles.pickRunTyres}>{`${run.tyres} tyres${run.tyres_sure === false ? ' (guess)' : ''}`}</Text>
+        <Text style={styles.pickRunTyres}>{tyreWords(run)}</Text>
       </View>
       <View style={styles.lapChoices}>
         {run.laps.map((l) => {
