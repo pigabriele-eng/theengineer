@@ -16,8 +16,8 @@ gained and a verdict (fixed, better, not yet).
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import or_, select
+from sqlalchemy.orm import Session, selectinload
 
 from app import models, run_labels, run_parts, run_tyres
 from app.analysis.technique import HABITS, habits
@@ -40,15 +40,26 @@ class _Run:
         kind, id_ = technique._scope_of(s)
         plan, self.row, self.status = technique._state(db, kind, id_)
         self.head = technique._head(plan, self.row, self.status)
-        self.res = res = self.row.result if self.row is not None else None
-        every = res["laps"] if res else []
+        # the answer kept, even while it is worked out again for a change (a driver, tyres, a new run): shown at once
+        self.res = res = technique._current(self.row)
+        self.every = res["laps"] if res else []
+        # the event's runs (the check's), read once with their drivers and logs (their labels read the logs)
+        ids = {x["session_id"] for x in self.every} | {s.id}
+        which = models.RunSession.id.in_(ids)
+        if s.event_id is not None:
+            which = or_(which, models.RunSession.event_id == s.event_id)
+        self.runs = list(db.scalars(select(models.RunSession).where(which).options(
+            selectinload(models.RunSession.driver), selectinload(models.RunSession.files))))
         # each run's driver as set now (the check keeps what its logs said when it ran: a Change since isn't in it)
-        ids = {x["session_id"] for x in every} | {s.id}
-        self.driver_of = {r.id: r.driver.name if r.driver else None
-                          for r in db.scalars(select(models.RunSession).where(models.RunSession.id.in_(ids)))}
+        self.driver_of = {r.id: r.driver.name if r.driver else None for r in self.runs}
         self.driver = self.driver_of.get(s.id)
-        # by default the run's own laps (all on one set of tyres); picked: the driver's laps among those picked, from
-        # any run of the check, and the other drivers' picked laps to compare with
+        self._labels: list[run_labels.RunLabel] | None = None
+        self.use(pick)
+
+    def use(self, pick: set[tuple[int, int]] | None) -> None:
+        """The laps to read: by default the run's own laps (all on one set of tyres); picked: the driver's laps among
+        those picked, from any run of the check, and the other drivers' picked laps to compare with."""
+        every, s = self.every, self.session
         picked = [x for x in every if (x["session_id"], x["number"]) in pick] if pick is not None else []
         self.laps = ([x for x in picked if self.of(x) == self.driver] if pick is not None
                      else [x for x in every if x["session_id"] == s.id])
@@ -59,13 +70,20 @@ class _Run:
         self.habits = habits([[{"unit": None, "cost_perfect_s": 0.0, **m} for m in x.get("obvious") or []]
                               for x in self.laps]) if self.laps else []
 
+    @property
+    def labels(self) -> list[run_labels.RunLabel]:
+        """The event's runs' labels (each called as the event page calls it), in the order they ran."""
+        if self._labels is None:
+            self._labels = run_labels.label_runs(self.runs)
+        return self._labels
+
     def of(self, lap: dict) -> str | None:
         """The lap's driver."""
         return self.driver_of.get(lap["session_id"])
 
     @property
     def ready(self) -> bool:
-        return self.row is not None and self.row.result is not None
+        return self.res is not None
 
     def out(self) -> dict:
         s = self.session
@@ -86,11 +104,6 @@ class _Run:
         return out
 
 
-def _labelled(db: Session, ids: list[int]) -> tuple[list[models.RunSession], list[run_labels.RunLabel]]:
-    runs = list(db.scalars(select(models.RunSession).where(models.RunSession.id.in_(ids))))
-    return runs, run_labels.label_runs(runs)
-
-
 def choices(db: Session, run: _Run) -> list[dict]:
     """What can be picked: the runs of the run's check (its event's), every driver's, in the order they ran, each
     with its driver, tyres and clean laps."""
@@ -99,12 +112,10 @@ def choices(db: Session, run: _Run) -> list[dict]:
     laps = run.res["laps"]
     order = list(dict.fromkeys(x["session_id"] for x in laps))
     # each called as the event page calls it ("FP1 stint 2"), in the order they ran
-    runs, ordered = _labelled(db, order)
-    labels = run_labels.labels_for(db, runs)
-    names = {r.id: labels[r.id].name if r.id in labels else r.name or f"Session {r.id}" for r in runs}
-    at = {lab.id: i for i, lab in enumerate(ordered)}
+    names = {lab.id: lab.name for lab in run.labels}
+    at = {lab.id: i for i, lab in enumerate(run.labels)}
     order.sort(key=lambda sid: at.get(sid, len(at)))
-    tyres = run.res.get("run_tyres") or {}
+    tyres = technique.live_tyres(run.res, run_tyres.stored(db, order))
     out = []
     for sid in order:
         t = tyres.get(str(sid)) or {}
@@ -123,8 +134,8 @@ def default_pick(db: Session, run: _Run) -> tuple[set[tuple[int, int]], str | No
     laps = (run.res or {}).get("laps") or []
     if not laps:
         return set(), None
-    runs, labels = _labelled(db, list({x["session_id"] for x in laps}))
-    found = run_parts.parts(runs, labels)
+    timed = {x["session_id"] for x in laps}
+    found = [p for p in run_parts.parts(run.runs, run.labels) if timed & set(p.ids)]
     last = found[-1] if found else None
     ids = set(last.ids) if last else {run.session.id}
     best: dict[object, dict] = {}
@@ -196,7 +207,7 @@ def session_top(session_id: int, laps: str | None = None, db: Session = Depends(
     if automatic and run.ready:
         pick, title = default_pick(db, run)
     if pick is not None:
-        run = _Run(db, run.session, pick)
+        run.use(pick)
     things = [{**t, "others": against(run, t["key"])} for t in top_things(run)] if run.ready else []
     return {**run.head, "session": run.out(), "things": things,
             "gain_s": round(sum(t["gain_s"] for t in things), 3), "driver": run.driver,

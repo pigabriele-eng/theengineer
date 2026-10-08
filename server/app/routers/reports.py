@@ -18,6 +18,7 @@ works the report out from the traces of that session's runs. A session of a sing
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 import hashlib
 import json
 import logging
@@ -79,6 +80,9 @@ class Plan:
     signature: str = ""
     labels: list[run_labels.RunLabel] = field(default_factory=list)  # the event's runs, in the event page's order
     part: str | None = None  # the official session's code ("FP1", "Q1", "03_Q") of a part's report
+    # what of the driver's tyre picks the signature holds: the level (the report keeps each level apart) or, for the
+    # technique check, run_tyres.pair (new or not: the only split it makes)
+    tyres_as: Callable[[str], str] | None = None
 
 
 def _hash(payload) -> str:
@@ -104,7 +108,8 @@ def _traces_signature(s: models.RunSession, f: models.LoggerFile, track: models.
                   track.timing_line if track else None, laps])
 
 
-def plan_for(db: Session, kind: str, id_: int, part: str | None = None, runs: list[int] | None = None) -> Plan:
+def plan_for(db: Session, kind: str, id_: int, part: str | None = None, runs: list[int] | None = None,
+             tyres_as: Callable[[str], str] | None = None) -> Plan:
     """What the report of an event, of one of its official sessions (kind "part", id_ the event's, ``part`` its code),
     of the runs of an event picked by hand (kind "pick", ``runs`` their ids) or of one run is made from."""
     if kind == "pick":
@@ -115,7 +120,8 @@ def plan_for(db: Session, kind: str, id_: int, part: str | None = None, runs: li
             raise HTTPException(404, "Event not found")
         sessions = db.scalars(select(models.RunSession).where(models.RunSession.event_id == id_)).all()
         labels = run_labels.label_runs(sessions)
-        return _fill(db, Plan(f"event:{id_}", kind, id_, ev.name, ev.track, labels=labels), sessions)
+        return _fill(db, Plan(f"event:{id_}", kind, id_, ev.name, ev.track, labels=labels, tyres_as=tyres_as),
+                     sessions)
     if kind == "part":
         ev, sessions, labels, found = _event_parts(db, id_)
         p = next((p for p in found if part_scope(id_, p.code) == part_scope(id_, part or "")), None)
@@ -128,7 +134,7 @@ def plan_for(db: Session, kind: str, id_: int, part: str | None = None, runs: li
     # called as in its event's report, so its label is worked out among the event's runs
     labels = run_labels.label_runs(run_labels.event_runs(db, s))
     return _fill(db, Plan(f"session:{id_}", kind, id_, next(lab.name for lab in labels if lab.id == s.id), None,
-                          labels=labels), [s])
+                          labels=labels, tyres_as=tyres_as), [s])
 
 
 def pick_scope(event_id: int, runs: list[int]) -> str:
@@ -212,7 +218,8 @@ def _fill(db: Session, plan: Plan, sessions: list[models.RunSession]) -> Plan:
     plan.track = plan.track or next(iter(tracks.values()), None)
     corners = official_corners(plan.track)
     # the tyres the driver set on its runs: the report compares laps on the same tyres only
-    tyres = sorted(run_tyres.stored(db, [i.session.id for i in plan.items if i.signature]).items())
+    tyres = sorted((sid, plan.tyres_as(t) if plan.tyres_as else t)
+                   for sid, t in run_tyres.stored(db, [i.session.id for i in plan.items if i.signature]).items())
     plan.signature = _hash([REPORT_VERSION, plan.scope, corners,
                             [(i.session.id, i.name, i.session.driver.name if i.session.driver else None, i.signature,
                               warm_up.of(i.session)) for i in plan.items if i.signature], tyres])
