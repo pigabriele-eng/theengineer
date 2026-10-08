@@ -1,5 +1,5 @@
 // What the race weekend page (During) works out from an event's runs: the latest run, each driver's latest timed run,
-// the latest run's best lap against the event's best, and each run's debrief state. Pure, so `npm test` checks it.
+// how many sections its top takes, and each run's debrief state. Pure, so `npm test` checks it.
 import type { Folder, FolderSession } from './events';
 
 // a run as the event's folder gives it, with its driver's id
@@ -18,7 +18,7 @@ export type EventDebrief = {
 /** The event's runs in the order they were driven (the folder's day order, each day by time). */
 export const runsInOrder = (folder: Folder | null | undefined): Run[] => folder?.days.flatMap((d) => d.sessions) ?? [];
 
-/** The run driven last, timed or not (a run added by hand for its debrief counts). */
+/** The run driven last, timed or not. */
 export const latestRun = (folder: Folder | null | undefined): Run | null => runsInOrder(folder).at(-1) ?? null;
 
 /** The timed run driven last. */
@@ -35,23 +35,6 @@ export function latestByDriver(folder: Folder | null | undefined): { driver: str
   const order = runsInOrder(folder);
   return [...latest.values()].sort((a, b) => order.indexOf(b) - order.indexOf(a))
     .map((run) => ({ driver: run.driver, run }));
-}
-
-export type LapRef = { session_id: number; lap: number; name: string; time: number; driver: string | null };
-
-const lapOf = (s: Run): LapRef => ({ session_id: s.id, lap: s.best_lap!, name: s.name, time: s.best_lap_s!,
-  driver: s.driver });
-
-/** The latest timed run's best lap and the lap it is held against: the event's best lap, or, when the latest run
- * holds it, the best lap of the event's other runs. Null with fewer than two timed runs. */
-export function latestAgainstBest(folder: Folder | null | undefined): { latest: LapRef; best: LapRef; holdsBest: boolean } | null {
-  const latest = latestTimedRun(folder);
-  if (!latest) return null;
-  const others = runsInOrder(folder).filter((s) => s.id !== latest.id && s.best_lap_s != null && s.best_lap != null)
-    .sort((a, b) => a.best_lap_s! - b.best_lap_s!);
-  if (!others.length) return null;
-  const holdsBest = latest.best_lap_s! <= others[0].best_lap_s!;
-  return { latest: lapOf(latest), best: lapOf(others[0]), holdsBest };
 }
 
 export type DebriefLine = {
@@ -72,10 +55,14 @@ export function debriefLines(folder: Folder | null | undefined, debriefs: EventD
   });
 }
 
-/** How many numbered sections the During view puts before the event page's own (Runs, Side by side, ...): three
- * things, the fastest runs of the latest session against each other (with where the time is and the traces when
- * there are two timed runs: latestAgainstBest says whether), the session reports, debriefs. */
-export const duringSections = (folder: Folder | null | undefined) => (latestAgainstBest(folder) ? 6 : 4);
+/** How many numbered sections the latest session's comparison takes at the top of the During view
+ * (components/weekend/SessionCompare.tsx): every lap, the best in each corner, where the time is and the traces once
+ * the event has a timed run; before that only the first, which says so. */
+export const sessionCompareSections = (folder: Folder | null | undefined) => (latestTimedRun(folder) ? 4 : 1);
+
+/** How many numbered sections the During view puts before the event page's own (Runs, Side by side, ...): the latest
+ * session's comparison, three things, the session reports, debriefs. */
+export const duringSections = (folder: Folder | null | undefined) => sessionCompareSections(folder) + 3;
 
 export type Stage = 'before' | 'during' | 'after';
 

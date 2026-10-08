@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  debriefLines, defaultStage, duringSections, latestAgainstBest, latestByDriver, latestRun, latestTimedRun,
+  debriefLines, defaultStage, duringSections, latestByDriver, latestRun, latestTimedRun, sessionCompareSections,
 } from './weekendRuns.ts';
 
 test('the tab a weekend opens on', () => {
@@ -30,15 +30,14 @@ test('the latest run, and the latest timed one', () => {
   assert.equal(latestRun(folder()), null);
 });
 
-test('the latest run against the event best, or against the next best when it holds the best', () => {
+test('the During tab\'s sections before the page\'s own: the latest session\'s four once a run is timed', () => {
   const f = folder([run(1, 'Q', 102.44), run(3, 'R1', 104.48)], [run(7, 'R2', 104.88)]);
-  const a = latestAgainstBest(f);
-  assert.deepEqual([a.latest.session_id, a.best.session_id, a.holdsBest], [7, 1, false]);
-  const b = latestAgainstBest(folder([run(1, 'Q', 102.44), run(3, 'R1', 101.9)]));
-  assert.deepEqual([b.latest.session_id, b.best.session_id, b.holdsBest], [3, 1, true]);
-  assert.equal(latestAgainstBest(folder([run(1, 'Q', 102.44), run(2, 'FP', null)])), null);
-  assert.equal(duringSections(f), 6);
-  assert.equal(duringSections(folder([run(1, 'Q', 102.44)])), 4);
+  assert.equal(sessionCompareSections(f), 4); // every lap, best in each corner, where the time is, traces
+  assert.equal(duringSections(f), 7); // then three things, session reports, debriefs
+  assert.equal(duringSections(folder([run(1, 'Q', 102.44)])), 7); // one timed run is enough
+  assert.equal(sessionCompareSections(folder([run(1, 'Q', null)])), 1); // nothing timed yet: one, saying so
+  assert.equal(duringSections(folder([run(1, 'Q', null)])), 4);
+  assert.equal(duringSections(null), 4);
 });
 
 test('each driver\'s latest timed run, the most recent first; no driver set counts as one', () => {

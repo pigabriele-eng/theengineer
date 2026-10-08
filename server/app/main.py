@@ -22,6 +22,7 @@ from app.routers import driver_style, habits
 from app.routers import event_debriefs
 from app.routers import setup_chat
 from app.vehicle import tyre_store
+from app import session_sections
 from app import results
 
 results.bind_models()  # before the results modules below use its tables
@@ -101,6 +102,7 @@ app.include_router(coaching.router, dependencies=signed_in)
 app.include_router(event_modes.router, dependencies=signed_in)
 app.include_router(event_debriefs.router, dependencies=signed_in)
 app.include_router(compare_suggest.router, dependencies=signed_in)
+app.include_router(session_sections.router, dependencies=signed_in)
 app.include_router(debriefs.media_router, dependencies=[Depends(require_user_or_query_token)])
 
 

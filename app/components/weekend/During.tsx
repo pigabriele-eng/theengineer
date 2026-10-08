@@ -1,9 +1,10 @@
 // A race weekend while it is on (Gabriele, 2026-10-07: "during the race weekend the effort shifts to data
-// comparison"): the answers first, then the runs. Three things for each driver's next run, each official session's
-// report (FP1, Q1, R1), the fastest runs of the latest session against each other (where the time is, the traces), the debriefs of every
-// run with a big button to record one for the latest. Setup suggestions live in the setup tool, on demand. Then the
-// event page's own sections (its runs by day, side by side, what it was run with, its results, a run to add), passed in
-// as children.
+// comparison"; 2026-10-08: the During tab "should open on: full comparison of the session uploaded latest with
+// traces"): every lap of the latest session against its fastest, the laps quicker somewhere flagged, the best lap in
+// each corner, where the time is and the traces (components/weekend/SessionCompare.tsx); then three things for each
+// driver's next run, each official session's report (FP1, Q1, R1), and the debriefs of every run with a big button to
+// record one for the latest. Setup suggestions live in the setup tool, on demand. Then the event page's own sections
+// (its runs by day, side by side, its results), passed in as children.
 import { Href, Link, useFocusEffect, useRouter } from 'expo-router';
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
@@ -11,14 +12,14 @@ import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 import { TopThings } from '@/components/Coaching';
 import { ErrorLine, MainButton, Note } from '@/components/Controls';
 import { Section, TextLink } from '@/components/Programme';
-import FastestRuns from '@/components/weekend/FastestRuns';
+import SessionCompare from '@/components/weekend/SessionCompare';
 import SessionReports from '@/components/weekend/SessionReports';
 import { Text, View } from '@/components/Themed';
 import { dayLabel, eventsApi, Folder } from '@/lib/events';
 import { poll } from '@/lib/poll';
 import { fetchEventDebriefs } from '@/lib/weekend';
 import {
-  debriefLines, DebriefLine, EventDebrief, latestAgainstBest, latestByDriver, latestRun,
+  debriefLines, DebriefLine, EventDebrief, latestByDriver, latestRun, sessionCompareSections,
 } from '@/lib/weekendRuns';
 import { face, Fonts, themed, Type, useTheme } from '@/constants/Theme';
 
@@ -37,21 +38,19 @@ export default function WeekendDuring({ eventId, folder: given, children }: {
 
   const styles = useStyles();
   const drivers = useMemo(() => latestByDriver(folder), [folder]);
-  const pair = useMemo(() => latestAgainstBest(folder), [folder]);
-  // 1 three things, 2 the fastest runs of the latest session against each other (3 where the time is, 4 the traces;
-  // with two timed runs: latestAgainstBest says whether there are), then the session reports
-  // just above the debriefs (Gabriele, 2026-10-08: the comparison before the session reports, the session reports moved
-  // down before the debriefs; setup suggestions off the reporting pages, separate and on demand; lib/weekendRuns.ts
-  // duringSections)
-  const reportsNo = pair ? 5 : 3;
+  // 1 every lap of the latest session (2 the best in each corner, 3 where the time is, 4 the traces, once the event
+  // has a timed run), then three things, the session reports and the debriefs (Gabriele, 2026-10-08: the During tab
+  // opens on the latest session's comparison; lib/weekendRuns.ts duringSections)
+  const thingsNo = sessionCompareSections(folder) + 1;
+  const reportsNo = thingsNo + 1;
   const debriefsNo = reportsNo + 1;
   return (
     <>
-      <Section no={1} title="Three things for next run"
+      <SessionCompare no={1} eventId={eventId} folder={folder} />
+      <Section no={thingsNo} title="Three things for next run"
         dek="For each driver’s latest run: the costliest mistakes that repeat, each at a different corner, what to do instead and what it is worth a lap.">
         <ThreeThings eventId={eventId} drivers={drivers} />
       </Section>
-      <FastestRuns no={2} eventId={eventId} folder={folder} />
       <Section no={reportsNo} title="Session reports"
         dek="One report per session of the weekend (FP1, Q1, the races), from every run of it.">
         <SessionReports eventId={eventId} />
