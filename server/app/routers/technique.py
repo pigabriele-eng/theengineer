@@ -526,7 +526,8 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
     if not sessions:
         raise TechniqueError("No clean laps to check")
     sessions, left_out = reports._quickest(sessions)
-    prepared = compact.prepare_compact(sessions, corners, consume=True)
+    # the car's limits are worked out below, for the laps on each kind of tyres
+    prepared = compact.prepare_compact(sessions, corners, consume=True, limits=False)
     del sessions
     if prepared is None:
         raise TechniqueError("No clean laps to check")
@@ -549,7 +550,8 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
             continue
         ref = min(xs, key=lambda x: x.time)
         if len(xs) == len(prep.laps):
-            groups[g] = (prep.perfect, prep.held, prep.calibration, prep.held_calibration, prep.sim.time, ref)
+            full = prep.prepared()
+            groups[g] = (full.perfect, full.held, full.calibration, full.held_calibration, full.sim.time, ref)
         else:
             row.current = f"Perfect driving on {g} tyres"
             db.commit()

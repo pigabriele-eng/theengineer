@@ -1329,6 +1329,12 @@ def model_phases(env: Envelope, sim: SimLap, step: int) -> list[int]:
     the corner ahead; at the grip limit (cornering as hard as the car has shown there, or driving out as hard as the
     tyres allow: part throttle); or full throttle (the engine, not the grip, limits the drive, or at top speed). The
     model has no pedal positions and never coasts."""
+    # asked several times a lap for the same model (the chart, the inputs, the lap without its mistakes, which
+    # keeps the realistic target's phases): worked out once per envelope and limited_by
+    kept = env.__dict__.setdefault("_phases", [])
+    for by_, step_, out_ in kept:
+        if by_ is sim.limited_by and step_ == step:
+            return list(out_)
     v_top = env.lim.top_speed * TOP_SPEED_MARGIN / 3.6
     out = []
     for i in range(0, env.n + 1, step):
@@ -1339,7 +1345,8 @@ def model_phases(env: Envelope, sim: SimLap, step: int) -> list[int]:
             out.append(2 if env.power_limited(float(env.P[i]), i) else 1)
         else:
             out.append(2 if env.vc[i] >= v_top - 1e-6 else 1)
-    return out
+    kept.append((sim.limited_by, step, out))
+    return list(out)
 
 
 MODEL_SMOOTH_M = 15  # perfect driving's acceleration is read over this many metres
@@ -1421,13 +1428,20 @@ def model_inputs(tr: dict[str, np.ndarray], env: Envelope, sim: SimLap, step: in
     idx = np.arange(0, len(kmh), step)
     phases = model_phases(env, sim, step)
     throttle, brake = [], []
-    for k, i in enumerate(idx):
-        drive = float(a[i] + r[i])
-        full = env.power_at(int(min(i, env.n - 1)), float(v[i])) + float(r[i])
+    last = env.n - 1
+    # on plain numbers, point by point (the same arithmetic as numpy's, without its overhead on every point)
+    for i, ph, ai, ri, vi in zip(idx.tolist(), list(phases), a[idx].tolist(), r[idx].tolist(), v[idx].tolist(),
+                                 strict=True):
+        drive = ai + ri
+        full = env.power_at(i if i < last else last, vi) + ri
         share = drive / max(full, 1e-6)
-        flat = phases[k] == 2 or share >= MODEL_FULL
+        flat = ph == 2 or share >= MODEL_FULL
         braking = not flat and drive < -MODEL_BRAKING_G
-        throttle.append(100.0 if flat else 0.0 if braking else round(float(np.clip(100 * share, 0, 100))))
+        if flat or braking:
+            throttle.append(100.0 if flat else 0.0)
+        else:
+            c = 100 * share
+            throttle.append(round(0.0 if c < 0 else 100.0 if c > 100 else c))
         brake.append(round(per_g * -drive, 1) if braking and per_g is not None else 0.0)
     out: dict[str, list[float] | None] = {"throttle": throttle, "brake": brake if per_g is not None else None,
                                           "gear": None, "rpm": None}
@@ -1470,11 +1484,14 @@ def without_mistakes(tr: dict[str, np.ndarray], env_r: Envelope, sections: list[
         if o["kind"] in ("soft_straight_braking", "braking_unused"):
             e = min(int(o["end_m"]), n)
             seed[e] = min(seed[e], driven[e])
-    bw = np.empty(n + 1)
-    bw[n] = min(seed[n], driven[n]) / 3.6
+    back = [0.0] * (n + 1)  # on plain numbers: the same arithmetic as on the arrays, without their overhead
+    seeds = seed.tolist()
+    back[n] = min(seeds[n], float(driven[n])) / 3.6
+    brake_at = env_r.brake_at
     for i in range(n - 1, -1, -1):
-        v = bw[i + 1]
-        bw[i] = min(seed[i] / 3.6, (v * v + 2 * env_r.brake_at(i + 1, v) * G) ** 0.5)
+        v = back[i + 1]
+        back[i] = min(seeds[i] / 3.6, (v * v + 2 * brake_at(i + 1, v) * G) ** 0.5)
+    bw = np.array(back)
     apexes = sorted(sec.apex for sec in sections if sec.apex is not None)
     ms = driven / 3.6
     for o in todo:
