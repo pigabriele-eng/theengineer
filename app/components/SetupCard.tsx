@@ -1,5 +1,6 @@
-// The Setup part of the session page: is there a sheet, what changed from the previous run, and the way in. A ruled
-// sub-head ("SETUP" in Archivo capitals over a 3 px ink rule), the changes on faint rules, and text links. `bare`
+// The Setup part of the session page: is there a sheet, what changed from the previous run, and the way in to the
+// sheet. No setup suggestions, nor a way to them: those are the setup tool's, on demand, apart from the run's pages.
+// A ruled sub-head ("SETUP" in Archivo capitals over a 3 px ink rule), the changes on faint rules, and text links. `bare`
 // leaves the sub-head out, for a page that sets the card inside a numbered section of its own.
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
@@ -78,8 +79,6 @@ export function SetupCard({ sessionId, bare }: { sessionId: number; bare?: boole
         )}
         <TextLink href={{ pathname: '/tools/setup', params: { session: sessionId } }}
           label={sheet?.exists ? 'Setup sheet' : 'Fill in the sheet'} arrow red={!(sheet && !sheet.exists && sheet.previous)} />
-        <TextLink href={{ pathname: '/tools/setup', params: { session: sessionId, tab: 'ideas' } }} label="Setup suggestions"
-          arrow />
       </View>
     </View>
   );

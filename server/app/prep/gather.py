@@ -208,7 +208,8 @@ def recurring_data(summaries: list[tuple[str, dict]]) -> list[Observation]:
 def recommend_setup(p: Plan, events: list[dict], observations: list[Observation],
                     summaries: list[tuple[str, int, dict]]) -> dict:
     """The setup to open the weekend with: the sheet of the quickest past run that has one (the latest event's
-    first), with the changes both the drivers' remarks and the data point to, ranked."""
+    first), with the changes both the drivers' remarks and the data point to, ranked. Not part of the prep report
+    (setup suggestions are kept apart from every report); kept for the setup tool."""
     base = None
     for ev in reversed(events):
         sheets = [r for r in ev["runs"] if r["has_setup"] and r["laps"]["best_s"]]

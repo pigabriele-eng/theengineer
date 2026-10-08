@@ -94,11 +94,8 @@ REMARK = {"session_id": 22, "session": "Run 2", "driver": "Anna", "text": "Under
 def test_a_two_year_briefing_puts_the_target_first_and_compares_the_years():
     events = [_event(1, "2025", 107.44, 13.37, remarks=[REMARK]),
               _event(2, "2026", 107.23, 13.20, remarks=[{**REMARK, "session_id": 22}])]
-    setup = {"baseline": {"session": "Run 2", "year": "2026", "best_s": 107.23}, "suggestions": [
-        {"title": "Soften the front anti-roll bar", "changes": [{"text": "Front anti-roll bar 3 → 2"}],
-         "reason": "understeer mid-corner at T6 (driver; data)"}], "recurring": []}
     out = brief.build({"id": 9, "name": "Hockenheim 2027"}, {"key": "logger:1", "label": "logger 1"}, events,
-                      None, setup)
+                      None)
     perf = out["performance"]
     assert [r["year"] for r in perf] == ["2025", "2026"]
     assert perf[1]["change"]["best"] == pytest.approx(-0.21)
@@ -107,7 +104,9 @@ def test_a_two_year_briefing_puts_the_target_first_and_compares_the_years():
     assert out["trend"].startswith("2026 against 2025: best lap 0.21 s quicker")
 
     keys = [b["key"] for b in out["briefing"]]
-    assert keys[:5] == ["target", "corners", "quali", "pressures", "setup"]
+    assert keys[:4] == ["target", "corners", "quali", "pressures"]
+    # no setup suggestions in a report: they are the setup tool's, on demand
+    assert "setup" not in keys and "recommendation" not in out
     target = out["briefing"][0]["text"]
     # the best real lap here, never a lap stitched from sections or simulated
     assert target.startswith("Aim for 1:47.23: the best lap here (2026, Run 2, Anna).")
@@ -115,7 +114,6 @@ def test_a_two_year_briefing_puts_the_target_first_and_compares_the_years():
     assert out["briefing"][2]["text"].startswith("What worked in 2026: warm up like Run 1") \
         and out["briefing"][2]["text"].endswith("2025 needed the same push temperatures.")
     assert "Set FL 1.13, RR 1.21 bar cold" in out["briefing"][3]["text"]
-    assert "soften the front anti-roll bar (Front anti-roll bar 3 → 2)" in out["briefing"][4]["text"]
 
     rows = out["corners"]["rows"]
     assert [r["code"] for r in rows] == ["T2-T5", "T1", "T6"] and out["corners"]["comparable"]
@@ -136,7 +134,7 @@ def test_a_two_year_briefing_puts_the_target_first_and_compares_the_years():
     assert said["runs"] == 2 and said["text"].startswith("Understeer mid-corner at T6: said after 2 runs (2025, 2026)")
     assert out["setups"]["runs"][0]["balance"] == "clear understeer on entry, strong oversteer on exit"
     same = brief.build({"id": 9}, {"key": "x", "label": "x"}, [events[0], {**events[0], "id": 3, "year": "2026"}],
-                       None, None)
+                       None)
     assert same["trend"].startswith("2026 against 2025: best lap the same (1:47.44 against 1:47.44)")
     text = str(out)
     assert not CORNER_NAME.search(text)
@@ -145,7 +143,7 @@ def test_a_two_year_briefing_puts_the_target_first_and_compares_the_years():
 def test_one_past_event_is_enough_and_detected_corners_are_not_lined_up():
     ev = _event(1, "2025", 107.44, 13.37, with_tyres=False)
     ev["report"]["numbering"] = "detected"
-    out = brief.build({"id": 2}, {"key": "x", "label": "x"}, [ev], None, None)
+    out = brief.build({"id": 2}, {"key": "x", "label": "x"}, [ev], None)
     assert len(out["performance"]) == 1 and out["performance"][0]["change"] is None and out["trend"] is None
     assert out["quali"] is None and out["pressures"] is None
     assert not out["corners"]["comparable"] and "no official corner numbers" in out["corners"]["note"]

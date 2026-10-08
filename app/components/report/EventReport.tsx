@@ -368,8 +368,8 @@ export default function EventReport({
         dek: 'How much of the car’s grip the laps use while braking and cornering, and where traction control cuts in.',
         body: 'event' in runScope ? <GripReport event={runScope.event} bare />
           : <GripReport session={runScope.session} bare /> });
-      sections.push({ title: 'Car balance & setup',
-        dek: 'The setup changes to try, and how the car is balanced.',
+      sections.push({ title: 'Car balance',
+        dek: 'How the car is balanced: understeer or oversteer on entry, mid-corner and exit, section by section.',
         body: 'event' in runScope ? <Balance event={runScope.event} bare />
           : <Balance session={runScope.session} bare /> });
     }

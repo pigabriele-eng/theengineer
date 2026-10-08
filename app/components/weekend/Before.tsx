@@ -45,9 +45,9 @@ const pastEvents = (n: number) => (n === 1 ? 'one past event' : `${n} past event
  * briefing in the race programme's numbered sections, the answers first. The lap to aim for in big figures with the
  * briefing and the weather; the gear map of the best lap here; corner by corner, the most effective way through each
  * in words beside its graph (the best pass here against a typical one: speed, throttle, brake); the track's grip and
- * what the tyres did (quali prep, pressures); the setup to start with, how the car behaved on each setup and each
- * driver's recurring technique points; and folded at the end, the year by year, the official results and the
- * prediction. Rendered by the prep page (app/prep.tsx) under its own headline, and by the event page's Before tab.
+ * what the tyres did (quali prep, pressures); how the car behaved on each setup and each driver's recurring technique
+ * points (no setup suggestions: those are the setup tool's, on demand); and folded at the end, the year by year, the
+ * official results and the prediction. Rendered by the prep page (app/prep.tsx) under its own headline, and by the event page's Before tab.
  * The car picker sits at its top; the car picked also goes in the page's ?car=. onAnswer hands the page the event the
  * report is for (its name, track and dates for the headline). */
 export default function WeekendBefore({ eventId, car: carParam, onAnswer }: { eventId: number;
@@ -245,7 +245,7 @@ function Body({ report, weather, official, eventId, reloadOfficial, openEvent, g
   const g = report.track_grip;
   const drivers = report.technique.filter((d) => d.habits.length);
   // the sections there is something to say in, numbered in order: the answers first (the lap to aim for, the gears,
-  // the corners), then the grip and the tyres, the setup, and the year by year, results and prediction folded last
+  // the corners), then the grip and the tyres, the setups run, and the year by year, results and prediction folded last
   const parts: (Part | null | false)[] = [
     { key: 'brief', render: (no) => <Briefing no={no} report={report} weather={weather} /> },
     { key: 'gears', render: (no) => <Gears no={no} guide={guide} /> },
@@ -254,7 +254,6 @@ function Body({ report, weather, official, eventId, reloadOfficial, openEvent, g
       key: 'grip', render: (no) => <TrackGripSection no={no} report={report} /> },
     !!report.quali && { key: 'quali', render: (no) => <Quali no={no} report={report} /> },
     !!report.pressures && { key: 'pressures', render: (no) => <Pressures no={no} report={report} weather={weather} /> },
-    !!report.recommendation && { key: 'setup', render: (no) => <Setup no={no} report={report} /> },
     report.setups.runs.length > 0 && { key: 'runs', render: (no) => <Runs no={no} report={report} /> },
     drivers.length > 0 && { key: 'technique', render: (no) => <Technique no={no} report={report} /> },
     report.notes.length > 0 && { key: 'notes', render: (no) => (
@@ -346,7 +345,8 @@ function Briefing({ no, report, weather }: { no: number; report: PrepReport; wea
   const read = wide ? type.read : type.readPhone;
   const f = weather?.forecast?.summary;
   // the official results and the prediction are folded at the end of the page (Later)
-  const items = report.briefing;
+  // a report kept from before setup suggestions left the reports may still hold its "setup" item: never shown
+  const items = report.briefing.filter((b) => b.key !== 'setup');
   const sky = f || weather?.compare;
   return (
     <Section no={no} title="Before the weekend" dek="The few things to know, most important first.">
@@ -364,7 +364,7 @@ function Briefing({ no, report, weather }: { no: number; report: PrepReport; wea
           <Item key={b.key} first={i === 0 && !sky} label={b.title}><Text style={read}>{b.text}</Text></Item>
         ))}
       </View>
-      {report.briefing.length === 0 && <Text style={type.note}>Nothing stood out in the past events yet.</Text>}
+      {items.length === 0 && <Text style={type.note}>Nothing stood out in the past events yet.</Text>}
       {weather?.note && !f && <Text style={StyleSheet.flatten([type.note, styles.after])}>Weather: {weather.note}</Text>}
     </Section>
   );
@@ -759,54 +759,7 @@ function Pressures({ no, report, weather }: { no: number; report: PrepReport; we
   );
 }
 
-// ---------------------------------------------------------------- setup, runs, technique
-
-const AGREEMENT: Record<string, string> = {
-  both: 'driver and data agree', driver: 'from the drivers', data: 'from the data', disagree: 'driver and data disagree',
-};
-
-function Setup({ no, report }: { no: number; report: PrepReport }) {
-  const styles = useStyles();
-  const type = usePrepType();
-  const wide = useWide();
-  const read = wide ? type.read : type.readPhone;
-  const rec = report.recommendation;
-  if (!rec) return null;
-  return (
-    <Section no={no} title="Setup to start with"
-      dek={rec.baseline
-        ? `Start from the setup of ${rec.baseline.session} (${rec.baseline.year}, best ${formatLap(rec.baseline.best_s)}), ` +
-          'the quickest past run here with a setup sheet.'
-        : 'No setup sheet was saved here yet: the changes are steps from wherever the car is.'}>
-      {rec.recurring.length > 0 && (
-        <View style={styles.items}>
-          <Item first label="The car kept showing">
-            <Text style={read}>{rec.recurring.map((r) => r.text).join('; ')}.</Text>
-          </Item>
-        </View>
-      )}
-      <View style={wide ? styles.suggestions : undefined}>
-        {rec.suggestions.map((s) => (
-          <View key={s.rank} style={wide ? styles.suggestion : styles.suggestionPhone}>
-            <View style={styles.sugHead}>
-              <View style={styles.rank}><Text style={styles.rankText}>{s.rank}</Text></View>
-              <Text style={wide ? styles.sugTitle : styles.sugTitlePhone}>{s.title}</Text>
-            </View>
-            {s.changes.length > 0 && <Text style={styles.changes}>{s.changes.map((c) => c.text).join(', ')}</Text>}
-            {s.reason ? <Text style={read}><Text style={type.inLabel}>Why  </Text>{s.reason}
-              {` (${AGREEMENT[s.agreement] ?? s.agreement})`}</Text> : null}
-            {s.expected ? <Text style={type.note}>Expect: {s.expected}</Text> : null}
-            {s.watch ? <Text style={type.note}>Watch: {s.watch}</Text> : null}
-            {s.disagree.map((d) => <Text key={d} style={type.note}>{d}</Text>)}
-          </View>
-        ))}
-      </View>
-      {rec.suggestions.length === 0 && (
-        <Text style={type.note}>Nothing in the past runs or debriefs points to a setup change.</Text>
-      )}
-    </Section>
-  );
-}
+// ---------------------------------------------------------------- runs, technique
 
 function Runs({ no, report }: { no: number; report: PrepReport }) {
   const styles = useStyles();
@@ -967,19 +920,6 @@ const useStyles = themed((c) => ({
   gearLine: { fontFamily: face('label', 600), fontSize: 15, lineHeight: 20, color: c.text },
   change: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   later: { marginTop: 48 },
-
-  // setup
-  suggestions: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 36, marginTop: 8 },
-  suggestion: { width: '47%', flexGrow: 1, borderTopWidth: 3, borderColor: c.rule, paddingTop: 10, paddingBottom: 20,
-    gap: 7 },
-  suggestionPhone: { borderTopWidth: 3, borderColor: c.rule, paddingTop: 10, paddingBottom: 18, gap: 7, marginTop: 8 },
-  sugHead: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  rank: { backgroundColor: c.rule, paddingHorizontal: 7, paddingTop: 3, paddingBottom: 2 },
-  rankText: { fontFamily: Fonts.display, fontSize: 18, lineHeight: 21, color: c.background },
-  sugTitle: { fontFamily: Fonts.display, fontSize: 26, lineHeight: 28, textTransform: 'uppercase', color: c.text, flex: 1 },
-  sugTitlePhone: { fontFamily: Fonts.display, fontSize: 22, lineHeight: 25, textTransform: 'uppercase', color: c.text,
-    flex: 1 },
-  changes: { fontFamily: face('label', 700), fontSize: 15, lineHeight: 20, color: c.text },
 
   // runs
   runs: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 36, borderTopWidth: 1, borderColor: c.rule },

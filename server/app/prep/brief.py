@@ -2,9 +2,9 @@
 
 Pure functions over what gather.py collected (each past event's report, technique habits, tyre prep, setups and
 remarks), so it can be tested without logs. Most important first: the briefing (what to aim for, where the time is,
-quali prep, pressures, the setup to open with, each driver's focus), then the performance year by year, corner by
-corner with the ideal way through each corner, quali prep per event, setups and how the car behaved on them, each
-driver's recurring technique points, and the opening recommendation with its evidence.
+quali prep, pressures, each driver's focus), then the performance year by year, corner by corner with the ideal way
+through each corner, quali prep per event, setups and how the car behaved on them, and each driver's recurring
+technique points. No setup suggestions: those are the setup tool's, on demand.
 
 Corners are named only by their numbers (official where the track has them). Laps and sections are compared across
 years only by those numbers, and only when every event used the track's official ones.
@@ -470,7 +470,7 @@ def setup_runs(events: list[dict]) -> dict:
     note = None
     if rows and not with_sheet:
         note = ("No setup sheet was saved for these runs, so the runs below show how the car behaved but not on "
-                "which setup. Fill in each session's setup sheet and the next prep report can say which setup worked.")
+                "which setup.")
     return {"runs": rows, "said": said, "with_sheet": with_sheet, "note": note}
 
 
@@ -520,8 +520,8 @@ def technique(events: list[dict]) -> list[dict]:
 
 # ---------- the briefing ----------
 
-def briefing(perf: list[dict], corner: dict, q: dict | None, press: dict | None, setup: dict | None,
-             tech: list[dict], runs: dict) -> list[dict]:
+def briefing(perf: list[dict], corner: dict, q: dict | None, press: dict | None, tech: list[dict],
+             runs: dict) -> list[dict]:
     """The few things to know before the weekend, most important first: each {"key", "title", "text"}."""
     out = []
     if perf:
@@ -554,9 +554,6 @@ def briefing(perf: list[dict], corner: dict, q: dict | None, press: dict | None,
     pt = pressures_text(press)
     if pt:
         out.append({"key": "pressures", "title": "Tyre pressures", "text": pt})
-    st = setup_text(setup)
-    if st:
-        out.append({"key": "setup", "title": "Setup to start with", "text": st})
     focus = []
     for d in tech:
         if d["habits"]:
@@ -574,43 +571,9 @@ def briefing(perf: list[dict], corner: dict, q: dict | None, press: dict | None,
     return out
 
 
-def _first_reason(reason: str) -> str:
-    """The first of a suggestion's reasons, its corners cut to three: 'oversteer on exit at T13, T6 (driver; data)'.
-    The reasons are joined by '; ' outside brackets, and '(driver; data)' has one inside."""
-    first = reason.split("); ", 1)[0]
-    if "(" in first and not first.endswith(")"):
-        first += ")"
-    m = re.match(r"(.*? at )([^()]+?)( \(.*\))?$", first)
-    if m:
-        codes = m.group(2).split(", ")
-        if len(codes) > 3:
-            first = m.group(1) + ", ".join(codes[:3]) + " and others" + (m.group(3) or "")
-    return first
-
-
-def setup_text(setup: dict | None) -> str | None:
-    if not setup:
-        return None
-    base, sug = setup.get("baseline"), setup.get("suggestions") or []
-    parts = []
-    if base:
-        parts.append(f"Start from the setup of {base['session']} ({base['year']}, best {lap_text(base['best_s'])}), "
-                     "the quickest run with a setup sheet.")
-    else:
-        parts.append("No setup sheet was saved at this track yet, so changes are steps from the car's usual setup.")
-    rec = setup.get("recurring") or []
-    if rec:
-        parts.append("The car showed " + "; ".join(r["text"] for r in rec[:2]) + ".")
-    if sug:
-        s = sug[0]
-        changes = ", ".join(c["text"] for c in s.get("changes") or [])
-        why = f" for {_first_reason(s['reason'])}" if s.get("reason") else ""
-        parts.append(f"First change to try: {s['title'].lower()}" + (f" ({changes})" if changes else "") + why + ".")
-    return " ".join(parts) if (base or sug or rec) else None
-
-
-def build(target: dict, car: dict, events: list[dict], tyre_model: dict | None, setup: dict | None) -> dict:
-    """The whole prep report from the gathered events (oldest first)."""
+def build(target: dict, car: dict, events: list[dict], tyre_model: dict | None) -> dict:
+    """The whole prep report from the gathered events (oldest first). It holds no setup suggestions: those are the
+    setup tool's, on demand, apart from every report."""
     perf = performance(events)
     tech = technique(events)
     corner = corners(events, tech)
@@ -628,10 +591,9 @@ def build(target: dict, car: dict, events: list[dict], tyre_model: dict | None, 
                          "corner times include their laps.")
     return {
         "target": target, "car": car,
-        "briefing": briefing(perf, corner, q, press, setup, tech, runs),
+        "briefing": briefing(perf, corner, q, press, tech, runs),
         "performance": perf, "trend": trend_text(perf),
         "corners": corner, "quali": q, "pressures": press, "setups": runs, "technique": tech,
-        "recommendation": setup,
         "notes": notes,
         "method": METHOD,
     }
@@ -648,8 +610,7 @@ METHOD = [
     "Quali prep and pressures: the tyre prep report of each event (TPMS warm-up, push temperatures, peak lap, the "
     "cold pressures that land in the fast laps' window).",
     "Setups and balance: each run's setup sheet and the balance from its log, against what the drivers said in "
-    "their debriefs. The opening setup is the quickest past run with a sheet, with the setup tool's ranked changes "
-    "for what both the drivers and the data kept showing.",
+    "their debriefs.",
     "Driver technique: the technique check's obvious mistakes that repeat on each driver's laps, each with the "
     "time it cost.",
 ]

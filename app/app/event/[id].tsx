@@ -307,7 +307,7 @@ export default function EventScreen() {
     </View>
   );
 
-  // Before the weekend: the prep report itself (the lap to aim for, corner by corner, grip, the setup to start with),
+  // Before the weekend: the prep report itself (the lap to aim for, corner by corner, grip, the setups run),
   // at once when the address asks for Before
   const before = isEvent && mode != null && eventId != null && stageKnown && !during && !laps && !coaching && (
     <WeekendBefore eventId={eventId} car={params.car ?? null} />
