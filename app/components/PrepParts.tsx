@@ -9,6 +9,7 @@ import { Text, View } from '@/components/Themed';
 import { INK } from '@/constants/Colors';
 import { deltaColor, face, Fonts, themed, Type, useTheme } from '@/constants/Theme';
 import { noPrint } from '@/lib/print';
+import { a11yState } from '@/lib/a11yState';
 
 const EVEN_S = 0.005;
 
@@ -111,7 +112,7 @@ export function Pick({ label, on, onPress }: { label: string; on: boolean; onPre
   const styles = useStyles();
   return (
     // on paper only the picked one is left
-    <Pressable accessibilityRole="button" accessibilityState={{ selected: on }} onPress={onPress} hitSlop={6}
+    <Pressable accessibilityRole="button" {...a11yState({ selected: on }, 'button')} onPress={onPress} hitSlop={6}
       {...(on ? null : noPrint)} style={StyleSheet.flatten([styles.pick, on && styles.pickOn])}>
       <Text style={StyleSheet.flatten([styles.pickText, !on && styles.pickOff])}>{label}</Text>
     </Pressable>

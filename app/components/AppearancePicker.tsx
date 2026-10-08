@@ -8,6 +8,7 @@ import { Text, View } from '@/components/Themed';
 import Colors from '@/constants/Colors';
 import { Fonts, themed, Type } from '@/constants/Theme';
 import { Appearance, APPEARANCES, setAppearance, useAppearance } from '@/lib/appearance';
+import { a11yState } from '@/lib/a11yState';
 
 const NOTE: Record<Appearance, string> = {
   system: 'Follows this device',
@@ -26,7 +27,7 @@ export function AppearancePicker({ no }: { no: number }) {
           const on = a.value === choice;
           return (
             <Pressable key={a.value} onPress={() => setAppearance(a.value)} accessibilityRole="radio"
-              accessibilityState={{ checked: on }} accessibilityLabel={`${a.label}: ${NOTE[a.value]}`} hitSlop={4}
+              {...a11yState({ checked: on })} accessibilityLabel={`${a.label}: ${NOTE[a.value]}`} hitSlop={4}
               style={StyleSheet.flatten([wide ? styles.choice : styles.choicePhone, on && styles.choiceOn])}>
               <Sample kind={a.value} />
               <View style={styles.words}>

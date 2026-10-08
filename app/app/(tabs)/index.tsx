@@ -43,6 +43,7 @@ import { driverState } from '@/lib/runDriver';
 import { PrepAvailability } from '@/lib/prep';
 import { fetchFinishes, Finishes } from '@/lib/finishes';
 import { fetchReport, Report } from '@/lib/report';
+import { a11yState } from '@/lib/a11yState';
 import { face, Fonts, Space, TAP, themed, Type, useTheme } from '@/constants/Theme';
 
 // What the page knows about an event beyond the list: its runs by day, its report and the logger it was recorded on.
@@ -387,7 +388,7 @@ function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged
               <Text style={StyleSheet.flatten([styles.status, { borderColor: status.line }])}>{status.text}</Text>
             </Pressable>
           </Link>
-          <Pressable onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded: open }}
+          <Pressable onPress={onToggle} accessibilityRole="button" {...a11yState({ expanded: open })}
             accessibilityLabel={`${open ? 'Fold' : 'Show'} the runs of ${f.name}`} style={styles.foldButton}>
             <Text style={wide ? styles.itemMark : styles.itemMarkPhone}>{open ? '▾' : '▸'}</Text>
           </Pressable>

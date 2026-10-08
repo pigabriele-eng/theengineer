@@ -8,6 +8,7 @@ import { TextLink, useWide } from '@/components/Programme';
 import { Text, View, useThemeColor } from '@/components/Themed';
 import { CalendarState, calendarApi, clockLabel, Filter, FILTERS, Plan } from '@/lib/calendar';
 import { Folder, FolderSummary } from '@/lib/events';
+import { a11yState } from '@/lib/a11yState';
 import { Fonts, Radius, themed, Type, useTheme } from '@/constants/Theme';
 
 /** The index of the event list: Past, Current, Upcoming and All as large words with their counts, the one shown
@@ -25,7 +26,7 @@ export function FilterBar({ filter, counts, onPick }: {
         const on = key === filter;
         return (
           <Pressable key={key} onPress={() => onPick(key)} accessibilityRole="tab" hitSlop={4}
-            accessibilityState={{ selected: on }} accessibilityLabel={`${label}: ${counts[key]}`}
+            {...a11yState({ selected: on })} accessibilityLabel={`${label}: ${counts[key]}`}
             style={StyleSheet.flatten([wide ? styles.tab : styles.tabPhone, on && styles.tabOn])}>
             <Text style={StyleSheet.flatten([wide ? styles.tabText : styles.tabTextPhone, on && styles.tabTextOn])}>
               {label}

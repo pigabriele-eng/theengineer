@@ -33,6 +33,7 @@ import {
   Tyres,
   working,
 } from '@/lib/technique';
+import { a11yState } from '@/lib/a11yState';
 import { deltaColor, face, Fonts, inkOn, phaseColor, themed, Type, useTheme } from '@/constants/Theme';
 
 const SIDE_BY_SIDE = 900; // from this wide the charts are taller
@@ -592,7 +593,7 @@ function MistakeRow({ n, m, on, first, onPress }: { n: number; m: ObviousMistake
   const wide = useWide();
   const styles = useStyles();
   return (
-    <Pressable accessibilityRole="button" accessibilityState={{ selected: on }} onPress={onPress}
+    <Pressable accessibilityRole="button" {...a11yState({ selected: on }, 'button')} onPress={onPress}
       style={StyleSheet.flatten([styles.mistake, !first && styles.mistakeRule, on && styles.mistakeOn])}>
       <View style={styles.mistakeHead}>
         <View style={StyleSheet.flatten([styles.no, on && styles.noOn])}>

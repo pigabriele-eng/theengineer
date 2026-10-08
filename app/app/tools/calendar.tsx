@@ -10,6 +10,7 @@ import { Colophon, Page, Section, SpecLine, TextLink, useWide } from '@/componen
 import { Text, View } from '@/components/Themed';
 import { CalendarEntry, CalendarState, calendarApi, clockLabel, syncSummary, todayIso } from '@/lib/calendar';
 import { dateRange } from '@/lib/events';
+import { a11yState } from '@/lib/a11yState';
 import { Fonts, themed, Type } from '@/constants/Theme';
 
 const STEPS = [
@@ -135,7 +136,7 @@ function AutoAdd({ value, onChange, busy }: { value: boolean; onChange: (on: boo
   const label = 'Add new calendar entries as events by themselves';
   return (
     <Pressable onPress={() => onChange(!value)} disabled={busy} style={styles.tickRow} accessibilityRole="checkbox"
-      accessibilityState={{ checked: value, disabled: busy }} accessibilityLabel={label}>
+      {...a11yState({ checked: value, disabled: busy })} accessibilityLabel={label}>
       {busy ? <ActivityIndicator style={styles.tickSpinner} /> : <Tick on={value} />}
       <View style={styles.tickText}>
         <Text style={styles.tickTitle}>{label}</Text>

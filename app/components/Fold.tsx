@@ -7,6 +7,7 @@ import { Pressable } from 'react-native';
 import { useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { Fonts, themed, Type } from '@/constants/Theme';
+import { a11yState } from '@/lib/a11yState';
 
 /** The big fold: the thick rule, the number in an ink block, the title, its facts in capitals (and anything after
  * them, like a coloured block), and the mark. `what` names what folds, for screen readers ("the season"). */
@@ -23,7 +24,7 @@ export function FoldHead({ no, title, facts, extra, open, onToggle, what, label 
   const styles = useStyles();
   const wide = useWide();
   return (
-    <Pressable onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded: open }}
+    <Pressable onPress={onToggle} accessibilityRole="button" {...a11yState({ expanded: open })}
       accessibilityLabel={label ?? `${title}, ${facts}`} accessibilityHint={open ? `Folds ${what}` : `Opens ${what}`}>
       <View style={styles.rule} />
       <View style={wide ? styles.head : styles.headPhone}>
@@ -52,7 +53,7 @@ export function SubFoldHead({ title, facts, open, onToggle, what }: {
   const styles = useStyles();
   const wide = useWide();
   return (
-    <Pressable onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded: open }}
+    <Pressable onPress={onToggle} accessibilityRole="button" {...a11yState({ expanded: open })}
       accessibilityLabel={`${title}, ${facts}`} accessibilityHint={open ? `Folds ${what}` : `Opens ${what}`}
       style={wide ? styles.sub : styles.subPhone}>
       <View style={wide ? styles.subWords : styles.subWordsPhone}>

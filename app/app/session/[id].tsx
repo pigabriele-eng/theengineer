@@ -25,6 +25,7 @@ import { poll } from '@/lib/poll';
 import { noPrint } from '@/lib/print';
 import { fetchReport, fetchReportProgress } from '@/lib/report';
 import { fetchStintView, StintLap, StintView } from '@/lib/stint';
+import { a11yState } from '@/lib/a11yState';
 import { face, Fonts, Palette, photoFor, TAP, themed, Type, useTheme } from '@/constants/Theme';
 
 const SAME_S = 0.0015; // section times are kept to the millisecond: closer than this is the same time
@@ -663,7 +664,7 @@ function ChartTable({ chart, fastest, ticked, onTick }: { chart: Chart; fastest:
                 {/* the tick and the lap's number, one target the row's height (a tap target's) */}
                 <Pressable onPress={() => onTick(l.number)} disabled={full && !ticked.includes(l.number)}
                   accessibilityRole="checkbox" accessibilityLabel={`Compare lap ${l.number}`}
-                  accessibilityState={{ checked: ticked.includes(l.number), disabled: full && !ticked.includes(l.number) }}
+                  {...a11yState({ checked: ticked.includes(l.number), disabled: full && !ticked.includes(l.number) })}
                   style={StyleSheet.flatten([styles.cell, styles.cellLeft, styles.tickCell, { width: W.tick + W.lap }])}>
                   <View {...noPrint}>
                     <Tick on={ticked.includes(l.number)} disabled={full && !ticked.includes(l.number)} size={18} />

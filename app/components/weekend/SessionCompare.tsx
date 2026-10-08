@@ -30,6 +30,7 @@ import {
 import { TYRE_LABEL } from '@/lib/tyreLevels';
 import { tyreTag } from '@/lib/tyreTag';
 import { sessionCompareSections } from '@/lib/weekendRuns';
+import { a11yState } from '@/lib/a11yState';
 
 const FULL = `${MAX_PICKS} laps are on the traces already: take one off first.`;
 
@@ -294,9 +295,7 @@ function LapRow({ run, lap, tyres, color, best, fastest, flag, onPress }: {
   const gap = gapWords(lap.time, fastest, best);
   const driver = run.driver ?? 'driver not set';
   return (
-    // aria-checked: what the web reads (react-native-web leaves accessibilityState's checked out)
-    <Pressable onPress={onPress} accessibilityRole="checkbox" accessibilityState={{ checked: color != null }}
-      aria-checked={color != null}
+    <Pressable onPress={onPress} accessibilityRole="checkbox" {...a11yState({ checked: color != null })}
       accessibilityLabel={`Lap ${lap.number} of ${run.name} on the traces: ${driver}, ${tyres.replace('?', ' (a guess)')} tyres, ${formatLap(lap.time)}, ${best ? 'the fastest lap' : `${gap} on the fastest lap`}.${flag ? ` ${flag}.` : ''}`}
       style={styles.lap}>
       <View style={styles.lapLine}>

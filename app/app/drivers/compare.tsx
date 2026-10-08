@@ -30,6 +30,7 @@ import {
   SIDES,
 } from '@/lib/drivers';
 import { poll } from '@/lib/poll';
+import { a11yState } from '@/lib/a11yState';
 import { face, Fonts, inkOn, themed, Type, useTheme } from '@/constants/Theme';
 
 type Mode = 'drivers' | 'sessions';
@@ -310,7 +311,7 @@ function SessionSides({ group, sideOf, setSideOf, names, setNames, colors }: {
                   key={side}
                   onPress={() => toggle(s.id, side)}
                   accessibilityRole="checkbox"
-                  accessibilityState={{ checked: on }}
+                  {...a11yState({ checked: on })}
                   accessibilityLabel={`${s.name} in ${names[side] || `group ${side.toUpperCase()}`}`}
                   style={StyleSheet.flatten([styles.sideToggle, on && { backgroundColor: colors[side], borderColor: colors[side] }])}>
                   <Text style={StyleSheet.flatten([styles.sideToggleText, on && { color: inkOn(colors[side]) }])}>

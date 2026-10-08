@@ -16,6 +16,7 @@ import { carShort, driversFor, Garage, garageApi, GarageDriver, RunFields, RunSe
 import { Fonts, themed, Type, useTheme } from '@/constants/Theme';
 import { seasonsApi } from '@/lib/seasons';
 import { noPrint } from '@/lib/print';
+import { a11yState } from '@/lib/a11yState';
 
 export type PickerKind = 'driver';
 export type RunRef = { id: number; name: string; driver_id?: number | null; driver?: string | null; car_id?: number | null };
@@ -122,7 +123,7 @@ function DriverList({ run, garage, onPick, onClose, eventDrivers }: {
     const on = d.id === run.driver_id;
     return (
       <Pressable key={d.id} onPress={() => onPick({ driver_id: d.id })} accessibilityRole="button"
-        accessibilityState={{ selected: on }} style={StyleSheet.flatten([styles.option, on && styles.optionOn])}>
+        {...a11yState({ selected: on }, 'button')} style={StyleSheet.flatten([styles.option, on && styles.optionOn])}>
         <Text style={styles.optionText}>{d.name}</Text>
       </Pressable>
     );
@@ -256,7 +257,7 @@ export function RunNameEditor({ id, name, kind, logSession, onSaved, onCancel, s
       <View style={styles.options}>
         <Text style={styles.kindLabel}>Kind</Text>
         {KINDS.map((kk) => (
-          <Pressable key={kk} onPress={() => setK(kk)} accessibilityRole="radio" accessibilityState={{ checked: kk === k }}
+          <Pressable key={kk} onPress={() => setK(kk)} accessibilityRole="radio" {...a11yState({ checked: kk === k })}
             style={chip(kk === k)}>
             <Text style={styles.smallText}>{KIND_NAMES[kk]}</Text>
           </Pressable>
