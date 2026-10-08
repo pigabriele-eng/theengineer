@@ -5,9 +5,12 @@ time it cost, and keeps, per session, the ones that repeat (its habits): per cor
 what they cost a lap on average. Never a comparison with a perfect lap.
 
 GET /coaching/sessions/{id}/top: the run's three costliest repeated mistakes, each at a different corner, with what
-to do instead and the time it is worth. GET /coaching/sessions/{id}/fixed: the previous run's three things checked on
-this run (by default the latest earlier run at the same track by the same driver; ?previous=<id> picks another): what
-each costs now against before, the time gained and a verdict (fixed, better, not yet).
+to do instead and the time it is worth. ?laps=<session id>:<lap number>,... works them out over the laps picked
+instead (Gabriele, 2026-10-08: "let me quick pick which laps and sessions i want to use for comparison"); the answer
+lists what can be picked: the driver's runs at the event, each with its tyres and clean laps.
+GET /coaching/sessions/{id}/fixed: the previous run's three things checked on this run (by default the latest earlier
+run at the same track by the same driver; ?previous=<id> picks another): what each costs now against before, the time
+gained and a verdict (fixed, better, not yet).
 """
 from __future__ import annotations
 
@@ -15,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import models
+from app import models, run_labels, run_tyres
 from app.analysis.technique import HABITS, habits
 from app.db import get_db
 from app.routers import technique
@@ -31,13 +34,15 @@ BETTER_SHARE = 0.7  # ... and at or under which it counts as better
 class _Run:
     """A session's technique check as far as coaching reads it."""
 
-    def __init__(self, db: Session, s: models.RunSession):
+    def __init__(self, db: Session, s: models.RunSession, pick: set[tuple[int, int]] | None = None):
         self.session = s
         kind, id_ = technique._scope_of(s)
         plan, self.row, self.status = technique._state(db, kind, id_)
         self.head = technique._head(plan, self.row, self.status)
-        res = self.row.result if self.row is not None else None
-        self.laps = [x for x in res["laps"] if x["session_id"] == s.id] if res else []
+        self.res = res = self.row.result if self.row is not None else None
+        # by default the run's own laps (all on one set of tyres); picked: those laps, from any run of the check
+        self.laps = [x for x in res["laps"] if ((x["session_id"], x["number"]) in pick if pick is not None
+                                                else x["session_id"] == s.id)] if res else []
         # the run's obvious mistakes that repeat, each at the time it really cost (an obvious mistake has no size of
         # its own nor a cost against perfect driving, which habits() reads)
         self.habits = habits([[{"unit": None, "cost_perfect_s": 0.0, **m} for m in x.get("obvious") or []]
@@ -60,10 +65,45 @@ class _Run:
         if worst is None:
             return {}
         _, m, lap = worst
-        out = {"what": m.get("what"), "do": m.get("do"), "lap": lap["number"]}
+        out = {"what": m.get("what"), "do": m.get("do"), "lap": lap["number"], "lap_session": lap["session_id"]}
         if m["kind"] not in HABITS and m.get("title"):  # a kind with no habit name of its own: the mistake's title
             out["title"] = m["title"]
         return out
+
+
+def choices(db: Session, run: _Run) -> list[dict]:
+    """What can be picked: the runs of the run's check (its event's) by the same driver, in order, each with its
+    tyres and clean laps."""
+    if not run.res:
+        return []
+    laps = run.res["laps"]
+    drivers = {x["driver"] for x in laps if x["session_id"] == run.session.id}
+    mine = [x for x in laps if not drivers or x["driver"] in drivers]
+    order = list(dict.fromkeys(x["session_id"] for x in mine))
+    # each called as the event page calls it ("FP1 stint 2"), in the order they ran
+    runs = list(db.scalars(select(models.RunSession).where(models.RunSession.id.in_(order))))
+    labels = run_labels.labels_for(db, runs)
+    names = {r.id: labels[r.id].name if r.id in labels else r.name or f"Session {r.id}" for r in runs}
+    at = {lab.id: i for i, lab in enumerate(run_labels.label_runs(runs))}
+    order.sort(key=lambda sid: at.get(sid, len(at)))
+    tyres = run.res.get("run_tyres") or {}
+    out = []
+    for sid in order:
+        t = tyres.get(str(sid)) or {}
+        out.append({"id": sid, "name": names.get(sid, f"Session {sid}"), "tyres": t.get("tyres"),
+                    "tyres_label": run_tyres.LABEL.get(t.get("tyres")), "tyres_sure": t.get("sure"),
+                    "laps": [{"number": x["number"], "time": x["time"]} for x in mine if x["session_id"] == sid]})
+    return out
+
+
+def parse_laps(text: str | None) -> set[tuple[int, int]] | None:
+    """?laps=12:3,12:4,13:1 -> {(12, 3), (12, 4), (13, 1)}; nothing given: None (the automatic choice)."""
+    if not text:
+        return None
+    try:
+        return {(int(a), int(b)) for a, b in (p.split(":") for p in text.split(",") if p)}
+    except ValueError:
+        raise HTTPException(422, "laps: <session id>:<lap number>, comma separated") from None
 
 
 def _session(db: Session, session_id: int) -> models.RunSession:
@@ -90,13 +130,18 @@ def top_things(run: _Run, n: int = TOP_N) -> list[dict]:
 
 
 @router.get("/sessions/{session_id}/top")
-def session_top(session_id: int, db: Session = Depends(get_db)):
+def session_top(session_id: int, laps: str | None = None, db: Session = Depends(get_db)):
     """The three things for the next run: the run's costliest repeated mistakes, each at a different corner, with
-    what to do instead and what it is worth a lap (on average over the run's clean laps)."""
-    run = _Run(db, _session(db, session_id))
+    what to do instead and what it is worth a lap (on average over the run's clean laps). ?laps=<session id>:<lap
+    number>,... works them out over those laps instead; "choices" lists the laps that can be picked and "picked"
+    the laps used."""
+    pick = parse_laps(laps)
+    run = _Run(db, _session(db, session_id), pick)
     things = top_things(run) if run.ready else []
     return {**run.head, "session": run.out(), "things": things,
-            "gain_s": round(sum(t["gain_s"] for t in things), 3)}
+            "gain_s": round(sum(t["gain_s"] for t in things), 3),
+            "choices": choices(db, run), "picked": [[x["session_id"], x["number"]] for x in run.laps],
+            "automatic": pick is None}
 
 
 def _track_key(s: models.RunSession) -> object:

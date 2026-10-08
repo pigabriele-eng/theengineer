@@ -72,6 +72,19 @@ def test_coaching_api(client):
         assert t["code"] in {"T1", "T2"} and t["gain_s"] > 0 and t["do"] and t["what"]
     assert top["gain_s"] == round(sum(t["gain_s"] for t in top["things"]), 3)
 
+    # what can be picked: both runs, each with its clean laps; by default this run's laps
+    assert top["automatic"] and [c["id"] for c in top["choices"]] == ids
+    assert [len(c["laps"]) for c in top["choices"]] == [3, 3]
+    assert sorted(top["picked"]) == sorted([ids[0], x["number"]] for x in top["choices"][0]["laps"])
+    # picked: the laps of both runs, then two laps of the first
+    both = ",".join(f"{c['id']}:{x['number']}" for c in top["choices"] for x in c["laps"])
+    wide = client.get(f"/coaching/sessions/{ids[0]}/top", params={"laps": both}).json()
+    assert not wide["automatic"] and wide["session"]["laps"] == 6 and len(wide["picked"]) == 6
+    assert all(t["of"] == 6 for t in wide["things"])
+    two = ",".join(f"{ids[0]}:{x['number']}" for x in top["choices"][0]["laps"][:2])
+    assert client.get(f"/coaching/sessions/{ids[0]}/top", params={"laps": two}).json()["session"]["laps"] == 2
+    assert client.get(f"/coaching/sessions/{ids[0]}/top", params={"laps": "x:1"}).status_code == 422
+
     fixed = _wait(client, f"/coaching/sessions/{ids[1]}/fixed")
     assert fixed["previous"]["id"] == ids[0]  # the run before, at the same track
     assert [t["key"] for t in fixed["things"]] == [t["key"] for t in top["things"]]
