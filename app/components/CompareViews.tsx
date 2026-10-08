@@ -207,7 +207,11 @@ type TracesProps = {
   no?: number;
   // theoretical laps added to the graph (lib/theoretical.ts onGraph), drawn dashed after the real laps
   extra?: { key: string; label: string; trace: LapTrace; color: string; dash: string }[];
+  bare?: boolean; // inside a section that already heads it (the report's Drivers section): no section of its own
 };
+
+/** Its content without a section's head, for `bare`. */
+const Bare = ({ children }: { no?: number; title?: string; dek?: string; children: React.ReactNode }) => <View>{children}</View>;
 
 const CHARTS: { role: TraceRole; title: string; unit: string; height: number; domain?: [number, number] }[] = [
   { role: 'speed', title: 'Speed', unit: 'km/h', height: 140 },
@@ -219,7 +223,7 @@ const CHARTS: { role: TraceRole; title: string; unit: string; height: number; do
 
 /** Every lap on one distance axis: time gained or lost against the reference, then speed, pedals, steering and
  * gear, with one crosshair across all of them. Zoom to a section to see a corner in detail. */
-export function CompareTraces({ data, colors, zoom, onZoom, cursor, onCursor, no = 4, extra = NONE }: TracesProps) {
+export function CompareTraces({ data, colors, zoom, onZoom, cursor, onCursor, no = 4, extra = NONE, bare }: TracesProps) {
   const styles = useStyles();
   const t = useText();
   const tr = data.traces;
@@ -282,8 +286,9 @@ export function CompareTraces({ data, colors, zoom, onZoom, cursor, onCursor, no
   const at = local != null ? tr.distance[i0 + local] : null;
   const here = at != null ? data.sections.find((s) => at >= s.start_m && at <= s.end_m)?.code : null;
 
+  const Wrap = bare ? Bare : Section;
   return (
-    <Section no={no} title="Traces" dek="Every lap on one distance axis, one crosshair across all the charts. Zoom to a section to see its corners.">
+    <Wrap no={no} title="Traces" dek="Every lap on one distance axis, one crosshair across all the charts. Zoom to a section to see its corners.">
       <Tabs label="Zoom" value={zoom} onChange={onZoom} style={styles.tabs}
         items={[null, ...data.sections.map((s) => s.code)].map((code) => ({ key: code, label: code ?? 'Whole lap' }))} />
       <View style={styles.legend}>
@@ -326,7 +331,7 @@ export function CompareTraces({ data, colors, zoom, onZoom, cursor, onCursor, no
         {data.channels.gear ? ` Gear is the logged ${data.channels.gear} channel.` : ''}
         {data.numbering === 'detected' ? ` ${DETECTED_CORNERS_NOTE}` : ''}
       </Text>
-    </Section>
+    </Wrap>
   );
 }
 

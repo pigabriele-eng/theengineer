@@ -18,6 +18,7 @@ from app.routers import prep as prep_report
 from app.routers import prep_guide
 from app.routers import stint as stint_tool
 from app.routers import track_grip, trackshape
+from app.routers import report_drivers
 from app.routers import driver_style, habits
 from app.routers import event_debriefs
 from app.routers import setup_chat
@@ -104,6 +105,7 @@ app.include_router(event_modes.router, dependencies=signed_in)
 app.include_router(event_debriefs.router, dependencies=signed_in)
 app.include_router(compare_suggest.router, dependencies=signed_in)
 app.include_router(session_sections.router, dependencies=signed_in)
+app.include_router(report_drivers.router, dependencies=signed_in)
 app.include_router(debriefs.media_router, dependencies=[Depends(require_user_or_query_token)])
 
 
