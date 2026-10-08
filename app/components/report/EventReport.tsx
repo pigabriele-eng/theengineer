@@ -13,6 +13,7 @@ import {
 import { Bars, LineChart, LineSeries, useChartColors } from '@/components/ReportCharts';
 import { Balance } from '@/components/report/Balance';
 import { GripReport } from '@/components/report/GripReport';
+import LapFilter from '@/components/report/LapFilter';
 import { GripBalance, LapsScope, TyreCorners, useQuickLaps } from '@/components/report/QuickLaps';
 import { ServerNote } from '@/components/report/ServerNote';
 import { TrackGrip } from '@/components/report/TrackGrip';
@@ -30,6 +31,8 @@ import { fetchPartReport, fetchPartReportProgress, Part, PartScope, refreshPartR
 import { TrackShapeData } from '@/lib/trackshape';
 import { defaultStage } from '@/lib/weekendRuns';
 import {
+  fetchPickProgress,
+  fetchPickReport,
   fetchReport,
   fetchReportProgress,
   Habit,
@@ -193,7 +196,45 @@ export default function EventReport({
   const byLevel = useMemo(() => (lead ? [lead, ...(lead.condition?.others ?? [])] : [])
     .sort((a, b) => TYRE_LEVELS.indexOf(a.condition?.tyres ?? 'used') - TYRE_LEVELS.indexOf(b.condition?.tyres ?? 'used')),
   [lead]);
-  const report = byLevel.find((r) => r.condition?.tyres === level) ?? lead;
+  // the laps picked in the filter (tyres, session, driver): the server works the report out again for just those runs
+  const [pickRuns, setPickRuns] = useState<number[] | null>(null);
+  const [pickAnswer, setPickAnswer] = useState<ReportAnswer | null>(null);
+  const [pickError, setPickError] = useState<string | null>(null);
+  const pickEvent = scope && 'event' in scope && !isPartScope(scope) ? scope.event : null;
+  const pickKey = pickRuns && pickEvent != null ? `${pickEvent}:${pickRuns.join(',')}` : '';
+  useEffect(() => {
+    setPickAnswer(null);
+    setPickError(null);
+    if (!pickRuns || pickEvent == null) return;
+    const busy = (status: string) => status === 'queued' || status === 'running';
+    let read = false;
+    return poll(async (live) => {
+      try {
+        if (read) {
+          const h = await fetchPickProgress(pickEvent, pickRuns);
+          if (!live()) return false;
+          if (busy(h.status)) {
+            setPickAnswer((a) => a && { ...a, ...h });
+            return true;
+          }
+        }
+        const a = await fetchPickReport(pickEvent, pickRuns);
+        if (!live()) return false;
+        read = true;
+        setPickAnswer(a);
+        setPickError(null);
+        return busy(a.status);
+      } catch (e) {
+        if (!live()) return false;
+        setPickError((e as Error).message);
+        return true;
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickKey]);
+  const picking = pickKey !== '';
+  const report = picking ? (pickAnswer?.status === 'ready' || pickAnswer?.stale ? pickAnswer.report : null)
+    : byLevel.find((r) => r.condition?.tyres === level) ?? lead;
   // every run by its own name ("FP1 stint 1", "Q1 · Gabriele Piana"), never a number
   const names = useMemo(() => runNamer(answer), [answer]);
   const mapAt = useRef<Box>(null); // the map, embedded: on the web a DOM element to bring into view
@@ -265,12 +306,6 @@ export default function EventReport({
         report ? <>Fastest <B>{formatLap(report.headline.fastest.time)}</B></> : null,
         report ? (report.numbering === 'official' ? 'Official corner numbers' : 'Corners numbered from the log') : null,
       ]} />
-      {report && byLevel.length > 1 && (
-        <Tabs big value={report.condition?.tyres ?? 'used'} onChange={setLevel}
-          style={styles.condition} label="Each lap compared only with laps on the same tyres"
-          items={byLevel.map((r) => ({ key: r.condition?.tyres ?? 'used', label: tyresWord(r),
-            sub: `${r.laps_analysed} laps · fastest ${formatLap(r.headline.fastest.time)}` }))} />
-      )}
     </View>
   );
 
@@ -404,11 +439,32 @@ export default function EventReport({
           onPick={(id) => (embedded ? setPicked({ of: givenKey, scope: { session: id } })
             : router.setParams({ session: String(id), event: undefined, part: undefined }))} />
       )}
+      <View style={styles.tyreBox}>
+        {!picking && report && byLevel.length > 1 && (
+          <Tabs big value={report.condition?.tyres ?? 'used'} onChange={setLevel}
+            style={styles.condition} label="Each lap compared only with laps on the same tyres"
+            items={byLevel.map((r) => ({ key: r.condition?.tyres ?? 'used', label: tyresWord(r),
+              sub: `${r.laps_analysed} laps · fastest ${formatLap(r.headline.fastest.time)}` }))} />
+        )}
+        {isEvent && <View {...noPrint}><LapFilter eventId={scope.event} onRuns={setPickRuns} style={styles.condition} /></View>}
+        {picking && report?.condition && (
+          <Text style={styles.para}>
+            <B>{report.condition.label}</B>{` · ${report.laps_analysed} laps · fastest ${formatLap(report.headline.fastest.time)}`}
+          </Text>
+        )}
+      </View>
       {switching && <ActivityIndicator style={styles.loading} />}
       {!answer && !error && <ActivityIndicator style={styles.loading} />}
       {error && <Text style={styles.error}>Can&apos;t reach the server: {error}</Text>}
       <ServerNote />
-      {answer && working && <Progress answer={answer} />}
+      {answer && working && !picking && <Progress answer={answer} />}
+      {picking && !pickAnswer && !pickError && <ActivityIndicator style={styles.loading} />}
+      {picking && pickAnswer && (pickAnswer.status === 'queued' || pickAnswer.status === 'running') &&
+        <Progress answer={pickAnswer} />}
+      {picking && pickError && <Text style={styles.error}>Can&apos;t work out the picked laps: {pickError}</Text>}
+      {picking && pickAnswer?.status === 'failed' && (
+        <Text style={styles.para}>{pickAnswer.error ?? 'The report of the picked laps couldn’t be worked out.'}</Text>
+      )}
       {answer?.status === 'failed' && (
         <View style={styles.banner}>
           <Text style={styles.para}>{answer.error ?? 'The report couldn’t be worked out.'}</Text>
@@ -1065,6 +1121,7 @@ function RelationRow({ r }: { r: Relation }) {
 
 const useStyles = themed((c) => ({
   condition: { marginTop: 18 },
+  tyreBox: { gap: 4 },
   // text
   para: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 25, color: c.text },
   note: { ...Type.dek, fontSize: 15, lineHeight: 21, color: c.textSecondary, marginTop: 6 },

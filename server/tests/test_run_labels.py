@@ -147,3 +147,17 @@ def test_the_report_calls_runs_by_their_names_in_time_order(client):
     assert "PT1 stint 1" in {x["run"] for r in (again["report"], *again["report"]["condition"]["others"])
                              for x in r["trends"]["runs"]}
     assert again["runs"][1]["short"] == "PT1 S1"
+
+    # the report's filter: the runs picked by hand (here both drivers' qualifying runs and one test run), worked out
+    # again over just their laps, the tyres of each beside its figures
+    picked = _wait(client, f"/reports/events/{event['id']}/pick?runs={ids[1]},{ids[3]},{ids[0]}")
+    assert picked["status"] == "ready", picked.get("error")
+    rep = picked["report"]
+    assert rep["runs_analysed"] == 3 and rep["condition"]["picked"] and rep["condition"]["others"] == []
+    assert rep["condition"]["runs"] == sorted([ids[0], ids[1], ids[3]])
+    assert "new" in rep["condition"]["levels"] and rep["summary"].startswith(rep["condition"]["label"])
+    assert {x["session_id"] for x in rep["trends"]["runs"]} == {ids[0], ids[1], ids[3]}
+    assert all(x["tyres"]["tyres"] in rep["condition"]["levels"] for x in rep["trends"]["runs"])
+    assert client.get(f"/reports/events/{event['id']}/pick?runs=").status_code == 422
+    assert client.get(f"/reports/events/{event['id']}/pick?runs=a,b").status_code == 422
+    assert client.get(f"/reports/events/{event['id']}/pick?runs=999999").status_code == 404
