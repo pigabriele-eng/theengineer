@@ -301,6 +301,7 @@ def test_stored_sizes_come_from_the_bucket_listing(tmp_path, monkeypatch):
     fake = ListingSupabase()
     s = fake.storage(tmp_path / "cache")
     keys = [s.save(b"\x40" * 5000, ".ld"), s.save(b"audio", ".m4a"), s.save(b"x" * 10, ".npz")]
+    fake.requests.clear()  # (storing a log lists the bucket once, for the room left: storage.StorageFull)
     sizes = s.sizes([*keys, "missing.ld"])
     assert set(sizes) == set(keys)
     assert sizes[keys[0]] == len(fake.objects[f"logs/{keys[0]}.gz"]) < 5000  # as stored: compressed

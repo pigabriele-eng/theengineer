@@ -73,6 +73,12 @@ export function ImportLogs({ onProgress, events, into, big = false }: {
   const resends = useRef(0);
   const running = job != null && (job.status === 'queued' || job.status === 'running');
   const sentTo = useRef<Target>(null);
+  // how full the file storage is (Supabase's free plan holds 1 GB): read again when an import ends
+  const [stored, setStored] = useState<{ used_mb: number | null; limit_mb: number | null } | null>(null);
+  useEffect(() => {
+    if (running) return;
+    api.storage().then(setStored, () => setStored(null));
+  }, [running]);
 
   // Follow the import until it ends; the run list is refreshed as runs come in.
   useEffect(() => {
@@ -245,6 +251,11 @@ export function ImportLogs({ onProgress, events, into, big = false }: {
         </View>
       )}
       {error && <ErrorLine>{error}</ErrorLine>}
+      {stored?.used_mb != null && stored.limit_mb != null && (
+        stored.used_mb >= stored.limit_mb * 0.9
+          ? <ErrorLine>{`Storage is nearly full: ${stored.used_mb.toLocaleString()} of ${stored.limit_mb.toLocaleString()} MB used. A race weekend takes about 100 MB.`}</ErrorLine>
+          : <Note>{`Storage: ${stored.used_mb.toLocaleString()} of ${stored.limit_mb.toLocaleString()} MB used. A race weekend takes about 100 MB.`}</Note>
+      )}
     </View>
   );
 }

@@ -225,6 +225,8 @@ export const api = {
     return request<ImportJob>('/imports', { method: 'POST', body: form });
   },
   importJob: (id: number) => request<ImportJob>(`/imports/${id}`),
+  // how much of the file storage is used (null when not kept: the local disk)
+  storage: () => request<{ used_mb: number | null; limit_mb: number | null }>('/imports/storage'),
   createDebrief: (id: number, points: DebriefPointIn[]) =>
     request<Debrief>(`/sessions/${id}/debriefs`, json({ mode: 'individual', points })),
   recordDebrief: (id: number, audio: PickedFile, mode: DebriefMode, language: DebriefLanguage) => {
