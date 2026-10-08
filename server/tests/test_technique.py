@@ -343,11 +343,18 @@ def test_technique_check_api(client):
     first = _wait(client, f"/technique/sessions/{ids[0]}")
     assert {k: first["tyres"][k] for k in ("tyres", "label", "pair", "sure", "why", "laps")} == \
         {"tyres": "used", "label": "Used", "pair": "used", "sure": True, "why": "set by you", "laps": 3}
+    assert first["tyres"]["set_by_driver"]  # the driver's pick, told apart from the guess
     assert {x["tyres"] for x in first["laps"]} == {"used"}
     ev = client.get(f"/technique/events/{event['id']}").json()
     assert [s["tyres"]["tyres"] for s in ev["sessions"]] == ["used", "new"]
     # every run's tyres for the event, to confirm or change with one tap; Very used is the same group as Used
-    assert client.put(f"/technique/sessions/{ids[0]}/tyres", json={"tyres": "worn"}).status_code == 200
+    # ... so the check stands as it is (no new check of the event), and the run reads Very used at once
+    worn = client.put(f"/technique/sessions/{ids[0]}/tyres", json={"tyres": "worn"})
+    assert worn.status_code == 200 and worn.json()["status"] == "ready"
+    now = client.get(f"/technique/sessions/{ids[0]}").json()
+    assert now["status"] == "ready" and (now["tyres"]["tyres"], now["tyres"]["label"]) == ("worn", "Very used")
+    ev = client.get(f"/technique/events/{event['id']}").json()
+    assert [s["tyres"]["label"] for s in ev["sessions"]] == ["Very used", "New"]
     listed = client.get(f"/technique/events/{event['id']}/tyres").json()
     assert [x["label"] for x in listed["levels"]] == ["New", "Fresh", "Used", "Very used"]
     assert [(r["id"], r["tyres"]["label"], r["tyres"]["sure"]) for r in listed["runs"]] == \

@@ -136,6 +136,10 @@ def test_the_report_calls_runs_by_their_names_in_time_order(client):
         assert not any(x["run"].strip().isdigit() for x in trends)
         assert all(x["tyres"]["tyres"] == r["condition"]["tyres"] for x in trends)
 
+    # each run's out lap was looked at once for the warm-up before a new set (app/warm_up.py)
+    with app.db.SessionLocal() as db:
+        assert all("warm_up_stops" in (db.get(models.RunSession, i).files[0].meta or {}) for i in ids)
+
     # one run's report calls it as the event's does
     one = _wait(client, f"/reports/sessions/{ids[0]}")
     assert one["title"] == "PTS 1" and one["report"]["trends"]["runs"][0]["run"] == "PTS 1"

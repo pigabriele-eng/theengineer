@@ -12,5 +12,6 @@ export type RunTyres = {
   sure: boolean;
   why: string;
   set_laps?: number | null; // laps on the set when the run started, when known
+  check?: boolean; // a guess against the series' usual new sets (GT4 European): worth checking
   laps?: number | null; // the event's clean laps compared with this run's (technique check)
 };

@@ -100,11 +100,10 @@ class TechniqueError(Exception):
 # ---------- what a check is made from ----------
 
 def _plan(db: Session, kind: str, id_: int) -> tuple[reports.Plan, str]:
-    plan = reports.plan_for(db, kind, id_)
-    # the tyres the driver set on its runs are part of what the check is made from
-    tyres = run_tyres.stored(db, [i.session.id for i in plan.items])
-    if tyres:
-        plan.signature = reports._hash([plan.signature, sorted(tyres.items())])
+    # the tyres the driver set on its runs are part of what the check is made from: new or not, as the check groups
+    # laps (run_tyres.pair); Fresh, Used or Very used picked among themselves change no lap's group, so no new check
+    # (each a full check of the event: minutes on the live server), only the label (_tyres_out reads it as set now)
+    plan = reports.plan_for(db, kind, id_, tyres_as=run_tyres.pair)
     return plan, reports._hash([TECHNIQUE_VERSION, plan.signature])
 
 
@@ -263,9 +262,20 @@ def _lap_out(row: models.TechniqueCache, res: dict, x: dict, session_habits: lis
 HIDDEN = ("detail", "mistakes", "perfect", "realistic", "gap", "budget")  # a lap's parts the page never shows
 
 
-def _tyres_out(res: dict | None, session_id: int) -> dict | None:
+def live_tyres(res: dict | None, stored: dict[int, str]) -> dict[str, dict]:
+    """The runs' tyres as the check kept them, with the driver's picks as they are now (a pick that keeps a run new or
+    not leaves the check as it is: _plan)."""
+    out = dict((res or {}).get("run_tyres") or {})
+    for sid, level in stored.items():
+        t = out.get(str(sid))
+        if t is not None and level in run_tyres.LABEL and (t.get("tyres") != level or not t.get("sure")):
+            out[str(sid)] = {**run_tyres._out(level, True, "set by you"), "guess": t.get("guess", t.get("tyres"))}
+    return out
+
+
+def _tyres_out(res: dict | None, session_id: int, stored: dict[int, str] | None = None) -> dict | None:
     """A run's tyres (run_tyres: the driver's, or guessed and to confirm) and how many laps of the event are on them."""
-    t = ((res or {}).get("run_tyres") or {}).get(str(session_id))
+    t = live_tyres(res, stored or {}).get(str(session_id))
     if t is None:
         return None
     on = ((res or {}).get("tyres") or {}).get(t.get("pair") or run_tyres.pair(t["tyres"])) or {}
@@ -326,7 +336,7 @@ def session_technique(session_id: int, lap: int | None = None, db: Session = Dep
     laps = sorted((x for x in res["laps"] if x["session_id"] == s.id), key=lambda x: x["number"])
     session_habits = res["habits"]["sessions"].get(str(s.id), [])
     out["laps"] = [_lap_row(x) for x in laps]
-    out["tyres"] = _tyres_out(res, s.id)
+    out["tyres"] = _tyres_out(res, s.id, run_tyres.stored(db, [s.id]))
     out["best_lap"] = min(laps, key=lambda x: x["time"])["number"] if laps else None
     chosen = next((x for x in laps if x["number"] == lap), None) if lap is not None else None
     if lap is not None and chosen is None:
@@ -356,11 +366,12 @@ def event_technique(event_id: int, db: Session = Depends(get_db), brief: bool = 
     if brief:  # ?brief=true: only how far the check is
         return out
     res = _current(row)
+    stored = run_tyres.stored(db, [i.session.id for i in plan.items])
     sessions = []
     for item in plan.items:
         laps = [x for x in (res["laps"] if res else []) if x["session_id"] == item.session.id]
         best = min(laps, key=lambda x: x["time"]) if laps else None
-        sessions.append({"id": item.session.id, "name": item.name, "tyres": _tyres_out(res, item.session.id),
+        sessions.append({"id": item.session.id, "name": item.name, "tyres": _tyres_out(res, item.session.id, stored),
                          "driver": item.session.driver.name if item.session.driver else None, "laps": len(laps),
                          "best": {"number": best["number"], "time": best["time"],
                                   "without_mistakes": best["without_mistakes"]}

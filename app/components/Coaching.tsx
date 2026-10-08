@@ -67,8 +67,12 @@ export function TopThings({ sessionId }: { sessionId: number }) {
   const { answer, error } = useCoaching<TopAnswer>(() => fetchTop(sessionId, picks),
     `${sessionId}:${picks?.join(',') ?? ''}`, String(sessionId));
   const wait = <Waiting answer={answer} error={error} />;
-  if (!answer || error || working(answer.status) || answer.status === 'failed') return wait;
+  // while the laps are checked again (a driver, tyres or a run changed) the answer kept so far shows at once, with a
+  // line saying it is being brought up to date: only a first check, with nothing kept, is waited for
+  const kept = answer != null && answer.choices.length > 0;
+  if (!answer || error || (working(answer.status) && !kept) || answer.status === 'failed') return wait;
   const names = new Map(answer.choices.map((r) => [r.id, r.name]));
+  const p = answer.progress;
   const none = answer.automatic ? 'this lap' : answer.session.laps === 0 ? null : 'the laps picked';
   return (
     <View>
@@ -76,6 +80,15 @@ export function TopThings({ sessionId }: { sessionId: number }) {
         <Text style={styles.head}>Three things for the next run</Text>
         {answer.things.length > 0 && <Text style={styles.headFig}>worth {seconds(answer.gain_s)} a lap</Text>}
       </View>
+      {working(answer.status) && (
+        <View style={styles.updating} accessibilityLiveRegion="polite">
+          <ActivityIndicator size="small" />
+          <Text style={styles.updatingText}>
+            Shown as last checked. Checking the laps again for the latest changes
+            {p && p.total ? ` (${p.done} of ${p.total})` : ''}…
+          </Text>
+        </View>
+      )}
       <LapPick answer={answer} onPicks={setPicks} />
       {answer.things.length === 0
         ? <Text style={styles.note}>{none ? `No mistake on ${none}: nothing to single out.`
@@ -301,6 +314,8 @@ const useStyles = themed((c: Palette) => ({
   gainNote: { ...Type.label, fontSize: 10, color: c.textSecondary },
   verdict: { paddingHorizontal: 8, paddingVertical: 4, width: 76, alignItems: 'center' },
   verdictText: { ...Type.label, fontSize: 12, color: c.onTint },
+  updating: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingTop: 10 },
+  updatingText: { ...Type.dek, flex: 1, fontSize: 16, lineHeight: 22, color: c.textSecondary },
   pick: { gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderColor: c.separator },
   pickHead: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 8 },
   pickSay: { flex: 1, minWidth: 200 },
