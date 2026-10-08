@@ -21,6 +21,8 @@ export type Thing = {
   what?: string; // on the lap where it cost the most, with the numbers
   do?: string; // what to do instead
   lap?: number;
+  lap_session?: number; // the run of that lap
+  others?: { driver: string | null; laps: number; cost_s: number }[]; // what it costs the other drivers' picked laps
 };
 
 export type Verdict = 'fixed' | 'better' | 'not yet';
@@ -42,7 +44,27 @@ export type FixedThing = {
 
 type Head = { status: TechniqueStatus; error: string | null; progress: { done: number; total: number } | null };
 
-export type TopAnswer = Head & { session: CoachRun; things: Thing[]; gain_s: number };
+/** A run that can be picked for the three things: the driver's runs at the event, each with its tyres and clean laps. */
+export type ChoiceRun = {
+  id: number;
+  name: string;
+  driver: string | null;
+  tyres: string | null;
+  tyres_label: string | null;
+  tyres_sure: boolean | null;
+  laps: { number: number; time: number }[];
+};
+
+export type TopAnswer = Head & {
+  session: CoachRun;
+  things: Thing[];
+  gain_s: number;
+  choices: ChoiceRun[];
+  picked: [number, number][]; // [run, lap number] of each lap used, every driver's
+  automatic: boolean; // nothing picked: each driver's best lap in the event's latest session
+  default_title: string | null; // that session's name
+  driver: string | null; // the run's driver: the three things come from their picked laps
+};
 export type FixedAnswer = Head & {
   session: CoachRun;
   previous: CoachRun | null;
@@ -57,7 +79,13 @@ async function get<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-export const fetchTop = (sessionId: number) => get<TopAnswer>(`/coaching/sessions/${sessionId}/top`);
+/** A lap as the picks hold it: "<run>:<lap number>". */
+export const lapKey = (session: number, lap: number) => `${session}:${lap}`;
+
+/** picks: the laps to work the three things out over ("<run>:<lap number>"); none: each driver's best lap in the
+ * event's latest session. */
+export const fetchTop = (sessionId: number, picks?: string[] | null) =>
+  get<TopAnswer>(`/coaching/sessions/${sessionId}/top${picks ? `?laps=${picks.join(',')}` : ''}`);
 
 export const fetchFixed = (sessionId: number, previous?: number | null) =>
   get<FixedAnswer>(`/coaching/sessions/${sessionId}/fixed${previous != null ? `?previous=${previous}` : ''}`);
