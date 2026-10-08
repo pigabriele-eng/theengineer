@@ -4,8 +4,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet } from 'react-native';
 
 import { FigRow, Notice, PageHead, useText } from '@/components/Picks';
+import { useBackTo } from '@/components/Back';
 import PrintButton from '@/components/PrintButton';
 import { Colophon, Fig, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
+import { useEventFolder, useSessionEvent } from '@/components/SessionSwitcher';
 import { Text, View } from '@/components/Themed';
 import { api, Debrief, DebriefCorner, DebriefPoint, SECTIONS } from '@/lib/api';
 import {
@@ -52,6 +54,11 @@ export default function DebriefReport() {
   const [checkError, setCheckError] = useState<string | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const player = useAudioPlayer(audioUrl);
+
+  // the masthead's Back, opened fresh: up to the event of the debriefed run
+  const eventId = useSessionEvent(d?.session_id);
+  const folder = useEventFolder(eventId);
+  useBackTo(eventId != null ? { id: eventId, name: folder?.id === eventId ? folder.name : null } : null);
 
   const load = useCallback(() => api.debrief(debriefId).then(setD, (e) => setError(e.message)), [debriefId]);
 

@@ -3,6 +3,7 @@ import { Link, Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Fragment, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextStyle, useWindowDimensions, ViewStyle } from 'react-native';
 
+import { useBackTo } from '@/components/Back';
 import { LapCompare } from '@/components/LapCompare';
 import { Tick } from '@/components/Controls';
 import { SessionResults } from '@/components/OfficialSessionCard';
@@ -147,6 +148,8 @@ export default function SessionScreen() {
   // session's numbers dimmed until the new one's arrive
   const eventId = (session as { event_id?: number | null } | null)?.event_id;
   const folder = useEventFolder(eventId);
+  // the masthead's Back, opened fresh: up to this run's event
+  useBackTo(eventId != null ? { id: eventId, name: folder?.id === eventId ? folder.name : null } : null);
   const [analysisFor, setAnalysisFor] = useState<number | null>(null);
   const current = useRef(sessionId);
   current.current = sessionId;

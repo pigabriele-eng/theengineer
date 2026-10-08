@@ -4,6 +4,7 @@ import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, useWind
 
 import { TYRE_LABEL, TYRE_LEVELS } from '@/lib/tyreLevels';
 import { Choice, FigRow, Meter, Notice, PageHead, Tabs, useText } from '@/components/Picks';
+import { useBackTo } from '@/components/Back';
 import PrintButton from '@/components/PrintButton';
 import { Colophon, Fig, Label, Page, Section, TextLink, useGutter, useWide } from '@/components/Programme';
 import { SessionSwitcher, useEventFolder, useSessionEvent } from '@/components/SessionSwitcher';
@@ -124,6 +125,8 @@ export default function TechniqueScreen() {
   const eventId = eventParam ?? answer?.event?.id ?? lookedUp ?? lastEvent.current;
   if (eventId != null) lastEvent.current = eventId;
   const folder = useEventFolder(eventId ?? (answer ? null : undefined));
+  // the masthead's Back, opened fresh: up to the event
+  useBackTo(eventId != null ? { id: eventId, name: folder?.id === eventId ? folder.name : null } : null);
   // the lap's track map: the event's for a session of an event (as the check's `map` says), else the session's own
   const mapPath = eventId != null ? `/events/${eventId}/map`
     : sessionId != null && lookedUp === null ? `/sessions/${sessionId}/map` : null;
