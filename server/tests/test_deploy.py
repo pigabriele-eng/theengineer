@@ -44,6 +44,15 @@ class FakeSupabaseStorage:
                 return httpx.Response(200, json=self.buckets[name])
             return httpx.Response(400, json={"statusCode": "404", "error": "Bucket not found"})
         name = path.removeprefix("/object/")
+        if name.startswith("list/") and request.method == "POST":
+            body = json.loads(request.content)
+            names = sorted(k.removeprefix("logs/") for k in self.objects)
+            page = names[body["offset"]:body["offset"] + body["limit"]]
+            return httpx.Response(200, json=[{"name": n, "metadata": {"size": len(self.objects[f"logs/{n}"])}}
+                                             for n in page])
+        if request.method == "DELETE":
+            self.objects.pop(name, None)
+            return httpx.Response(200, json={})
         if request.method == "POST":
             self.objects[name] = request.content
             return httpx.Response(200, json={"Key": name})
@@ -158,6 +167,53 @@ def test_storage_failures_reach_the_app_as_502(client, tmp_path, monkeypatch):
     session = client.post("/sessions", json={}).json()
     r = client.post(f"/sessions/{session['id']}/debriefs/audio", files={"audio": ("long.m4a", b"x" * 1000)})
     assert r.status_code == 502 and "50 MB" in r.json()["detail"]
+
+
+def _full_at(monkeypatch, mb: float) -> None:
+    monkeypatch.setenv("STORAGE_LIMIT_MB", str(mb))
+
+
+def test_logs_are_refused_before_storage_is_full(tmp_path, monkeypatch):
+    fake = FakeSupabaseStorage()
+    s = fake.storage(tmp_path / "cache")
+    log = bytes(range(256)) * 4000  # about 1 MB, stored as a few KB
+    first = s.save(log, ".ld")
+    one = len(fake.objects[f"logs/{first}.gz"])
+    assert s.used() == one
+    # room for two logs less the reserve kept for the reports
+    _full_at(monkeypatch, (2.5 * one + storage.LOG_RESERVE_BYTES) / 1024**2)
+    second = s.save(log + b"x", ".ld")
+    assert s.used() == len(fake.objects[f"logs/{first}.gz"]) + len(fake.objects[f"logs/{second}.gz"])
+    with pytest.raises(storage.StorageFull, match="nearly full"):
+        s.save(log + b"y", ".ld")
+    assert s.save(b"report", ".npz")  # what is worked out from the logs still has room (the reserve)
+    s.delete(first)  # room again
+    assert s.save(log + b"z", ".ld")
+    monkeypatch.setattr(storage, "backend", lambda: s)
+    assert storage.usage()["limit_mb"] == round((2.5 * one + storage.LOG_RESERVE_BYTES) / 1024**2)
+
+
+def test_an_upload_stops_cleanly_when_storage_is_nearly_full(client, tmp_path, monkeypatch):
+    """Gabriele, 2026-10-08: a 727 MB zip on the free plan's 1 GB. The logs that fit are imported, the rest listed as
+    not imported, with why; nothing is half stored."""
+    from tests.synthetic import simulate, write_ld
+    from tests.test_imports import make_zip, upload
+
+    fake = FakeSupabaseStorage()
+    s = fake.storage(tmp_path / "cache")
+    s.setup()
+    monkeypatch.setattr(storage, "backend", lambda: s)
+    logs = {f"Test/run{i}.ld": write_ld(simulate(paces=(0.97 + i / 100, 0.98, 0.99))[0]) for i in range(3)}
+    one = max(len(gzip.compress(b, storage.COMPRESS_LEVEL)) for b in logs.values())
+    _full_at(monkeypatch, (1.5 * one + storage.LOG_RESERVE_BYTES) / 1024**2)
+
+    job = upload(client, ("weekend.zip", make_zip(logs)))
+    assert job["status"] == "done", job
+    assert len(job["session_ids"]) == 1
+    assert [x["reason"] for x in job["skipped"]] == ["not imported: storage is nearly full"] * 2
+    assert job["message"].startswith("Storage is nearly full")
+    assert len([k for k in fake.objects if k.endswith(".ld.gz")]) == 1
+    assert client.get("/imports/storage").json()["limit_mb"] is not None
 
 
 def test_what_postgres_refuses_is_a_client_error(client):

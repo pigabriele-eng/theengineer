@@ -117,6 +117,11 @@ def _bad_value(_: Request, e: DataError):
     return JSONResponse({"detail": f"A value doesn't fit: {str(e.orig).splitlines()[0]}"}, 422)
 
 
+@app.exception_handler(storage.StorageFull)
+def _storage_full(_: Request, e: storage.StorageFull):
+    return JSONResponse({"detail": str(e)}, 507)
+
+
 @app.exception_handler(storage.StorageError)
 def _storage_failed(_: Request, e: storage.StorageError):
     return JSONResponse({"detail": f"File storage failed: {e}"}, 502)

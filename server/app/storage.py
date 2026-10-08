@@ -8,12 +8,17 @@ Supabase is used when SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are set (bucket
 "logs", created private on startup if it's missing); otherwise files go under STORAGE_DIR (default ./storage).
 Logs are stored gzip-compressed in Supabase (a 90 MB MoTeC log is about 11 MB), which keeps them under the
 free plan's 50 MB per-file limit; the cached copy is the plain file.
+
+The free plan also holds 1 GB in all (STORAGE_LIMIT_MB, default 1024): a log that would take the bucket past it, less
+LOG_RESERVE_BYTES kept for the reports and lap packs worked out from the logs, isn't stored (StorageFull), so an upload
+stops with a clear message rather than storage failing half way (Gabriele, 2026-10-08: a 727 MB zip).
 """
 from __future__ import annotations
 
 import gzip
 import logging
 import os
+import threading
 import shutil
 import uuid
 import zlib
@@ -25,11 +30,18 @@ from typing import Protocol
 import httpx
 
 COMPRESSED_SUFFIXES = (".ld", ".ldx", ".csv", ".txt")  # logs compress well; audio is compressed already
+LOG_SUFFIXES = COMPRESSED_SUFFIXES  # uploaded logs (stopped first when storage is nearly full)
 COMPRESS_LEVEL = 4  # close to the smallest size for a fraction of the time of level 9
 CACHE_LIMIT_BYTES = 2 * 1024**3  # downloaded copies kept on the server's disk
 CHUNK_BYTES = 1024**2
+LIMIT_MB_DEFAULT = 1024  # Supabase's free plan
+LOG_RESERVE_BYTES = 50 * 1024**2  # kept free of logs: the reports and lap packs made from them need room too
 LIST_PAGE = 1000  # files per page of a Supabase bucket listing
 LIST_LIMIT = 100_000  # files looked through at most when finding stored sizes
+
+
+class StorageFull(OSError):
+    """A log that doesn't fit in what is left of the storage."""
 
 
 class StorageError(OSError):
@@ -122,6 +134,8 @@ class SupabaseStorage:
         if not service_key.startswith("sb_"):
             headers["Authorization"] = f"Bearer {service_key}"
         self.client = client or httpx.Client(timeout=httpx.Timeout(30, read=300))
+        self._used: int | None = None  # bytes stored, once listed (used())
+        self._used_lock = threading.Lock()
         self.client.headers.update(headers)
 
     @staticmethod
@@ -162,13 +176,39 @@ class SupabaseStorage:
         self._write_cache(key, _chunks(path))
         return key
 
+    def used(self) -> int:
+        """Bytes the bucket holds, from its listing once, then kept up to date as files are stored and deleted."""
+        with self._used_lock:
+            if self._used is None:
+                total = 0
+                for offset in range(0, LIST_LIMIT, LIST_PAGE):
+                    r = self.client.post(f"{self.api}/object/list/{self.bucket}", json={
+                        "prefix": "", "limit": LIST_PAGE, "offset": offset,
+                        "sortBy": {"column": "name", "order": "asc"}})
+                    if r.status_code >= 400:
+                        raise self._fail("list the files", r)
+                    page = r.json()
+                    total += sum(s for o in page if isinstance(s := (o.get("metadata") or {}).get("size"), int))
+                    if len(page) < LIST_PAGE:
+                        break
+                self._used = total
+            return self._used
+
     def _upload(self, key: str, body: bytes) -> None:
+        limit = limit_bytes()
+        if limit is not None and key.endswith(LOG_SUFFIXES):
+            used = self.used()
+            if used + len(body) > limit - LOG_RESERVE_BYTES:
+                raise StorageFull(full_words(used, limit, len(body)))
         r = self.client.post(self._url(key), content=body, headers={"Content-Type": "application/octet-stream"})
         if r.status_code == 413:
             raise StorageError(f"The file is {len(body) / 1e6:.0f} MB, more than the storage takes per file "
                                "(50 MB on Supabase's free plan)")
         if r.status_code >= 400:
             raise self._fail("store the file", r)
+        with self._used_lock:
+            if self._used is not None:
+                self._used += len(body)
 
     def local_path(self, key: str) -> Path:
         p = self.cache_dir / key
@@ -194,6 +234,8 @@ class SupabaseStorage:
         # older Storage versions answer 400 with a "not found" body for a missing object
         if r.status_code >= 400 and r.status_code != 404 and "not found" not in r.text.lower():
             raise self._fail("delete the file", r)
+        with self._used_lock:
+            self._used = None  # listed again when next needed
         (self.cache_dir / key).unlink(missing_ok=True)
 
     def sizes(self, keys: list[str]) -> dict[str, int]:
@@ -287,3 +329,24 @@ def delete(key: str) -> None:
 
 def sizes(keys: list[str]) -> dict[str, int]:
     return backend().sizes(keys)
+
+
+def limit_bytes() -> int | None:
+    """The most Supabase Storage holds (STORAGE_LIMIT_MB, default the free plan's 1 GB; 0 for no limit)."""
+    mb = float(os.environ.get("STORAGE_LIMIT_MB") or LIMIT_MB_DEFAULT)
+    return int(mb * 1024**2) if mb > 0 else None
+
+
+def full_words(used: int, limit: int, size: int) -> str:
+    return (f"Storage is nearly full ({used / 1024**2:.0f} of {limit / 1024**2:.0f} MB used): this log needs "
+            f"{size / 1024**2:.0f} MB more, so it wasn't kept. Delete an old event or move to a bigger storage plan "
+            "to add more")
+
+
+def usage() -> dict:
+    """What the storage holds and can hold, in MB (None when unknown or unlimited)."""
+    b = backend()
+    if not isinstance(b, SupabaseStorage):  # the local disk: no limit kept
+        return {"used_mb": None, "limit_mb": None}
+    limit, used = limit_bytes(), b.used()
+    return {"used_mb": round(used / 1024**2), "limit_mb": round(limit / 1024**2) if limit is not None else None}

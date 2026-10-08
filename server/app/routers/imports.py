@@ -40,6 +40,7 @@ from app.vehicle import tyre_store
 router = APIRouter(prefix="/imports")
 log = logging.getLogger(__name__)
 
+STORAGE_FULL = "not imported: storage is nearly full"
 INTERRUPTED = "The server restarted before the import finished; upload the files again."
 DATE_FORMATS = ("%d/%m/%Y", "%Y-%m-%d", "%d.%m.%Y", "%d/%m/%y")  # MoTeC writes 05/05/2025
 
@@ -108,6 +109,12 @@ def _upload_name(filename: str | None, i: int) -> str:
 def get_rates():
     """How fast this server imports (app/import_rates.py), for the time left of an upload still being sent."""
     return import_rates.as_json(import_rates.rates())
+
+
+@router.get("/storage")
+def get_storage():
+    """How much of the file storage is used (Supabase's free plan holds 1 GB), for the Upload page."""
+    return storage.usage()
 
 
 @router.get("/{job_id}", response_model=schemas.ImportJobOut)
@@ -194,6 +201,13 @@ def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]], event
                         started, kept = time.monotonic(), (len(job.session_ids), len(job.skipped))
                         run.add(item, ldx_for.get(i), prints[i])
                     job.done = i + 1
+                    if run.full:  # the rest won't fit either: listed, not read
+                        job.skipped = [*job.skipped, *({"file": x.label, "reason": STORAGE_FULL}
+                                                       for k, x in enumerate(found.logs) if k > i and k not in already)]
+                        job.message = run.full
+                        job.done = len(found.logs)
+                        db.commit()
+                        break
                     db.commit()
                     if (len(job.session_ids), len(job.skipped)) != kept:  # read through (a run or an empty one)
                         import_rates.log_read(progress, item.size, time.monotonic() - started)
@@ -324,6 +338,7 @@ class _Run:
         self.target = event_id
         self.homes = homes or {}  # zip -> the event its logs already uploaded are in
         self.events: dict[int, models.Event] = {}
+        self.full: str | None = None  # storage is nearly full: why the log wasn't kept, and the rest aren't tried
         self.names: set[str] = set()
         if event_id is not None:  # names stay unique within the event the logs go into
             self.names = set(db.scalars(select(models.RunSession.name)
@@ -378,6 +393,9 @@ class _Run:
             self.events = {k: ev for k, ev in self.events.items() if inspect(ev).persistent}
             if isinstance(e, NoLaps):  # an empty run isn't kept: listed with the reason
                 job.skipped = [*job.skipped, {"file": item.label, "reason": e.reason}]
+            elif isinstance(e, storage.StorageFull):
+                self.full = str(e)
+                job.skipped = [*job.skipped, {"file": item.label, "reason": STORAGE_FULL}]
             else:
                 errors.append({"file": item.label, "error": _plain(e)})
         finally:
