@@ -298,3 +298,10 @@ def _no_background_work_left():
     _settle(server_up=False)
     yield
     _settle(server_up=False)
+
+
+@pytest.fixture()
+def settle():
+    """Wait, in the middle of a test, until the app does nothing in the background: before a test writes to the
+    database what a background job (a report's warm-up count, a re-timing) may be writing too."""
+    return lambda: _settle(server_up=True)

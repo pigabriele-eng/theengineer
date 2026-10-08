@@ -88,21 +88,22 @@ def ensure(db: Session, sessions: list[models.RunSession]) -> int:
         if f is None or KEY in (f.meta or {}):
             continue
         value = None
-        try:
-            with heavy.lock:
+        with heavy.lock:
+            try:
                 ld = read_file(f)
                 value = out_lap_stops(ld, (f.meta or {}).get("beacons"))
                 del ld
-        except Exception as e:  # a log it can't read is left uncounted, never in the way of the report
-            log.warning("Couldn't count the warm-up stops of session %s: %s", s.id, e)
-        finally:
-            heavy.release_memory()
-        # the log's meta as it is now (an import or a re-timing may have changed it meanwhile), with the count
-        f = db.scalars(select(models.LoggerFile).where(models.LoggerFile.id == f.id)
-                       .execution_options(populate_existing=True)).first()
-        if f is None:
-            continue
-        f.meta = {**(f.meta or {}), KEY: value}
-        db.commit()
+            except Exception as e:  # a log it can't read is left uncounted, never in the way of the report
+                log.warning("Couldn't count the warm-up stops of session %s: %s", s.id, e)
+            finally:
+                heavy.release_memory()
+            # the log's meta as it is now, with the count, written under the lock: a re-timing (timing.py) reads,
+            # changes and writes the meta under it too, so neither writes back what the other replaced
+            f = db.scalars(select(models.LoggerFile).where(models.LoggerFile.id == f.id)
+                           .execution_options(populate_existing=True)).first()
+            if f is None:
+                continue
+            f.meta = {**(f.meta or {}), KEY: value}
+            db.commit()
         done += 1
     return done
