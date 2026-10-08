@@ -31,6 +31,11 @@ EARLY_LAPS = 3  # "at the start of a run": its first three laps
 WARM_UP_STOPS = 2  # hard stops on the straights of the out lap (warm_up.py): the warm-up for a new set...
 WARM_UP_LAPS = 4  # ...then, in the run's first four laps, a lap quicker than any on the set before...
 WARM_UP_WITHIN = 0.01  # ...or within this share of qualifying's best
+# GT4 European Series (Gabriele, 2026-10-08): "always 1 new tire run in official free practice (fp1 or fp2) and 2 new
+# tires (one per driver) in Paid Test"
+GT4_EUROPEAN = re.compile(r"gt4[\s_-]*(european|europe|es\b|es_)", re.I)
+FREE_PRACTICE = re.compile(r"^fp\d*\b", re.I)
+PAID_TEST = re.compile(r"^(pts?\d*|pt\d*|paid)", re.I)
 ORDER_PREFIX = re.compile(r"^\d+[_\- ]+")  # a folder's order in front of its name: "03_Q" -> "Q"
 QUALI_NAME = re.compile(r"^(q\d*|qualifying|quali)\b", re.I)
 RACE_NAME = re.compile(r"^(r\d*|race)\b", re.I)
@@ -69,21 +74,72 @@ def kind_of(kind: str, name: str | None) -> str:
 
 
 def _out(level: str, sure: bool, why: str, on_set: int | None = None) -> dict:
-    return {"tyres": level, "label": LABEL[level], "pair": pair(level), "sure": sure, "why": why, "set_laps": on_set}
+    return {"tyres": level, "label": LABEL[level], "pair": pair(level), "sure": sure, "why": why, "set_laps": on_set,
+            "check": False}
 
 
 def _step(on_set: int) -> str:
     return FRESH if on_set < FRESH_UNDER else USED if on_set < USED_UNDER else WORN
 
 
-def guess(runs: list[RunLaps]) -> dict[int, dict]:
+def expects_new_sets(series: str | None, name: str | None) -> bool:
+    """A GT4 European Series event (its series, or its name: "GT4_ES_R05"): the new sets it runs are known."""
+    return bool(GT4_EUROPEAN.search(series or "") or GT4_EUROPEAN.search(name or ""))
+
+
+def _picks(runs: list[RunLaps], kinds: dict[int, str]) -> dict[int, str]:
+    """GT4 European Series: the stints expected on new sets, by session id with why. One in official free practice
+    (FP1 or FP2), one per driver in the paid test: each the stint whose start is quickest against the driver's own
+    best (their qualifying, else their quickest lap here), a warm-up on its out lap counting for 0.4%."""
+    best: dict[str | None, float] = {}
+    for d in {r.driver for r in runs}:
+        q = [min(r.times) for r in runs if r.driver == d and r.times and kinds[r.session_id] == "qualifying"]
+        allt = [min(r.times) for r in runs if r.driver == d and r.times]
+        if q or allt:
+            best[d] = min(q) if q else min(allt)
+
+    def score(r: RunLaps) -> float | None:
+        numbers = r.numbers if r.numbers is not None else list(range(1, len(r.times) + 1))
+        warm = [t for n, t in zip(numbers, r.times, strict=False) if n <= WARM_UP_LAPS]
+        if not warm or best.get(r.driver) is None:
+            return None
+        return min(warm) / best[r.driver] - 1 - (NEW_GAIN if (r.warm_up or 0) >= WARM_UP_STOPS else 0)
+
+    def name(r: RunLaps) -> str:
+        return ORDER_PREFIX.sub("", (r.name or "").strip())
+
+    out: dict[int, str] = {}
+    fp = [(sc, r) for r in runs if kinds[r.session_id] == "practice" and FREE_PRACTICE.match(name(r))
+          and (sc := score(r)) is not None]
+    if fp:
+        out[min(fp, key=lambda x: x[0])[1].session_id] = "free practice: the series' one new set, its quickest start"
+    pt = [(sc, r) for r in runs if kinds[r.session_id] == "practice" and PAID_TEST.match(name(r))
+          and (sc := score(r)) is not None]
+    drivers = {r.driver for _, r in pt}
+    for d in drivers:
+        mine = [x for x in pt if x[1].driver == d]
+        take = 2 if d is None and len(drivers) == 1 else 1  # the drivers not known: the two quickest starts
+        for _, r in sorted(mine, key=lambda x: x[0])[:take]:
+            out[r.session_id] = "paid test: one new set per driver, this driver's quickest start"
+    return out
+
+
+def guess(runs: list[RunLaps], expected: bool = False) -> dict[int, dict]:
     """Each run's tyres by session id, the runs given in the order they ran (an event's): {"tyres": level, "label",
     "pair": new|used, "sure", "why", "set_laps": laps on the set when the run started, when known}.
 
     Pace is only ever measured against the driver on the tyres (Gabriele: two drivers can be far apart): a lap against
     that driver's own qualifying best and their own laps on the set before. The set's laps add up whoever drove
-    them."""
+    them.
+
+    expected (a GT4 European Series event): one new set in free practice and one per driver in the paid test, the
+    stints whose starts are quickest (_picks); a stint the cues call new beyond those is kept new and marked to
+    check, as is a picked one with no cue."""
     kinds = {r.session_id: kind_of(r.kind, r.name) for r in runs}
+    picks = _picks(runs, kinds) if expected else {}
+    counted = ({r.session_id for r in runs if kinds[r.session_id] == "practice"
+                and (FREE_PRACTICE.match(ORDER_PREFIX.sub("", (r.name or "").strip()))
+                     or PAID_TEST.match(ORDER_PREFIX.sub("", (r.name or "").strip())))} if expected else set())
     quali = [min(r.times) for r in runs if kinds[r.session_id] == "qualifying" and r.times]
     q_all = min(quali) if quali else None
     # each driver's own qualifying best; a driver who didn't qualify has none (their own quickest lap would only
@@ -122,13 +178,24 @@ def guess(runs: list[RunLaps]) -> dict[int, dict]:
                               or (own is not None and min(warm) < own)))
         done = r.laps if r.laps is not None else len(r.times) + 2  # its out and in laps too
         whose = f"{r.driver}'s " if r.driver else ""
-        if as_quali or beats_set or after_warm_up:
+        cued = as_quali or beats_set or after_warm_up
+        if r.session_id in picks:
+            out[r.session_id] = _out(NEW, False, picks[r.session_id] + ("" if cued else ": no sign of a new set in "
+                                                                         "its laps, check it"), 0)
+            out[r.session_id]["check"] = not cued
+            on_set, seen = done, done
+            set_best = {r.driver: min(r.times)} if r.times else {}
+            continue
+        if cued:
             why = (f"a lap at the start of the run as quick as {whose}qualifying" if as_quali
                    else (f"a lap at the start of the run clearly quicker than {whose}laps on the set before" if r.driver
                     else "a lap at the start of the run clearly quicker than any on the set before")
                    if beats_set else
                    f"the warm-up on the out lap ({r.warm_up} hard stops on the straights), then a quick lap")
             out[r.session_id] = _out(NEW, False, why, 0)
+            if r.session_id in counted:  # one more new set than the series runs: kept, to check
+                out[r.session_id]["why"] += "; more new sets than the series normally runs here, check it"
+                out[r.session_id]["check"] = True
             on_set, seen = done, done
             set_best = {r.driver: min(r.times)} if r.times else {}
             continue
@@ -151,20 +218,21 @@ def stored(db: Session, session_ids: list[int]) -> dict[int, str]:
         models.RunTyres.session_id.in_(session_ids)))}
 
 
-def resolve(db: Session, runs: list[RunLaps]) -> dict[int, dict]:
+def resolve(db: Session, runs: list[RunLaps], expected: bool = False) -> dict[int, dict]:
     """Each run's tyres: the driver's where set (sure), else the guess."""
-    out = guess(runs)
+    out = guess(runs, expected)
     for sid, tyres in stored(db, [r.session_id for r in runs]).items():
         if sid in out and tyres in LABEL:
             out[sid] = {**_out(tyres, True, "set by you"), "guess": out[sid]["tyres"]}
     return out
 
 
-def event_runs(db: Session, sessions: list[models.RunSession]) -> list[list[RunLaps]]:
-    """Every run of these runs' events, an event at a time, in the order they ran (as the event page lists them)."""
+def event_runs(db: Session, sessions: list[models.RunSession]) -> list[tuple[list[RunLaps], bool]]:
+    """Every run of these runs' events, an event at a time, in the order they ran (as the event page lists them), and
+    whether the event's new sets are known (expects_new_sets)."""
     from app import run_labels  # here: run_labels reaches the importer, which reaches the reports
 
-    out: list[list[RunLaps]] = []
+    out: list[tuple[list[RunLaps], bool]] = []
     seen: set[int] = set()
     for s in sessions:
         if s.id in seen:
@@ -181,7 +249,8 @@ def event_runs(db: Session, sessions: list[models.RunSession]) -> list[list[RunL
             runs.append(RunLaps(x.id, x.kind.value, x.name, [float(lap.time_s) for lap in clean],
                                 [lap.number for lap in clean], len(laps), warm_up.of(x),
                                 x.driver.name if x.driver else None))
-        out.append(runs)
+        ev = s.event if s.event_id is not None else None
+        out.append((runs, expects_new_sets(ev.series, ev.name) if ev is not None else False))
     return out
 
 
@@ -189,8 +258,8 @@ def for_runs(db: Session, sessions: list[models.RunSession]) -> dict[int, dict]:
     """These runs' tyres and every other run's of their events: the driver's, else guessed among the event's runs in
     the order they ran."""
     out: dict[int, dict] = {}
-    for runs in event_runs(db, sessions):
-        out.update(resolve(db, runs))
+    for runs, expected in event_runs(db, sessions):
+        out.update(resolve(db, runs, expected))
     return out
 
 

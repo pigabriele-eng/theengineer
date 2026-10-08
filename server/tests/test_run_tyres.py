@@ -26,7 +26,7 @@ def test_qualifying_is_new_a_race_fresh_and_practice_guessed_from_the_laps_in_th
     assert g[4]["set_laps"] == 12 and g[5]["set_laps"] == 19 and g[6]["set_laps"] == 27
     assert "as quick as qualifying" in g[7]["why"]
     assert g[9] == {"tyres": NEW, "label": "New", "pair": NEW, "sure": True, "why": "qualifying: always a new set",
-                    "set_laps": None}
+                    "set_laps": None, "check": False}
     assert g[10]["sure"] and g[10]["label"] == "Fresh" and g[10]["pair"] == USED and g[11]["tyres"] == FRESH
     assert g[6]["label"] == "Very used" and g[6]["pair"] == USED
 
@@ -93,3 +93,28 @@ def test_pace_is_measured_against_the_driver_on_the_tyres():
     # without the drivers, the same laps are measured against the quicker driver's qualifying: no new set seen
     g = guess([RunLaps(r.session_id, r.kind, r.name, r.times, laps=r.laps) for r in runs])
     assert g[3]["tyres"] == USED
+
+
+def test_gt4_european_one_new_set_in_free_practice_and_one_per_driver_in_the_paid_test():
+    """Gabriele: in GT4 European Series there is always one new-tyre run in official free practice (FP1 or FP2) and
+    two in the paid test, one per driver."""
+    from app.run_tyres import expects_new_sets
+
+    assert expects_new_sets("GT4 European Series", None) and expects_new_sets(None, "GT4_ES_R05")
+    assert not expects_new_sets("GT4 Germany", "ADAC GT4 Hockenheim") and not expects_new_sets(None, None)
+    runs = [RunLaps(1, "test", "PT1 stint 1", [103.4, 103.2], laps=8, driver="A"),
+            RunLaps(2, "test", "PT1 stint 2", [102.5, 102.6], laps=6, driver="A", warm_up=3),  # A's quickest start
+            RunLaps(3, "test", "PT2 stint 1", [103.9, 103.8], laps=8, driver="B"),
+            RunLaps(4, "test", "PT2 stint 2", [103.3, 103.5], laps=6, driver="B"),  # B's quickest start, no warm-up
+            RunLaps(5, "practice", "FP1 stint 1", [102.9, 103.0], laps=8, driver="A"),
+            RunLaps(6, "practice", "FP1 stint 2", [102.3, 102.6], laps=6, driver="B", warm_up=2),  # the FP new set
+            RunLaps(7, "qualifying", "Q1", [101.8], driver="A"),
+            RunLaps(8, "qualifying", "Q2", [102.6], driver="B")]
+    g = guess(runs, expected=True)
+    assert [g[i]["tyres"] for i in range(1, 7)] == [USED, NEW, FRESH, NEW, FRESH, NEW]
+    assert "paid test" in g[2]["why"] and not g[2]["check"]
+    assert "free practice" in g[6]["why"] and not g[6]["check"]
+    # a stint the cues call new beyond the series' count is kept new, marked to check
+    runs[4] = RunLaps(5, "practice", "FP1 stint 1", [101.9, 103.0], laps=8, driver="A", warm_up=2)
+    g = guess(runs, expected=True)
+    assert g[6]["tyres"] == NEW and g[5]["tyres"] == NEW and g[5]["check"] != g[6]["check"]
