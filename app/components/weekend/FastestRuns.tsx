@@ -1,4 +1,4 @@
-// The During tab's comparison after a session (Gabriele, 2026-10-08: "latest run vs best is also not helpful, the
+// The During tab's Run comparison: after a session (Gabriele, 2026-10-08: "latest run vs best is also not helpful, the
 // standard after a session is a comparison between fastest runs within that session and a quick way to compare
 // different runs"): each run's fastest lap in the latest session against the others, each driver's fastest marked and
 // each run's tyres shown (like with like), then where the time is and the traces. Pick runs swaps in any other runs
@@ -19,7 +19,7 @@ import { defaultRuns, driversFastest, FastRun, flipRun, MAX_RUNS, runsByPart } f
 import { afterOthers } from '@/lib/loadLast';
 import { EventTyres, fetchEventTyres } from '@/lib/report';
 import { EventParts, fetchParts } from '@/lib/sessionReports';
-import { runsInOrder } from '@/lib/weekendRuns';
+import { latestAgainstBest, runsInOrder } from '@/lib/weekendRuns';
 
 /** True once the section is near the screen (on the web), or once the page's other reads have answered: the heavy
  * read it needs then loads last, and doesn't hold up the answers above it on the server. Stays true. */
@@ -111,15 +111,17 @@ export default function FastestRuns({ no, eventId, folder }: { no: number; event
   const current = data != null && data.laps.length === laps.length
     && data.laps.every((l, i) => l.session_id === laps[i].session_id && l.lap === laps[i].lap);
 
-  const title = picked == null && auto.title ? `Fastest runs of ${auto.title}` : 'Fastest runs compared';
-  if (!parts) {
-    return <Section no={no} title="Fastest runs of the session"><ActivityIndicator style={styles.left} /></Section>;
-  }
-  if (byPart.length === 0 || all.size < 2) {
+  // three sections with two timed runs, else one, as the page numbers them (lib/weekendRuns.ts duringSections)
+  const three = latestAgainstBest(folder) != null;
+  if (!parts || byPart.length === 0 || all.size < 2) {
+    const body = !parts ? <ActivityIndicator style={styles.left} />
+      : <Note>Two timed runs are needed: each run’s fastest lap is put against the others of its session.</Note>;
     return (
-      <Section no={no} title="Fastest runs of the session">
-        <Note>Two timed runs are needed: each run’s fastest lap is put against the others of its session.</Note>
-      </Section>
+      <>
+        <Section no={no} title="Run comparison">{body}</Section>
+        {three && <Section no={no + 1} title="Where the time is">{body}</Section>}
+        {three && <Section no={no + 2} title="Traces">{body}</Section>}
+      </>
     );
   }
   const best = runs.length ? Math.min(...runs.map((r) => r.time)) : 0;
@@ -128,9 +130,9 @@ export default function FastestRuns({ no, eventId, folder }: { no: number; event
       : <View style={styles.working}><ActivityIndicator /><Note>Placing the laps on one line…</Note></View>;
   return (
     <Box ref={at}>
-      <Section no={no} title={title}
+      <Section no={no} title="Run comparison"
         dek={picked == null
-          ? 'Each run’s fastest lap in the latest session, against the others; each driver’s fastest marked. Compare tyres like with like.'
+          ? `Each run’s fastest lap in ${auto.title ?? 'the latest session'}, against the others; each driver’s fastest marked. Compare tyres like with like.`
           : 'The fastest lap of each run picked; each driver’s fastest marked. Compare tyres like with like.'}>
         <View style={styles.list}>
           {runs.map((r, i) => (
