@@ -3,7 +3,8 @@
 // same bar follows it run by run, with the time left of the whole upload and of the stage it is at (UploadEta.tsx).
 // Before picking the files, choose the event they go into: an existing one, a new one (name and dates), or by default
 // a new event per zip named after it. When the upload has made events, each gets a prompt: name it from its logs, or
-// put it into the same race weekend's event. On the web the files can also be dropped, whole folders too, onto a box
+// put it into the same race weekend's event. Under the upload's result, the tyres of each stint it brought, the app's
+// guess ticked (components/TyrePicks.tsx). On the web the files can also be dropped, whole folders too, onto a box
 // that opens the picker when clicked.
 import * as DocumentPicker from 'expo-document-picker';
 import { ReactNode, useEffect, useRef, useState } from 'react';
@@ -16,6 +17,7 @@ import { AskEventInfo } from '@/components/EventInfoForm';
 import { NameNewEvent, Settled, SettledLine } from '@/components/NameNewEvent';
 import { Block, TextLink, useWide } from '@/components/Programme';
 import { SeasonMatch } from '@/components/SeasonMatch';
+import { UploadTyres } from '@/components/TyrePicks';
 import { Text, View } from '@/components/Themed';
 import { EtaLines, EtaText, useUploadEta } from '@/components/UploadEta';
 import { api, ImportJob } from '@/lib/api';
@@ -23,6 +25,7 @@ import { untimedRuns } from '@/lib/emptyRuns';
 import { namingApi, NewEvent } from '@/lib/eventNaming';
 import { warmResults } from '@/lib/finishes';
 import { dateRange, eventsApi, FolderSummary } from '@/lib/events';
+import { uploadRunIds } from '@/lib/tyrePicks';
 import { PickedFile, sendImport, sizeOf } from '@/lib/upload';
 import { Fonts, inkOn, themed, Type, useTheme } from '@/constants/Theme';
 
@@ -196,6 +199,10 @@ export function ImportLogs({ onProgress, events, into, big = false }: {
       )}
       {job && !running && <UploadStatus sending={null} job={job} />}
       {job && !running && <Summary job={job} onHide={() => setJob(null)} />}
+      {job?.status === 'done' && (
+        // the tyres of each stint it brought: the app's guess ticked, one tap or "Confirm all" to save them
+        <UploadTyres runIds={uploadRunIds(job)} refresh={settled} />
+      )}
       {job && !running && made?.order.map((id) => {
         if (settled[id]) return <SettledLine key={id} s={settled[id]} />;
         const ev = made.events.find((e) => e.id === id);

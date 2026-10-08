@@ -61,11 +61,16 @@ export function suggestionTitle(s: Suggestion, code: (driver: string | null) => 
   return mine(`best and typical lap, ${a.run}`);
 }
 
-/** One lap's line after its time: "03_Q (2) · lap 2 · new tyres", "R1 stint 1 · lap 8 · typical lap · used tyres";
+/** A lap's or a run's tyres in words: its level's label ("Very used tyres", lib/tyreLevels.ts) where the server says
+ * it, else new or used; a guess says so ("Fresh tyres (guess)"). */
+export function tyreWords(t: { tyres: string; tyres_sure?: boolean; tyres_label?: string }): string {
+  return `${t.tyres_label ?? t.tyres} tyres${t.tyres_sure === false ? ' (guess)' : ''}`;
+}
+
+/** One lap's line after its time: "03_Q (2) · lap 2 · New tyres", "R1 stint 1 · lap 8 · typical lap · Fresh tyres";
  * a guessed tyre state says so. */
 export function lapWords(l: SuggestedLap): string {
-  const tyres = `${l.tyres} tyres${l.tyres_sure === false ? ' (guess)' : ''}`;
-  return [l.run, `lap ${l.lap}`, l.role === 'typical' ? 'typical lap' : null, tyres].filter(Boolean).join(' · ');
+  return [l.run, `lap ${l.lap}`, l.role === 'typical' ? 'typical lap' : null, tyreWords(l)].filter(Boolean).join(' · ');
 }
 
 /** The whole suggestion for a screen reader, ending with what a tap does. `time` formats a lap time. */
