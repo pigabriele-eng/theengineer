@@ -134,7 +134,10 @@ export function flipPick(picks: LapPick[], lap: LapRef, max = MAX_PICKS): { pick
   return addPick(picks, lap, max);
 }
 
-/** A lap put on the traces (the best in a corner tapped): as flipPick, but a lap already on them stays. */
+/** A lap taken off the traces (its × above them); the others keep their colours. Down to none: the traces need two. */
+export const dropPick = (picks: LapPick[], lap: LapRef): LapPick[] => picks.filter((p) => !sameLap(p, lap));
+
+/** A lap put on the traces: as flipPick, but a lap already on them stays. */
 export function addPick(picks: LapPick[], lap: LapRef, max = MAX_PICKS): { picks: LapPick[]; full: boolean } {
   if (picks.some((p) => sameLap(p, lap))) return { picks, full: false };
   if (picks.length >= max) return { picks, full: true };
