@@ -202,7 +202,7 @@ def _slow_mid_understeer(a: dict, model: ModelFn, recs: list[Recommendation], re
            f"{', '.join(f'{c} {deg(v)}' for c, v, _ in pushes)}.")
     harder = [c for c, v, q in pushes if q is not None and q > v + 0.3]
     if harder:
-        why += f" The quickest passes push even more in {listed(harder)}: they carry more speed into the same limit."
+        why += f" The top 10% of passes push even more in {listed(harder)}: they carry more speed into the same limit."
     if rear_first:
         recs.append(Recommendation(
             "front_grip_slow", "Then: more front grip in slow corners, without the bars",
@@ -297,7 +297,7 @@ def _braking_note(a: dict) -> str | None:
         return None
     abs_share = a["diagnostics"].get("abs_share_of_braking")
     more = _span([m for _, m in found], ".0f").replace(DASH, " to ")
-    text = (f"Brakes need no setup change. Into {listed([c for c, _ in found])} the quickest passes use {more} bar "
+    text = (f"Brakes need no setup change. Into {listed([c for c, _ in found])} the top 10% of passes use {more} bar "
             "more pressure: the time is in how hard the pedal goes on")
     if abs_share is not None:
         text += f". ABS works in {abs_share * 100:.0f} % of all braking"
@@ -387,7 +387,7 @@ def car_limits(a: dict) -> dict:
                  f"place, used without a mistake) by {held - ideal:.2f} s; the theoretical lap, the best the car has "
                  f"shown at every place at once, is {ideal - theo:.2f} s quicker still.")
     if beaten:
-        text += f" In {listed(beaten)} the quickest passes already beat the realistic target."
+        text += f" In {listed(beaten)} the top 10% of passes already beat the realistic target."
     car = max(ideal - held, 0.0)  # where the best sections beat the realistic target, the car holds back nothing
     return {"lap": {"reference": ref, "ideal": ideal, "held": held, "theoretical": theo,
                     "driving": round(ref - ideal, 3), "car": round(car, 3), "optimism": round(ideal - car - theo, 3)},

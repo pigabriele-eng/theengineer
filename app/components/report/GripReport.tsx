@@ -132,7 +132,7 @@ function Report({ data, bare }: { data: GripResult; bare?: boolean }) {
           The grip limit is the 98th percentile of combined g (lateral and longitudinal together) in each 10° direction
           and speed band, from the laps within 2 % of the quickest: what this car showed it can do, often. Grip use is
           combined g over that limit, averaged over the time spent braking, turning in, mid-corner and on the exit.
-          Quick and slow passes are compared lap to lap, so a link is a strong hint, not a guarantee that more grip use
+          The quicker and the slower of the quick laps are compared lap to lap, so a link is a strong hint, not a guarantee that more grip use
           alone finds the time.
         </Text>
         {data.notes.map((n) => (
@@ -212,11 +212,11 @@ function PhaseGap({ data, c }: { data: GripResult; c: ChartColors }) {
         hint="Point at a phase to read it."
       />
       <View style={styles.legendRow}>
-        <LegendItem color={c.s1} label="Quickest third of the quick laps" />
-        <LegendItem color={c.other} label="Slowest third" />
+        <LegendItem color={c.s1} label="The quicker of the quick laps" />
+        <LegendItem color={c.other} label="The slower of the quick laps" />
       </View>
       <Text style={styles.caption}>
-        Under each phase: seconds a lap spent in it, quickest third then slowest third. Turn-in is braking while already
+        Under each phase: seconds a lap spent in it, the quicker of the quick laps, then the slower. Turn-in is braking while already
         cornering; mid-corner is off both pedals.
       </Text>
     </View>
@@ -277,8 +277,8 @@ function SectionTable({ sections, c }: { sections: GripSection[]; c: ChartColors
         <Text style={styles.legendText}>100 % grip use, typical quick lap</Text>
       </View>
       <Text style={styles.caption}>
-        +n: points more grip the quickest third of laps uses than the slowest third. Worth: the time a typical quick lap
-        would find in that corner using the grip like the quickest third.
+        +n: points more grip the quicker of the quick laps use than the slower. Worth: the time a typical quick lap
+        would find in that corner using the grip like the quicker of the quick laps.
       </Text>
       <Text style={styles.h3}>What the quick laps do differently</Text>
       {sections.map((s) => (

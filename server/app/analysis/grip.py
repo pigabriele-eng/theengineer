@@ -732,14 +732,15 @@ def _sr(v: float) -> str:
 def section_note(s: dict, brake_unit: str = "") -> str:
     """What the quick passes do differently in this section, in a sentence or two."""
     if s["r"] is None:
-        return "Too few quick laps to compare quick and slow passes here."
+        return "Too few quick laps to compare the quicker and the slower of them here."
     brake_r = s["phases"]["braking"]["r"]
     harder_slower = (f" Braking harder here goes with a slower pass (r {_sr(brake_r)}): brake less and carry speed."
                      if brake_r is not None and brake_r >= 0.35 else "")
     if not s["spots"]:
         if s["flat_out"]:
             return "Flat out: the time here comes from the exit of the corner before, not from grip."
-        return f"No grip pattern separates the quick passes from the slow ones here (r {_sr(s['r'])})." + harder_slower
+        return (f"No grip pattern separates the quicker of the quick laps from the slower ones here "
+                f"(r {_sr(s['r'])}).") + harder_slower
     return _spot_words(s["spots"][0], f" {brake_unit}" if brake_unit else "", harder_slower)
 
 
@@ -841,8 +842,9 @@ def headlines(r: dict) -> list[dict]:
         total = sum(s["worth_s"] for s in worth)
         top = sorted(worth, key=lambda s: -s["worth_s"])[:2]
         out.append({"key": "grip_left", "label": "Time left in grip use", "value": f"≈ {total:.2f} s",
-                    "detail": "If a typical quick lap used the grip like the quickest third of laps in every corner. "
-                              "The most in " + " and ".join(f"{s['code']} ({s['worth_s']:.2f} s)" for s in top) + ".",
+                    "detail": "If a typical quick lap used the grip like the quicker of the quick laps in "
+                              "every corner. The most in "
+                              + " and ".join(f"{s['code']} ({s['worth_s']:.2f} s)" for s in top) + ".",
                     "action": f"{top[0]['code']}: {top[0]['note']}"})
     tc = r["tc"]
     if tc.get("available"):

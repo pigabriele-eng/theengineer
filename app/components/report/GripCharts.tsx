@@ -330,7 +330,7 @@ export function Dumbbell({ rows, hint }: {
     <View style={styles.chart}>
       <Readout hint={hint} zoom={zoom}>
         {r && r.fast != null && r.slow != null
-          ? `${r.label}: quickest third ${r.fast.toFixed(1)} %, slowest third ${r.slow.toFixed(1)} % (${r.sub})`
+          ? `${r.label}: the quicker of the quick laps ${r.fast.toFixed(1)} %, the slower ${r.slow.toFixed(1)} % (${r.sub})`
           : null}
       </Readout>
       <ZoomArea zoom={zoom} full={full} left={left} width={plot} minSpan={1} {...props}>
