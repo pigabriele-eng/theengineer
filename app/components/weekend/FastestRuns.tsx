@@ -1,8 +1,9 @@
 // The During tab's Run comparison: after a session (Gabriele, 2026-10-08: "latest run vs best is also not helpful, the
 // standard after a session is a comparison between fastest runs within that session and a quick way to compare
 // different runs"): each run's fastest lap in the latest session against the others, each driver's fastest marked and
-// each run's tyres shown (like with like), then where the time is and the traces. Pick runs swaps in any other runs
-// of the event with a tap; Clear goes back to the latest session's. Sections `no` to `no + 2`.
+// each run's tyres shown (like with like; a tap on them changes them, components/TyreTag.tsx), then where the time is
+// and the traces. Pick runs swaps in any other runs of the event with a tap; Clear goes back to the latest session's.
+// Sections `no` to `no + 2`.
 import { RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, View as Box } from 'react-native';
 
@@ -11,14 +12,16 @@ import { ErrorLine, Note } from '@/components/Controls';
 import { Choice, useText } from '@/components/Picks';
 import { Label, Section, TextLink } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
+import { TyreChoices, TyreTag, useTyreTags } from '@/components/TyreTag';
 import { face, themed, Type } from '@/constants/Theme';
 import { CompareResult, compareLaps, encodePicks, formatLap } from '@/lib/compare';
 import { codeOf } from '@/lib/driverTag';
 import type { Folder } from '@/lib/events';
 import { defaultRuns, driversFastest, FastRun, flipRun, MAX_RUNS, runsByPart } from '@/lib/fastestRuns';
 import { afterOthers } from '@/lib/loadLast';
-import { EventTyres, fetchEventTyres } from '@/lib/report';
 import { EventParts, fetchParts } from '@/lib/sessionReports';
+import { TYRE_LABEL } from '@/lib/tyreLevels';
+import { tyreTag } from '@/lib/tyreTag';
 import { latestAgainstBest, runsInOrder } from '@/lib/weekendRuns';
 
 /** True once the section is near the screen (on the web), or once the page's other reads have answered: the heavy
@@ -48,13 +51,13 @@ export default function FastestRuns({ no, eventId, folder }: { no: number; event
   const t = useText();
   const at = useRef<Box>(null);
   const [parts, setParts] = useState<EventParts | null>(null);
-  const [tyres, setTyres] = useState<EventTyres | null>(null);
   useEffect(() => {
     let live = true;
     fetchParts(eventId).then((x) => live && setParts(x), () => undefined);
-    fetchEventTyres(eventId).then((x) => live && setTyres(x), () => undefined);
     return () => { live = false; };
   }, [eventId, folder]);
+  // the event's tyres, shared with the page's run list (read once, again with its runs and after a pick)
+  const tags = useTyreTags(eventId);
 
   // every timed run by session, each with its fastest lap (the event page's list knows its number)
   const byPart = useMemo(() => {
@@ -68,11 +71,7 @@ export default function FastestRuns({ no, eventId, folder }: { no: number; event
   const all = useMemo(() => new Map(byPart.flatMap((p) => p.runs.map((r) => [r.id, r]))), [byPart]);
   const runs = ids.map((id) => all.get(id)).filter((r): r is FastRun => r != null);
   const fastest = driversFastest(runs);
-  const tyreOf = useMemo(() => new Map((tyres?.runs ?? []).map((r) => [r.id, r.tyres])), [tyres]);
-  const tyreText = (id: number) => {
-    const x = tyreOf.get(id);
-    return x ? `${x.label ?? x.tyres}${x.sure ? '' : '?'}` : 'Tyres not set';
-  };
+  const tyreText = (id: number) => tyreTag(tags.rowOf(id), TYRE_LABEL)?.text ?? 'Tyres not set';
 
   // the laps on one line, made last (useLoadLast) and again a moment after the last tap
   const laps = runs.map((r) => ({ session_id: r.id, lap: r.lap }));
@@ -136,23 +135,28 @@ export default function FastestRuns({ no, eventId, folder }: { no: number; event
           : 'The fastest lap of each run picked; each driver’s fastest marked. Compare tyres like with like.'}>
         <View style={styles.list}>
           {runs.map((r, i) => (
-            <View key={r.id} style={styles.line}>
-              <LineKey color={colors.laps[i]} />
-              <View style={styles.grow}>
-                <Text style={styles.name}>
-                  {r.name}{picked != null ? ` · ${r.part}` : ''} · lap {r.lap}
-                </Text>
-                <Text style={t.body}>
-                  {r.driver ?? 'Driver not set'} · {tyreText(r.id)} tyres
-                  {fastest.has(r.id) && runs.length > 1 ? (
-                    <Text style={styles.mark}>{`  ${codeOf(r.driver) ?? 'Driver'}’s fastest`}</Text>
-                  ) : null}
-                </Text>
+            <View key={r.id}>
+              <View style={styles.line}>
+                <LineKey color={colors.laps[i]} />
+                <View style={styles.grow}>
+                  <Text style={styles.name}>
+                    {r.name}{picked != null ? ` · ${r.part}` : ''} · lap {r.lap}
+                  </Text>
+                  <View style={styles.who}>
+                    <Text style={t.body}>{`${r.driver ?? 'Driver not set'} ·`}</Text>
+                    {tags.rowOf(r.id) ? <TyreTag tags={tags} id={r.id} run={r.name} size={16} />
+                      : <Text style={t.body}>Tyres not set</Text>}
+                    {fastest.has(r.id) && runs.length > 1 ? (
+                      <Text style={styles.mark}>{`${codeOf(r.driver) ?? 'Driver'}’s fastest`}</Text>
+                    ) : null}
+                  </View>
+                </View>
+                <View style={styles.times}>
+                  <Text style={styles.time}>{formatLap(r.time)}</Text>
+                  <Text style={t.note}>{r.time === best ? 'fastest' : `+${(r.time - best).toFixed(2)} s`}</Text>
+                </View>
               </View>
-              <View style={styles.times}>
-                <Text style={styles.time}>{formatLap(r.time)}</Text>
-                <Text style={t.note}>{r.time === best ? 'fastest' : `+${(r.time - best).toFixed(2)} s`}</Text>
-              </View>
+              <TyreChoices tags={tags} id={r.id} name={r.name} style={styles.choicesUnder} />
             </View>
           ))}
         </View>
@@ -208,13 +212,16 @@ export default function FastestRuns({ no, eventId, folder }: { no: number; event
 const useStyles = themed((c) => ({
   left: { alignSelf: 'flex-start', marginTop: 12 },
   grow: { flex: 1, minWidth: 0 },
+  // the driver, the tyres (a tag: a tap changes them) and the driver's fastest, wrapping on a phone
+  who: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 6 },
   working: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   list: { borderTopWidth: 1, borderColor: c.rule, maxWidth: 820 },
   line: { flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderColor: c.separator,
     paddingVertical: 10 },
   name: { fontFamily: face('body', 600), fontSize: 17, lineHeight: 22, color: c.text },
-  mark: { fontFamily: face('label', 700), fontSize: 16, color: c.text },
+  mark: { fontFamily: face('label', 700), fontSize: 16, color: c.text, marginLeft: 6 },
   times: { alignItems: 'flex-end' },
+  choicesUnder: { paddingTop: 10, borderBottomWidth: 1, borderColor: c.separator },
   time: { ...Type.number, fontFamily: face('label', 700), fontSize: 20, color: c.text },
   links: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 22, rowGap: 12, marginTop: 16 },
   pick: { gap: 14, marginTop: 14, paddingTop: 14, borderTopWidth: 1, borderColor: c.rule },

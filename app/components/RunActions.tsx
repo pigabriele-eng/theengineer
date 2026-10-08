@@ -1,6 +1,6 @@
 // A run row's quick actions (Gabriele, 2026-10-07: "Quick hold/swipe to delete runs in phone app"): swipe the row to
-// the left for a red Delete, or hold it for a small menu (Delete, Change driver, Rename and, on the event page, Tyres:
-// components/TyrePicks.tsx). Delete always asks first,
+// the left for a red Delete, or hold it for a small menu (Delete, Change driver, Rename and, for a run of an event,
+// Tyres: the four levels its tyres tag opens, components/TyreTag.tsx). Delete always asks first,
 // with the confirm the ticked runs' Delete… uses (components/DeleteRuns.tsx), so a stray swipe never loses a run.
 // Never the only way: screen readers get the same as actions on the row's link, the keyboard on the web opens
 // the menu with the menu key or Shift+F10, and ticking runs then Delete… stays. The numbers behind the swipe and the

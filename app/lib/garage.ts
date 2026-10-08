@@ -119,10 +119,3 @@ export function driversFor(garage: Garage, carId: number | null | undefined) {
   const first = car ? garage.drivers.filter((d) => car.driver_ids.includes(d.id)) : [];
   return { first, rest: garage.drivers.filter((d) => !first.includes(d)) };
 }
-
-/** The cars to offer for a run: the cars of the run's driver first (they're the likely ones), then the rest. */
-export function carsFor(garage: Garage, driverId: number | null | undefined) {
-  const driver = garage.drivers.find((d) => d.id === driverId);
-  const first = driver ? garage.cars.filter((c) => driver.car_ids.includes(c.id)) : [];
-  return { first, rest: garage.cars.filter((c) => !first.includes(c)) };
-}

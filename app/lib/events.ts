@@ -121,8 +121,6 @@ export const eventsApi = {
   // move sessions into an event, or out of their events with NO_EVENT
   move: (key: string, sessionIds: number[]) =>
     call<Folder>(`/events/${key}/sessions`, send('POST', { session_ids: sessionIds })),
-  createSession: (body: { name: string; kind: SessionKind; event_id: number | null }) =>
-    call<{ id: number }>('/sessions', send('POST', body)),
   updateSession: (id: number, body: { name?: string; kind?: SessionKind; event_id?: number | null }) =>
     call<FolderSession>(`/sessions/${id}`, send('PATCH', body)),
   compare: (key: string, sessionIds: number[]) =>

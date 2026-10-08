@@ -13,7 +13,6 @@ import { ActivityIndicator, Platform, Pressable, StyleSheet, useWindowDimensions
 import { Choice, Choices, ErrorLine, Field, Note, ProgressBar } from '@/components/Controls';
 import { DropZone } from '@/components/DropZone';
 import { EventForm } from '@/components/EventForm';
-import { AskEventInfo } from '@/components/EventInfoForm';
 import { NameNewEvent, Settled, SettledLine } from '@/components/NameNewEvent';
 import { Block, TextLink, useWide } from '@/components/Programme';
 import { SeasonMatch } from '@/components/SeasonMatch';
@@ -209,11 +208,8 @@ export function ImportLogs({ onProgress, events, into, big = false }: {
         return ev ? <NameNewEvent key={id} ev={ev} onSettled={(s) => settle(id, s)} /> : null;
       })}
       {job && !running && job.session_ids.length > 0 && (
-        // which season the upload's events are in: joined by itself, or asked; the event info form follows
+        // which season the upload's events are in: joined by itself, or asked (what they were run with comes from it)
         <SeasonMatch runIds={job.session_ids} onChanged={() => { setSettled((s) => ({ ...s })); onProgress(); }} />
-      )}
-      {job && !running && job.session_ids.length > 0 && (
-        <AskEventInfo runIds={job.session_ids} refresh={settled} onSaved={onProgress} />
       )}
       {job && !running && landed && !into && (
         <TextLink href={{ pathname: '/event/[id]', params: { id: landed.id } }} label={`Open ${landed.name}`} red arrow />

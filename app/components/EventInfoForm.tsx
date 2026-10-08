@@ -1,28 +1,15 @@
-// What an event was run with (tyre, car, vehicle, team, drivers 1 to 4) and a season's entry: the same short form.
-// EventInfoForm saves an event's info (fields the season already gives are left to it); AskEventInfo asks for it
-// after an upload, for each event the upload's runs are in that is missing some of it, filled from its season or
-// from the previous event of the same car.
+// What a season's entry was run with (tyre, car, vehicle, team, drivers 1 to 4): the short form of Tools › Seasons.
+// Each event takes them from its season (Gabriele, 2026-10-08: "remove event info": no form of its own on the
+// weekend page or after an upload).
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator } from 'react-native';
 
-import { Choice, Choices, ErrorLine, Field, FormActions, Input, MainButton, Note } from '@/components/Controls';
-import { Block, Label, TextLink } from '@/components/Programme';
+import { Choice, Choices, ErrorLine, Field, Input, Note } from '@/components/Controls';
+import { TextLink } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { carLong, driversFor, Garage, garageApi } from '@/lib/garage';
-import {
-  catalogApi,
-  Entry,
-  EMPTY_ENTRY,
-  EventInfo,
-  InfoFields,
-  MISSING_LABEL,
-  MissingKey,
-  seasonsApi,
-  sourceWords,
-  Tyre,
-  Vehicle,
-} from '@/lib/seasons';
-import { Fonts, inkOn, themed, Type, useTheme } from '@/constants/Theme';
+import { catalogApi, Entry, Tyre, Vehicle } from '@/lib/seasons';
+import { themed, Type } from '@/constants/Theme';
 
 const MAX_DRIVERS = 4;
 
@@ -48,11 +35,8 @@ export function useLists(on = true) {
   return { lists, error, reload };
 }
 
-// The fields of the form, and the checklist item each one answers
+// The fields of the form
 type FieldKey = 'tyre' | 'car' | 'vehicle' | 'team' | 'drivers';
-const FIELD_OF: Record<MissingKey, FieldKey> = {
-  'tyre brand': 'tyre', compound: 'tyre', car: 'car', team: 'team', drivers: 'drivers',
-};
 
 /** The tyre, car, vehicle, team and drivers 1 to 4 as words to pick: tap one to pick it, or add a new one in place. */
 export function EntryFields({ value, onChange, lists, onListsChanged, focus, notes }: {
@@ -222,173 +206,9 @@ function NewTyre({ onAdded }: { onAdded: (t: Tyre) => void }) {
   );
 }
 
-// ---------- an event's info ----------
-
-const ids = (info: EventInfo): Entry => ({
-  tyre_kind_id: info.resolved.tyre_kind?.id ?? null,
-  car_id: info.resolved.car?.id ?? null,
-  vehicle_model_id: info.resolved.vehicle_model?.id ?? null,
-  team_id: info.resolved.team?.id ?? null,
-  drivers: info.resolved.drivers.map((d) => d.id),
-});
-
-/** The form's first values: what the event resolves to, and for what it lacks, what the previous event of the same
- * car was run with. */
-export function startValue(info: EventInfo): { value: Entry; suggested: Set<keyof Entry> } {
-  const value = ids(info);
-  const prev = info.previous;
-  const suggested = new Set<keyof Entry>();
-  if (prev) {
-    for (const k of ['tyre_kind_id', 'car_id', 'vehicle_model_id', 'team_id'] as const) {
-      if (value[k] == null && prev[k] != null) {
-        value[k] = prev[k];
-        suggested.add(k);
-      }
-    }
-    if (!value.drivers.length && prev.drivers.length) {
-      value.drivers = prev.drivers;
-      suggested.add('drivers');
-    }
-  }
-  return { value, suggested };
-}
-
-/** What to save: a field left as the season (or the runs, or the car) gives it is not set on the event, so it keeps
- * following them. */
-export function toSave(info: EventInfo, value: Entry): InfoFields {
-  const base = info.season?.entry ?? EMPTY_ENTRY;
-  const now = ids(info);
-  const derived = (k: keyof typeof info.from) => info.from[k] != null && info.from[k] !== 'event';
-  const one = (k: 'tyre_kind_id' | 'car_id' | 'vehicle_model_id' | 'team_id', from: keyof typeof info.from) =>
-    value[k] === base[k] || (derived(from) && value[k] === now[k]) ? null : value[k];
-  const same = (a: number[], b: number[]) => a.length === b.length && a.every((x, i) => x === b[i]);
-  return {
-    tyre_kind_id: one('tyre_kind_id', 'tyre_kind'),
-    car_id: one('car_id', 'car'),
-    vehicle_model_id: one('vehicle_model_id', 'vehicle_model'),
-    team_id: one('team_id', 'team'),
-    drivers: same(value.drivers, base.drivers) || (derived('drivers') && same(value.drivers, now.drivers))
-      ? [] : value.drivers,
-  };
-}
-
-/** The event's info as a short form, filled from what it has (its season's entry included) and, for what it lacks,
- * from the previous event of the same car. */
-export function EventInfoForm({ info, lists, onListsChanged, focus, onSaved, onCancel, cancelLabel = 'Cancel' }: {
-  info: EventInfo;
-  lists: Lists;
-  onListsChanged: () => void;
-  focus?: MissingKey | null;
-  onSaved: (info: EventInfo) => void;
-  onCancel: () => void;
-  cancelLabel?: string;
-}) {
-  const styles = useStyles();
-  const [start] = useState(() => startValue(info));
-  const [value, setValue] = useState<Entry>(start.value);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const prevName = info.previous?.event_name;
-  const note = (k: keyof Entry, from: keyof typeof info.from) =>
-    start.suggested.has(k) ? `as at ${prevName}` : value[k] === ids(info)[k] ? sourceWords(info.from[from]) : null;
-  const save = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      onSaved(await seasonsApi.setInfo(info.event_id, toSave(info, value)));
-    } catch (e) {
-      setError((e as Error).message);
-      setBusy(false);
-    }
-  };
-  return (
-    <View style={styles.form}>
-      <EntryFields value={value} onChange={setValue} lists={lists} onListsChanged={onListsChanged}
-        focus={focus ? FIELD_OF[focus] : null}
-        notes={{
-          tyre: note('tyre_kind_id', 'tyre_kind'),
-          car: note('car_id', 'car'),
-          vehicle: note('vehicle_model_id', 'vehicle_model'),
-          team: note('team_id', 'team'),
-          drivers: start.suggested.has('drivers') ? `as at ${prevName}`
-            : value.drivers.join() === ids(info).drivers.join() ? sourceWords(info.from.drivers) : null,
-        }} />
-      {error && <ErrorLine>{error}</ErrorLine>}
-      <FormActions>
-        <MainButton label="Save" onPress={save} busy={busy} />
-        <TextLink onPress={onCancel} label={cancelLabel} />
-      </FormActions>
-    </View>
-  );
-}
-
-/** What an event's info is missing: a red block, then each item as a link to its field in the form. */
-export function MissingList({ missing, onPick }: { missing: MissingKey[]; onPick: (k: MissingKey) => void }) {
-  const styles = useStyles();
-  const c = useTheme();
-  if (!missing.length) return null;
-  return (
-    <View style={styles.missing}>
-      <Block label="Missing" color={c.mark} ink={inkOn(c.mark)} />
-      {missing.map((k) => (
-        <TextLink key={k} onPress={() => onPick(k)} label={MISSING_LABEL[k]} small />
-      ))}
-    </View>
-  );
-}
-
-// ---------- after an upload ----------
-
-/** After an upload: for each event its runs went into that is missing some of its info, the same short form, filled
- * from the season or the previous event of the same car. refresh: ask again (runs were moved to another event). */
-export function AskEventInfo({ runIds, refresh, onSaved }: { runIds: number[]; refresh?: unknown; onSaved?: () => void }) {
-  const styles = useStyles();
-  const [infos, setInfos] = useState<EventInfo[] | null>(null);
-  const [done, setDone] = useState<Record<number, string>>({});
-  const { lists, reload } = useLists();
-  const key = runIds.join(',');
-  useEffect(() => {
-    if (!key) return;
-    seasonsApi.infoForRuns(key.split(',').map(Number)).then(setInfos, () => setInfos([])); // an older server: no form
-  }, [key, refresh]);
-  if (!infos || !lists) return null;
-  return (
-    <>
-      {infos.map((info) => {
-        if (done[info.event_id]) return <Text key={info.event_id} style={styles.doneText}>{done[info.event_id]}</Text>;
-        if (!info.missing.length) return null;
-        return (
-          <View key={info.event_id} style={styles.ask}>
-            <Label>Event info</Label>
-            <Text style={styles.askTitle}>What was {info.event_name ?? 'this event'} run with?</Text>
-            <Note>
-              Missing: {info.missing.map((k) => MISSING_LABEL[k]).join(', ')}.
-              {info.season ? ` The rest comes from ${info.season.name}.` : ''}
-              {info.previous ? ` Filled in as at ${info.previous.event_name}: check and save.` : ''}
-            </Note>
-            <EventInfoForm info={info} lists={lists} onListsChanged={reload} cancelLabel="Skip"
-              onSaved={(saved) => {
-                setDone((d) => ({ ...d, [info.event_id]: saved.missing.length
-                  ? `Saved. ${saved.event_name} still misses: ${saved.missing.map((k) => MISSING_LABEL[k]).join(', ')}.`
-                  : `Saved what ${saved.event_name} was run with.` }));
-                onSaved?.();
-              }}
-              onCancel={() => setDone((d) => ({ ...d, [info.event_id]: `Skipped the event info of ${info.event_name}: fill it in on its page.` }))} />
-          </View>
-        );
-      })}
-    </>
-  );
-}
-
 const useStyles = themed((c) => ({
   fields: { gap: 22 },
   order: { fontFamily: Type.label.fontFamily, fontSize: 15, letterSpacing: 0.3, color: c.text },
   inline: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', columnGap: 14, rowGap: 8, width: '100%' },
   inlineInput: { minWidth: 160, flexGrow: 1, flexShrink: 1, flexBasis: 160 },
-  form: { gap: 22 },
-  missing: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 16, rowGap: 10, marginTop: 14 },
-  ask: { gap: 10, borderTopWidth: 3, borderColor: c.rule, paddingTop: 10, marginTop: 18 },
-  askTitle: { fontFamily: Fonts.display, fontSize: 28, lineHeight: 31, textTransform: 'uppercase', color: c.text },
-  doneText: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 22, color: c.text, marginTop: 10 },
 }));

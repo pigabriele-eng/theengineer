@@ -139,7 +139,7 @@ function Debriefs({ no, eventId, folder }: { no: number; eventId: number; folder
       <View style={styles.list}>
         {debriefs && lines.map((l) => <DebriefRow key={l.run.id} line={l} />)}
       </View>
-      {lines.length === 0 && <Note>No run yet: add a run by hand at the end of the page to record its debrief.</Note>}
+      {lines.length === 0 && <Note>No run yet: upload the first run’s log on the Upload page, then record its debrief.</Note>}
     </Section>
   );
 }

@@ -2,6 +2,8 @@
 // on the official corner numbers, top speed, tyres and conditions, in one table with a column per run. Each run wears
 // the colour slot it was picked with (the validated lap palette), so the colours here match Compare laps. The best of
 // each row is a purple block; the others print their gap to it in red, with a bar in the time-lost ramp in a section.
+// Each run's tyres are under its name, one tap to change them (components/TyreTag.tsx): the four levels open above the
+// table.
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet } from 'react-native';
 
@@ -9,6 +11,7 @@ import { useLapColors } from '@/components/CompareViews';
 import { Note } from '@/components/Controls';
 import { Swatch, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
+import { TyreChoices, TyreTag, TyreTags, useTyreTags } from '@/components/TyreTag';
 import { DETECTED_CORNERS_NOTE, formatLap } from '@/lib/api';
 import { encodePicks } from '@/lib/compare';
 import { ComparedSession, dayLabel, eventsApi, KIND_NAMES, SideBySide } from '@/lib/events';
@@ -48,6 +51,8 @@ export function EventCompare({ folderKey, picks, onClear }: {
   const key = ids.join(',');
   const colors = useLapColors(picks.map((p) => p.slot));
   const ask = useRef(0);
+  // the event's tyres (shared with its runs' rows), their four levels opened from a column's tag
+  const tags = useTyreTags(Number.isInteger(Number(folderKey)) ? Number(folderKey) : null);
 
   // ask once the picks settle; while the report is still reading logs, ask again (lib/poll.ts: less and less often)
   useEffect(() => {
@@ -89,7 +94,10 @@ export function EventCompare({ folderKey, picks, onClear }: {
         {onClear && <View style={styles.clear}><TextLink onPress={onClear} label="Clear" small /></View>}
       </View>
       {error && <Text style={styles.error}>{error}</Text>}
-      {shown && <Table data={shown} colors={colors.laps} />}
+      {shown && tags.open != null && (
+        <TyreChoices tags={tags} id={tags.open} name={shown.sessions.find((s) => s.id === tags.open)?.name ?? ''} />
+      )}
+      {shown && <Table data={shown} colors={colors.laps} tags={tags} />}
       {shown?.status === 'working' && (
         <Note>
           Section times follow once the logs are read for the report
@@ -195,7 +203,7 @@ function rowsOf(data: SideBySide): { title: string; rows: Row[]; note?: string }
   return groups;
 }
 
-function Table({ data, colors }: { data: SideBySide; colors: string[] }) {
+function Table({ data, colors, tags }: { data: SideBySide; colors: string[]; tags: TyreTags }) {
   const c = useTheme();
   const styles = useStyles();
   const wide = useWide();
@@ -219,6 +227,7 @@ function Table({ data, colors }: { data: SideBySide; colors: string[] }) {
                   {[s.date ? dayLabel(s.date) : null, s.time].filter(Boolean).join(' · ')}
                 </Text>
                 <Text style={styles.colSub} numberOfLines={1}>{KIND_NAMES[s.kind]}</Text>
+                <TyreTag tags={tags} id={s.id} run={s.name} size={15} />
               </View>
             ))}
           </View>

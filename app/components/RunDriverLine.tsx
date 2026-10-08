@@ -2,6 +2,9 @@
 // driving style says drove it (marked "by style", with Confirm to take it in one tap), and Change (Set when nobody is
 // named) to open the run's driver list in place: RunPicker in components/RunChips.tsx, the event page's own list.
 // A style no driver is named for yet is never shown by a placeholder ("Style A"): the run simply has no driver.
+// `children`: what follows on the same line (the run's tyres tag, components/TyreTag.tsx).
+import { ReactNode } from 'react';
+
 import { TextLink } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { RunGuess } from '@/lib/fingerprints';
@@ -10,13 +13,14 @@ import { DriverRun, driverState, driverWords } from '@/lib/runDriver';
 import { face, themed } from '@/constants/Theme';
 
 /** The line itself, under the run's name: the driver, then Confirm (a style's guess) and Change. */
-export function RunDriverLine({ run, guess, garage, open, onOpen, onPick }: {
+export function RunDriverLine({ run, guess, garage, open, onOpen, onPick, children }: {
   run: DriverRun;
   guess: RunGuess | undefined;
   garage: Garage | null;
   open: boolean; // its driver list is open under the row
   onOpen: (open: boolean) => void;
   onPick: (fields: RunFields) => void;
+  children?: ReactNode;
 }) {
   const styles = useStyles();
   const st = driverState(run, guess, garage);
@@ -37,6 +41,7 @@ export function RunDriverLine({ run, guess, garage, open, onOpen, onPick }: {
         )}
         <TextLink label={st.kind === 'none' ? 'Set' : 'Change'} small red={open} disabled={!garage}
           onPress={() => onOpen(!open)} />
+        {children}
       </View>
     </View>
   );

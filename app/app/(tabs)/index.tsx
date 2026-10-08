@@ -20,6 +20,7 @@ import { deletedLine } from '@/components/DeleteRuns';
 import { Said } from '@/components/Controls';
 import { SeasonMatchCount } from '@/components/SeasonMatch';
 import { Text, View } from '@/components/Themed';
+import { TyreChoices, TyreTag, useTyreTags } from '@/components/TyreTag';
 import { api, formatLap } from '@/lib/api';
 import {
   CalendarState, calendarApi, countByWhen, defaultFilter, Filter, filtered, Plan, todayIso, When, whenOf,
@@ -435,9 +436,9 @@ function LooseRuns({ f, onChanged }: { f: FolderSummary; onChanged: () => void }
 // ---------- an open event's runs ----------
 
 /** An event open on the page: its links, its runs by day (each with its best lap: a purple block for the event's
- * best, else a red bar for the gap to it, and its driver, or who the driving style says, with Change), and beside
- * them the best lap, clean laps, typical lap (the median clean lap of the lead event's report; runs for the others)
- * and the event's facts. */
+ * best, else a red bar for the gap to it, and its driver, or who the driving style says, with Change, and its tyres,
+ * a tap to change them), and beside them the best lap, clean laps, typical lap (the median clean lap of the lead
+ * event's report; runs for the others) and the event's facts. */
 function Feature({ f, detail, garage, onGarage, onChanged }: {
   f: FolderSummary;
   detail?: Detail;
@@ -462,6 +463,8 @@ function Feature({ f, detail, garage, onGarage, onChanged }: {
   // event's drivers 1 to 4, offered first in a run's list: only for an open event, as this is drawn only then
   const guess = useDriverGuess(folder ? id : null, folder);
   const eventDrivers = useEventDrivers(id);
+  // each run's tyres beside its driver, one tap to change them (read with the event's runs)
+  const tyreTags = useTyreTags(folder ? id : null, folder);
   useEffect(() => {
     setPicked((p) => {
       const keep = Object.entries(p).filter(([k]) => saving.current.has(Number(k)));
@@ -524,6 +527,7 @@ function Feature({ f, detail, garage, onGarage, onChanged }: {
                     return (
                       <RunRow key={s.id} s={s} no={no} best={best} maxGap={maxGap}
                         onDriver={() => garage && setPicking(s.id)} onChanged={onChanged}
+                        onTyres={tyreTags.rowOf(s.id) ? () => tyreTags.show(s.id) : undefined}
                         onDeleted={(d) => {
                           setDeleted(deletedLine(d));
                           onChanged();
@@ -531,11 +535,14 @@ function Feature({ f, detail, garage, onGarage, onChanged }: {
                         tag={driverTag(driverState(s, g, garage))} driver={(
                         <RunDriverLine run={s} guess={guess?.sessions.find((g) => g.session_id === s.id)} garage={garage}
                           open={picking === s.id} onOpen={(o) => setPicking(o ? s.id : null)}
-                          onPick={(fields) => pick(s, fields)} />
+                          onPick={(fields) => pick(s, fields)}>
+                          <TyreTag tags={tyreTags} id={s.id} run={s.name} size={15} />
+                        </RunDriverLine>
                       )}>
+                        <TyreChoices tags={tyreTags} id={s.id} name={s.name} style={styles.runPicker} />
                         {picking === s.id && garage && (
                           <View style={styles.runPicker}>
-                            <RunPicker what="driver" run={s} garage={garage} eventDrivers={eventDrivers}
+                            <RunPicker run={s} garage={garage} eventDrivers={eventDrivers}
                               onPick={(fields) => pick(s, fields)} onClose={() => setPicking(null)} />
                           </View>
                         )}
@@ -587,9 +594,10 @@ function Feature({ f, detail, garage, onGarage, onChanged }: {
 }
 
 /** One run: its line opens it (number, name, time, laps, best lap and the gap to the event's best); under it, outside
- * the link, its driver line under its name, then (children) its driver list when open, the row's width. Swiped left
- * it shows Delete; held, a menu of Delete, Change driver and Rename (components/RunActions.tsx). */
-function RunRow({ s, no, best, maxGap, tag, driver, onDriver, onChanged, onDeleted, children }: {
+ * the link, its driver line (with its tyres) under its name, then (children) its driver list or its tyres' four
+ * levels when open, the row's width. Swiped left it shows Delete; held, a menu of Delete, Change driver, Rename and
+ * Tyres (components/RunActions.tsx). */
+function RunRow({ s, no, best, maxGap, tag, driver, onDriver, onTyres, onChanged, onDeleted, children }: {
   s: FolderSession;
   no: number;
   best: number | null;
@@ -597,6 +605,7 @@ function RunRow({ s, no, best, maxGap, tag, driver, onDriver, onChanged, onDelet
   tag: Tag; // the driver on the name line, first thing the eye meets
   driver: ReactNode;
   onDriver: () => void; // open its driver list
+  onTyres?: () => void; // open its tyres' four levels
   onChanged: () => void; // renamed: read the event's runs again
   onDeleted: (d: RunsDeleted) => void;
   children?: ReactNode;
@@ -604,7 +613,7 @@ function RunRow({ s, no, best, maxGap, tag, driver, onDriver, onChanged, onDelet
   const styles = useStyles();
   const c = useTheme();
   const [renaming, setRenaming] = useState(false);
-  const run = useRunActions({ onDriver, onRename: () => setRenaming(true) });
+  const run = useRunActions({ onDriver, onRename: () => setRenaming(true), onTyres });
   const gap = s.best_lap_s != null && best != null ? s.best_lap_s - best : null;
   const isBest = gap != null && gap < 0.0005;
   return (
