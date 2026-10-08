@@ -26,7 +26,7 @@ def test_qualifying_is_new_a_race_fresh_and_practice_guessed_from_the_laps_in_th
     assert g[4]["set_laps"] == 12 and g[5]["set_laps"] == 19 and g[6]["set_laps"] == 27
     assert "as quick as qualifying" in g[7]["why"]
     assert g[9] == {"tyres": NEW, "label": "New", "pair": NEW, "sure": True, "why": "qualifying: always a new set",
-                    "set_laps": None, "check": False}
+                    "set_laps": None, "check": False, "set_by_driver": False}
     assert g[10]["sure"] and g[10]["label"] == "Fresh" and g[10]["pair"] == USED and g[11]["tyres"] == FRESH
     assert g[6]["label"] == "Very used" and g[6]["pair"] == USED
 
@@ -139,3 +139,16 @@ def test_adac_gt4_germany_one_new_set_in_free_practice_and_sachsenrings_extra_se
     assert "free practice" in g[2]["why"] and g[3]["check"]  # FP2's looks new too: one too many, to check
     g = guess(runs, "adac-sachsenring")
     assert g[6]["tyres"] == FRESH and g[7]["tyres"] == NEW and g[7]["check"] and "two new" in g[7]["why"]
+
+
+def test_adac_thursday_test_has_two_new_sets_one_per_driver():
+    """Gabriele: the ADAC GT4 Germany Paid Test, or Thursday test, normally has two new sets."""
+    runs = [RunLaps(1, "practice", "Thursday test stint 1", [83.4, 83.2], laps=8, driver="A"),
+            RunLaps(2, "practice", "Thursday test stint 2", [82.5, 82.6], laps=6, driver="A", warm_up=2),
+            RunLaps(3, "practice", "Thursday test stint 3", [83.3, 83.0], laps=8, driver="B"),
+            RunLaps(4, "practice", "Thursday test stint 4", [82.8, 82.9], laps=6, driver="B", warm_up=2),
+            RunLaps(5, "qualifying", "Q1", [82.0], driver="A"), RunLaps(6, "qualifying", "Q2", [82.4], driver="B")]
+    g = guess(runs, "adac")
+    assert [g[i]["tyres"] for i in range(1, 5)] == [USED, NEW, FRESH, NEW]  # B carries on on A's set, then has their own
+    assert "paid test" in g[2]["why"] and "paid test" in g[4]["why"]
+    assert not any(g[i]["set_by_driver"] for i in g)

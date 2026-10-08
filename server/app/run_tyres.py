@@ -36,7 +36,7 @@ WARM_UP_WITHIN = 0.01  # ...or within this share of qualifying's best
 GT4_EUROPEAN = re.compile(r"gt4[\s_-]*(european|europe|es\b|es_)", re.I)
 ADAC = re.compile(r"adac|gt4[\s_-]*(germany|deutschland|de\b)", re.I)
 FREE_PRACTICE = re.compile(r"^fp\d*\b", re.I)
-PAID_TEST = re.compile(r"^(pts?\d*|pt\d*|paid)", re.I)
+PAID_TEST = re.compile(r"^(pts?\d*|pt\d*|paid|thursday)", re.I)  # ADAC calls its paid test the Thursday test
 ORDER_PREFIX = re.compile(r"^\d+[_\- ]+")  # a folder's order in front of its name: "03_Q" -> "Q"
 QUALI_NAME = re.compile(r"^(q\d*|qualifying|quali)\b", re.I)
 RACE_NAME = re.compile(r"^(r\d*|race)\b", re.I)
@@ -76,7 +76,7 @@ def kind_of(kind: str, name: str | None) -> str:
 
 def _out(level: str, sure: bool, why: str, on_set: int | None = None) -> dict:
     return {"tyres": level, "label": LABEL[level], "pair": pair(level), "sure": sure, "why": why, "set_laps": on_set,
-            "check": False}
+            "check": False, "set_by_driver": False}
 
 
 def _step(on_set: int) -> str:
@@ -86,7 +86,7 @@ def _step(on_set: int) -> str:
 def new_set_rule(series: str | None, name: str | None, track: str | None = None) -> str | None:
     """The new sets the event's series runs, when known (Gabriele, 2026-10-08), by its series or its name:
     "gt4-european" (one in free practice, one per driver in the paid test), "adac" (ADAC GT4 Germany: one in free
-    practice) or "adac-sachsenring" (and one more for the races, in Race 1, Race 2 or split between them)."""
+    practice, two in the Thursday test) or "adac-sachsenring" (and one more for the races, in Race 1, Race 2 or split between them)."""
     text = f"{series or ''} {name or ''}"
     if GT4_EUROPEAN.search(series or "") or GT4_EUROPEAN.search(name or ""):
         return "gt4-european"
@@ -101,7 +101,8 @@ def expects_new_sets(series: str | None, name: str | None) -> bool:
 
 def _picks(runs: list[RunLaps], kinds: dict[int, str], rule: str) -> dict[int, str]:
     """The stints expected on new sets (new_set_rule), by session id with why: one across official free practice
-    (FP1 and FP2 together, whoever drove it); in GT4 European one per driver in the paid test; at the ADAC's
+    (FP1 and FP2 together, whoever drove it); two in the paid test (ADAC: the Thursday test), one per driver; at
+    the ADAC's
     Sachsenring one race (the extra set). Each the stint whose start is quickest against the driver's own best (their
     qualifying, else their quickest lap here), a warm-up on its out lap counting for 0.4%."""
     best: dict[str | None, float] = {}
@@ -132,8 +133,6 @@ def _picks(runs: list[RunLaps], kinds: dict[int, str], rule: str) -> dict[int, s
             out[min(races, key=lambda x: x[0])[1].session_id] = (
                 "Sachsenring's extra new set for the races, its quickest start: all four new, or two new and two "
                 "from qualifying, check it")
-    if rule != "gt4-european":
-        return out
     pt = [(sc, r) for r in runs if kinds[r.session_id] == "practice" and PAID_TEST.match(name(r))
           and (sc := score(r)) is not None]
     drivers = {r.driver for _, r in pt}
@@ -141,7 +140,7 @@ def _picks(runs: list[RunLaps], kinds: dict[int, str], rule: str) -> dict[int, s
         mine = [x for x in pt if x[1].driver == d]
         take = 2 if d is None and len(drivers) == 1 else 1  # the drivers not known: the two quickest starts
         for _, r in sorted(mine, key=lambda x: x[0])[:take]:
-            out[r.session_id] = "paid test: one new set per driver, this driver's quickest start"
+            out[r.session_id] = "paid test: two new sets, one per driver, this driver's quickest start"
     return out
 
 
@@ -163,7 +162,7 @@ def guess(runs: list[RunLaps], expected: bool | str | None = None) -> dict[int, 
     def counts(r: RunLaps) -> bool:  # a stint whose session's new sets the series' rule counts
         text = ORDER_PREFIX.sub("", (r.name or "").strip())
         return kinds[r.session_id] == "practice" and bool(
-            FREE_PRACTICE.match(text) or (rule == "gt4-european" and PAID_TEST.match(text)))
+            FREE_PRACTICE.match(text) or PAID_TEST.match(text))
     counted = {r.session_id for r in runs if counts(r)} if rule else set()
     quali = [min(r.times) for r in runs if kinds[r.session_id] == "qualifying" and r.times]
     q_all = min(quali) if quali else None
@@ -251,7 +250,7 @@ def resolve(db: Session, runs: list[RunLaps], expected: str | None = None) -> di
     out = guess(runs, expected)
     for sid, tyres in stored(db, [r.session_id for r in runs]).items():
         if sid in out and tyres in LABEL:
-            out[sid] = {**_out(tyres, True, "set by you"), "guess": out[sid]["tyres"]}
+            out[sid] = {**_out(tyres, True, "set by you"), "guess": out[sid]["tyres"], "set_by_driver": True}
     return out
 
 
