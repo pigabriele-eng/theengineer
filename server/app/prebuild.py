@@ -3,9 +3,10 @@ for, so they open at once instead of working it out while Gabriele waits.
 
 For each uploaded run and the event it is in, in this order (the pages that ask for it in brackets):
 1. the run's compact lap traces, one log at a time (Report, Technique, Track grip, the event's side by side);
-2. the event's report, then the reports of the official sessions (FP1, Q1, R1...) the runs are in, then its track map
-   and shape, track grip, grip use, balance and its main logs' stint view (Report; the weekend page's session reports;
-   the session page's best section times);
+2. the event's report, then the reports of the official sessions (FP1, Q1, R1...) the runs are in, then the runs'
+   lap packs (Compare laps, the Laps tab, the Run comparison), then its track map and shape, track grip, grip use,
+   balance and its main logs' stint view (Report; the weekend page's session reports; the session page's best section
+   times);
 3. the run's lap analysis, the lap comparison it opens on, stint view, track map and track shape (the session page);
 4. the event's technique check, or the run's when it is in no event (Technique);
 5. the run's tyre prep (Quali), and its own report, grip use and balance (Report of one run);
@@ -108,6 +109,11 @@ def pieces(db: Session, session_ids: list[int], prep: bool = True) -> list[Piece
         out += [("report", ("event", e))]
         # its sessions' reports: from the traces the event's report has just made, so they take little more
         out += [("report", ("part", e, code)) for code in reports.parts_with(db, e, sids)]
+    # the lap packs, from the compact traces just made: Compare laps, the Laps tab and the Run comparison read them
+    # instead of the logs (an event's technique check below takes minutes on the live server)
+    if sids:
+        out.append(("lap packs", (tuple(sids),)))
+    for e in events:
         out += [("event map", (e,)), ("event shape", (e,)), ("track grip", (e,)), ("grip", ("event", e)),
                 ("balance", ("event", e)), ("event stint", (e,))]
     for sid in sids:
@@ -289,6 +295,11 @@ def _prep(eid: int) -> None:
     prep.prebuild(eid)
 
 
+def _lap_packs(session_ids: list[int]) -> None:
+    from app import lappacks  # here: it imports the routers, which import this module
+    lappacks.warm_sessions(session_ids)
+
+
 def warm(session_ids: list[int]) -> None:
     """Other modules' warm-ups for these runs, last of their pieces."""
     # ===== Other per-session warm-ups go here. =====
@@ -317,6 +328,7 @@ RUN: dict[str, Callable] = {
     "event map": _event_map, "event shape": _event_shape, "technique": _technique, "track grip": _track_grip,
     "tyre prep": _tyre_prep, "prep": _prep, "grip": _grip, "balance": _balance, "event stint": _event_stint,
     "warm": lambda sids: warm(list(sids)),
+    "lap packs": lambda sids: _lap_packs(list(sids)),
 }
 
 

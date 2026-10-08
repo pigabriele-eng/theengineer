@@ -90,6 +90,17 @@ def _own(key: str) -> lappack.OwnTraces:
     return own
 
 
+def traces_ready(db: Session, s: models.RunSession, track: models.Track | None) -> bool:
+    """Whether the session's compact traces (the report's) are up to date: with its pack, its laps trace without
+    the log."""
+    f = main_file(s)
+    if f is None:
+        return False
+    rec = db.scalar(select(models.SessionTraces).where(models.SessionTraces.session_id == s.id))
+    return rec is not None and rec.path is not None and not rec.error and \
+        rec.signature == reports._traces_signature(s, f, track)
+
+
 def packed_run(db: Session, s: models.RunSession, track: models.Track | None, numbers: list[int] | None = None,
                only: set[int] | None = None) -> lappack.PackedRun | None:
     """The session's clean laps ready to trace without its log, when its pack and compact traces are both up to date

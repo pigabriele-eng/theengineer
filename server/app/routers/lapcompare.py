@@ -139,7 +139,14 @@ def compare_laps(body: CompareLapsIn, db: Session = Depends(get_db)):
         return load_session(read_file(f), _channel_map(s), beacons=f.meta.get("beacons"), line=track_line(track))
 
     def packed(run: str):
-        return lappacks.packed_run(db, sessions[int(run)], track, [p.number for p in picks if p.run == run])
+        s, numbers = sessions[int(run)], [p.number for p in picks if p.run == run]
+        got = lappacks.packed_run(db, s, track, numbers)
+        if got is None and lappacks.traces_ready(db, s, track):
+            # no pack yet (just uploaded, or its laps were timed again): made now, reading only the channels a pack
+            # keeps, about three times quicker than reading the whole log to trace the laps, and kept for next time
+            lappacks.ensure_pack(db, s.id)
+            got = lappacks.packed_run(db, s, track, numbers)
+        return got
 
     try:
         # each session's log is read and traced under the shared lock, one session at a time; letting go of the
