@@ -73,3 +73,32 @@ def parts(sessions: Iterable[models.RunSession], labels: list[run_labels.RunLabe
 
 def find(found: list[Part], code: str) -> Part | None:
     return next((p for p in found if p.code == code), None)
+
+
+def blocks(found: list[Part]) -> list[Part]:
+    """The sessions as comparisons take them: a day's qualifying sessions together ("Q1 + Q2": each driver has a
+    qualifying of their own, run back to back, Gabriele 2026-10-08: "there are no stints in Q, so a second run is
+    the second driver"), every other session on its own; in the order they ran. A session's own report stays its
+    own (parts)."""
+    out: list[Part] = []
+    quali: dict[int | None, Part] = {}  # by day
+    for p in found:
+        if not (p.official and p.code.startswith("Q") and p.runs):
+            out.append(p)
+            continue
+        day = p.runs[0].day
+        if day in quali:
+            q = quali[day]
+            q.code = q.title = f"{q.code} + {p.code}"
+            q.runs.extend(p.runs)
+            continue
+        quali[day] = Part(p.code, p.title, True, list(p.runs))
+        out.append(quali[day])
+    return out
+
+
+def find_block(found: list[Part], code: str) -> Part | None:
+    """The block that is the session ``code`` or holds it ("Q1" is in "Q1 + Q2")."""
+    return next((p for p in found if p.code == code), None) or \
+        next((p for p in found if code in p.code.split(" + ")), None)
+

@@ -17,6 +17,10 @@ question ("if you are not sure, ask"): GET /results/events/{id}/run-names lists 
 answers one with a tap. A name typed by hand is never changed again (``RunNameMark.by_hand``); a run whose name is
 still the one the upload gave it (the logger's session name, the file's or the folder's name) or one given here
 before is renamed. The kind of run (practice, qualifying, race, test) follows the session.
+
+Each driver has a qualifying of their own, so two runs in one qualifying are its two drivers: the second takes the day's
+other qualifying (Q2); more than two are asked about (a red flag can split one). A race has two stints, one per driver:
+R1 stint 1 and R1 stint 2.
 """
 from __future__ import annotations
 
@@ -24,6 +28,7 @@ import logging
 import re
 from datetime import datetime, timedelta
 
+import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -52,10 +57,11 @@ def label(code: str) -> str:
     return {"T": f"PT{n}", "PQ": "Pre-qualifying"}.get(p, code)
 
 
-def run_name(code: str, i: int, of: int) -> str:
+def run_name(code: str, i: int) -> str:
     """A run is always "FP1 stint 2", "PT1 stint 1", "R1 stint 1" (a race it didn't finish too); a qualifying run
-    is "Q1", with a stint number only when it has company."""
-    if of == 1 and prefix(code) == "Q":
+    is "Q1", never a stint: each driver has a qualifying of their own (Gabriele, 2026-10-08: "there are no stints in
+    Q, so a second run is the second driver")."""
+    if prefix(code) == "Q":
         return label(code)
     return f"{label(code)} stint {i}"
 
@@ -280,6 +286,95 @@ def _by_driver(runs: list[models.RunSession], codes: dict[int, str], asks: dict[
     return {r.id: "Q1" if r.driver_id == starter else "Q2" for r in open_q}
 
 
+def _quali_per_driver(runs: list[models.RunSession], codes: dict[int, str], order: dict[int, tuple],
+                      table: list, fixed: set[int]) -> tuple[dict[int, str], dict[int, list[str]]]:
+    """Qualifying runs that landed in one session (a log of both, one download after both) go one per driver
+    (Gabriele, 2026-10-08: "there are no stints in Q, so a second run is the second driver"): the next driver's run
+    takes the day's next qualifying no run holds. The driver who starts Race 1 qualified first (Q1) when the drivers
+    are known, else the run that ran first did. Runs of one known driver stay together; a run whose session was
+    tapped (``fixed``) keeps it. More than two runs with a driver not known: a red flag split someone's qualifying
+    ("If you find more than 2 runs for quali, ask"), so each run not tapped yet is asked about, between the day's
+    qualifying sessions. Returns the runs to move and where, and the runs to ask about with the sessions to offer."""
+    day = {c: t0.date() for c, t0, _ in table}
+    held = set(codes.values())
+    r1 = sorted((r for r in runs if codes.get(r.id) == "R1" and r.driver_id), key=lambda r: (order[r.id], r.id))
+    starter = r1[0].driver_id if r1 else None
+    out: dict[int, str] = {}
+    ask: dict[int, list[str]] = {}
+    for code in sorted(c for c in set(codes.values()) if prefix(c) == "Q" and c in day):
+        drivers: list[tuple[int | None, list[models.RunSession]]] = []  # in the order they ran
+        for r in sorted((r for r in runs if codes.get(r.id) == code), key=lambda r: (order[r.id], r.id)):
+            same = next((d for d in drivers if r.driver_id and d[0] == r.driver_id), None)
+            if same is not None:
+                same[1].append(r)
+            else:
+                drivers.append((r.driver_id, [r]))
+        if len(drivers) < 2:
+            continue
+        free = sorted((c for c in day if prefix(c) == "Q" and c not in held and day[c] == day[code]),
+                      key=lambda c: table_start(table, c))
+        if not free:
+            continue  # nowhere to go: each keeps the session, told apart by its driver (run_labels.py)
+        group = [r for _, rs in drivers for r in rs]
+        if len(group) > 2 and any(r.driver_id is None for r in group):
+            options = sorted([code, *free], key=lambda c: table_start(table, c))
+            ask.update({r.id: options for r in group if r.id not in fixed})
+            held.update(free)
+            continue
+        stays = [d for d in drivers if any(r.id in fixed for r in d[1])]
+        if stays:  # a tapped run keeps its session; the other drivers take the free ones
+            moving, slots = [d for d in drivers if d not in stays], free
+        else:
+            slots = sorted([code, *free], key=lambda c: table_start(table, c))
+            if slots[0] == "Q1" and starter is not None:  # the Race 1 starter first, a driver not known next
+                drivers.sort(key=lambda d: 0 if d[0] == starter else 1 if d[0] is None else 2)
+            moving = drivers
+        for (_, rs), c in zip(moving, slots, strict=False):
+            held.add(c)
+            out.update({r.id: c for r in rs if r.id not in fixed and c != code})
+    return out, ask
+
+
+STOP_FROM_MIN = 25  # a race's driver change comes between minute 25 and 35 of its 60 (Gabriele, 2026-10-08)
+LAPS_BEFORE_STOP_MIN = 20  # ... so laps adding up to this before a run (no formation lap or in-lap in them): stint 2
+PIT_STOP_MIN = 2.5  # a stop longer than this (with the in-lap and out-lap around it) is a red flag: the stint goes on
+
+
+def _stints(code: str, group: list[models.RunSession], minute: dict[int, tuple[float, float]] | None = None
+            ) -> list[int]:
+    """Each run's stint number in its session, in the order they ran. Elsewhere every run is a stint; a race has two,
+    one per driver (Gabriele, 2026-10-08: "races for ADAC GT4 are only two stints", 60 minutes with the driver change
+    between minute 25 and 35, a stop of about 1.5 minutes): a run of the same known driver as the run before it is
+    that stint (a log saved twice in one stint), one of the other driver the second. With a driver not known: by the
+    logger's clock, where it can be trusted (``minute``: how far into the race the run's first lap began and its last
+    lap ended), a run starting STOP_FROM_MIN or later is the second, unless the stop before it was longer than a pit
+    stop ("any interruption during the race that is longer than a pitstop is a red flag": the stint goes on); without
+    a clock, a run after LAPS_BEFORE_STOP_MIN of the race's laps is the second. A part of a run split at its driver
+    change (run_split.py) is the second."""
+    if prefix(code) != "R":
+        return list(range(1, len(group) + 1))
+    minute = minute or {}
+    out: list[int] = []
+    laps_min = 0.0
+    for k, r in enumerate(group):
+        prev = group[k - 1] if k else None
+        if prev is not None and r.driver_id is not None and prev.driver_id is not None:
+            n = out[-1] if r.driver_id == prev.driver_id else 2
+        elif prev is not None and any((f.meta or {}).get("split_from") for f in r.files):
+            n = 2  # cut off a run at its driver change (run_split.py)
+        elif r.id in minute:
+            n = 2 if minute[r.id][0] >= STOP_FROM_MIN else 1
+            if n == 2 and prev is not None and prev.id in minute and prev.laps:
+                in_out = 2 * float(np.median([lap.time_s for lap in prev.laps])) / 60  # the in-lap and the out-lap
+                if minute[r.id][0] - minute[prev.id][1] > in_out + PIT_STOP_MIN:
+                    n = out[-1]  # a red flag
+        else:
+            n = 2 if laps_min >= LAPS_BEFORE_STOP_MIN else 1
+        out.append(max(n, out[-1]) if out else n)
+        laps_min += sum(lap.time_s for lap in r.laps) / 60
+    return out
+
+
 def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | None = None) -> dict:
     """Name the event's runs after the official sessions of ``rnd`` (only runs with laps: a log of a few seconds
     keeps its name); returns what was named and what to ask."""
@@ -335,6 +430,13 @@ def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | Non
     for i, (_, ids) in enumerate(sorted(tests.items(), key=lambda g: min(order[x] for x in g[1])), 1):
         for rid in ids:
             codes[rid] = f"T{i}"
+    fixed = {r.id for r in runs if marks.get(r.id) is not None and marks[r.id].answered}
+    moves, ask_q = _quali_per_driver(runs, {k: v for k, v in codes.items() if v != NONE}, order, table, fixed)
+    codes.update(moves)
+    for r in runs:  # more than two qualifying runs: asked, not guessed
+        if r.id in ask_q and looks_given(r, marks.get(r.id)):
+            codes.pop(r.id, None)
+            asks[r.id] = ask_q[r.id]
     for r in runs:
         if r.id in asks:
             out["questions"].append({"session_id": r.id, "name": r.name,
@@ -348,8 +450,15 @@ def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | Non
     changed = False
     for code, group in by_code.items():
         group.sort(key=lambda r: (order[r.id], r.id))
-        for i, r in enumerate(group, 1):
-            want = run_name(code, i, len(group))
+        minute = {}  # how far into the race each run's first lap began and last lap ended, by a trusted logger clock
+        if prefix(code) == "R" and code in codes_in:
+            for r in group:
+                if r.id in timed and r.laps:
+                    at = windows[r.id][0] + timedelta(hours=h) - table_start(table, code)
+                    minute[r.id] = ((at.total_seconds() + min(lap.start_s for lap in r.laps)) / 60,
+                                    (at.total_seconds() + max(lap.start_s + lap.time_s for lap in r.laps)) / 60)
+        for i, r in zip(_stints(code, group, minute), group, strict=True):
+            want = run_name(code, i)
             m = marks.get(r.id)
             if not looks_given(r, m):
                 continue

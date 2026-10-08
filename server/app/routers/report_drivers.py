@@ -3,15 +3,15 @@ runs on one tyre level: how each takes every corner, their lap times put on the 
 balance as each of them drove it, and the mistakes the technique check finds again and again in each one's laps.
 
 GET /report/drivers/corners?a=<run ids>&b=<run ids>: like with like first. Where both drove in the same sessions
-(run_parts.py: R1, FP2), only those runs are compared, as the track changes between sessions; else every run, and the
-answer says so. Each corner group (official corner numbers) with each driver's passes ranked as the report ranks its
-sections' passes, against the same corner on the laps either side in their own stint (analysis/advice.py), and split
-into the top 10%, the middle tenth and the bottom 10%; per group the median speed, brake and throttle through the
-corner every 5 m with the technique numbers that go with them (analysis/driver_corners.py). The laps are read from
-their lap packs (compare._read, the log only where a pack is missing), one run at a time under the heavy-work lock.
-Then each lap's time taken to one tyre age and one fuel load (analysis/like_for_like.py, from the event's stint view):
-each driver's best and typical lap, raw and corrected, and what was corrected and what wasn't. Kept in the database
-under the event and the run ids.
+(run_parts.py: R1, FP2; a day's qualifying sessions count as one, as each driver has their own, back to back), only
+those runs are compared, as the track changes between sessions; else every run, and the answer says so. Each corner
+group (official corner numbers) with each driver's passes ranked as the report ranks its sections' passes, against the
+same corner on the laps either side in their own stint (analysis/advice.py), and split into the top 10%, the middle
+tenth and the bottom 10%; per group the median speed, brake and throttle through the corner every 5 m with the technique
+numbers that go with them (analysis/driver_corners.py). The laps are read from their lap packs (compare._read, the log
+only where a pack is missing), one run at a time under the heavy-work lock. Then each lap's time taken to one tyre age
+and one fuel load (analysis/like_for_like.py, from the event's stint view): each driver's best and typical lap, raw and
+corrected, and what was corrected and what wasn't. Kept in the database under the event and the run ids.
 
 GET /report/drivers/balance?a=<run ids>&b=<run ids>: understeer or oversteer per section on entry, mid-corner and
 exit for each side (analysis/balance.py, read as the report's Car balance section reads it). Every run of both sides is
@@ -200,7 +200,7 @@ def drivers_corners(a: str, b: str, db: Session = Depends(get_db)):
         labels = {side: f"{labels[side]} ({side.upper()})" for side in SIDES}
     event = run_labels.event_runs(db, runs["a"][0])
     labs = run_labels.label_runs(event)
-    found = run_parts.parts(event, labs)
+    found = run_parts.blocks(run_parts.parts(event, labs))  # a day's qualifying sessions as one: Q1 + Q2
     part_of = {lab.id: p for p in found for lab in p.runs}
     mine = {side: [p.code for p in found if any(part_of.get(s.id) is p for s in runs[side])] for side in SIDES}
     shared = [c for c in mine["a"] if c in mine["b"]]

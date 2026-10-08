@@ -195,6 +195,21 @@ def test_no_stop_or_a_short_one_is_no_driver_change(client, monkeypatch):
         assert len(db.scalars(select(models.RunSession.id)).all()) == 2
 
 
+def test_a_long_stop_in_a_race_is_a_red_flag_not_a_driver_change(client):
+    # Gabriele, 2026-10-08: "any interruption during the race that is longer than a pitstop is a red flag"
+    from app import db as app_db
+    from app import run_split
+
+    ev = client.post("/events/folders", json={"name": "Race weekend"}).json()["id"]
+    red = _run(client, ev, "04_R1", at="12:00:00", stop_s=400)
+    pit = _run(client, ev, "05_R2", at="15:00:00", stop_s=90)
+    test = _run(client, ev, "Long run", at="17:00:00", stop_s=400)
+    with app_db.SessionLocal() as db:
+        assert run_split.driver_changes(db, ev, _guess(red)) == {}  # the race goes on after it
+        assert list(run_split.driver_changes(db, ev, _guess(pit))) == [pit]  # a pit stop of 1.5 minutes
+        assert list(run_split.driver_changes(db, ev, _guess(test))) == [test]  # outside a race: a driver change
+
+
 def test_too_few_laps_either_side_is_no_split(client):
     from app import db as app_db
     from app import models, run_split

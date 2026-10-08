@@ -33,7 +33,7 @@ def test_a_race_stint_carries_on_from_the_one_before():
     words = like_for_like.words(c, fade, races=True)
     assert words[0] == ("Corrected for tyre age (0.10 s per lap on the set, from this weekend's 4 long stints) and "
                         "fuel (2.0 kg a lap, 0.10 s per 10 kg). Not corrected: track grip between sessions.")
-    assert "no refuelling at the driver change assumed" in words[1] and "same tyres" in words[1]
+    assert "no refuelling or tyre change at the driver change" in words[1] and "assumed" not in words[1]
 
 
 def test_a_set_of_unknown_age_is_not_corrected_for_tyres():

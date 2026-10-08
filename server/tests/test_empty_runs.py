@@ -327,3 +327,61 @@ def test_what_the_app_filled_in_itself_keeps_no_empty_run(client, monkeypatch):
         db.commit()
     assert app.empty_runs.cleanup() == {"removed": [ids["a_car"]], "kept": []}
     assert client.get(f"/sessions/{ids['b_named']}").status_code == 200
+
+
+def test_a_run_with_no_lap_to_use_goes_after_the_upload_and_at_startup(client, tmp_path):
+    # Gabriele, 2026-10-08: "R1 has two stints, please automatically delete no laps runs"
+    import app.db
+    import app.empty_runs
+    import app.models
+    import app.routers.imports
+
+    app.empty_runs.wait_idle()  # the check the server ran on startup, on the empty database
+    in_lap = write_ld(simulate((1.0,), stops={1: 40.0})[0])  # one lap, through the pits: not clean
+    job = upload(client, ("R1.zip", make_zip({
+        "R1/01_R1/run.ld": lapped_log(), "R1/02_R1/run.ld": in_lap,
+        "R1/03_R1/run.ld": write_ld(simulate((0.95, 1.0, 0.97))[0]),
+        "R1/04_R1/run.ld": write_ld(simulate((0.9, 0.95, 1.0, 0.98))[0])})))
+    app.routers.imports._jobs.join()  # what an import does once it shows done: duplicates, runs with no lap to use
+    job = client.get(f"/imports/{job['id']}").json()
+    assert job["status"] == "done" and len(job["session_ids"]) == 3
+    assert job["skipped"] == [{"file": "02_R1/run.ld", "reason": "No lap to use: only an out-lap and an in-lap"}]
+    assert sorted(client.get(f"/sessions/{i}").json()["name"] for i in job["session_ids"]) == \
+        ["01_R1", "03_R1", "04_R1"]
+    assert len(stored_files(tmp_path, ".ld")) == 3
+
+    # runs already on the server left with a lap or two, none clean: they go, unless a person put something on them
+    a, b, c = job["session_ids"]
+    with app.db.SessionLocal() as db:
+        for sid in (a, b, c):
+            laps = db.query(app.models.Lap).filter_by(session_id=sid).order_by(app.models.Lap.number).all()
+            for lap in laps[2:]:
+                db.delete(lap)
+            for lap in laps[:2]:
+                lap.clean = False
+        db.commit()
+    assert client.post(f"/sessions/{a}/debriefs", json={"transcript": "Box this lap"}).status_code == 201
+    assert client.put(f"/sessions/{b}/driver", json={"driver_name": "Gabriele"}).status_code == 200
+    assert app.empty_runs.cleanup() == {"removed": [c], "kept": []}
+    assert {s["id"] for s in client.get("/sessions").json()} == {a, b}
+    assert len(stored_files(tmp_path, ".ld")) == 2
+
+
+
+def test_the_lap_to_grid_goes_and_a_practice_run_stays(client):
+    # Gabriele, 2026-10-08: "You can delete the "lap to grid" which is normally the first run from pits to grid"
+    import app.empty_runs
+    import app.routers.imports
+
+    app.empty_runs.wait_idle()
+    job = upload(client, ("Round.zip", make_zip({
+        "Round/01_FP1/a.ld": write_ld(simulate((0.85,))[0]), "Round/01_FP1/b.ld": write_ld(simulate((0.92, 0.99))[0]),
+        "Round/04_R1/a.ld": write_ld(simulate((0.8,))[0]),  # from the pits to the grid: one slow lap
+        "Round/04_R1/b.ld": lapped_log(), "Round/04_R1/c.ld": write_ld(simulate((0.95, 1.0, 0.97))[0])})))
+    app.routers.imports._jobs.join()
+    job = client.get(f"/imports/{job['id']}").json()
+    assert job["skipped"] == [{"file": "04_R1/a.ld",
+                               "reason": "The lap to grid: from the pits to the grid before the race"}]
+    names = sorted(client.get(f"/sessions/{i}").json()["name"] for i in job["session_ids"])
+    assert len(names) == 4 and sum(n.startswith("01_FP1") for n in names) == 2
+    assert app.empty_runs.cleanup() == {"removed": [], "kept": []}  # the race's first run now is its first stint

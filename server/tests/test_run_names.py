@@ -67,9 +67,9 @@ def test_what_the_folders_and_the_logger_say():
     # a name given here before says nothing: "FP2 run 1" was a wrong guess, the logger's "FP" stands
     mark = rm.RunNameMark(auto_name="FP2 run 1")
     assert run_names.hint(_run("FP2 run 1", "FP"), mark) == ("practice", None)
-    assert [run_names.run_name("T2", 1, 1), run_names.run_name("FP1", 2, 4), run_names.run_name("Q1", 1, 1),
-            run_names.run_name("R2", 1, 2), run_names.run_name("R1", 1, 1)] == \
-        ["PT2 stint 1", "FP1 stint 2", "Q1", "R2 stint 1", "R1 stint 1"]  # a race stint alone too (a DNF)
+    assert [run_names.run_name("T2", 1), run_names.run_name("FP1", 2), run_names.run_name("Q1", 1),
+            run_names.run_name("Q1", 2), run_names.run_name("R2", 1), run_names.run_name("R1", 1)] == \
+        ["PT2 stint 1", "FP1 stint 2", "Q1", "Q1", "R2 stint 1", "R1 stint 1"]  # no stints in Q; a DNF's race too
 
 
 def test_logs_saved_after_the_session_go_to_the_last_one_of_their_kind():
@@ -101,3 +101,72 @@ def test_quali_runs_too_close_to_call_are_told_by_who_started_race_1():
     assert got == {10: "Q2", 11: "Q1"}
     # no driver known: still asked
     assert run_names._by_driver([models.RunSession(id=10)], {}, {10: ["Q1", "Q2"]}, {10: (t, 0)}) == {}
+
+
+def _moves(*args):
+    moves, ask = run_names._quali_per_driver(*args)
+    assert ask == {}
+    return moves
+
+
+def test_two_runs_in_one_qualifying_are_its_two_drivers():
+    # Gabriele, 2026-10-08: "there are no stints in Q, so a second run is the second driver"
+    table = run_names.timetable(_round(("Q1", "2026-09-19T11:15:00"), ("Q2", "2026-09-19T11:40:00"),
+                                       ("R1", "2026-09-19T17:25:00"), ("Q3", "2026-09-20T09:00:00")))
+    t = datetime(2026, 9, 19, 12, 5)
+    a, b = models.RunSession(id=1), models.RunSession(id=2)
+    order = {1: (t, 0), 2: (t, 400), 3: (t.replace(hour=17), 0), 4: (t, 900)}
+    # one log of both, or one download after both: the run that ran first is Q1, the next driver's run Q2
+    assert _moves([a, b], {1: "Q1", 2: "Q1"}, order, table, set()) == {2: "Q2"}
+    assert _moves([a, b], {1: "Q2", 2: "Q2"}, order, table, set()) == {1: "Q1"}
+    # the drivers known: the one who started Race 1 qualified first
+    piana, rackl = 1, 2
+    a.driver_id, b.driver_id = piana, rackl
+    r1 = models.RunSession(id=3, driver_id=rackl)
+    codes = {1: "Q1", 2: "Q1", 3: "R1"}
+    assert _moves([a, b, r1], codes, order, table, set()) == {1: "Q2"}  # Rackl stays in Q1
+    b.driver_id = None  # the other run's driver not known yet: Piana didn't start Race 1, so not Q1
+    assert _moves([a, b, r1], codes, order, table, set()) == {1: "Q2"}
+    # one driver's two logs stay together
+    b.driver_id = piana
+    assert _moves([a, b, r1], codes, order, table, set()) == {}
+    # a session tapped by hand stays; the other driver takes the free one
+    b.driver_id = None
+    assert _moves([a, b], {1: "Q1", 2: "Q1"}, order, table, {2}) == {1: "Q2"}
+    # nowhere free that day (Q2 holds a run, Q3 is the next day): each keeps Q1, told apart by its driver
+    c = models.RunSession(id=4)
+    assert _moves([a, b, c], {1: "Q1", 2: "Q1", 4: "Q2"}, order, table, set()) == {}
+
+    # more than two (a red flag split someone's qualifying): asked, "If you find more than 2 runs for quali, ask"
+    a.driver_id = b.driver_id = None
+    d = models.RunSession(id=5)
+    order[5] = (t, 1200)
+    three = ([a, b, d], {1: "Q1", 2: "Q1", 5: "Q1"}, order, table)
+    assert run_names._quali_per_driver(*three, set()) == ({}, {i: ["Q1", "Q2"] for i in (1, 2, 5)})
+    assert run_names._quali_per_driver(*three, {1, 2}) == ({}, {5: ["Q1", "Q2"]})  # the ones tapped stay
+    a.driver_id, b.driver_id, d.driver_id = piana, piana, rackl  # every driver known: no need to ask
+    assert run_names._quali_per_driver(*three, set()) == ({5: "Q2"}, {})
+
+
+def test_a_race_has_two_stints_one_per_driver():
+    # Gabriele, 2026-10-08: "R1 has two stints"; "races for ADAC GT4 are only two stints ... 60m pitstop for driver
+    # change ... between minute 25 and 35"
+    piana, rackl = 1, 2
+    runs = [models.RunSession(id=i, driver_id=d) for i, d in ((1, piana), (2, piana), (3, rackl))]
+    assert run_names._stints("R1", runs) == [1, 1, 2]  # one stint's log saved twice
+    assert run_names._stints("FP1", runs) == [1, 2, 3]  # practice: every run out of the pits is a stint
+    # the drivers not known: by the logger's clock, the stop for the driver change from minute 25 on
+    unknown = [models.RunSession(id=i) for i in (1, 2, 3, 4)]
+    assert run_names._stints("R1", unknown, {1: (1.5, 13.0), 2: (14.5, 27.0), 3: (31.0, 48.0), 4: (50.0, 60.0)}) \
+        == [1, 1, 2, 2]
+    # "any interruption during the race that is longer than a pitstop is a red flag": the stint goes on after it
+    red = [models.RunSession(id=i, laps=[models.Lap(number=1, time_s=104.0, start_s=0.0)]) for i in (1, 2, 3)]
+    assert run_names._stints("R1", red, {1: (1.5, 20.0), 2: (41.0, 50.0), 3: (55.0, 60.0)}) == [1, 1, 2]
+
+    def laps(n):
+        return [models.Lap(number=k + 1, time_s=100.0, start_s=100.0 * k) for k in range(n)]
+
+    # no clock to trust either: by the race's laps before each run (6 laps: 10 minutes, then 25)
+    a, b, c = (models.RunSession(id=i, laps=laps(n)) for i, n in ((1, 6), (2, 9), (3, 15)))
+    assert run_names._stints("R1", [a, b, c]) == [1, 1, 2]
+    assert run_names._stints("R1", [models.RunSession(id=1), models.RunSession(id=2)]) == [1, 1]
