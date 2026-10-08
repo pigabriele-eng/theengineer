@@ -135,7 +135,7 @@ def default_pick(db: Session, run: _Run) -> tuple[set[tuple[int, int]], str | No
     if not laps:
         return set(), None
     timed = {x["session_id"] for x in laps}
-    found = [p for p in run_parts.parts(run.runs, run.labels) if timed & set(p.ids)]
+    found = [p for p in run_parts.blocks(run_parts.parts(run.runs, run.labels)) if timed & set(p.ids)]  # Q1 + Q2
     last = found[-1] if found else None
     ids = set(last.ids) if last else {run.session.id}
     best: dict[object, dict] = {}

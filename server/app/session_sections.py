@@ -5,7 +5,9 @@ laps that have better sections").
 GET /events/{id}/latest-session/sections: the official session (FP1, Q1, R1..., as run_parts groups the runs; a log
 folder's name such as "05_R2" when the runs aren't named after the timetable) that holds the most recently uploaded
 timed run, with every clean lap of it by stint (run) in the order they ran, and each lap's time in each section of the
-lap comparison. The app puts each lap against the fastest one and flags the sections where it was quicker.
+lap comparison. The app puts each lap against the fastest one and flags the sections where it was quicker. A day's
+qualifying sessions are one session here ("Q1 + Q2", run_parts.blocks): each driver has a qualifying of their own,
+and the two are compared with each other.
 
 Another session instead, and stints of other sessions mixed in (Gabriele, 2026-10-08: "quickly select other sessions or
 runs to compare. Standard it should open the latest session but should be possible to tap the session and change it"):
@@ -114,7 +116,7 @@ def latest_part(db: Session, sessions: list[models.RunSession]
     when = upload_times(db, timed)
     order = {lab.id: k for k, lab in enumerate(labels)}
     latest = max(timed, key=lambda s: (when[s.id], order.get(s.id, -1)))
-    part = next((p for p in run_parts.parts(sessions, labels) if latest.id in p.ids), None)
+    part = next((p for p in run_parts.blocks(run_parts.parts(sessions, labels)) if latest.id in p.ids), None)
     return part, labels
 
 
@@ -136,10 +138,11 @@ def _scope(event_id: int, picked: str | None = None, add: tuple[int, ...] = ()) 
 
 
 def timed_parts(sessions: list[models.RunSession], labels: list[run_labels.RunLabel]) -> list[run_parts.Part]:
-    """The event's sessions with a timed run, in the order they ran, each with its timed runs only."""
+    """The event's sessions with a timed run, in the order they ran, each with its timed runs only (a day's
+    qualifying sessions as one: run_parts.blocks)."""
     by_id = {s.id: s for s in sessions}
     out = []
-    for p in run_parts.parts(sessions, labels):
+    for p in run_parts.blocks(run_parts.parts(sessions, labels)):
         runs = [lab for lab in p.runs if lab.id in by_id and _timed(by_id[lab.id])]
         if runs:
             out.append(run_parts.Part(p.code, p.title, p.official, runs))
@@ -349,7 +352,7 @@ def latest_session_sections(event_id: int, part: str | None = None,
     if part is None or part == latest.code:
         chosen = next((p for p in parts if p.code == latest.code), latest)
     else:
-        chosen = next((p for p in parts if p.code == part), None)
+        chosen = run_parts.find_block(parts, part)
         if chosen is None:
             raise HTTPException(404, f"No session {part} with a timed run in this event")
     if not wanted and chosen.code == latest.code:
@@ -362,7 +365,7 @@ def latest_session_sections(event_id: int, part: str | None = None,
     hit = page_cache.lookup(db, scope, sig)
     if hit is not None and hit[0] == 200:
         return {**hit[1], **extra}
-    session_of = {lab.id: p.title for p in parts for lab in p.runs}
+    session_of = {lab.id: p.title for p in run_parts.parts(sessions, labels) for lab in p.runs}  # its own: "Q2"
     answer = {**base(event_id, picked, by_id, session_of), **extra}
     with _lock:
         job = _working.get(scope)

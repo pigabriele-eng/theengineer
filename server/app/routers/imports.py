@@ -234,6 +234,7 @@ def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]], event
             if gone:
                 job.session_ids = [i for i in job.session_ids if i not in gone]
                 db.commit()
+            _drop_unused(db, job)
             _name_runs(db, topped_up if job.session_ids else set())
         try:  # work out the pages of what was imported now, in the background, so they are ready when opened
             if prebuild.enabled():
@@ -307,6 +308,27 @@ def _already_uploaded(db: Session, job: models.ImportJob, logs: list[archive.Ite
     if already:
         log.warning("import %s: %s logs already uploaded, left out", job.id, len(already))
     return prints, already, homes
+
+
+def _drop_unused(db: Session, job: models.ImportJob) -> None:
+    """Runs of the upload with no lap to use (a lap or two, none clean: an out-lap and an in-lap) go
+    (empty_runs.py), listed as left out with why."""
+    files = {f.session_id: "/".join(x for x in ((f.meta or {}).get("folder"), f.filename) if x) for f in db.scalars(
+        select(models.LoggerFile).where(models.LoggerFile.session_id.in_(job.session_ids or [])))}
+    try:
+        gone = set(empty_runs.cleanup(only=set(job.session_ids or []))["removed"])
+    except Exception:
+        log.exception("Checking import %s for runs with no lap to use failed", job.id)
+        return
+    if gone:
+        db.refresh(job)
+        job.session_ids = [i for i in job.session_ids if i not in gone]
+        job.skipped = [*job.skipped, *({"file": files.get(i, f"Run {i}"), "reason": NO_LAP_TO_USE}
+                                       for i in sorted(gone))]
+        db.commit()
+
+
+NO_LAP_TO_USE = "No lap to use: only an out-lap and an in-lap"
 
 
 def _name_runs(db: Session, event_ids: set[int]) -> None:

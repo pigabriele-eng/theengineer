@@ -7,7 +7,7 @@ from sqlalchemy import select
 from app import models
 from app.event_delete import scope_named
 from app.run_labels import label_runs
-from app.run_parts import code_of, parts
+from app.run_parts import blocks, code_of, find_block, parts
 from tests.synthetic import simulate, write_ld
 
 SECTORED = [("T1", 100, None), ("T2", 280, "T2-T5"), ("T3", 300, "T2-T5"), ("T4", 320, "T2-T5"),
@@ -57,6 +57,22 @@ def test_an_event_s_runs_by_session_in_the_order_they_ran():
     assert parts(runs, labels)[0].title == "FP1" and parts([_run(9, "Pre-qualifying stint 1")],
                                                              label_runs([_run(9, "Pre-qualifying stint 1")]))[0].title \
         == "Pre-qualifying"
+
+
+def test_comparisons_take_a_day_s_qualifying_sessions_together():
+    # Gabriele, 2026-10-08: "there are no stints in Q, so a second run is the second driver": GT4 European runs Q1
+    # and Q2 back to back, one per driver; ADAC runs Q2 the next day
+    runs = [_run(1, "FP1 stint 1", at="09:00:00"), _run(2, "Q1", at="11:15:00", driver="Gabriele Piana"),
+            _run(3, "Q2", at="11:40:00", driver="Max Rackl"), _run(4, "R1 stint 1", at="17:25:00"),
+            _run(5, "Q3", date="20/09/2026", at="09:00:00")]
+    found = parts(runs, label_runs(runs))
+    assert [p.code for p in found] == ["FP1", "Q1", "Q2", "R1", "Q3"]  # a report each
+    together = blocks(found)
+    assert [(p.code, p.title, p.ids) for p in together] == [
+        ("FP1", "FP1", [1]), ("Q1 + Q2", "Q1 + Q2", [2, 3]), ("R1", "R1", [4]), ("Q3", "Q3", [5])]
+    assert [p.code for p in found] == ["FP1", "Q1", "Q2", "R1", "Q3"]  # left as they were
+    assert find_block(together, "Q2").code == "Q1 + Q2" and find_block(together, "Q1 + Q2").ids == [2, 3]
+    assert find_block(together, "R1").ids == [4] and find_block(together, "R2") is None
 
 
 def test_a_folder_name_met_on_two_days_is_a_session_per_day():
