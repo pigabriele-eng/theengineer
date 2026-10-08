@@ -232,7 +232,7 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
         <View style={styles.list}>
           {answer.runs.map((r) => (
             <View key={r.id} style={styles.stint}>
-              <StintHead run={r} tags={tags} from={sessionOf(r) !== answer.session?.title ? sessionOf(r) : null} />
+              <StintHead run={r} tags={tags} from={mixedFrom(r, answer.session?.title)} />
               {r.laps.map((l) => {
                 const ref = { session_id: r.id, lap: l.number };
                 return (
@@ -331,6 +331,13 @@ function OnTraces({ picks, runs, colorOf, onRemove }: {
       </View>
     </View>
   );
+}
+
+/** The session a stint mixed in from another session came from, when its name doesn't already say it ("R1 stint 2"
+ * does). */
+function mixedFrom(run: SessionRun, shown: string | undefined): string | null {
+  const from = sessionOf(run);
+  return from && from !== shown && !run.name.startsWith(from) ? from : null;
 }
 
 /** A stint's head: its name, its driver and its tyres (a tap on them opens the four levels under it). */
