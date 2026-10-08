@@ -3,6 +3,9 @@
 // import job is followed with api.importJob as before.
 import { API_URL, ImportJob } from '@/lib/api';
 import { accessToken, authEnabled, signOut } from '@/lib/auth';
+import { CUT, Retry, withRetries } from '@/lib/uploadRetry';
+
+export type { Retry };
 
 export type PickedFile = { uri: string; name: string; file?: File | Blob; mimeType?: string; size?: number | null };
 
@@ -19,8 +22,9 @@ export const sizeOf = (files: PickedFile[]) =>
   files.reduce((n, f) => n + (f.file ? f.file.size : f.size ?? 0), 0);
 
 /** Send the files into an event (or, with null, a new event per zip) and hand back the import job the server made;
- * `onSent` hears how much has gone out as it goes. */
-export async function sendImport(files: PickedFile[], eventId: number | null, onSent: (s: Sent) => void): Promise<ImportJob> {
+ * `onSent` hears how much has gone out as it goes, `onRetry` when it is cut off and sent again (null once it goes). */
+export async function sendImport(files: PickedFile[], eventId: number | null, onSent: (s: Sent) => void,
+  onRetry?: (r: Retry | null) => void): Promise<ImportJob> {
   const form = new FormData();
   for (const f of files) {
     const part = formFile(f, f.mimeType || 'application/octet-stream');
@@ -28,23 +32,31 @@ export async function sendImport(files: PickedFile[], eventId: number | null, on
     else form.append('files', part);
   }
   if (eventId != null) form.append('event_id', String(eventId));
-  const token = await accessToken();
   const guess = sizeOf(files);
 
-  const res = await new Promise<{ status: number; body: string }>((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    let total = guess;
-    xhr.open('POST', `${API_URL}/imports`);
-    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable && e.total) total = e.total;
-      onSent({ loaded: e.loaded, total });
-    };
-    xhr.upload.onload = () => onSent({ loaded: total || 1, total: total || 1 }); // all of it has gone out
-    xhr.onload = () => resolve({ status: xhr.status, body: xhr.responseText });
-    xhr.onerror = () => reject(new Error('The upload was cut off: check the connection and try again.'));
-    xhr.ontimeout = () => reject(new Error('The upload took too long: try fewer files at a time.'));
-    xhr.send(form);
+  const once = async () => {
+    const token = await accessToken();
+    return new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      let total = guess;
+      xhr.open('POST', `${API_URL}/imports`);
+      if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && e.total) total = e.total;
+        onSent({ loaded: e.loaded, total });
+      };
+      xhr.upload.onload = () => onSent({ loaded: total || 1, total: total || 1 }); // all of it has gone out
+      xhr.onload = () => resolve({ status: xhr.status, body: xhr.responseText });
+      xhr.onerror = () => reject(new Error(CUT));
+      xhr.ontimeout = () => reject(new Error('The upload took too long: try fewer files at a time.'));
+      xhr.send(form);
+    });
+  };
+
+  // cut off by a server restart: sent again after a wait (lib/uploadRetry.ts), from the start
+  const res = await withRetries(once, (r) => {
+    onRetry?.(r);
+    if (r) onSent({ loaded: 0, total: guess });
   });
 
   if (res.status === 401 && authEnabled) await signOut('Your session has ended. Please sign in again.');
