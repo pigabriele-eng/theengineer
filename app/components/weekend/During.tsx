@@ -1,26 +1,24 @@
 // A race weekend while it is on (Gabriele, 2026-10-07: "during the race weekend the effort shifts to data
 // comparison"): the answers first, then the runs. Three things for each driver's next run, each official session's
-// report (FP1, Q1, R1), the latest run against the event's best (where the time is, the traces), the debriefs of every
+// report (FP1, Q1, R1), the fastest runs of the latest session against each other (where the time is, the traces), the debriefs of every
 // run with a big button to record one for the latest. Setup suggestions live in the setup tool, on demand. Then the
 // event page's own sections (its runs by day, side by side, what it was run with, its results, a run to add), passed in
 // as children.
 import { Href, Link, useFocusEffect, useRouter } from 'expo-router';
-import { ReactNode, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, View as Box, StyleSheet } from 'react-native';
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 
 import { TopThings } from '@/components/Coaching';
-import { CompareTraces, LineKey, useLapColors, WhereTheTimeIs } from '@/components/CompareViews';
 import { ErrorLine, MainButton, Note } from '@/components/Controls';
-import { Fig, Label, Section, TextLink, useWide } from '@/components/Programme';
+import { Section, TextLink } from '@/components/Programme';
+import FastestRuns from '@/components/weekend/FastestRuns';
 import SessionReports from '@/components/weekend/SessionReports';
 import { Text, View } from '@/components/Themed';
-import { CompareResult, compareLaps, encodePicks, formatLap, signedSeconds } from '@/lib/compare';
 import { dayLabel, eventsApi, Folder } from '@/lib/events';
-import { afterOthers } from '@/lib/loadLast';
 import { poll } from '@/lib/poll';
 import { fetchEventDebriefs } from '@/lib/weekend';
 import {
-  debriefLines, DebriefLine, EventDebrief, LapRef, latestAgainstBest, latestByDriver, latestRun,
+  debriefLines, DebriefLine, EventDebrief, latestAgainstBest, latestByDriver, latestRun,
 } from '@/lib/weekendRuns';
 import { face, Fonts, themed, Type, useTheme } from '@/constants/Theme';
 
@@ -40,7 +38,8 @@ export default function WeekendDuring({ eventId, folder: given, children }: {
   const styles = useStyles();
   const drivers = useMemo(() => latestByDriver(folder), [folder]);
   const pair = useMemo(() => latestAgainstBest(folder), [folder]);
-  // 1 three things, 2 the latest run against the best (3 where the time is, 4 the traces), then the session reports
+  // 1 three things, 2 the fastest runs of the latest session against each other (3 where the time is, 4 the traces;
+  // with two timed runs: latestAgainstBest says whether there are), then the session reports
   // just above the debriefs (Gabriele, 2026-10-08: the comparison before the session reports, the session reports moved
   // down before the debriefs; setup suggestions off the reporting pages, separate and on demand; lib/weekendRuns.ts
   // duringSections)
@@ -52,7 +51,7 @@ export default function WeekendDuring({ eventId, folder: given, children }: {
         dek="For each driver’s latest run: the costliest mistakes that repeat, each at a different corner, what to do instead and what it is worth a lap.">
         <ThreeThings eventId={eventId} drivers={drivers} />
       </Section>
-      <LatestAgainstBest no={2} pair={pair} />
+      <FastestRuns no={2} eventId={eventId} folder={folder} />
       <Section no={reportsNo} title="Session reports"
         dek="One report per session of the weekend (FP1, Q1, the races), from every run of it.">
         <SessionReports eventId={eventId} />
@@ -83,125 +82,6 @@ function ThreeThings({ eventId, drivers }: { eventId: number; drivers: ReturnTyp
         <TextLink href={{ pathname: '/technique', params: { event: eventId } }} label="Technique check, every corner" arrow />
       </View>
     </>
-  );
-}
-
-// ---------- the latest run against the best ----------
-
-/** True once the section is near the screen (on the web), or once the page's other reads have answered: the heavy
- * read it needs then loads last, and doesn't hold up the answers above it on the server. Stays true. */
-function useLoadLast(ref: RefObject<Box | null>, on: boolean) {
-  const [go, setGo] = useState(false);
-  useEffect(() => {
-    if (!on || go) return;
-    const stop = afterOthers(() => setGo(true));
-    const node = ref.current as unknown;
-    let seen: IntersectionObserver | undefined;
-    if (typeof IntersectionObserver !== 'undefined' && typeof Element !== 'undefined' && node instanceof Element) {
-      seen = new IntersectionObserver((es) => es.some((e) => e.isIntersecting) && setGo(true),
-        { rootMargin: '0px 0px 200px 0px' });
-      seen.observe(node);
-    }
-    return () => {
-      stop();
-      seen?.disconnect();
-    };
-  }, [on, go]); // eslint-disable-line react-hooks/exhaustive-deps -- the ref is the section's, for good
-  return go;
-}
-
-/** The latest run's best lap against the event's best: who, the gap, then where the time is and the traces (one
- * request, nothing to pick, made last: useLoadLast), and the full comparison one tap away. Sections `no` to
- * `no + 2`. */
-function LatestAgainstBest({ no, pair }: { no: number; pair: ReturnType<typeof latestAgainstBest> }) {
-  const styles = useStyles();
-  const wide = useWide();
-  const colors = useLapColors([0, 1]);
-  const at = useRef<Box>(null); // where the sections start: on the web, a DOM element to watch come into view
-  const [data, setData] = useState<CompareResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [focus, setFocus] = useState(0);
-  const [zoom, setZoom] = useState<string | null>(null);
-  const [cursor, setCursor] = useState<number | null>(null);
-  const laps = pair ? [pair.latest, pair.best].map(({ session_id, lap }) => ({ session_id, lap })) : [];
-  const key = encodePicks(laps);
-  const go = useLoadLast(at, key !== '');
-  useEffect(() => {
-    if (!key || !go) return;
-    let live = true;
-    setData(null);
-    setError(null);
-    setFocus(0);
-    setZoom(null);
-    setCursor(null);
-    compareLaps(laps).then((d) => live && setData(d), (e) => live && setError((e as Error).message));
-    return () => {
-      live = false;
-    };
-  }, [key, go]); // eslint-disable-line react-hooks/exhaustive-deps -- the laps, by value
-  const step = data?.traces.step_m ?? 5;
-  const show = useCallback((code: string | null, at?: number) => {
-    setZoom(code);
-    setCursor(at != null ? Math.round(at / step) : null);
-  }, [step]);
-
-  if (!pair) {
-    return (
-      <Section no={no} title="Latest run against the best">
-        <Note>Two timed runs are needed: the latest run’s best lap is put against the event’s best.</Note>
-      </Section>
-    );
-  }
-  const gap = pair.latest.time - pair.best.time;
-  const waiting = error ? <ErrorLine>{`Can’t compare the two laps: ${error}`}</ErrorLine>
-    : <View style={styles.working}><ActivityIndicator /><Note>Placing the two laps on one line…</Note></View>;
-  return (
-    <Box ref={at}>
-      <Section no={no} title="Latest run against the best"
-        dek={pair.holdsBest ? 'The latest run holds the event’s best lap: here against the best of the other runs.'
-          : 'The latest run’s best lap against the event’s best lap.'}>
-        <View style={wide ? styles.vs : styles.vsPhone}>
-          <View style={styles.vsLaps}>
-            <LapLine color={colors.laps[0]} label="Latest run" lap={pair.latest} />
-            <LapLine color={colors.laps[1]} label={pair.holdsBest ? 'Next best' : 'Event’s best'} lap={pair.best} />
-          </View>
-          <Fig label={pair.holdsBest ? 'Ahead by' : 'Gap'} value={signedSeconds(gap)} unit="s" size={wide ? 64 : 52}
-            style={wide ? styles.vsFig : styles.vsFigPhone} />
-        </View>
-        <View style={styles.links}>
-          <TextLink href={{ pathname: '/compare', params: { laps: encodePicks([pair.latest, pair.best]) } }}
-            label="Open the full comparison" arrow red />
-        </View>
-      </Section>
-      {data ? (
-        <>
-          <WhereTheTimeIs no={no + 1} data={data} colors={colors} focus={focus} onFocus={setFocus} onShow={show} />
-          <CompareTraces no={no + 2} data={data} colors={colors} zoom={zoom} onZoom={setZoom}
-            cursor={cursor} onCursor={setCursor} />
-        </>
-      ) : (
-        <>
-          <Section no={no + 1} title="Where the time is">{waiting}</Section>
-          <Section no={no + 2} title="Traces">{waiting}</Section>
-        </>
-      )}
-    </Box>
-  );
-}
-
-function LapLine({ color, label, lap }: { color: string; label: string; lap: LapRef }) {
-  const styles = useStyles();
-  return (
-    <View style={styles.lapLine}>
-      <LineKey color={color} />
-      <View style={styles.grow}>
-        <Label>{label}</Label>
-        <Text style={styles.lapName} numberOfLines={2}>
-          {`${lap.name} · lap ${lap.lap}${lap.driver ? ` · ${lap.driver}` : ''}`}
-        </Text>
-      </View>
-      <Text style={styles.lapTime}>{formatLap(lap.time)}</Text>
-    </View>
   );
 }
 
@@ -302,17 +182,6 @@ const useStyles = themed((c) => ({
   driverHead: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 16, rowGap: 6,
     borderBottomWidth: 3, borderColor: c.rule, paddingBottom: 6, marginBottom: 10 },
   driverName: { fontFamily: Fonts.display, fontSize: 28, lineHeight: 32, textTransform: 'uppercase', color: c.text },
-
-  // the latest run against the best
-  vs: { flexDirection: 'row', alignItems: 'flex-end', gap: 32 },
-  vsPhone: { gap: 16 },
-  vsLaps: { flex: 1, minWidth: 0, maxWidth: 640 },
-  vsFig: { paddingLeft: 28, borderLeftWidth: 1, borderColor: c.rule },
-  vsFigPhone: { borderTopWidth: 1, borderColor: c.rule, paddingTop: 10 },
-  lapLine: { flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderColor: c.separator,
-    paddingVertical: 10 },
-  lapName: { fontFamily: face('body', 600), fontSize: 17, lineHeight: 22, color: c.text, marginTop: 2 },
-  lapTime: { ...Type.number, fontFamily: face('label', 700), fontSize: 20, color: c.text },
 
   // debriefs
   record: { alignSelf: 'flex-start', marginBottom: 18 },
