@@ -294,3 +294,36 @@ def test_comparisons_read_no_log_once_their_sessions_are_packed(client, monkeypa
             assert {r.session_id: r.path for r in db.scalars(select(models.LapPackFile))} == \
                 {sid: r.path for sid, r in rows.items()}
         assert not locked
+
+
+def test_a_comparison_packs_a_session_whose_traces_are_ready(client):
+    """A session with its compact traces but no pack yet (just uploaded): the comparison makes the pack itself, which
+    reads fewer channels than tracing from the log, and keeps it."""
+    import app.lappacks
+    import app.routers.lapcompare
+    import app.routers.reports
+    from app import db as app_db
+    from app import models
+
+    track = client.post("/tracks", json={"name": "Test ring", "corners": [
+        {"code": "T1", "apex_m": 300}, {"code": "T2", "apex_m": 700}]}).json()
+    event = client.post("/events", json={"name": "Test day", "track_id": track["id"]}).json()
+    ids = []
+    for name, paces in (("Ben", (0.97, 0.98)), ("Anna", (1.0, 0.99))):
+        ids.append(client.post("/sessions", json={"event_id": event["id"], "name": f"Run {name}"}).json()["id"])
+        _upload(client, ids[-1], paces)
+    picks = {"laps": [{"session_id": ids[0], "lap": 2}, {"session_id": ids[1], "lap": 1}]}
+    first = client.post("/compare/laps", json=picks)  # from the logs; packs and traces made in the background
+    assert first.status_code == 200, first.text
+    assert app.lappacks.wait_idle() and app.routers.reports.wait_idle()
+    with app_db.SessionLocal() as db:
+        db.query(models.LapPackFile).delete()
+        db.commit()
+
+    app.routers.lapcompare._answers.clear()
+    again = client.post("/compare/laps", json=picks)
+    assert again.status_code == 200, again.text
+    with app_db.SessionLocal() as db:  # made by the request, not left to the background
+        rows = {r.session_id: r for r in db.scalars(select(models.LapPackFile))}
+    assert set(rows) == set(ids) and all(r.path and r.error is None for r in rows.values())
+    _same_comparison(first.json(), again.json())
