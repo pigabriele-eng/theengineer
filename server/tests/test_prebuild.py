@@ -292,7 +292,9 @@ def test_an_import_is_prebuilt_and_every_page_then_opens_at_once(client, monkeyp
         db.execute(models.ReportCache.__table__.delete())
         db.commit()
         pieces = prebuild.everything(db)
-    assert pieces[0] == ("traces", (min(sids),)) and ("report", ("event", ev)) in pieces
+    # the stints' lap packs first (queued once), then the event's pieces from its traces
+    assert pieces[0] == ("lap packs", (tuple(sorted(sids)),)) and pieces[1] == ("traces", (min(sids),))
+    assert pieces.count(pieces[0]) == 2 and ("report", ("event", ev)) in pieces
     monkeypatch.setattr(prebuild, "START_DELAY_S", 0)
     prebuild.start()
     deadline = time.monotonic() + 60

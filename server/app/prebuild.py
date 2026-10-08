@@ -33,9 +33,10 @@ leaves a quiet moment), and the prebuild's thread runs at the lowest CPU priorit
 worked out, the piece in hand gets the CPU only when the request doesn't want it.
 
 On server start (Render starts it again after each deploy, and when it wakes from sleep), once the start-up checks
-are done and the server has had a quiet moment (the first pages after a wake-up come first), every event (newest
-first), then the runs in no event and the prep reports, go through the same pieces at the lowest priority: whatever
-is missing or out of date (after a new version of a page, say) is worked out again.
+are done and the server has had a quiet moment (the first pages after a wake-up come first), every event's lap packs
+(newest first: those missing are made, so the first comparison of a stint stored before them reads no log), then
+every event (newest first), then the runs in no event and the prep reports, go through the same pieces at the lowest
+priority: whatever is missing or out of date (after a new version of a page, say) is worked out again.
 
 PREBUILD=off turns it off (the tests do, except their own): an import then queues only its reports, as before.
 """
@@ -449,16 +450,21 @@ def _start_pass() -> None:
 
 
 def everything(db: Session) -> list[Piece]:
-    """Every event's pieces (newest first), then the runs in no event, then every prep report."""
+    """Every event's lap packs (newest first: the first Compare laps of a stint stored before they were made then
+    reads no log), then every event's pieces (newest first), then the runs in no event, then every prep report."""
     from app.prep import plan as prep_plan
 
     events = db.execute(select(models.Event.id, models.Event.date)).all()
-    out: list[Piece] = []
+    by_event: list[list[int]] = []
     for eid, _ in sorted(events, key=lambda e: (e.date is not None, e.date, e.id), reverse=True):
         sids = db.scalars(select(models.RunSession.id).where(models.RunSession.event_id == eid)
                           .order_by(models.RunSession.id)).all()
         if sids:
-            out += pieces(db, list(sids), prep=False)
+            by_event.append(list(sids))
+    # the same piece as the event's own below (so it is queued once): one log at a time, those made skipped
+    out: list[Piece] = [("lap packs", (tuple(sids),)) for sids in by_event]
+    for sids in by_event:
+        out += pieces(db, sids, prep=False)
     loose = db.scalars(select(models.RunSession.id).where(models.RunSession.event_id.is_(None))
                        .order_by(models.RunSession.id.desc())).all()
     if loose:
