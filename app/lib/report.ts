@@ -76,6 +76,7 @@ export type RunTrend = {
   best_lap: number;
   median: number;
   consistency: number | null;
+  tyres?: { tyres: 'new' | 'used'; sure: boolean; why: string } | null; // the run's, why it is compared with these laps
 };
 
 export type LapRow = { run: string; lap: number; time: number; index_in_run: number };

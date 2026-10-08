@@ -118,7 +118,7 @@ def test_the_report_calls_runs_by_their_names_in_time_order(client):
     assert [r["short"] for r in body["runs"]] == ["PTS 2", "PTS 1", "Q1 RAC", "Q1 PIA"]
     assert [r["id"] for r in body["runs"]] == [ids[2], ids[0], ids[3], ids[1]]
     assert [s["name"] for s in body["sessions"]] == want
-    # the test runs lead (used tyres: no lap as quick as qualifying in so few), qualifying has its own report
+    # the test runs lead (used tyres: none as quick as qualifying), the new-tyre laps have their own report
     rep, quali = body["report"], body["report"]["condition"]["other"]
     assert rep["condition"]["tyres"] == "used" and quali["condition"]["tyres"] == "new"
     for r, names, sids in ((rep, want[:2], [ids[2], ids[0]]), (quali, want[2:], [ids[3], ids[1]])):
@@ -131,6 +131,7 @@ def test_the_report_calls_runs_by_their_names_in_time_order(client):
         assert f"{r['headline']['fastest']['run']} lap" in r["summary"]
         assert r["summary"].startswith(r["condition"]["label"])
         assert not any(x["run"].strip().isdigit() for x in trends)
+        assert all(x["tyres"]["tyres"] == r["condition"]["tyres"] for x in trends)
 
     # one run's report calls it as the event's does
     one = _wait(client, f"/reports/sessions/{ids[0]}")

@@ -663,9 +663,10 @@ def _load(db: Session, item: Item, track: models.Track | None) -> compact.Compac
 
 
 def compute(db: Session, plan: Plan) -> dict:
-    """The report, comparing laps on the same tyres only (run_tyres): qualifying's new tyres and low fuel are a
-    condition of their own, so a used-tyre lap is never measured against them. With both, the report leads with the
-    used-tyre laps (the race's condition) and carries the new-tyre laps' own report under condition.other."""
+    """The report, comparing laps on the same tyres only: each run's own, new or used (run_tyres: the driver's, else
+    guessed from its laps; a practice run can be on new tyres too), so a used-tyre lap is never measured against new
+    tyres' grip. With both, the report leads with the used-tyre laps (the race's condition) and carries the new-tyre
+    laps' own report under condition.other."""
     corners = official_corners(plan.track)
     sessions = []
     for item in _used(plan):
@@ -692,6 +693,8 @@ def compute(db: Session, plan: Plan) -> dict:
             raise
         rep["condition"] = {"tyres": g, "label": CONDITIONS[g], "laps": rep["laps_analysed"],
                             "runs": sorted(sid for sid, t in tyres.items() if t["tyres"] == g)}
+        for r in rep["trends"]["runs"]:  # each run's tyres beside its figures: why it is compared with these laps
+            r["tyres"] = tyres.get(r["session_id"])
         if out is None:
             out = rep
         else:
@@ -704,7 +707,7 @@ def compute(db: Session, plan: Plan) -> dict:
     return _plain(out)
 
 
-CONDITIONS = {run_tyres.USED: "On used tyres (practice and races)", run_tyres.NEW: "On new tyres (qualifying)"}
+CONDITIONS = {run_tyres.USED: "On used tyres", run_tyres.NEW: "On new tyres"}
 
 
 def _report_of(sessions: list[tuple[int, compact.CompactSession]], corners) -> dict:
