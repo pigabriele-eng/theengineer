@@ -76,6 +76,7 @@ export type RunTrend = {
   best_lap: number;
   median: number;
   consistency: number | null;
+  tyres?: { tyres: 'new' | 'used'; sure: boolean; why: string } | null; // the run's, why it is compared with these laps
 };
 
 export type LapRow = { run: string; lap: number; time: number; index_in_run: number };
@@ -109,6 +110,9 @@ export type Report = {
   method: string[];
   corners: { code: string; at_m: number }[];
   laps_left_out?: number; // a long event is worked out from its quickest laps only
+  // the laps it compares, all on the same tyres (qualifying's new tyres and low fuel are a condition of their own);
+  // with both, the used-tyre laps lead and the new-tyre laps have their own report in other
+  condition?: { tyres: 'new' | 'used'; label: string; laps: number; runs: number[]; other?: Report | null };
 };
 
 export type ReportStatus = 'ready' | 'queued' | 'running' | 'failed' | 'empty';

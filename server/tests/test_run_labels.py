@@ -118,15 +118,20 @@ def test_the_report_calls_runs_by_their_names_in_time_order(client):
     assert [r["short"] for r in body["runs"]] == ["PTS 2", "PTS 1", "Q1 RAC", "Q1 PIA"]
     assert [r["id"] for r in body["runs"]] == [ids[2], ids[0], ids[3], ids[1]]
     assert [s["name"] for s in body["sessions"]] == want
-    rep = body["report"]
-    trends = rep["trends"]["runs"]
-    assert [r["run"] for r in trends] == want  # the sessions table, by time of day
-    assert [r["session_id"] for r in trends] == [ids[2], ids[0], ids[3], ids[1]]
-    assert {r["run"] for r in rep["trends"]["laps"]} == set(want)
-    assert rep["headline"]["fastest"]["run"] in want and rep["headline"]["fastest"]["session_id"] in ids
-    assert all(s["times"]["best_lap"].rsplit("#", 1)[0] in want for s in rep["sections"])
-    assert f"{rep['headline']['fastest']['run']} lap" in rep["summary"]
-    assert not any(r["run"].strip().isdigit() for r in trends)
+    # the test runs lead (used tyres: none as quick as qualifying), the new-tyre laps have their own report
+    rep, quali = body["report"], body["report"]["condition"]["other"]
+    assert rep["condition"]["tyres"] == "used" and quali["condition"]["tyres"] == "new"
+    for r, names, sids in ((rep, want[:2], [ids[2], ids[0]]), (quali, want[2:], [ids[3], ids[1]])):
+        trends = r["trends"]["runs"]
+        assert [x["run"] for x in trends] == names  # the sessions table, by time of day
+        assert [x["session_id"] for x in trends] == sids
+        assert {x["run"] for x in r["trends"]["laps"]} == set(names)
+        assert r["headline"]["fastest"]["run"] in names and r["headline"]["fastest"]["session_id"] in sids
+        assert all(s["times"]["best_lap"].rsplit("#", 1)[0] in names for s in r["sections"])
+        assert f"{r['headline']['fastest']['run']} lap" in r["summary"]
+        assert r["summary"].startswith(r["condition"]["label"])
+        assert not any(x["run"].strip().isdigit() for x in trends)
+        assert all(x["tyres"]["tyres"] == r["condition"]["tyres"] for x in trends)
 
     # one run's report calls it as the event's does
     one = _wait(client, f"/reports/sessions/{ids[0]}")

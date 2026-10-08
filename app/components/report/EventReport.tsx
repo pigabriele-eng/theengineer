@@ -4,6 +4,7 @@ import {
   ActivityIndicator, LayoutChangeEvent, Pressable, ScrollView, StyleSheet, useWindowDimensions, View as Box,
 } from 'react-native';
 
+import { Tabs } from '@/components/Picks';
 import PrintButton from '@/components/PrintButton';
 import {
   B, Colophon, Fig, Folio, Hero, Label, Page, Section, Swatch, TextLink, useGutter, useWide,
@@ -87,6 +88,9 @@ const reportPhoto = (track: string | null | undefined): Photo => {
  * `onSections` says how many there are), hand it the event it has already read (`folder`), and bring the map into
  * view when a section is tapped to see it there (`onShowMap`, with the map's place in the report, where the browser
  * can't). */
+/** A condition's tab: the tyres and what runs on them. */
+const tyresWord = (r: Report) => (r.condition?.tyres === 'new' ? 'New tyres' : 'Used tyres');
+
 export default function EventReport({
   eventId, part, sessionId, embedded, firstNo = 1, onSections, folder: hostFolder, onShowMap, parts: hostParts,
 }: {
@@ -182,7 +186,11 @@ export default function EventReport({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 
-  const report = answer?.report ?? null;
+  // the laps on used tyres (practice and races) lead; qualifying's new tyres and low fuel have their own report
+  const [onNew, setOnNew] = useState(false);
+  const lead = answer?.report ?? null;
+  const other = lead?.condition?.other ?? null;
+  const report = onNew && other ? other : lead;
   // every run by its own name ("FP1 stint 1", "Q1 · Gabriele Piana"), never a number
   const names = useMemo(() => runNamer(answer), [answer]);
   const mapAt = useRef<Box>(null); // the map, embedded: on the web a DOM element to bring into view
@@ -254,6 +262,12 @@ export default function EventReport({
         report ? <>Fastest <B>{formatLap(report.headline.fastest.time)}</B></> : null,
         report ? (report.numbering === 'official' ? 'Official corner numbers' : 'Corners numbered from the log') : null,
       ]} />
+      {lead && other && (
+        <Tabs big value={report === other ? 'other' : 'lead'} onChange={(k) => setOnNew(k === 'other')}
+          style={styles.condition} label="Each lap compared only with laps on the same tyres"
+          items={[lead, other].map((r, i) => ({ key: i ? 'other' : 'lead', label: tyresWord(r),
+            sub: `${r.laps_analysed} laps · fastest ${formatLap(r.headline.fastest.time)}` }))} />
+      )}
     </View>
   );
 
@@ -928,6 +942,7 @@ function Trends({ report, names }: { report: Report; names: RunNamer }) {
             <Text style={styles.th}>Best</Text>
             <Text style={styles.th}>Median</Text>
             <Text style={styles.th}>Consistency</Text>
+            {tr.runs.some((r) => r.tyres) && <Text style={styles.th}>Tyres</Text>}
           </View>
           {tr.runs.map((r) => (
             <View key={r.run} style={styles.tr}>
@@ -939,6 +954,11 @@ function Trends({ report, names }: { report: Report; names: RunNamer }) {
               <Text style={styles.td}>{formatLap(r.best)}</Text>
               <Text style={styles.td}>{formatLap(r.median)}</Text>
               <Text style={styles.td}>{r.consistency != null ? `${r.consistency.toFixed(1)}%` : '–'}</Text>
+              {r.tyres && (
+                <Text style={styles.td} accessibilityLabel={`${r.tyres.tyres} tyres, ${r.tyres.why}`}>
+                  {r.tyres.tyres === 'new' ? 'New' : 'Used'}{r.tyres.sure ? '' : ' (guessed)'}
+                </Text>
+              )}
             </View>
           ))}
         </View>
@@ -946,6 +966,9 @@ function Trends({ report, names }: { report: Report; names: RunNamer }) {
       <Text style={styles.note}>
         Consistency is 100% when every clean lap matches the session&apos;s best, 10 points off for each 1% the median
         lap is slower.
+        {tr.runs.some((r) => r.tyres) ? ' Laps are compared only with laps on the same tyres. A run\'s tyres are ' +
+          'guessed from its laps (a short run as quick as qualifying is on new tyres) until you set them on its ' +
+          'technique check.' : ''}
         {tr.consistency != null ? ` Across all ${report.laps_analysed} laps: ${tr.consistency.toFixed(1)}%.` : ''}
       </Text>
       {longest >= 2 && (
@@ -1036,6 +1059,7 @@ function RelationRow({ r }: { r: Relation }) {
 }
 
 const useStyles = themed((c) => ({
+  condition: { marginTop: 18 },
   // text
   para: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 25, color: c.text },
   note: { ...Type.dek, fontSize: 15, lineHeight: 21, color: c.textSecondary, marginTop: 6 },

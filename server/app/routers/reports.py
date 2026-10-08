@@ -34,7 +34,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import heavy, models, page_cache, run_labels, run_parts, storage
+from app import heavy, models, page_cache, run_labels, run_parts, run_tyres, storage
 from app.analysis import compact
 from app.analysis.advice import build_report
 from app.db import SessionLocal, get_db
@@ -43,7 +43,7 @@ from app.routers.sessions import _channel_map, _line, official_corners, read_fil
 router = APIRouter(prefix="/reports")
 log = logging.getLogger(__name__)
 
-REPORT_VERSION = 9  # raise when the advice or the sections change, so every kept report is worked out again
+REPORT_VERSION = 10  # raise when the advice or the sections change, so every kept report is worked out again
 TRACES_VERSION = compact.FORMAT  # raise (in compact.py) when the reduction changes
 IMPORT_WAIT_S = 1800  # longest the report waits for an import that is reading logs
 MAX_LAPS = 250  # the quickest laps of an event the report works from, to keep within the server's memory
@@ -177,9 +177,11 @@ def _fill(db: Session, plan: Plan, sessions: list[models.RunSession]) -> Plan:
         plan.error = "These sessions were driven at different tracks, so they can't share one report"
     plan.track = plan.track or next(iter(tracks.values()), None)
     corners = official_corners(plan.track)
+    # the tyres the driver set on its runs: the report compares laps on the same tyres only
+    tyres = sorted(run_tyres.stored(db, [i.session.id for i in plan.items if i.signature]).items())
     plan.signature = _hash([REPORT_VERSION, plan.scope, corners,
                             [(i.session.id, i.name, i.session.driver.name if i.session.driver else None, i.signature)
-                             for i in plan.items if i.signature]])
+                             for i in plan.items if i.signature], tyres])
     return plan
 
 
@@ -661,14 +663,55 @@ def _load(db: Session, item: Item, track: models.Track | None) -> compact.Compac
 
 
 def compute(db: Session, plan: Plan) -> dict:
+    """The report, comparing laps on the same tyres only: each run's own, new or used (run_tyres: the driver's, else
+    guessed from its laps; a practice run can be on new tyres too), so a used-tyre lap is never measured against new
+    tyres' grip. With both, the report leads with the used-tyre laps (the race's condition) and carries the new-tyre
+    laps' own report under condition.other."""
     corners = official_corners(plan.track)
     sessions = []
     for item in _used(plan):
         cs = _load(db, item, plan.track)
         if cs is not None and cs.n_laps:
-            sessions.append((item.session.id, cs))
+            sessions.append((item.session, cs))
     if not sessions:
         raise ReportError("No clean laps to analyse")
+    tyres = run_tyres.resolve(db, [run_tyres.RunLaps(s.id, s.kind.value, s.name, [float(t) for t in cs.times])
+                                   for s, cs in sessions])
+    groups = {g: [(s.id, cs) for s, cs in sessions if tyres[s.id]["tyres"] == g] for g in CONDITIONS}
+    groups = {g: xs for g, xs in groups.items() if xs}
+    del sessions
+    lead = run_tyres.USED if run_tyres.USED in groups else run_tyres.NEW
+    out = None
+    other = None
+    for g in sorted(groups, key=lambda g: g != lead):
+        try:
+            rep = _report_of(groups.pop(g), corners)
+        except ReportError:
+            if g == lead and groups:  # too little to go on: the other tyres lead
+                lead = next(iter(groups))
+                continue
+            raise
+        rep["condition"] = {"tyres": g, "label": CONDITIONS[g], "laps": rep["laps_analysed"],
+                            "runs": sorted(sid for sid, t in tyres.items() if t["tyres"] == g)}
+        for r in rep["trends"]["runs"]:  # each run's tyres beside its figures: why it is compared with these laps
+            r["tyres"] = tyres.get(r["session_id"])
+        if out is None:
+            out = rep
+        else:
+            other = rep
+    if out is None:
+        raise ReportError("No clean laps to analyse")
+    out["condition"]["other"] = other
+    for rep in (out, other) if other else ():  # two reports: each says which laps it compares
+        rep["summary"] = f"{rep['condition']['label']}: {rep['summary']}"
+    return _plain(out)
+
+
+CONDITIONS = {run_tyres.USED: "On used tyres", run_tyres.NEW: "On new tyres"}
+
+
+def _report_of(sessions: list[tuple[int, compact.CompactSession]], corners) -> dict:
+    """The report of these runs' laps, all on the same tyres."""
     sessions, left_out = _quickest(sessions)
     prepared = compact.prepare_compact(sessions, corners, consume=True)
     del sessions
@@ -678,7 +721,7 @@ def compute(db: Session, plan: Plan) -> dict:
     out = build_report(prep, extras, corners)
     out["corners"] = [{"code": c[0], "at_m": c[1]} for c in corners or []]
     out["laps_left_out"] = left_out
-    return _plain(out)
+    return out
 
 
 def _quickest(sessions: list[tuple[int, compact.CompactSession]]) -> tuple[list, int]:
