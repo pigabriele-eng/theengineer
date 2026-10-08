@@ -2,12 +2,13 @@
 // uploaded latest with traces; full comparison should flag laps that have better sections"): every clean lap of the
 // latest session, by stint, against the session's fastest lap. What the server answers (GET
 // /events/{id}/latest-session/sections, server/app/session_sections.py), the laps put on the traces by default and with
-// a tap, and the flags: the sections where a lap was quicker than the fastest lap. Real laps only, never a summed
-// theoretical lap. Pure, so `npm test` checks it; the request is in lib/sessionCompare.ts.
+// a tap, and the flags: the corners where a lap holds the session's best time, with what it gained there on the
+// fastest lap (only the best per corner: on real data nearly every lap beats the fastest lap somewhere, so flagging
+// every one of them flags nothing). Real laps only, never a summed theoretical lap. Pure, so `npm test` checks it; the
+// request is in lib/sessionCompare.ts.
 
 export const MAX_PICKS = 6; // the laps a comparison takes (lib/compare.ts MAX_LAPS, POST /compare/laps)
 export const MIN_GAIN_S = 0.02; // a section quicker than the fastest lap's by less than this isn't flagged
-export const FLAGS_SHOWN = 3; // sections named on a flagged lap at most
 
 /** A clean lap: its number, its time and its time in each section (in `sections` order; null while they are worked
  * out, or when the lap couldn't be placed on the fastest lap's line). */
@@ -55,25 +56,30 @@ export function fastestSections(answer: LatestSession): number[] | null {
   return answer.runs.find((r) => r.id === f.session_id)?.laps.find((l) => l.number === f.lap)?.sections ?? null;
 }
 
-/** The sections where `lap` was quicker than the fastest lap by `min` or more, the biggest gain first. */
-export function gains(lap: SessionLap, fastest: number[] | null, sections: SessionSection[] | null,
-  min = MIN_GAIN_S): Gain[] {
-  if (!lap.sections || !fastest || !sections || lap.sections.length !== fastest.length) return [];
-  return sections.map((s, k) => ({ code: s.code, gain: round(lap.sections![k] - fastest[k]) }))
-    .filter((g) => g.gain <= -min + 1e-9)
-    .sort((a, b) => a.gain - b.gain);
-}
-
 const round = (v: number) => Math.round(v * 1000) / 1000;
 
 /** "−0.12 s", "+0.42 s" (a minus sign, not a hyphen). */
 export const seconds = (v: number) => `${v < 0 ? '−' : '+'}${Math.abs(v).toFixed(2)} s`;
 
-/** The flag on a lap: "Quicker than the fastest lap in T6 −0.12 s · T10 −0.05 s", at most `max` sections; null when
- * it wasn't quicker anywhere. */
-export function flagWords(gs: Gain[], max = FLAGS_SHOWN): string | null {
-  if (!gs.length) return null;
-  return `Quicker than the fastest lap in ${gs.slice(0, max).map((g) => `${g.code} ${seconds(g.gain)}`).join(' · ')}`;
+/** The flag on a lap: "Best of the session in T6 −0.12 s · T10 −0.05 s" (what it gained there on the fastest lap);
+ * null when it holds no corner's best. */
+export function flagWords(gs: Gain[] | undefined): string | null {
+  if (!gs?.length) return null;
+  return `Best of the session in ${gs.map((g) => `${g.code} ${seconds(g.gain)}`).join(' · ')}`;
+}
+
+export const lapKey = (l: LapRef) => `${l.session_id}:${l.lap}`;
+
+/** The laps flagged (by lapKey): each corner's best lap of the session (bestInEachCorner) other than the fastest lap,
+ * with the corners it holds, the biggest gain first. */
+export function bestFlags(answer: LatestSession, min = MIN_GAIN_S): Map<string, Gain[]> {
+  const out = new Map<string, Gain[]>();
+  for (const b of bestInEachCorner(answer, min)) {
+    if (b.fastest) continue;
+    const key = lapKey({ session_id: b.run.id, lap: b.lap.number });
+    out.set(key, [...(out.get(key) ?? []), { code: b.code, gain: b.gain }].sort((x, y) => x.gain - y.gain));
+  }
+  return out;
 }
 
 /** The lap's gap to the session's fastest lap: "Fastest", or "+0.42 s". */
@@ -133,10 +139,4 @@ export function addPick(picks: LapPick[], lap: LapRef, max = MAX_PICKS): { picks
   if (picks.some((p) => sameLap(p, lap))) return { picks, full: false };
   if (picks.length >= max) return { picks, full: true };
   return { picks: [...picks, { session_id: lap.session_id, lap: lap.lap, slot: freeSlot(picks, max) }], full: false };
-}
-
-/** How many laps were quicker than the fastest lap in at least one section. */
-export function flaggedCount(answer: LatestSession, min = MIN_GAIN_S): number {
-  const fast = fastestSections(answer);
-  return answer.runs.reduce((n, r) => n + r.laps.filter((l) => gains(l, fast, answer.sections, min).length > 0).length, 0);
 }

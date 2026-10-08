@@ -2,8 +2,8 @@
 // uploaded latest with traces; full comparison should flag laps that have better sections"): every clean lap of the
 // official session holding the run uploaded last (FP1, Q1, R1..., server/app/session_sections.py), stint by stint,
 // each with its driver, its run's tyres (a tap on the stint's tag changes them, components/TyreTag.tsx), its time and
-// its gap to the session's fastest lap. A lap quicker than the fastest lap in one or more sections is flagged in words
-// with those sections, biggest gain first. Then the quickest lap in each corner, then where the time is and the traces
+// its gap to the session's fastest lap. A lap holding the session's best time in a corner is flagged in words with
+// those corners and what it gained there on the fastest lap, biggest gain first. Then the quickest lap in each corner, then where the time is and the traces
 // of the laps picked: each stint's fastest lap at first, any lap with a tap. Real laps only, never a summed lap
 // (lib/sessionLaps.ts). Sections `no` to `no + 3`; only `no` before the event has a timed run (lib/weekendRuns.ts
 // duringSections).
@@ -24,8 +24,8 @@ import { afterOthers } from '@/lib/loadLast';
 import { poll } from '@/lib/poll';
 import { fetchLatestSession } from '@/lib/sessionCompare';
 import {
-  addPick, bestInEachCorner, defaultPicks, fastestSections, flaggedCount, flagWords, flipPick, gains, gapWords,
-  isFastest, LapPick, LapRef, LatestSession, MAX_PICKS, MIN_GAIN_S, seconds, SessionLap, SessionRun,
+  addPick, bestFlags, bestInEachCorner, defaultPicks, fastestSections, flagWords, flipPick, gapWords,
+  isFastest, lapKey, LapPick, LapRef, LatestSession, MAX_PICKS, MIN_GAIN_S, seconds, SessionLap, SessionRun,
 } from '@/lib/sessionLaps';
 import { TYRE_LABEL } from '@/lib/tyreLevels';
 import { tyreTag } from '@/lib/tyreTag';
@@ -164,10 +164,11 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
   const finding = (
     <View style={styles.working} accessibilityLiveRegion="polite">
       <ActivityIndicator />
-      <Note>{`Finding the sections each lap was quicker in…${progress}`}</Note>
+      <Note>{`Finding each lap’s time in every corner…${progress}`}</Note>
     </View>
   );
-  const flagged = flaggedCount(answer);
+  const flags = bestFlags(answer);
+  const flagged = flags.size;
   const leftOut = answer.left_out === 0 ? 'every lap is clean'
     : `${answer.left_out} ${answer.left_out === 1 ? 'lap' : 'laps'} that aren’t clean left out`;
   const tyreText = (id: number) => tyreTag(tags.rowOf(id), TYRE_LABEL)?.text ?? 'Tyres not set';
@@ -177,13 +178,13 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
   return (
     <>
       <Section no={no} title={title}
-        dek={`Every clean lap of the session, stint by stint, against its fastest lap (${leftOut}). A flag marks a lap quicker than the fastest somewhere; tap a lap to put it on the traces or take it off.`}>
+        dek={`Every clean lap of the session, stint by stint, against its fastest lap (${leftOut}). A flag marks a lap with the session’s best time in a corner, and what it gained there on the fastest lap; tap a lap to put it on the traces or take it off.`}>
         {fastest && fastRun && (
           <Text style={StyleSheet.flatten([t.body, styles.summary])}>
             <Text style={t.strong}>{`Fastest: ${formatLap(fastest.time)}`}</Text>
             {`, lap ${fastest.lap} of ${fastRun.name} (${fastRun.driver ?? 'driver not set'}).`}
-            {!working && fast ? ` ${flagged === 0 ? 'No other lap was quicker in any section.'
-              : `${flagged} ${flagged === 1 ? 'lap was' : 'laps were'} quicker in at least one section.`}` : ''}
+            {!working && fast ? ` ${flagged === 0 ? 'It is also the quickest lap in every corner.'
+              : `${flagged} other ${flagged === 1 ? 'lap holds' : 'laps hold'} the session’s best in a corner.`}` : ''}
           </Text>
         )}
         {working && finding}
@@ -197,7 +198,7 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
                 return (
                   <LapRow key={l.number} run={r} lap={l} tyres={tyreText(r.id)} color={colorOf(ref)}
                     best={isFastest(answer, ref)} fastest={fastest?.time ?? null}
-                    flag={flagWords(gains(l, fast, answer.sections))} onPress={() => flip(ref)} />
+                    flag={flagWords(flags.get(lapKey(ref)))} onPress={() => flip(ref)} />
                 );
               })}
             </View>
@@ -278,7 +279,7 @@ function StintHead({ run, tags }: { run: SessionRun; tags: TyreTags }) {
 }
 
 /** One lap: a tap puts it on the traces or takes it off. Its driver, its run's tyres, its time and gap, and its flag
- * (the sections where it was quicker than the fastest lap), in words. */
+ * (the corners where it holds the session’s best), in words. */
 function LapRow({ run, lap, tyres, color, best, fastest, flag, onPress }: {
   run: SessionRun;
   lap: SessionLap;
@@ -344,7 +345,7 @@ const useStyles = themed((c) => ({
   gapBest: { ...Type.label, fontSize: 13, color: c.text, minWidth: 64, textAlign: 'right' },
   // the flag: a rule in the "better" colour and the words beside it (never the colour alone)
   flag: { marginTop: 6, marginLeft: 30, borderLeftWidth: 3, borderColor: c.success, paddingLeft: 8 },
-  flagText: { fontFamily: face('body', 600), fontSize: 15, lineHeight: 21, color: c.success },
+  flagText: { fontFamily: face('body', 600), fontSize: 16, lineHeight: 22, color: c.success },
 
   // the best in each corner
   corner: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: TAP + 8, paddingVertical: 8,

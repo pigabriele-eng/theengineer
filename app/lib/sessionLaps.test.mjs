@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  addPick, bestInEachCorner, defaultPicks, fastestSections, flagWords, flaggedCount, flipPick, gains, gapWords,
+  addPick, bestFlags, bestInEachCorner, defaultPicks, fastestSections, flagWords, flipPick, gapWords, lapKey,
   MAX_PICKS,
 } from './sessionLaps.ts';
 
@@ -12,36 +12,35 @@ const run = (id, laps, driver = null) => ({ id, name: `R2 stint ${id}`, short: `
 const SECTIONS = ['T1', 'T2-T5', 'T6', 'T8/T9'].map((code, k) => ({ code, start_m: k * 1000, end_m: k * 1000 + 999,
   apex_m: null, corners: [] }));
 
-// stint 1's lap 3 is the fastest (100.0); its laps 2 and 4 are quicker in some sections; stint 2's lap 1 in one
+// stint 1's lap 3 is the fastest (100.0); its laps 2 and 4 are quicker in some sections, stint 2's lap 1 in two
 const answer = {
   event_id: 1, status: 'ready', session: { code: 'R2', title: 'R2' }, left_out: 2, numbering: 'official',
   progress: null, note: null, sections: SECTIONS, fastest: { session_id: 1, lap: 3, time: 100.0 },
   runs: [
     run(1, [lap(2, 100.4, [25.05, 25.4, 24.9, 25.05]), lap(3, 100.0, [25.0, 25.2, 25.0, 24.8]),
       lap(4, 100.3, [24.88, 25.33, 24.985, 25.105])], 'Ann'),
-    run(2, [lap(1, 100.2, [25.1, 25.15, 25.1, 24.85]), lap(2, 100.6, null)], 'Ben'),
+    run(2, [lap(1, 100.2, [24.86, 25.15, 25.1, 24.85]), lap(2, 100.6, null)], 'Ben'),
   ],
 };
 
-test('the sections where a lap was quicker than the fastest lap, the biggest gain first; under 0.02 s left out', () => {
-  const fast = fastestSections(answer);
-  assert.deepEqual(fast, [25.0, 25.2, 25.0, 24.8]);
-  assert.deepEqual(gains(answer.runs[0].laps[0], fast, SECTIONS), [{ code: 'T6', gain: -0.1 }]);
-  // lap 4: T1 −0.12, T6 −0.015 (too small to count)
-  assert.deepEqual(gains(answer.runs[0].laps[2], fast, SECTIONS), [{ code: 'T1', gain: -0.12 }]);
-  assert.deepEqual(gains(answer.runs[1].laps[0], fast, SECTIONS), [{ code: 'T2-T5', gain: -0.05 }]);
-  assert.deepEqual(gains(answer.runs[0].laps[1], fast, SECTIONS), []); // the fastest lap itself
-  assert.deepEqual(gains(answer.runs[1].laps[1], fast, SECTIONS), []); // no section times
-  assert.deepEqual(gains(answer.runs[0].laps[0], null, SECTIONS), []); // not worked out yet
-  assert.equal(flaggedCount(answer), 3);
+test('a lap is flagged with the corners where it holds the session’s best, the biggest gain first', () => {
+  assert.deepEqual(fastestSections(answer), [25.0, 25.2, 25.0, 24.8]);
+  const flags = bestFlags(answer);
+  assert.deepEqual([...flags.keys()].sort(), ['1:2', '2:1']);
+  // stint 2 lap 1 holds T1 (−0.14) and T2-T5 (−0.05)
+  assert.deepEqual(flags.get(lapKey({ session_id: 2, lap: 1 })), [{ code: 'T1', gain: -0.14 }, { code: 'T2-T5', gain: -0.05 }]);
+  assert.deepEqual(flags.get('1:2'), [{ code: 'T6', gain: -0.1 }]);
+  // stint 1 lap 4 was 0.12 s quicker than the fastest lap in T1, but not the best there: no flag
+  assert.equal(flags.get('1:4'), undefined);
+  assert.equal(flags.get('1:3'), undefined); // the fastest lap itself
+  assert.equal(bestFlags({ ...answer, sections: null }).size, 0); // not worked out yet
 });
 
-test('the flag in words, at most three sections', () => {
+test('the flag in words', () => {
   assert.equal(flagWords([{ code: 'T6', gain: -0.12 }, { code: 'T10', gain: -0.05 }]),
-    'Quicker than the fastest lap in T6 −0.12 s · T10 −0.05 s');
-  const many = ['T1', 'T2', 'T3', 'T4'].map((code, i) => ({ code, gain: -0.1 + i * 0.01 }));
-  assert.equal(flagWords(many), 'Quicker than the fastest lap in T1 −0.10 s · T2 −0.09 s · T3 −0.08 s');
+    'Best of the session in T6 −0.12 s · T10 −0.05 s');
   assert.equal(flagWords([]), null);
+  assert.equal(flagWords(undefined), null);
   assert.equal(gapWords(100.42, 100, false), '+0.42 s');
   assert.equal(gapWords(100, 100, true), 'Fastest');
   assert.equal(gapWords(100, 100, false), '+0.00 s'); // a lap as quick as the fastest, set later
@@ -50,7 +49,7 @@ test('the flag in words, at most three sections', () => {
 test('the best lap in each corner, real laps only; the fastest lap where none was 0.02 s quicker', () => {
   const best = bestInEachCorner(answer);
   assert.deepEqual(best.map((b) => [b.code, b.run.id, b.lap.number, b.gain, b.fastest]), [
-    ['T1', 1, 4, -0.12, false],
+    ['T1', 2, 1, -0.14, false],
     ['T2-T5', 2, 1, -0.05, false],
     ['T6', 1, 2, -0.1, false],
     ['T8/T9', 1, 3, 0, true],
