@@ -226,7 +226,8 @@ export const api = {
   },
   importJob: (id: number) => request<ImportJob>(`/imports/${id}`),
   // how much of the file storage is used (null when not kept: the local disk)
-  storage: () => request<{ used_mb: number | null; limit_mb: number | null }>('/imports/storage'),
+  storage: () => request<{ used_mb: number | null; limit_mb: number | null; moving?: { done: number; total: number } }>(
+    '/imports/storage'),
   createDebrief: (id: number, points: DebriefPointIn[]) =>
     request<Debrief>(`/sessions/${id}/debriefs`, json({ mode: 'individual', points })),
   recordDebrief: (id: number, audio: PickedFile, mode: DebriefMode, language: DebriefLanguage) => {

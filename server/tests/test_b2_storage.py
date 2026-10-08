@@ -169,3 +169,52 @@ def test_the_settings_choose_the_storage(tmp_path, monkeypatch):
         assert isinstance(both, TwoStorages) and isinstance(both.old, storage.SupabaseStorage)
     finally:
         storage._backend.cache_clear()
+
+
+def test_older_files_are_copied_to_b2_and_kept_in_supabase(tmp_path, monkeypatch):
+    """Gabriele, 2026-10-08: "can we transfer everything on backblaze?" """
+    old_fake, new_fake = FakeSupabaseStorage(), FakeB2()
+    old = old_fake.storage(tmp_path / "cache")
+    keys = [old.save(bytes([i]) * 5000, ".ld") for i in range(3)] + [old.save(b"audio", ".m4a")]
+    both = TwoStorages(new_fake.storage(tmp_path / "cache"), old)
+    both.setup()
+    already = both.save(b"\x40 new", ".ld")
+    assert both.copy_over() == {"copied": 4, "left": 0}
+    for key in keys:
+        name = old._object(key)
+        assert new_fake.objects[name] == old_fake.objects[f"logs/{name}"]  # as stored: still compressed
+    assert len(old_fake.objects) == 4  # Supabase keeps its copies
+    assert both.used() == sum(len(b) for b in new_fake.objects.values())
+    shutil.rmtree(tmp_path / "cache")
+    old_fake.objects.clear()
+    assert both.local_path(keys[0]).read_bytes() == bytes([0]) * 5000  # read from B2 now
+    assert both.local_path(already).read_bytes() == b"\x40 new"
+    assert both.copy_over() == {"copied": 0, "left": 0}  # nothing left to copy on the next start
+    assert both.moving is None
+
+
+def test_copying_stops_before_b2_is_full_and_skips_what_fails(tmp_path, monkeypatch):
+    old_fake, new_fake = FakeSupabaseStorage(), FakeB2()
+    old = old_fake.storage(tmp_path / "cache")
+    keys = sorted(old.save(bytes(range(256)) * (40 + i), ".m4a") for i in range(3))  # 10-11 KB each, listed in order
+    both = TwoStorages(new_fake.storage(tmp_path / "cache"), old)
+    real = old_fake.handler
+
+    def broken_first(request):
+        if request.method == "GET" and request.url.path.endswith(keys[0]):
+            return httpx.Response(500, text="boom")
+        return real(request)
+
+    old.client = httpx.Client(transport=httpx.MockTransport(broken_first), headers=old.client.headers)
+    monkeypatch.setenv("STORAGE_LIMIT_MB", str((20_500 + storage.LOG_RESERVE_BYTES) / 1024**2))
+    assert both.copy_over() == {"copied": 1, "left": 2}  # one failed, then the next would pass the limit
+    assert list(new_fake.objects) == [keys[1]]
+
+
+def test_the_storage_line_says_files_are_being_moved(tmp_path, monkeypatch):
+    both = TwoStorages(FakeB2().storage(tmp_path), FakeSupabaseStorage().storage(tmp_path))
+    monkeypatch.setattr(storage, "backend", lambda: both)
+    both.moving = {"done": 3, "total": 40}
+    assert storage.usage()["moving"] == {"done": 3, "total": 40}
+    both.moving = None
+    assert "moving" not in storage.usage()
