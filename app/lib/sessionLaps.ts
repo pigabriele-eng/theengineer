@@ -62,10 +62,10 @@ const round = (v: number) => Math.round(v * 1000) / 1000;
 export const seconds = (v: number) => `${v < 0 ? '−' : '+'}${Math.abs(v).toFixed(2)} s`;
 
 /** The flag on a lap: "Best of the session in T6 −0.12 s · T10 −0.05 s" (what it gained there on the fastest lap);
- * null when it holds no corner's best. */
-export function flagWords(gs: Gain[] | undefined): string | null {
+ * null when it holds no corner's best. `of`: what it is the best of ("these laps" on the Compare page). */
+export function flagWords(gs: Gain[] | undefined, of = 'the session'): string | null {
   if (!gs?.length) return null;
-  return `Best of the session in ${gs.map((g) => `${g.code} ${seconds(g.gain)}`).join(' · ')}`;
+  return `Best of ${of} in ${gs.map((g) => `${g.code} ${seconds(g.gain)}`).join(' · ')}`;
 }
 
 export const lapKey = (l: LapRef) => `${l.session_id}:${l.lap}`;

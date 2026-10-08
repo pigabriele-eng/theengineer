@@ -10,6 +10,7 @@
 import { RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, View as Box, StyleSheet } from 'react-native';
 
+import { BestInEachCorner } from '@/components/BestInEachCorner';
 import { CompareTraces, LineKey, useLapColors, WhereTheTimeIs } from '@/components/CompareViews';
 import { ErrorLine, Note } from '@/components/Controls';
 import { TickBox, useText } from '@/components/Picks';
@@ -26,7 +27,7 @@ import { poll } from '@/lib/poll';
 import { fetchLatestSession } from '@/lib/sessionCompare';
 import {
   bestFlags, bestInEachCorner, defaultPicks, dropPick, fastestSections, flagWords, flipPick, gapWords,
-  isFastest, lapKey, LapPick, LapRef, LatestSession, MAX_PICKS, MIN_GAIN_S, seconds, SessionLap, SessionRun,
+  isFastest, lapKey, LapPick, LapRef, LatestSession, MAX_PICKS, MIN_GAIN_S, SessionLap, SessionRun,
 } from '@/lib/sessionLaps';
 import { TYRE_LABEL } from '@/lib/tyreLevels';
 import { tyreTag } from '@/lib/tyreTag';
@@ -236,28 +237,7 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
       <Section no={no + 1} title="Best in each corner"
         dek={`The session’s quickest lap in each section and what it gained on the fastest lap (${MIN_GAIN_S.toFixed(2)} s or more); tap one to put it on the traces, again to take it off.`}>
         {working ? finding : !fast ? <Note>{answer.note ?? 'Two clean laps are needed to compare the corners.'}</Note> : (
-          <View style={styles.list}>
-            {bestInEachCorner(answer).map((b) => {
-              const ref = { session_id: b.run.id, lap: b.lap.number };
-              const color = colorOf(ref);
-              const who = `${b.run.name} · lap ${b.lap.number} · ${b.run.driver ?? 'driver not set'}`;
-              return (
-                <Pressable key={b.code} onPress={() => flipCorner(ref)} accessibilityRole="checkbox"
-                  {...a11yState({ checked: color != null })} style={styles.corner}
-                  accessibilityLabel={`${b.code}: ${b.fastest ? 'the fastest lap is the quickest here' : `${who}, ${seconds(b.gain)} on the fastest lap`}, on the traces`}>
-                  <Text style={styles.code}>{b.code}</Text>
-                  <View style={styles.grow}>
-                    <Text style={styles.cornerWho}>{b.fastest ? 'The fastest lap itself' : who}</Text>
-                    {!b.fastest && <Text style={styles.gain}>{`${seconds(b.gain)} on the fastest lap`}</Text>}
-                  </View>
-                  <View style={styles.cornerState}>
-                    {color && <LineKey color={color} />}
-                    <Text style={styles.cornerGo}>{color ? 'On the traces · Remove ×' : 'Add →'}</Text>
-                  </View>
-                </Pressable>
-              );
-            })}
-          </View>
+          <BestInEachCorner rows={bestInEachCorner(answer)} colorOf={colorOf} onPress={(_, ref) => flipCorner(ref)} />
         )}
         {full === 'corners' && <Text style={styles.full} accessibilityLiveRegion="polite">{FULL}</Text>}
       </Section>
@@ -415,14 +395,6 @@ const useStyles = themed((c) => ({
   flag: { marginTop: 6, marginLeft: 30, borderLeftWidth: 3, borderColor: c.success, paddingLeft: 8 },
   flagText: { fontFamily: face('body', 600), fontSize: 16, lineHeight: 22, color: c.success },
 
-  // the best in each corner
-  corner: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: TAP + 8, paddingVertical: 8,
-    borderBottomWidth: 1, borderColor: c.separator },
-  code: { ...Type.label, fontSize: 15, color: c.text, width: 74 },
-  cornerWho: { fontFamily: face('body', 600), fontSize: 16, lineHeight: 21, color: c.text },
-  gain: { ...Type.number, fontSize: 15, color: c.success, marginTop: 2 },
-  cornerState: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  cornerGo: { ...Type.link, fontSize: 13, color: c.text },
 
   // the laps on the traces: a key each, an × to take it off
   onTraces: { marginTop: 28, maxWidth: 820 },
