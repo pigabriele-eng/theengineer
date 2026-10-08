@@ -8,7 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app import heavy, lappacks, models
-from app.analysis.lapcompare import MAX_LAPS, MIN_LAPS, Pick, compare_picks
+from app.analysis.lapcompare import MAX_LAPS, MIN_LAPS, Pick, compare_picks, theoreticals
+from app.analysis.lappack import NotCovered
 from app.analysis.laps import SessionData, load_session
 from app.db import get_db
 from app.routers.imports import _date
@@ -89,16 +90,9 @@ class CompareLapsIn(BaseModel):
     step_m: float = Field(5.0, ge=1.0, le=50.0)
 
 
-@router.post("/laps")
-def compare_laps(body: CompareLapsIn, db: Session = Depends(get_db)):
-    """Two to six laps from any sessions at one track, placed on one GPS line: section times against the quickest
-    in each section and the ideal lap made of them, where each lap loses time (the phase, and the technique
-    difference behind it in plain words), and the traces every step_m metres for charts.
-
-    The laps are traced from the sessions' lap packs and compact traces (app/lappacks.py), without reading a log;
-    a session without them is read from its log, one at a time under the shared lock, and let go once its picked laps
-    are traced. The latest answers are kept, so picking a lap again answers at once.
-    """
+def _picks(db: Session, body: CompareLapsIn) -> tuple[list[Pick], dict[int, models.RunSession],
+                                                     models.Track | None, list | None]:
+    """The laps asked for, their sessions, their one track and its official corners (422/404 as the screen says)."""
     if len({(p.session_id, p.lap) for p in body.laps}) < len(body.laps):
         raise HTTPException(422, "Each lap can only be picked once")
     by_name = _tracks_by_name(db)
@@ -122,6 +116,20 @@ def compare_laps(body: CompareLapsIn, db: Session = Depends(get_db)):
         raise HTTPException(422, "These laps are from different tracks; compare laps from one track")
     track = next(iter(tracks.values()))
     corners = official_corners(track)
+    return picks, sessions, track, corners
+
+
+@router.post("/laps")
+def compare_laps(body: CompareLapsIn, db: Session = Depends(get_db)):
+    """Two to six laps from any sessions at one track, placed on one GPS line: section times against the quickest
+    in each section and the ideal lap made of them, where each lap loses time (the phase, and the technique
+    difference behind it in plain words), and the traces every step_m metres for charts.
+
+    The laps are traced from the sessions' lap packs and compact traces (app/lappacks.py), without reading a log;
+    a session without them is read from its log, one at a time under the shared lock, and let go once its picked laps
+    are traced. The latest answers are kept, so picking a lap again answers at once.
+    """
+    picks, sessions, track, corners = _picks(db, body)
     key = (track.id if track else None, track.name if track else None, tuple(corners or ()), body.step_m,
            tuple((p.run, p.number, p.time, tuple(sorted(p.meta.items()))) for p in picks),
            tuple(lappacks.signature(s, _main_file(s), track) for s in sessions.values()))
@@ -160,6 +168,42 @@ def compare_laps(body: CompareLapsIn, db: Session = Depends(get_db)):
     if read:
         lappacks.missed(db, read)
     out = {"track": track.name if track else None, **result}
+    with _answers_lock:
+        _answers[key] = out
+        while len(_answers) > ANSWERS_KEPT:
+            _answers.popitem(last=False)
+    return out
+
+
+@router.post("/theoretical")
+def theoretical_laps(body: CompareLapsIn, db: Session = Depends(get_db)):
+    """The "stint theoretical" of each stint of these laps (its quickest in each section, from all its clean laps) and
+    their "combined theoretical", on the line and sections of POST /laps for the same laps, with their traces on its
+    grid. From the lap packs only: a stint whose pack isn't made yet comes back not ready (made now when its compact
+    traces are, as for the comparison)."""
+    picks, sessions, track, corners = _picks(db, body)
+    key = ("theoretical", track.id if track else None, tuple(corners or ()), body.step_m,
+           tuple((p.run, p.number, p.time) for p in picks),
+           tuple(lappacks.signature(s, _main_file(s), track) for s in sessions.values()))
+    with _answers_lock:
+        if key in _answers:
+            _answers.move_to_end(key)
+            return _answers[key]
+
+    def packed(run: str):
+        s = sessions[int(run)]
+        got = lappacks.packed_run(db, s, track)
+        if got is None and lappacks.traces_ready(db, s, track):
+            lappacks.ensure_pack(db, s.id)
+            got = lappacks.packed_run(db, s, track)
+        return got
+
+    try:
+        out = theoreticals(picks, packed, corners, body.step_m)
+    except NotCovered as e:
+        raise HTTPException(409, "The laps aren't ready for theoretical laps yet; try again in a minute") from e
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
     with _answers_lock:
         _answers[key] = out
         while len(_answers) > ANSWERS_KEPT:

@@ -11,7 +11,7 @@ from app.analysis.align import TrackLine, aligned_trace, project, track_line
 from app.analysis.channels import math_channels
 from app.analysis.compare import RunSource, compare_groups
 from app.analysis.insights import RunInput
-from app.analysis.lapcompare import KEEP, Pick, compare_picks
+from app.analysis.lapcompare import KEEP, Pick, compare_picks, theoreticals
 from app.analysis.laps import load_session
 from app.importers.motec import read_ld
 from tests.synthetic import simulate, write_ld
@@ -204,6 +204,47 @@ def test_compared_drivers_from_packs_are_the_logs(runs):
     assert new["theoretical_lap"] == pytest.approx(old["theoretical_lap"], abs=0.0011)
 
 
+def test_stint_and_combined_theoreticals(runs):
+    """Each stint's quickest in each section from all its clean laps, and the quickest of both: the same sections,
+    line and ideal as a comparison of every one of those laps, told from the quickest real lap."""
+    packed = {name: _packed(data) for name, data in runs.items()}
+    times = {name: {l.number: l.time for l in data.laps if l.clean} for name, data in runs.items()}
+    every = [Pick(name, n, t, {"session": name}) for name, laps in times.items() for n, t in laps.items()]
+    assert len(every) == 5
+    whole = compare_picks(every, runs.__getitem__, CORNERS)
+    got = theoreticals(every, packed.get, CORNERS)
+
+    assert got["sections"] == [s["code"] for s in whole["sections"]]
+    quickest = min(range(len(every)), key=lambda i: every[i].time)
+    combined = got["combined"]
+    assert combined["best_run"] == every[quickest].run and combined["best_lap"] == every[quickest].number
+    assert combined["gap_s"] == pytest.approx(whole["laps"][quickest]["to_ideal"], abs=0.002)
+    assert combined["time"] == pytest.approx(every[quickest].time - combined["gap_s"], abs=0.001)
+    at = {(p.run, p.number): i for i, p in enumerate(every)}
+    for k, (run, n) in enumerate(combined["from"]):  # each section held by the quickest lap there (a tie by either)
+        assert whole["sections"][k]["times"][at[(run, n)]] == pytest.approx(min(whole["sections"][k]["times"]),
+                                                                              abs=0.002)
+
+    for st in got["stints"]:
+        assert st["ready"] and st["laps"] == len(times[st["run"]])
+        assert all(run == st["run"] for run, _ in st["from"])
+        assert 0 <= st["gap_s"] and st["time"] == pytest.approx(min(times[st["run"]].values()) - st["gap_s"], abs=0.001)
+        assert combined["time"] <= st["time"] + 0.001
+    tr = got["traces"]
+    assert tr["distance"] == whole["traces"]["distance"]
+    assert all(len(x["t"]) == len(tr["distance"]) and x["t"][0] == 0 for x in [*tr["stints"], tr["combined"]])
+    assert tr["combined"]["t"][-1] == pytest.approx(whole["traces"]["ideal"]["t"][-1], abs=0.01)
+
+    # picked from fewer laps, the stints still count all their clean laps
+    two = theoreticals([every[0], every[-1]], packed.get, CORNERS)
+    assert [s["laps"] for s in two["stints"]] == [len(times[every[0].run]), len(times[every[-1].run])]
+
+    # a stint without a pack is not ready, and nothing is combined from one stint
+    one = theoreticals([every[0], every[-1]], {every[0].run: packed[every[0].run]}.get, CORNERS)
+    assert [s["ready"] for s in one["stints"]] == [True, False]
+    assert one["combined"] is None and one["traces"]["stints"][1] is None
+
+
 def _upload(client, session_id: int, paces) -> None:
     channels, _ = simulate(paces=paces)
     hz, unit, v = channels["vCar"]
@@ -327,3 +368,28 @@ def test_a_comparison_packs_a_session_whose_traces_are_ready(client):
         rows = {r.session_id: r for r in db.scalars(select(models.LapPackFile))}
     assert set(rows) == set(ids) and all(r.path and r.error is None for r in rows.values())
     _same_comparison(first.json(), again.json())
+
+
+def test_the_theoretical_laps_of_a_comparison(client):
+    import app.lappacks
+    import app.routers.reports
+
+    track = client.post("/tracks", json={"name": "Test ring", "corners": [
+        {"code": "T1", "apex_m": 300}, {"code": "T2", "apex_m": 700}]}).json()
+    event = client.post("/events", json={"name": "Test day", "track_id": track["id"]}).json()
+    ids = []
+    for name, paces in (("Ben", (0.97, 0.98, 0.96)), ("Anna", (1.0, 0.99))):
+        ids.append(client.post("/sessions", json={"event_id": event["id"], "name": f"Run {name}"}).json()["id"])
+        _upload(client, ids[-1], paces)
+    picks = {"laps": [{"session_id": ids[0], "lap": 2}, {"session_id": ids[1], "lap": 1}]}
+    assert client.post("/compare/laps", json=picks).status_code == 200
+    assert app.lappacks.wait_idle() and app.routers.reports.wait_idle()
+    r = client.post("/compare/theoretical", json=picks)
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert [s["session_id"] for s in got["stints"]] == ids and all(s["ready"] for s in got["stints"])
+    assert got["combined"]["time"] <= min(s["time"] for s in got["stints"])
+    assert client.post("/compare/theoretical", json=picks).json() == got  # kept
+    bad = client.post("/compare/theoretical", json={"laps": [{"session_id": ids[0], "lap": 99},
+                                                             {"session_id": ids[1], "lap": 1}]})
+    assert bad.status_code == 404
