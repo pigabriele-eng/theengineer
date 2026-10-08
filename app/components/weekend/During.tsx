@@ -1,8 +1,9 @@
 // A race weekend while it is on (Gabriele, 2026-10-07: "during the race weekend the effort shifts to data
 // comparison"): the answers first, then the runs. Three things for each driver's next run, each official session's
-// report (FP1, Q1, R1), the latest run against the event's best (where the time is, the traces), the debriefs of every run with a big button to record one for the
-// latest, and setup changes to try for it. Then the event page's own sections (its runs by day, side by side, what it
-// was run with, its results, a run to add), passed in as children.
+// report (FP1, Q1, R1), the latest run against the event's best (where the time is, the traces), the debriefs of every
+// run with a big button to record one for the latest. Setup suggestions live in the setup tool, on demand. Then the
+// event page's own sections (its runs by day, side by side, what it was run with, its results, a run to add), passed in
+// as children.
 import { Href, Link, useFocusEffect, useRouter } from 'expo-router';
 import { ReactNode, RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, View as Box, StyleSheet } from 'react-native';
@@ -11,7 +12,6 @@ import { TopThings } from '@/components/Coaching';
 import { CompareTraces, LineKey, useLapColors, WhereTheTimeIs } from '@/components/CompareViews';
 import { ErrorLine, MainButton, Note } from '@/components/Controls';
 import { Fig, Label, Section, TextLink, useWide } from '@/components/Programme';
-import { IdeasView } from '@/components/SetupIdeas';
 import SessionReports from '@/components/weekend/SessionReports';
 import { Text, View } from '@/components/Themed';
 import { CompareResult, compareLaps, encodePicks, formatLap, signedSeconds } from '@/lib/compare';
@@ -40,34 +40,24 @@ export default function WeekendDuring({ eventId, folder: given, children }: {
   const styles = useStyles();
   const drivers = useMemo(() => latestByDriver(folder), [folder]);
   const pair = useMemo(() => latestAgainstBest(folder), [folder]);
-  const latest = useMemo(() => latestRun(folder), [folder]);
-  // 1 three things, 2 the session reports, 3 the latest run against the best (4 where the time is, 5 the traces),
-  // then debriefs and setup (lib/weekendRuns.ts duringSections)
-  const debriefsNo = pair ? 6 : 4;
+  // 1 three things, 2 the latest run against the best (3 where the time is, 4 the traces), then the session reports
+  // just above the debriefs (Gabriele, 2026-10-08: the comparison before the session reports, the session reports moved
+  // down before the debriefs; setup suggestions off the reporting pages, separate and on demand; lib/weekendRuns.ts
+  // duringSections)
+  const reportsNo = pair ? 5 : 3;
+  const debriefsNo = reportsNo + 1;
   return (
     <>
       <Section no={1} title="Three things for next run"
         dek="For each driver’s latest run: the costliest mistakes that repeat, each at a different corner, what to do instead and what it is worth a lap.">
         <ThreeThings eventId={eventId} drivers={drivers} />
       </Section>
-      <Section no={2} title="Session reports"
+      <LatestAgainstBest no={2} pair={pair} />
+      <Section no={reportsNo} title="Session reports"
         dek="One report per session of the weekend (FP1, Q1, the races), from every run of it.">
         <SessionReports eventId={eventId} />
       </Section>
-      <LatestAgainstBest no={3} pair={pair} />
       <Debriefs no={debriefsNo} eventId={eventId} folder={folder} />
-      <Section no={debriefsNo + 1} title="Setup suggestions"
-        dek={latest ? `For ${latest.name}: changes to try, from what the driver said and what the data show.` : undefined}>
-        {latest ? (
-          <>
-            <IdeasView parts sessionId={latest.id} vehicleId={null} />
-            <View style={styles.links}>
-              <TextLink href={{ pathname: '/tools/setup', params: { session: latest.id, tab: 'ideas' } }}
-                label="Open the setup page" arrow />
-            </View>
-          </>
-        ) : <Note>No run yet: upload the first run’s log, or add a run by hand to record its debrief.</Note>}
-      </Section>
       {children}
     </>
   );
