@@ -98,10 +98,10 @@ def test_pace_is_measured_against_the_driver_on_the_tyres():
 def test_gt4_european_one_new_set_in_free_practice_and_one_per_driver_in_the_paid_test():
     """Gabriele: in GT4 European Series there is always one new-tyre run in official free practice (FP1 or FP2) and
     two in the paid test, one per driver."""
-    from app.run_tyres import expects_new_sets
+    from app.run_tyres import expects_new_sets, new_set_rule
 
-    assert expects_new_sets("GT4 European Series", None) and expects_new_sets(None, "GT4_ES_R05")
-    assert not expects_new_sets("GT4 Germany", "ADAC GT4 Hockenheim") and not expects_new_sets(None, None)
+    assert new_set_rule("GT4 European Series", None) == "gt4-european" and expects_new_sets(None, "GT4_ES_R05")
+    assert new_set_rule("GT4 Germany", "ADAC GT4 Hockenheim") == "adac" and not expects_new_sets(None, None)
     runs = [RunLaps(1, "test", "PT1 stint 1", [103.4, 103.2], laps=8, driver="A"),
             RunLaps(2, "test", "PT1 stint 2", [102.5, 102.6], laps=6, driver="A", warm_up=3),  # A's quickest start
             RunLaps(3, "test", "PT2 stint 1", [103.9, 103.8], laps=8, driver="B"),
@@ -118,3 +118,24 @@ def test_gt4_european_one_new_set_in_free_practice_and_one_per_driver_in_the_pai
     runs[4] = RunLaps(5, "practice", "FP1 stint 1", [101.9, 103.0], laps=8, driver="A", warm_up=2)
     g = guess(runs, expected=True)
     assert g[6]["tyres"] == NEW and g[5]["tyres"] == NEW and g[5]["check"] != g[6]["check"]
+
+
+def test_adac_gt4_germany_one_new_set_in_free_practice_and_sachsenrings_extra_set_for_the_races():
+    """Gabriele: ADAC GT4 Germany, one new set in free practice (FP1 or FP2), always new in qualifying, fresh in the
+    races; at the Sachsenring an extra new set for Race 1, Race 2 or split between them."""
+    from app.run_tyres import new_set_rule
+
+    assert new_set_rule("ADAC GT4 Germany", "Oschersleben") == "adac"
+    assert new_set_rule("GT4 Germany", "Round 4", "Sachsenring") == "adac-sachsenring"
+    assert new_set_rule("GT4 European Series", "Spa") == "gt4-european" and new_set_rule("NLS", "NLS 3") is None
+    runs = [RunLaps(1, "practice", "FP1 stint 1", [83.4, 83.2], laps=8, driver="A"),
+            RunLaps(2, "practice", "FP1 stint 2", [82.6, 82.7], laps=6, driver="B", warm_up=2),
+            RunLaps(3, "practice", "FP2 stint 1", [82.7, 82.9], laps=6, driver="A", warm_up=2),
+            RunLaps(4, "qualifying", "Q1", [82.0], driver="A"), RunLaps(5, "qualifying", "Q2", [82.2], driver="B"),
+            RunLaps(6, "race", "R1", [83.4, 83.3, 83.5], driver="A"),
+            RunLaps(7, "race", "R2", [82.9, 83.0, 83.2], driver="B")]
+    g = guess(runs, "adac")
+    assert [g[i]["tyres"] for i in range(1, 8)] == [USED, NEW, NEW, NEW, NEW, FRESH, FRESH]
+    assert "free practice" in g[2]["why"] and g[3]["check"]  # FP2's looks new too: one too many, to check
+    g = guess(runs, "adac-sachsenring")
+    assert g[6]["tyres"] == FRESH and g[7]["tyres"] == NEW and g[7]["check"] and "two new" in g[7]["why"]
