@@ -46,3 +46,32 @@ def test_overlapping_mistakes_in_a_corner_count_once():
 def test_with_no_qualifying_and_nothing_quicker_every_run_is_guessed_used():
     g = guess([RunLaps(1, "test", "Run 1", [101.0, 101.2]), RunLaps(2, "test", "Run 2", [100.9, 101.3])])
     assert {v["tyres"] for v in g.values()} == {USED} and not any(v["sure"] for v in g.values())
+
+
+def test_the_warm_up_before_a_new_set_hard_stops_on_the_straights_of_the_out_lap():
+    """Gabriele: a new set shows as a much faster lap after a warm-up with a lot of braking in a straight line where
+    the car is normally flat out."""
+    import numpy as np
+
+    from app.warm_up import stops
+
+    hz = 100
+    speed = np.full(60 * hz, 180.0)
+    brake = np.zeros(60 * hz)
+    steer = np.zeros(60 * hz)
+    for at in (5, 15):  # two hard stops on a straight
+        brake[at * hz:at * hz + 50] = 80.0
+    brake[30 * hz:30 * hz + 150] = 90.0  # a corner's braking: the wheel turns as it lets go
+    steer[31 * hz:34 * hz] = 120.0
+    assert stops(brake, speed, steer, hard=100.0, wheel=120.0) == 2
+    assert stops(brake, np.full(60 * hz, 60.0), steer, hard=100.0, wheel=120.0) == 0  # in the pit lane: too slow
+
+    # Monza's FP2: the second stint's out lap has the warm-up, then a lap quicker than any on the set before
+    runs = [RunLaps(1, "practice", "FP1 stint 1", [116.3, 116.5, 116.4], laps=12),
+            RunLaps(2, "practice", "FP2 stint 1", [117.7, 117.3, 116.8], laps=6, warm_up=2),  # warm-up, not quick
+            RunLaps(3, "practice", "FP2 stint 2", [117.5, 116.2, 116.3, 115.8], laps=8, warm_up=2),
+            RunLaps(4, "practice", "FP2 stint 3", [118.0, 116.1], laps=5, warm_up=0),
+            RunLaps(5, "qualifying", "Q", [115.2])]
+    g = guess(runs)
+    assert [g[i]["tyres"] for i in range(1, 6)] == [USED, USED, NEW, FRESH, NEW]
+    assert "warm-up" in g[3]["why"] and "2 hard stops" in g[3]["why"]

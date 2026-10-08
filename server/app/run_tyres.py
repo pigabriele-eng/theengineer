@@ -4,9 +4,11 @@ Gabriele (2026-10-08): qualifying is always on a new set with low fuel; the race
 always Fresh, never New; in paid tests and practice a new set shows as a much quicker lap at the start of a run
 (after a warm-up lap of heavy braking on the straights). The logs hold no tyre set, so each run is guessed from the
 event's laps in the order they ran: a practice run that starts with a lap as quick as qualifying, or clearly quicker
-than anything on the set before, starts a new set; the runs after it on that set step down to Fresh, Used and Very
-used as its laps add up. Before any new set is seen the set's age is unknown: Used, guessed. The driver's pick
-(RunTyres, at upload or later with one tap) always wins, and a guess is shown as one, never taken silently.
+than anything on the set before, or whose out lap has the warm-up's hard stops on the straights followed by a lap
+quicker than the set's or near qualifying's, starts a new set; the runs after it on that set step down to Fresh,
+Used and Very used as its laps add up. Before any new set is seen the set's age is unknown: Used, guessed. The
+driver's pick (RunTyres, at upload or later with one tap) always wins, and a guess is shown as one, never taken
+silently.
 """
 from __future__ import annotations
 
@@ -16,7 +18,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import models
+from app import models, warm_up
 
 NEW, FRESH, USED, WORN = "new", "fresh", "used", "worn"  # stored as these (RunTyres.tyres, 8 characters)
 LEVELS = (NEW, FRESH, USED, WORN)
@@ -26,6 +28,9 @@ USED_UNDER = 25  # ...under 25 Used, 25 or more Very used
 NEW_WITHIN = 0.004  # a run's early lap within this share of qualifying's best: a new set...
 NEW_GAIN = 0.004  # ...or this share quicker than any lap on the set before
 EARLY_LAPS = 3  # "at the start of a run": its first three laps
+WARM_UP_STOPS = 2  # hard stops on the straights of the out lap (warm_up.py): the warm-up for a new set...
+WARM_UP_LAPS = 4  # ...then, in the run's first four laps, a lap quicker than any on the set before...
+WARM_UP_WITHIN = 0.01  # ...or within this share of qualifying's best
 ORDER_PREFIX = re.compile(r"^\d+[_\- ]+")  # a folder's order in front of its name: "03_Q" -> "Q"
 QUALI_NAME = re.compile(r"^(q\d*|qualifying|quali)\b", re.I)
 RACE_NAME = re.compile(r"^(r\d*|race)\b", re.I)
@@ -46,6 +51,7 @@ class RunLaps:
     times: list[float]
     numbers: list[int] | None = None
     laps: int | None = None
+    warm_up: int | None = None  # hard stops on the straights of its out lap (warm_up.py); None: not counted
 
 
 def kind_of(kind: str, name: str | None) -> str:
@@ -96,11 +102,17 @@ def guess(runs: list[RunLaps]) -> dict[int, dict]:
         # through the first runs isn't taken for a new set
         beats_set = (quick is not None and set_best is not None and seen >= FRESH_UNDER
                      and quick <= set_best * (1 - NEW_GAIN))
+        # the warm-up (hard stops on the straights of the out lap), then a quick lap early in the run
+        warm = [t for n, t in zip(numbers, r.times, strict=False) if n <= WARM_UP_LAPS]
+        after_warm_up = (r.warm_up is not None and r.warm_up >= WARM_UP_STOPS and bool(warm)
+                         and ((q_best is not None and min(warm) <= q_best * (1 + WARM_UP_WITHIN))
+                              or (set_best is not None and min(warm) < set_best)))
         done = r.laps if r.laps is not None else len(r.times) + 2  # its out and in laps too
-        if as_quali or beats_set:
-            out[r.session_id] = _out(NEW, False, "a lap at the start of the run as quick as qualifying" if as_quali
-                                     else "a lap at the start of the run clearly quicker than any on the set before",
-                                     0)
+        if as_quali or beats_set or after_warm_up:
+            why = ("a lap at the start of the run as quick as qualifying" if as_quali
+                   else "a lap at the start of the run clearly quicker than any on the set before" if beats_set
+                   else f"the warm-up on the out lap ({r.warm_up} hard stops on the straights), then a quick lap")
+            out[r.session_id] = _out(NEW, False, why, 0)
             on_set, set_best, seen = done, min(r.times), done
             continue
         if on_set is None:
@@ -150,7 +162,7 @@ def event_runs(db: Session, sessions: list[models.RunSession]) -> list[list[RunL
             laps = sorted((lap for lap in x.laps if f is not None and lap.file_id == f.id), key=lambda lap: lap.number)
             clean = [lap for lap in laps if lap.clean]
             runs.append(RunLaps(x.id, x.kind.value, x.name, [float(lap.time_s) for lap in clean],
-                                [lap.number for lap in clean], len(laps)))
+                                [lap.number for lap in clean], len(laps), warm_up.of(x)))
         out.append(runs)
     return out
 
