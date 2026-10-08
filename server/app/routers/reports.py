@@ -34,7 +34,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app import heavy, models, page_cache, run_labels, run_parts, run_tyres, storage
+from app import heavy, models, page_cache, run_labels, run_parts, run_tyres, storage, warm_up
 from app.analysis import compact
 from app.analysis.advice import build_report
 from app.db import SessionLocal, get_db
@@ -214,8 +214,8 @@ def _fill(db: Session, plan: Plan, sessions: list[models.RunSession]) -> Plan:
     # the tyres the driver set on its runs: the report compares laps on the same tyres only
     tyres = sorted(run_tyres.stored(db, [i.session.id for i in plan.items if i.signature]).items())
     plan.signature = _hash([REPORT_VERSION, plan.scope, corners,
-                            [(i.session.id, i.name, i.session.driver.name if i.session.driver else None, i.signature)
-                             for i in plan.items if i.signature], tyres])
+                            [(i.session.id, i.name, i.session.driver.name if i.session.driver else None, i.signature,
+                              warm_up.of(i.session)) for i in plan.items if i.signature], tyres])
     return plan
 
 
@@ -628,6 +628,15 @@ def run_job(scope: str) -> None:
                 ensure_traces(db, item, plan.track)
                 row.done = n + 1
                 db.commit()
+            # the warm-up before a new set on each run's out lap (warm_up.py), for the tyres' guess: counted once
+            # per log, and the plan's signature then carries the counts
+            runs = warm_up.uncounted(run_labels.event_runs(db, items[0].session) if items else [])
+            if runs:
+                row.current = "Looking for new tyre sets"
+                db.commit()
+                warm_up.ensure(db, runs)
+                plan = plan_of_scope(db, scope)
+                row.signature = plan.signature
             row.current = "Working out the report"
             db.commit()
             # the logs were read one per turn of the lock above; working out the report from the compact traces

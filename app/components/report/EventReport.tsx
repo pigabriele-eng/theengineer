@@ -1015,7 +1015,7 @@ function Trends({ report, names }: { report: Report; names: RunNamer }) {
               <Text style={styles.td}>{r.consistency != null ? `${r.consistency.toFixed(1)}%` : '–'}</Text>
               {r.tyres && (
                 <Text style={styles.td} accessibilityLabel={`${TYRE_LABEL[r.tyres.tyres]} tyres, ${r.tyres.why}`}>
-                  {TYRE_LABEL[r.tyres.tyres]}{r.tyres.sure ? '' : ' (guessed)'}
+                  {TYRE_LABEL[r.tyres.tyres]}{r.tyres.sure ? '' : r.tyres.check ? ' (check)' : ' (guessed)'}
                 </Text>
               )}
             </View>

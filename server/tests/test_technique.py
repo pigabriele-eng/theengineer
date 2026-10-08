@@ -343,6 +343,7 @@ def test_technique_check_api(client):
     first = _wait(client, f"/technique/sessions/{ids[0]}")
     assert {k: first["tyres"][k] for k in ("tyres", "label", "pair", "sure", "why", "laps")} == \
         {"tyres": "used", "label": "Used", "pair": "used", "sure": True, "why": "set by you", "laps": 3}
+    assert first["tyres"]["set_by_driver"]  # the driver's pick, told apart from the guess
     assert {x["tyres"] for x in first["laps"]} == {"used"}
     ev = client.get(f"/technique/events/{event['id']}").json()
     assert [s["tyres"]["tyres"] for s in ev["sessions"]] == ["used", "new"]
