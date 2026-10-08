@@ -30,7 +30,7 @@ from app.setup.suggest import (
     _apply,
     _contribution,
 )
-from app.setup.templates import AXLE_OF, BMW_M4_GT4_EVO, Template
+from app.setup.templates import AXLE_OF, BMW_M4_GT4_EVO, OPPOSITE, Template
 
 VARIANTS = {"evo": "M4 GT4 Evo (G82)", "non_evo": "M4 GT4 (G82, before Evo)"}
 
@@ -55,6 +55,7 @@ EXTRA_LEVERS: tuple[Lever, ...] = (
 SKIP_KINDS = ("electronics",)
 CHAT_LEVERS: tuple[Lever, ...] = tuple(lv for lv in (*LEVERS, *EXTRA_LEVERS) if lv.kind not in SKIP_KINDS)
 BY_KEY = {lv.key: lv for lv in CHAT_LEVERS}
+MINUS = "\u2212"
 MIN_SCORE = 0.4  # a lever must answer the problem at least this much to be offered
 
 PROBLEMS: tuple[dict, ...] = (
@@ -387,7 +388,7 @@ def ranked(problems: list[dict], data: list[dict] | None = None) -> list[tuple[s
 
 
 def next_change(state: dict, template: Template = BMW_M4_GT4_EVO, values: dict | None = None,
-                data: list[dict] | None = None) -> dict | None:
+                data: list[dict] | None = None, past: list[dict] | None = None) -> dict | None:
     """The next change to offer: the best-ranked lever not tried, not skipped and not ruled out by a limit."""
     values = values or {}
     done = {t["lever"] for t in state.get("tried", [])} | set(state.get("skipped", []))
@@ -408,6 +409,7 @@ def next_change(state: dict, template: Template = BMW_M4_GT4_EVO, values: dict |
                 "why": reason or _why(lever, state.get("problems", [])),
                 "expected": lever.expected, "watch": lever.cost,
                 "another_way": made_another_way, "limits": option_limits(opt), "score": score,
+                "history": evidence(lever, past or [], state.get("problems", []), template),
                 "ruled_out_before": [BY_KEY[k].title for k in ruled_out]}
     return None
 
@@ -424,6 +426,55 @@ def problem_label(p: dict) -> str:
         base = Observation(kind=p["kind"], phase=p.get("phase")).describe()
     where = f" at {p['corner']}" if p.get("corner") else f" in {p['speed']} corners" if p.get("speed") else ""
     return base.lower() + where
+
+
+# ---------- what the logged setups say ----------
+
+def _matches(change: dict, targets: tuple[Target, ...], template: Template) -> bool:
+    """A past change on the sheet (setup/sheet.py history: row, at, from, to) made the same way as one of these."""
+    row = template.rows.get(change.get("row") or "")
+    if row is None or change.get("from") is None or change.get("to") is None or change["to"] == change["from"]:
+        return False
+    up = change["to"] > change["from"]
+    for t in targets:
+        if SAME_ROW.get(t.row, t.row) != SAME_ROW.get(row.key, row.key):
+            continue
+        if t.positions and AXLE_OF.get(change.get("at") or "") not in {AXLE_OF.get(p) for p in t.positions}:
+            continue
+        wants_up = row.up == t.want
+        if row.up is not None and (wants_up or OPPOSITE.get(t.want) == row.up) and up == wants_up:
+            return True
+    return False
+
+
+def evidence(lever: Lever, past: list[dict], problems: list[dict], template: Template = BMW_M4_GT4_EVO) -> dict:
+    """What the logged runs say about this change: how many times it was made (from one run's sheet to the next, at
+    any event with this car), what the best lap did, and how the balance moved in the problem's phase.
+    past: the run-to-run changes, each {"event", "run", "changes": [...], "deltas": {...} or None}."""
+    hits = []
+    for run in past:
+        if any(_matches(c, opt, template) for c in run.get("changes", []) for opt in lever.options):
+            hits.append(run)
+    if not hits:
+        return {"times": 0, "text": "Not logged before with this car, so this comes from the car's setup logic. "
+                                    "Log each run's setup and the tool learns what your changes do."}
+    timed = [h["deltas"]["best_s"] for h in hits if (h.get("deltas") or {}).get("best_s") is not None]
+    parts = [f"Made {len(hits)} time{'s' if len(hits) != 1 else ''} before ("
+             + ", ".join(f"{h['run']} at {h['event']}" for h in hits[:3]) + (", …" if len(hits) > 3 else "") + ")."]
+    if timed:
+        mean = sum(timed) / len(timed)
+        parts.append(f"Best lap {'+' if mean > 0 else MINUS if mean < 0 else '±'}{abs(mean):.2f} s on average "
+                     f"against the run before ({len(timed)} with timed laps; tyres and conditions differ).")
+    phases = [p.get("phase") for p in problems if p.get("kind") in ("understeer", "oversteer")]
+    phase = next((ph for ph in phases if ph in ("entry", "mid", "exit")), "mid" if phases else None)
+    if phase:
+        moves = [((h.get("deltas") or {}).get("balance") or {}).get(phase) for h in hits]
+        moves = [m for m in moves if m is not None]
+        if moves:
+            towards_over = sum(1 for m in moves if m < 0)
+            parts.append(f"The {'mid-corner' if phase == 'mid' else phase} balance moved towards oversteer "
+                         f"{towards_over} of {len(moves)} times in the data.")
+    return {"times": len(hits), "text": " ".join(parts)}
 
 
 # ---------- one turn ----------
@@ -458,8 +509,9 @@ def quick_replies(state: dict) -> list[dict]:
             for p in PROBLEMS]
 
 
-def _offer(state: dict, template: Template, values: dict | None, data: list[dict] | None, lead: list[str]) -> None:
-    change = next_change(state, template, values, data)
+def _offer(state: dict, template: Template, values: dict | None, data: list[dict] | None, lead: list[str],
+           past: list[dict] | None = None) -> None:
+    change = next_change(state, template, values, data, past)
     state["current"] = change
     if change is None:
         if not state.get("problems") and not data:
@@ -479,7 +531,7 @@ def _offer(state: dict, template: Template, values: dict | None, data: list[dict
 
 
 def turn(state: dict, action: dict, template: Template = BMW_M4_GT4_EVO, values: dict | None = None,
-         data: list[dict] | None = None, said: str | None = None) -> dict:
+         data: list[dict] | None = None, said: str | None = None, past: list[dict] | None = None) -> dict:
     """Apply one answer (an action from a tap, or read from typed text) and offer the next change. `said` is what
     the engineer typed or the tapped answer's words, kept in the conversation."""
     state = {**new_state(), **state}
@@ -526,12 +578,12 @@ def turn(state: dict, action: dict, template: Template = BMW_M4_GT4_EVO, values:
         state["problems"], state["skipped"], state["current"] = [], [], None
         _say(state, "tool", "Great. What else is the car doing? Pick one below or type it.")
         return state
-    _offer(state, template, values, data, lead)
+    _offer(state, template, values, data, lead, past)
     return state
 
 
 def turn_text(state: dict, text: str, template: Template = BMW_M4_GT4_EVO, values: dict | None = None,
-              data: list[dict] | None = None) -> dict:
+              data: list[dict] | None = None, past: list[dict] | None = None) -> dict:
     """A typed reply: read into actions, applied in order, with one offer at the end."""
     actions = read_reply(text)
     if not actions:
@@ -545,7 +597,7 @@ def turn_text(state: dict, text: str, template: Template = BMW_M4_GT4_EVO, value
         if i < len(actions) - 1:  # earlier actions only update the state; the last one makes the offer
             state = _apply_quiet(state, a)
         else:
-            state = turn(state, a, template, values, data, said=text)
+            state = turn(state, a, template, values, data, said=text, past=past)
     if len(actions) > 1:
         notes = [f"Noted for this event: {_lc(limit_label(a['limit']))}."
                  for a in actions[:-1] if a["type"] == "limit"]
@@ -562,6 +614,18 @@ def _apply_quiet(state: dict, a: dict) -> dict:
     elif a["type"] == "problem" and a["problem"] not in state["problems"]:
         state["problems"] = [*state["problems"], a["problem"]]
     return state
+
+
+def problems_after(state: dict, text: str | None = None, action: dict | None = None) -> list[dict]:
+    """The problems the conversation will be on once this answer is taken in: what the run's data is weighed
+    against before the turn is made."""
+    problems = list(state.get("problems", []))
+    for a in (read_reply(text) if text else [action or {}]):
+        if a.get("type") in ("reset", "gone"):
+            problems = []
+        elif a.get("type") == "problem" and a.get("problem") and a["problem"] not in problems:
+            problems.append(a["problem"])
+    return problems
 
 
 def view(state: dict) -> dict:

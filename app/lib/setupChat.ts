@@ -14,6 +14,7 @@ export type Change = {
   expected: string;
   watch: string;
   another_way: boolean;
+  history?: { times: number; text: string }; // what the logged runs say about this change
 };
 
 export type ChatMessage = { from: 'you' | 'tool'; text: string; at: string; change?: Change };

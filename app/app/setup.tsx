@@ -1,4 +1,4 @@
-import { Stack } from 'expo-router';
+import { Stack, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 
@@ -7,6 +7,7 @@ import { PageHead, useText } from '@/components/Picks';
 import { Colophon, Page, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { eventsApi, FolderSummary } from '@/lib/events';
+import { setupApi, Sheet } from '@/lib/setup';
 import { Change, ChatAction, ChatMessage, setupChatApi, SetupChat } from '@/lib/setupChat';
 import { face, Fonts, TAP, themed, Type, useTheme } from '@/constants/Theme';
 
@@ -196,10 +197,7 @@ export default function SetupToolScreen() {
                 <Choice label="None" on={chat.session_id == null}
                   onPress={() => send({ session_id: null, set_session: true })} />
               </Choices>
-              {chat.session_id != null && (
-                <TextLink small arrow label="Fill in this run's setup sheet"
-                  href={{ pathname: '/tools/setup', params: { session: chat.session_id, tab: 'sheet' } }} />
-              )}
+              {chat.session_id != null && <RunLog key={chat.session_id} sessionId={chat.session_id} />}
             </View>
           </View>
         </View>
@@ -210,6 +208,67 @@ export default function SetupToolScreen() {
       <Colophon left="The Engineer · Setup"
         right="Rules from the car's adjustments. Spring and bar rates are estimates until BMW's are known." />
     </Page>
+  );
+}
+
+// The run's setup log: a baseline once, then each run copies the last and changes what changed, so the tool can
+// learn what each change did. Quick from a phone: one tap copies the last run's setup.
+function RunLog({ sessionId }: { sessionId: number }) {
+  const t = useText();
+  const styles = useStyles();
+  const [sheet, setSheet] = useState<Sheet | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      let live = true;
+      setupApi.sheet(sessionId).then((r) => live && setSheet(r), (e) => live && setError((e as Error).message));
+      return () => {
+        live = false;
+      };
+    }, [sessionId]),
+  );
+  const copy = () => {
+    setBusy(true);
+    setupApi.copyPrevious(sessionId).then(
+      (r) => {
+        setSheet(r);
+        setBusy(false);
+      },
+      (e) => {
+        setError((e as Error).message);
+        setBusy(false);
+      },
+    );
+  };
+  const href = { pathname: '/tools/setup', params: { session: sessionId, tab: 'sheet' } } as const;
+  if (!sheet) return error ? <Text style={t.error}>{error}</Text> : null;
+  return (
+    <View style={styles.log}>
+      <Text style={t.sub}>This run's setup</Text>
+      {!sheet.exists && (
+        <Text style={t.body}>
+          {sheet.previous
+            ? `Not logged yet. If only a few things changed since ${sheet.previous.name ?? 'the last run'}, copy it and change those.`
+            : 'Not logged yet. Log the setup once as a baseline; after that each run copies the last.'}
+        </Text>
+      )}
+      {sheet.exists && (
+        <Text style={t.body}>
+          {sheet.changes.length > 0
+            ? `Logged. Changed from ${sheet.previous?.name ?? 'the last run'}: ${sheet.changes.map((c) => c.text).join('; ')}.`
+            : sheet.previous ? `Logged, the same as ${sheet.previous.name ?? 'the last run'}.` : 'Logged.'}
+        </Text>
+      )}
+      <View style={styles.sendRow}>
+        {!sheet.exists && sheet.previous && (
+          <MainButton label={`Same as ${sheet.previous.name ?? 'last run'}`} onPress={copy} busy={busy} />
+        )}
+        <TextLink small arrow label={sheet.exists ? 'Change the sheet' : sheet.previous ? 'Log what changed' : 'Log the setup'}
+          href={href} />
+      </View>
+      {error && <Text style={t.error}>{error}</Text>}
+    </View>
   );
 }
 
@@ -237,6 +296,7 @@ function ChangeCard({ ch }: { ch: Change }) {
       {ch.why ? <Line label="Why" text={ch.why} /> : null}
       {ch.expected ? <Line label="Expect" text={ch.expected} /> : null}
       {ch.watch ? <Line label="Watch" text={ch.watch} /> : null}
+      {ch.history ? <Line label="Your log" text={ch.history.text} /> : null}
       {!ch.why && !ch.expected && <Text style={t.note}>No reason given.</Text>}
     </View>
   );
@@ -278,5 +338,6 @@ const useStyles = themed((c) => ({
   replyPressed: { backgroundColor: c.rule },
   replyText: { ...Type.label, fontSize: 15, color: c.text },
   dim: { opacity: 0.45 },
+  log: { marginTop: 8, gap: 10 },
   sendRow: { flexDirection: 'row', alignItems: 'center', gap: 20, flexWrap: 'wrap' },
 }));

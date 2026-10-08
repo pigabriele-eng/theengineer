@@ -169,3 +169,40 @@ def test_chat_api_remembers_limits_per_event(client):
     assert r["variant"] == "non_evo" and r["variant_label"].startswith("M4 GT4 (G82")
     assert client.post("/setup/chat", json={"event_id": event["id"], "variant": "gt3"}).status_code == 422
     assert client.get("/setup/chat?event_id=99999").status_code == 404
+
+
+def test_evidence_counts_the_same_change_in_the_log():
+    from app.setup.chat import MINUS, evidence
+    lever = BY_KEY["arb_front_softer"]
+    past = [
+        {"event": "Spa", "run": "FP2", "changes": [{"row": "arb", "at": "front", "from": 3, "to": 2}],
+         "deltas": {"best_s": -0.2, "balance": {"mid": -0.3}}},
+        {"event": "Monza", "run": "FP1", "changes": [{"row": "arb", "at": "front", "from": 2, "to": 3}],
+         "deltas": {"best_s": 0.1, "balance": {"mid": 0.2}}},  # the other way: not counted
+        {"event": "Monza", "run": "Q1", "changes": [{"row": "arb", "at": "rear", "from": 3, "to": 2}],
+         "deltas": None},  # the other axle
+    ]
+    e = evidence(lever, past, [{"kind": "understeer", "phase": "mid"}])
+    assert e["times"] == 1
+    assert "FP2 at Spa" in e["text"] and f"{MINUS}0.20 s" in e["text"] and "1 of 1" in e["text"]
+    assert evidence(lever, [], [])["times"] == 0
+
+
+def test_chat_api_reads_the_logged_changes(client):
+    event = client.post("/events", json={"name": "Spa weekend"}).json()
+    a, b = (client.post("/sessions", json={"name": n, "event_id": event["id"]}).json() for n in ("FP1", "FP2"))
+    client.put(f"/sessions/{a['id']}/setup", json={"values": {"arb_front": 3, "arb_rear": 2}})
+    client.put(f"/sessions/{b['id']}/setup", json={"values": {"arb_front": 2, "arb_rear": 2}})
+    r = client.post("/setup/chat", json={"event_id": event["id"], "session_id": b["id"], "set_session": True,
+                                         "text": "understeer mid-corner"}).json()
+    assert r["current"]["lever"] == "arb_front_softer"
+    assert r["current"]["changes"] == ["Anti-roll bar front 2 → 1"]  # from FP2's sheet
+    assert r["current"]["history"]["times"] == 1 and "FP2 at Spa weekend" in r["current"]["history"]["text"]
+
+
+def test_problems_after_an_answer():
+    from app.setup.chat import problems_after
+    st = {**new_state(), "problems": [{"kind": "understeer", "phase": "mid"}]}
+    assert problems_after(st, action={"type": "reset"}) == []
+    assert [p["kind"] for p in problems_after(st, text="and oversteer on exit")] == ["understeer", "oversteer"]
+    assert problems_after(st, action={"type": "skip"}) == st["problems"]

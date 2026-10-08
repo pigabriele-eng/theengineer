@@ -12,7 +12,7 @@ from app import models
 from app.db import get_db
 from app.routers.setups import _suggestions
 from app.setup import chat, sheet
-from app.setup.models import SetupChat
+from app.setup.models import SessionSetup, SetupChat
 from app.setup.templates import BMW_M4_GT4_EVO
 
 log = logging.getLogger(__name__)
@@ -32,6 +32,24 @@ def _runs(db: Session, event_id: int | None) -> list[models.RunSession]:
     q = select(models.RunSession).where(models.RunSession.event_id.is_(None) if event_id is None
                                         else models.RunSession.event_id == event_id)
     return sorted(db.scalars(q).unique().all(), key=sheet._order, reverse=True)
+
+
+def _past(db: Session) -> list[dict]:
+    """Every logged run-to-run setup change, at every event: what changed and what the lap times and balance did
+    (setup/sheet.py history, from kept summaries only: no log is read here)."""
+    sheets = db.execute(select(models.RunSession, SessionSetup)
+                        .join(SessionSetup, SessionSetup.session_id == models.RunSession.id)).all()
+    out, seen = [], set()
+    for s, _ in sheets:
+        key = s.event_id if s.event_id is not None else ("venue", sheet._venue(s))
+        if key in seen:
+            continue
+        seen.add(key)
+        h = sheet.history(db, s)
+        event = s.event.name if s.event else "a test"
+        out += [{"event": event, "run": r["name"] or f"Run {r['session_id']}", "changes": r["changes"],
+                 "deltas": r["deltas"]} for r in h["runs"] if r["changes"]]
+    return out
 
 
 def _out(db: Session, event_id: int | None, state: dict, notes: list[str] | None = None) -> dict:
@@ -94,7 +112,7 @@ def post_turn(body: TurnIn, db: Session = Depends(get_db)):
             template = sheet.template_of(db, s, own)
             values = dict(own.values) if own else {}
             try:
-                extra = chat._observations(state.get("problems", []))
+                extra = chat._observations(chat.problems_after(state, body.text, body.action))
                 res = _suggestions(db, s, extra)
                 data = res["suggestions"]
                 quiet = ("This session has no setup sheet", "No debrief for this session", "No log with clean laps")
@@ -107,10 +125,11 @@ def post_turn(body: TurnIn, db: Session = Depends(get_db)):
                 db.rollback()
                 row = _row(db, body.event_id)
                 notes = ["The run's data couldn't be read, so this goes on what you tell me."]
+        past = _past(db)
         if body.text:
-            state = chat.turn_text(state, body.text, template, values, data)
+            state = chat.turn_text(state, body.text, template, values, data, past)
         else:
-            state = chat.turn(state, body.action or {}, template, values, data, said=body.said)
+            state = chat.turn(state, body.action or {}, template, values, data, said=body.said, past=past)
     row.state = state
     db.commit()
     return _out(db, body.event_id, state, notes)
