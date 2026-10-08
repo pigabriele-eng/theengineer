@@ -4,6 +4,7 @@ import {
   ActivityIndicator, LayoutChangeEvent, Pressable, ScrollView, StyleSheet, useWindowDimensions, View as Box,
 } from 'react-native';
 
+import { useBackTo } from '@/components/Back';
 import { Tabs } from '@/components/Picks';
 import { TYRE_LABEL, TYRE_LEVELS, TYRE_STEPS } from '@/lib/tyreLevels';
 import PrintButton from '@/components/PrintButton';
@@ -139,6 +140,8 @@ export default function EventReport({
   const sessionEvent = useSessionEvent(hostFolder === undefined && scope && 'session' in scope ? scope.session : null);
   const read = useEventFolder(hostFolder !== undefined ? null : scope && 'event' in scope ? scope.event : sessionEvent);
   const folder = hostFolder ?? read;
+  // the masthead's Back on the report's own page, opened fresh: up to its event
+  useBackTo(!embedded && folder?.id != null ? { id: folder.id, name: folder.name } : null);
   // an official session's runs, once its report has answered: what its sections worked out per run show
   const partRuns = scope && isPartScope(scope) && answer?.scope === 'part' && answer.part === scope.part
     ? answer.sessions.map((s) => s.id) : null;

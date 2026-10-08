@@ -23,6 +23,8 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 
 import { Text, View } from '@/components/Themed';
 import { Fonts, Focus, Photo, Space, TAP, tapRoom, themed, Type, useTheme, WIDE } from '@/constants/Theme';
+import { BackLink, noteVisit } from '@/components/Back';
+import { parentOf } from '@/lib/backTo';
 import { useKnownMode } from '@/lib/eventModes';
 import { noPrint, printFill, printHead } from '@/lib/print';
 import { a11yState } from '@/lib/a11yState';
@@ -70,14 +72,23 @@ export function navOf(pathname: string, coaching = false): NavKey {
   return 'weekend';
 }
 
-/** The paper masthead at the top of every page: the nameplate and today's date, the five parts of the app as text
- * links (the one you are in underlined in red), then a thick and a thin rule. On a phone the links take a row of their
- * own under the nameplate. */
+// Under this width (a small phone), the date makes way for Back: Back, the nameplate and the date need about 345 px of
+// window, gutters included, so under 360 they would crowd one row.
+const DATE_WITH_BACK = 360;
+
+/** The paper masthead at the top of every page: Back (on every page but the race weekends, components/Back.tsx), the
+ * nameplate and today's date, the parts of the app as text links (the one you are in underlined in red), then a thick
+ * and a thin rule. On a phone the links take a row of their own under the nameplate. */
 export function Masthead() {
   const styles = useStyles();
-  const wide = useWide();
+  const { width } = useWindowDimensions();
+  const wide = width >= WIDE;
   const insets = useSafeAreaInsets();
   const path = usePathname();
+  // the trail Back reads: every page shown, in order
+  noteVisit(path);
+  const back = parentOf(path) != null;
+  const date = wide || !back || width >= DATE_WITH_BACK ? <Text style={styles.issue}>{today()}</Text> : null;
   const event = /^\/event\/(\d+)/.exec(path);
   const on = navOf(path, useKnownMode(event ? Number(event[1]) : null) === 'coaching');
   const nav = (
@@ -101,25 +112,29 @@ export function Masthead() {
       {wide ? (
         <View style={styles.mastRow}>
           <View style={styles.nameplate}>
+            <BackLink path={path} />
             <Link href="/" asChild>
               <Pressable accessibilityRole="link" accessibilityLabel="The Engineer: race weekends" style={styles.home}>
                 <Text style={styles.mark}>The Engineer</Text>
               </Pressable>
             </Link>
-            <Text style={styles.issue}>{today()}</Text>
+            {date}
           </View>
           {nav}
         </View>
       ) : (
         <>
           <View style={styles.nameplatePhone}>
-            <Link href="/" asChild>
-              <Pressable accessibilityRole="link" accessibilityLabel="The Engineer: race weekends"
-                style={styles.homePhone}>
-                <Text style={styles.markPhone}>The Engineer</Text>
-              </Pressable>
-            </Link>
-            <Text style={styles.issue}>{today()}</Text>
+            <View style={styles.nameplate}>
+              <BackLink path={path} />
+              <Link href="/" asChild>
+                <Pressable accessibilityRole="link" accessibilityLabel="The Engineer: race weekends"
+                  style={styles.homePhone}>
+                  <Text style={styles.markPhone}>The Engineer</Text>
+                </Pressable>
+              </Link>
+            </View>
+            {date}
           </View>
           {nav}
         </>

@@ -9,15 +9,13 @@ import { Newsreader_600SemiBold } from '@expo-google-fonts/newsreader/600SemiBol
 import { Newsreader_700Bold } from '@expo-google-fonts/newsreader/700Bold';
 import { useFonts } from 'expo-font';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
-import { HeaderBackButton } from 'expo-router/react-navigation';
 import * as SplashScreen from 'expo-splash-screen';
-import { ComponentProps, useEffect, useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 
 import { Masthead } from '@/components/Programme';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
-import { Fonts, TAP } from '@/constants/Theme';
 import { authEnabled, useAuthSession } from '@/lib/auth';
 import { installFocusRing } from '@/lib/focusRing';
 import { NoteLaunch } from '@/lib/openCurrent';
@@ -29,7 +27,8 @@ export {
 } from 'expo-router';
 
 export const unstable_settings = {
-  // Ensure that reloading a session page keeps a back button present.
+  // A page loaded fresh keeps the race weekends under it (the masthead's Back still goes up to the page above it,
+  // components/Back.tsx).
   initialRouteName: '(tabs)',
 };
 
@@ -71,10 +70,6 @@ export default function RootLayout() {
   return <RootLayoutNav signedIn={!authEnabled || auth.session != null} />;
 }
 
-// The pages that open on a full-bleed photo: the photo is their top, so they have no header bar (their kicker links
-// back up instead).
-const NO_BAR = { headerShown: false };
-
 function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
   const colorScheme = useColorScheme();
   const c = Colors[colorScheme];
@@ -87,20 +82,10 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
         border: c.rule, notification: c.error },
     };
   }, [colorScheme, c]);
-  // A pushed page's bar: the paper, no shadow, its name in Archivo Narrow
+  // No header bar on any page: each page has its own headline, and the masthead's Back (components/Back.tsx) is the one
+  // way back, in the same place on every page. A page's title still names the browser's tab.
   const screenOptions = useMemo(() => ({
-    headerStyle: { backgroundColor: c.background },
-    headerShadowVisible: false,
-    headerTintColor: c.text,
-    headerTitleStyle: { fontFamily: Fonts.label, fontSize: 15, color: c.text },
-    headerBackTitleStyle: { fontFamily: Fonts.label, fontSize: 14 },
-    // "Back", read out as "Go back" (not the route group's name, "(tabs)")
-    headerBackTitle: 'Back',
-    // on the web the back arrow is a 44 px tap target (the bar's own is 30 px)
-    ...(Platform.OS === 'web' ? {
-      headerLeft: ({ canGoBack, ...props }: ComponentProps<typeof HeaderBackButton> & { canGoBack?: boolean }) =>
-        canGoBack ? <HeaderBackButton {...props} style={styles.back} /> : null,
-    } : null),
+    headerShown: false,
     contentStyle: { backgroundColor: c.background },
   }), [c]);
   // the print styles (lib/print.ts), so a page prints right from the browser's own Print menu too
@@ -124,10 +109,10 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
         {signedIn && <Masthead />}
         <Stack screenOptions={screenOptions}>
           <Stack.Protected guard={signedIn}>
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="(tabs)" />
             <Stack.Screen name="event/[id]" options={{ title: 'Event' }} />
-            <Stack.Screen name="session/[id]" options={{ title: 'Session', ...NO_BAR }} />
-            <Stack.Screen name="report" options={{ title: 'Report', ...NO_BAR }} />
+            <Stack.Screen name="session/[id]" options={{ title: 'Session' }} />
+            <Stack.Screen name="report" options={{ title: 'Report' }} />
             <Stack.Screen name="technique" options={{ title: 'Technique check' }} />
             <Stack.Screen name="quali" options={{ title: 'Quali prep' }} />
             <Stack.Screen name="prep" options={{ title: 'Prep report' }} />
@@ -140,10 +125,10 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
             <Stack.Screen name="tools/setup" />
             <Stack.Screen name="tools/calendar" options={{ title: 'Racing calendar' }} />
             <Stack.Screen name="garage" options={{ title: 'Cars, drivers and teams' }} />
-            <Stack.Screen name="seasons" options={{ title: 'Seasons', ...NO_BAR }} />
-            <Stack.Screen name="coaching" options={{ title: 'Coaching', ...NO_BAR }} />
-            <Stack.Screen name="setup" options={{ title: 'Setup', ...NO_BAR }} />
-            <Stack.Screen name="drivers/index" options={{ title: 'Drivers', ...NO_BAR }} />
+            <Stack.Screen name="seasons" options={{ title: 'Seasons' }} />
+            <Stack.Screen name="coaching" options={{ title: 'Coaching' }} />
+            <Stack.Screen name="setup" options={{ title: 'Setup' }} />
+            <Stack.Screen name="drivers/index" options={{ title: 'Drivers' }} />
             <Stack.Screen name="drivers/tag" options={{ title: 'Tag drivers' }} />
             <Stack.Screen name="drivers/compare" options={{ title: 'Compare drivers' }} />
             <Stack.Screen name="drivers/fingerprints" options={{ title: 'Driver fingerprints' }} />
@@ -151,7 +136,7 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
             <Stack.Screen name="compare" options={{ title: 'Compare laps' }} />
           </Stack.Protected>
           <Stack.Protected guard={!signedIn}>
-            <Stack.Screen name="sign-in" options={{ headerShown: false, title: 'Sign in' }} />
+            <Stack.Screen name="sign-in" options={{ title: 'Sign in' }} />
           </Stack.Protected>
         </Stack>
       </View>
@@ -161,5 +146,4 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  back: { minWidth: TAP, minHeight: TAP, justifyContent: 'center' },
 });

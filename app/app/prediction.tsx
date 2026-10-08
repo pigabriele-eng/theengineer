@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, useWindowDimensions } from 'react-native';
 
 import { onFill, SubHead, usePrepType } from '@/components/PrepParts';
+import { useBackTo } from '@/components/Back';
 import PrintButton from '@/components/PrintButton';
 import { CarNumber, Prediction } from '@/components/PrepOfficial';
 import { Block, Colophon, Fig, Label, Page, Section, TextLink, useGutter, useWide } from '@/components/Programme';
@@ -29,6 +30,8 @@ export default function PredictionScreen() {
   const params = useLocalSearchParams<{ event?: string; view?: string }>();
   const event = params.event ? Number(params.event) : null;
   const folder = useEventFolder(event);
+  // the masthead's Back, opened fresh: up to the event
+  useBackTo(event != null ? { id: event, name: folder?.id === event ? folder.name : null } : null);
   const [data, setData] = useState<EventPrediction | null>(null);
   const [error, setError] = useState<string | null>(null);
 
