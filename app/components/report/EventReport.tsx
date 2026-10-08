@@ -320,7 +320,7 @@ export default function EventReport({
     sections.push({ title: 'The lap', dek: 'The fastest lap, and what a typical clean lap does.',
       body: <TheLap report={report} names={names} width={Math.min(width, 1240) - 2 * gutter} /> });
     sections.push({ title: report.gains.length === 3 ? 'Top three gains' : 'Where to gain',
-      dek: `Where a typical lap (${formatLap(h.typical)}) gives the most away to the quick passes.`,
+      dek: `Where a typical lap (${formatLap(h.typical)}) gives the most away to the top 10% of passes.`,
       body: <Gains report={report} onPick={showOnMap} /> });
   }
   if (hasLaps) {
@@ -345,7 +345,7 @@ export default function EventReport({
   }
   if (report) {
     sections.push({ title: 'Where the time goes',
-      dek: 'What a typical lap loses to the quick passes of every section, by driving phase.',
+      dek: 'What a typical lap loses to the top 10% of passes in every section, by driving phase.',
       body: <WhereTime report={report} /> });
   }
   if (hasLaps) {
@@ -670,7 +670,7 @@ function Gains({ report, onPick }: { report: Report; onPick: (code: string) => v
   const wide = useWide();
   const c = useTheme();
   if (report.gains.length === 0) {
-    return <Text style={styles.para}>The typical pass is already as quick as the quick passes everywhere.</Text>;
+    return <Text style={styles.para}>The typical pass is already as quick as the top 10% everywhere.</Text>;
   }
   return (
     <>
@@ -725,7 +725,7 @@ function LostList({ report, tones, focus, onPick }: {
     <View>
       <View style={styles.mapTop}>
         <Label>Time lost, s</Label>
-        <Label muted small>typical lap vs quick passes</Label>
+        <Label muted small>typical lap vs top 10%</Label>
       </View>
       {ranked.map((s) => (
         <Pressable key={s.code} onPress={() => onPick(s.code)} accessibilityRole="button"
@@ -756,7 +756,7 @@ function LostList({ report, tones, focus, onPick }: {
       {picked && (
         <Text style={styles.note}>
           {picked.code} · {Math.round(picked.start_m)}–{Math.round(picked.end_m)} m · typical{' '}
-          {picked.times.typical.toFixed(2)} s · quick passes {picked.times.quick.toFixed(2)} s
+          {picked.times.typical.toFixed(2)} s · top 10% {picked.times.quick.toFixed(2)} s
         </Text>
       )}
     </View>
@@ -771,7 +771,7 @@ function WhereTime({ report }: { report: Report }) {
   const c = useTheme();
   const phases = PHASES.map((p) => ({ p, v: Math.max(0, report.where_total[p] ?? 0), color: phaseColor(c, p) }));
   const total = phases.reduce((a, x) => a + x.v, 0);
-  if (total < 0.005) return <Text style={styles.para}>A typical lap loses nothing to the quick passes.</Text>;
+  if (total < 0.005) return <Text style={styles.para}>A typical lap loses nothing to the top 10%.</Text>;
   const most = phases.reduce((a, b) => (b.v > a.v ? b : a));
   // a phase's name and seconds sit over its stretch of the bar; a short stretch's go under it
   const big = (v: number) => v / total >= 0.06;
@@ -812,7 +812,7 @@ function WhereTime({ report }: { report: Report }) {
       )}
       <View style={wide ? styles.story : styles.storyPhone}>
         <Text style={wide ? styles.storyBody : styles.storyBodyPhone}>
-          A typical lap ({formatLap(report.headline.typical)}) loses {total.toFixed(2)} s to the quick passes of every
+          A typical lap ({formatLap(report.headline.typical)}) loses {total.toFixed(2)} s to the top 10% of passes in every
           section, added up by what the quickest pass was doing at each metre. Most of it is{' '}
           {PHASE_WORDS[most.p]?.where ?? most.p}.
         </Text>
@@ -863,7 +863,7 @@ function DrivingCard({ section: s, report, names, tone, onMap }: {
         </Text>
       </View>
       <Text style={styles.note}>
-        {Math.round(s.start_m)}–{Math.round(s.end_m)} m{s.flat ? ' · flat out' : ''} · {s.quick_passes} quick passes
+        {Math.round(s.start_m)}–{Math.round(s.end_m)} m{s.flat ? ' · flat out' : ''} · top 10%: {s.quick_passes} passes
       </Text>
       {s.headline && <Text style={styles.cardHeadline}>{s.headline}</Text>}
 
@@ -890,7 +890,7 @@ function DrivingCard({ section: s, report, names, tone, onMap }: {
             <Text style={styles.h4}>Section times</Text>
             <Text style={styles.times}>
               Fastest lap {t.fastest_lap.toFixed(2)} · best {t.best.toFixed(2)} ({names.lap(t.best_lap)}) · typical{' '}
-              {t.typical.toFixed(2)} · quick passes {t.quick.toFixed(2)}
+              {t.typical.toFixed(2)} · top 10% {t.quick.toFixed(2)}
             </Text>
             <Text style={styles.note}>
               The fastest lap is {s2(Math.max(t.fastest_lap - t.best, 0))} off the best pass here.
@@ -950,7 +950,7 @@ function SectionSpeed({ section: s, report }: { section: SectionReport; report: 
   const series: LineSeries[] = [
     { key: 'fastest', label: 'Fastest lap', values: cut(report.trace.fastest_lap), color: c.s3 },
     { key: 'typical', label: 'Typical pass', values: cut(report.trace.typical), color: c.s2 },
-    { key: 'quick', label: 'Quick passes', values: cut(report.trace.quick), color: c.s1 },
+    { key: 'quick', label: 'Top 10%', values: cut(report.trace.quick), color: c.s1 },
   ];
   const markers = report.corners.filter((k) => k.at_m >= s.start_m && k.at_m <= s.end_m)
     .map((k) => ({ at: k.at_m, label: k.code }));

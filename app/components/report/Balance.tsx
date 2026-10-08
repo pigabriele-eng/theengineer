@@ -154,11 +154,11 @@ function BalanceTable({ r }: { r: BalanceReport }) {
       <View style={styles.toggle} accessibilityRole="tablist">
         {[
           { label: 'All clean laps', on: !quick },
-          { label: 'Quickest passes', on: quick },
+          { label: 'Top 10%', on: quick },
         ].map((o) => (
           <Pressable
             key={o.label}
-            onPress={() => setQuick(o.label === 'Quickest passes')}
+            onPress={() => setQuick(o.label === 'Top 10%')}
             {...(o.on ? null : noPrint)}
             accessibilityRole="tab"
             {...a11yState({ selected: o.on })}

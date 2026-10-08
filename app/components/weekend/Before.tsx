@@ -576,7 +576,7 @@ function Corners({ no, corners, guide }: { no: number; corners: PrepReport['corn
     : guide?.status === 'none' ? guide.reason : guide?.status === 'ready' ? ZOOM_HINT : null;
   return (
     <Section no={no} title="Corner by corner"
-      dek={`In lap order. Quick passes: what the quickest tenth of the passes did; the graph is the best pass here ` +
+      dek={`In lap order. Top 10%: what the quickest tenth of the passes did; the graph is the best pass here ` +
         `against a typical one. Most time to find: ${top.join(', ')}.`}>
       {corners.changes && <Text style={StyleSheet.flatten([wide ? type.read : type.readPhone, styles.before])}>
         {corners.changes}</Text>}
@@ -612,7 +612,7 @@ function Corner({ r, guide, top }: { r: CornerRow; guide: Guide | null; top: boo
           </View>
         </View>
         <View style={styles.cornerMain}>
-          {r.ideal && <Text style={read}><Text style={type.inLabel}>Quick passes  </Text>{r.ideal}</Text>}
+          {r.ideal && <Text style={read}><Text style={type.inLabel}>Top 10%  </Text>{r.ideal}</Text>}
           {r.why && <Text style={read}><Text style={type.inLabel}>Why  </Text>{r.why}</Text>}
           {r.advice.length > 0 && (
             <Text style={read}><Text style={type.inLabel}>To change  </Text>{r.advice.join('. ')}.</Text>

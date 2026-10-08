@@ -26,7 +26,7 @@ SECTION_KEYS = ("code", "corners", "flat", "start_m", "end_m", "apex_m", "times"
                 "headline", "advice", "loss_line")
 HABIT_KEYS = ("key", "label", "unit", "phase", "typical", "quick", "link", "used", "worth_s")
 WHY = {  # what the time in each part of a corner comes from, in plain words
-    "braking": "Time under braking comes from braking later and harder: the quick passes stop the car in less "
+    "braking": "Time under braking comes from braking later and harder: the top 10% of passes stop the car in less "
                "distance, so they stay at full speed longer on the way in.",
     "entry": "On entry the time is in the release: letting the brake go progressively while turning keeps the "
              "front loaded so the car turns, and it carries more speed to the apex.",
@@ -34,8 +34,8 @@ WHY = {  # what the time in each part of a corner comes from, in plain words
                   "uses, so brake a little less rather than later.",
     "exit": "The exit counts twice: every km/h more out of the corner is carried all the way down the next "
             "straight, so getting back on the throttle earlier and more smoothly is worth more than braking later.",
-    "full throttle": "The straight after the corner is quicker only through a better exit from it: the quick passes "
-                     "are faster down it because they left the corner faster.",
+    "full throttle": "The straight after the corner is quicker only through a better exit from it: the top 10% of "
+                     "passes are faster down it because they left the corner faster.",
 }
 BALANCE_WORDS = {"entry": "on entry", "mid": "mid-corner", "exit": "on exit"}
 
@@ -605,7 +605,7 @@ METHOD = [
     "Lap times: best is the quickest clean lap; typical is the median clean lap of each event's report; "
     "race pace is the median clean lap of the race sessions (else of the long runs); quali is the best qualifying "
     "lap (else the peak of the best quali-style run).",
-    "Corners: each event's report sections, by the track's official corner numbers. The quick passes are what the "
+    "Corners: each event's report sections, by the track's official corner numbers. The top 10% are what the "
     "quickest tenth of the passes did.",
     "Quali prep and pressures: the tyre prep report of each event (TPMS warm-up, push temperatures, peak lap, the "
     "cold pressures that land in the fast laps' window).",
