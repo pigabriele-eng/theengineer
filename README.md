@@ -63,6 +63,8 @@ API server (`theengineer-api`):
 | `SUPABASE_ANON_KEY` | Public key the server sends with each token check | Project Settings → **API Keys**: the publishable key (`sb_publishable_...`), or the legacy `anon` key |
 | `SUPABASE_SERVICE_ROLE_KEY` | Private key for file storage; server only, never in the app | Project Settings → **API Keys**: a secret key (`sb_secret_...`), or the legacy `service_role` key |
 | `STORAGE_BUCKET` | Storage bucket for logs and recordings (set to `logs`); created private on first start | – |
+| `S3_ENDPOINT`, `S3_BUCKET`, `S3_KEY_ID`, `S3_SECRET_KEY` | Optional: store new logs in Backblaze B2 (free 10 GB) instead of Supabase Storage (1 GB). Files stored earlier stay in Supabase and are still read from there. If B2 can't be reached on start, the server logs why and keeps using Supabase | Backblaze → **Buckets** (a private bucket; its *Endpoint* is `s3.<region>.backblazeb2.com`) and **Application Keys** (a key for that bucket: *keyID* and *applicationKey*) |
+| `STORAGE_LIMIT_MB` | Optional: how much the storage holds (default 1024 on Supabase, 9500 on B2; 0 for no limit). Logs stop being stored 50 MB short of it | – |
 | `ALLOWED_EMAILS` | Optional, comma-separated: only these accounts get in | – |
 | `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY` | Voice debriefs, as above | console.anthropic.com, console.deepgram.com |
 
