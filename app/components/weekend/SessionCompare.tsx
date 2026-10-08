@@ -4,8 +4,8 @@
 // each with its driver, its run's tyres (a tap on the stint's tag changes them, components/TyreTag.tsx), its time and
 // its gap to the session's fastest lap. A lap holding the session's best time in a corner is flagged in words with
 // those corners and what it gained there on the fastest lap, biggest gain first. Then the quickest lap in each corner, then where the time is and the traces
-// of the laps picked: each stint's fastest lap at first, any lap with a tap. Real laps only, never a summed lap
-// (lib/sessionLaps.ts). Sections `no` to `no + 3`; only `no` before the event has a timed run (lib/weekendRuns.ts
+// of the laps picked: each stint's fastest lap at first, any lap with a tap. Real laps, plus the two theoretical laps
+// Gabriele asked for by name (components/TheoreticalLaps.tsx), added to the graph only with a tap. Sections `no` to `no + 3`; only `no` before the event has a timed run (lib/weekendRuns.ts
 // duringSections).
 import { RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, View as Box, StyleSheet } from 'react-native';
@@ -15,6 +15,7 @@ import { ErrorLine, Note } from '@/components/Controls';
 import { TickBox, useText } from '@/components/Picks';
 import { Label, Section, TextLink } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
+import { TheoreticalLaps, useTheoreticalLines, useTheoreticals } from '@/components/TheoreticalLaps';
 import { TyreChoices, TyreTag, TyreTags, useTyreTags } from '@/components/TyreTag';
 import { face, TAP, themed, Type } from '@/constants/Theme';
 import { CompareResult, compareLaps, encodePicks, formatLap } from '@/lib/compare';
@@ -29,6 +30,7 @@ import {
 } from '@/lib/sessionLaps';
 import { TYRE_LABEL } from '@/lib/tyreLevels';
 import { tyreTag } from '@/lib/tyreTag';
+import { flipKey, onGraph } from '@/lib/theoretical';
 import { sessionCompareSections } from '@/lib/weekendRuns';
 import { a11yState } from '@/lib/a11yState';
 
@@ -146,6 +148,17 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
   // the result shown is the one for these laps (while a new pick is worked out, the sections say so)
   const current = data != null && data.laps.length === laps.length
     && data.laps.every((l, i) => l.session_id === laps[i].session_id && l.lap === laps[i].lap);
+  // the stint and combined theoretical laps, worked out after the comparison; on the graph only once added
+  const theo = useTheoreticals(laps, current);
+  const [theoOn, setTheoOn] = useState<{ key: string; on: string[] }>({ key: '', on: [] });
+  const on = theoOn.key === sessionKey ? theoOn.on : [];
+  const flipTheo = (k: string) => setTheoOn({ key: sessionKey, on: flipKey(on, k) });
+  const colorOfSession = (id: number) => {
+    const p = picks.find((x) => x.session_id === id);
+    return p ? palette[p.slot % palette.length] : null;
+  };
+  const lineOf = useTheoreticalLines(colorOfSession);
+  const extra = current && data ? onGraph(theo.answer, on, data.traces.distance).map((g) => ({ ...g, ...lineOf(g) })) : [];
 
   // four sections once the event has a timed run, else one, as the page numbers them (lib/weekendRuns.ts)
   const four = sessionCompareSections(folder) === 4;
@@ -252,9 +265,12 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
         {current && data ? (
           <>
             <WhereTheTimeIs no={no + 2} data={data} colors={colors} focus={focus} onFocus={setFocus} onShow={show} />
-            <OnTraces picks={picks} runs={answer.runs} colorOf={colorOf} onRemove={remove} />
+            <TheoreticalLaps answer={theo.answer} error={theo.error} waiting={false} on={on} onFlip={flipTheo}
+              colorOfSession={colorOfSession} />
+            <OnTraces picks={picks} runs={answer.runs} colorOf={colorOf} onRemove={remove} extra={extra}
+              onRemoveExtra={flipTheo} />
             <CompareTraces no={no + 3} data={data} colors={colors} zoom={zoom} onZoom={setZoom}
-              cursor={cursor} onCursor={setCursor} />
+              cursor={cursor} onCursor={setCursor} extra={extra} />
           </>
         ) : (
           <>
@@ -270,14 +286,16 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
 
 /** The laps on the traces, each with its colour and an × that takes it off them (Gabriele, 2026-10-08: "please allow
  * to remove a trace as well"), down to none; the traces need two. */
-function OnTraces({ picks, runs, colorOf, onRemove }: {
+function OnTraces({ picks, runs, colorOf, onRemove, extra = [], onRemoveExtra }: {
   picks: LapPick[];
   runs: SessionRun[];
   colorOf: (l: LapRef) => string | null;
   onRemove: (l: LapRef) => void;
+  extra?: { key: string; label: string; color: string; dash: string }[]; // theoretical laps on the graph
+  onRemoveExtra?: (key: string) => void;
 }) {
   const styles = useStyles();
-  if (picks.length === 0) return null;
+  if (picks.length === 0 && extra.length === 0) return null;
   return (
     <View style={styles.onTraces}>
       <Label style={styles.onTracesLabel}>On the traces</Label>
@@ -296,6 +314,14 @@ function OnTraces({ picks, runs, colorOf, onRemove }: {
             </Pressable>
           );
         })}
+        {extra.map((x) => (
+          <Pressable key={x.key} onPress={() => onRemoveExtra?.(x.key)} accessibilityRole="button"
+            accessibilityLabel={`Take the ${x.label} off the graph`} style={styles.chip}>
+            <LineKey color={x.color} dash={x.dash} />
+            <Text style={styles.chipText}>{x.label}</Text>
+            <Text style={styles.chipX}>×</Text>
+          </Pressable>
+        ))}
       </View>
     </View>
   );

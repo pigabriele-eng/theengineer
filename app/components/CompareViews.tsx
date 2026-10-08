@@ -14,11 +14,14 @@ import {
   formatLap,
   LAP_COLORS,
   lapLabel,
+  LapTrace,
   Opportunity,
   TraceRole,
 } from '@/lib/compare';
 import { noPrint } from '@/lib/print';
 import { deltaColor, deltaWash, face, Fonts, phaseColor, TAP, themed, Type, useTheme } from '@/constants/Theme';
+
+const NONE: NonNullable<TracesProps['extra']> = [];
 
 // Colours of the laps in a result, by the slot each lap was given when it was picked.
 export function useLapColors(slots: number[]) {
@@ -33,8 +36,12 @@ export function useLapColors(slots: number[]) {
 type Colors = ReturnType<typeof useLapColors>;
 
 /** A short flat stroke of the lap's colour: the key for a lap wherever its name is written. */
-export function LineKey({ color }: { color: string }) {
+export function LineKey({ color, dash }: { color: string; dash?: string }) {
   const styles = useStyles();
+  if (dash) {  // a theoretical lap's: dashed as on the charts (DASH in lib/theoretical.ts: long dashes, or dots)
+    const style = Number(dash.split(',')[0]) > 3 ? 'dashed' : 'dotted';
+    return <View style={StyleSheet.flatten([styles.dashKey, { borderColor: color, borderStyle: style }])} />;
+  }
   return <View style={StyleSheet.flatten([styles.key, { backgroundColor: color }])} />;
 }
 
@@ -198,6 +205,8 @@ type TracesProps = {
   cursor: number | null;
   onCursor: (i: number | null) => void;
   no?: number;
+  // theoretical laps added to the graph (lib/theoretical.ts onGraph), drawn dashed after the real laps
+  extra?: { key: string; label: string; trace: LapTrace; color: string; dash: string }[];
 };
 
 const CHARTS: { role: TraceRole; title: string; unit: string; height: number; domain?: [number, number] }[] = [
@@ -210,7 +219,7 @@ const CHARTS: { role: TraceRole; title: string; unit: string; height: number; do
 
 /** Every lap on one distance axis: time gained or lost against the reference, then speed, pedals, steering and
  * gear, with one crosshair across all of them. Zoom to a section to see a corner in detail. */
-export function CompareTraces({ data, colors, zoom, onZoom, cursor, onCursor, no = 4 }: TracesProps) {
+export function CompareTraces({ data, colors, zoom, onZoom, cursor, onCursor, no = 4, extra = NONE }: TracesProps) {
   const styles = useStyles();
   const t = useText();
   const tr = data.traces;
@@ -238,17 +247,20 @@ export function CompareTraces({ data, colors, zoom, onZoom, cursor, onCursor, no
       const out = x.slice(i0, i1 + 1).map((v, k) => v - ref.t[i0 + k]);
       return out.map((v) => v - out[0]);
     };
-    return tr.laps.map((l, i) => ({ values: sliced(l.t), color: colors.laps[i] }));
-  }, [tr, ref, i0, i1, colors]);
+    return [...tr.laps.map((l, i) => ({ values: sliced(l.t), color: colors.laps[i] })),
+      ...extra.map((x) => ({ values: sliced(x.trace.t), color: x.color, dash: x.dash }))];
+  }, [tr, ref, i0, i1, colors, extra]);
   // each chart's lines, kept from one render to the next so a chart only redraws them when they or its view change
   const byRole = useMemo(() => {
-    const part = (values: number[] | undefined, color: string) => (values ? [{ values: values.slice(i0, i1 + 1), color }] : []);
-    const out: Partial<Record<TraceRole, { values: number[]; color: string }[]>> = {};
+    const part = (values: number[] | undefined, color: string, dash?: string) =>
+      (values ? [{ values: values.slice(i0, i1 + 1), color, dash }] : []);
+    const out: Partial<Record<TraceRole, { values: number[]; color: string; dash?: string }[]>> = {};
     for (const role of tr.roles) {
-      out[role] = tr.laps.flatMap((l, i) => part(l[role], colors.laps[i]));
+      out[role] = [...tr.laps.flatMap((l, i) => part(l[role], colors.laps[i])),
+        ...extra.flatMap((x) => part(x.trace[role], x.color, x.dash))];
     }
     return out;
-  }, [tr, i0, i1, colors]);
+  }, [tr, i0, i1, colors, extra]);
   const seriesOf = (role: TraceRole) => byRole[role] ?? [];
   // whole gears on the axis, the same however far the charts are zoomed: a range of at least five keeps the labels
   // whole numbers
@@ -277,6 +289,12 @@ export function CompareTraces({ data, colors, zoom, onZoom, cursor, onCursor, no
       <View style={styles.legend}>
         {data.laps.map((l, i) => (
           <Swatch key={i} color={colors.laps[i]} label={`L${l.lap} · ${l.session}`} width={14} height={4} />
+        ))}
+        {extra.map((x) => (
+          <View key={x.key} style={styles.dashLegend}>
+            <LineKey color={x.color} dash={x.dash} />
+            <Text style={styles.dashLabel}>{x.label}</Text>
+          </View>
         ))}
       </View>
       <View style={styles.atRow}>
@@ -314,6 +332,7 @@ export function CompareTraces({ data, colors, zoom, onZoom, cursor, onCursor, no
 
 const useStyles = themed((c) => ({
   key: { width: 14, height: 4 },
+  dashKey: { width: 18, height: 0, borderTopWidth: 3 },
   tabs: { marginBottom: 16 },
   measure: { maxWidth: 820 },
   shrink: { flexShrink: 1 },
@@ -349,6 +368,8 @@ const useStyles = themed((c) => ({
   best: { fontFamily: face('label', 700), color: c.timing.onBest },
   strong: { fontFamily: face('label', 700) },
   legend: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 22, rowGap: 8, marginTop: 14, marginBottom: 6 },
+  dashLegend: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  dashLabel: { ...Type.label, fontFamily: Fonts.label, fontSize: 13, letterSpacing: 0.7, color: c.text },
   atRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 18, rowGap: 6, marginTop: 10,
     marginBottom: 6, minHeight: 22 },
   at: { ...Type.number, fontSize: 13, color: c.textSecondary },
