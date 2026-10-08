@@ -280,3 +280,114 @@ def _traces(laps: list[Traced], sections: list[Section], best: np.ndarray, step:
         elapsed += float(tr["t"][s.end] - tr["t"][s.start])
     return {"step_m": round(step), "distance": idx.tolist(), "laps": [pack(x.trace) for x in laps],
             "ideal": pack(ideal), "roles": roles}
+
+
+# ---------- theoretical laps ----------
+# Gabriele, 2026-10-08: "add the theoretical lap time per run and a theoretical lap time for both compared stints
+# together. call them "stint theoretical" and "combined theoretical" and give the possibility to add the traces of
+# such laps to the graph". Only these two, on the comparisons; every report's best and typical laps stay real laps.
+
+def theoreticals(picks: list[Pick], packed: Callable[[str], PackedRun | None], corners: list[CornerSpec] | None = None,
+                 step: float = 5.0) -> dict:
+    """Each picked stint's "stint theoretical" (its quickest time in each section, from all its clean laps) and the
+    "combined theoretical" of the stints together (the quickest in each section of any of them), on the line and
+    sections of the comparison of these picks (compare_picks), with traces stitched from the laps holding each
+    section, every `step` metres, on the comparison's grid.
+
+    Read from the lap packs only (packed(run): the run's clean laps, or None): a stint without one is "not ready".
+    Each time is told as the stint's quickest real lap (as stored) less what the sections gain on it, so a theoretical
+    is never slower than the real lap it comes from. NotCovered when the quickest picked lap has no pack.
+    """
+    if not MIN_LAPS <= len(picks) <= MAX_LAPS:
+        raise ValueError(f"Pick {MIN_LAPS} to {MAX_LAPS} laps")
+    runs: dict[str, PackedRun | None] = {}
+    for p in sorted(picks, key=lambda p: p.time):
+        if p.run not in runs:
+            runs[p.run] = packed(p.run)
+    first = min(picks, key=lambda p: p.time)
+    pr = runs[first.run]
+    if pr is None or first.number not in pr.pack.laps:
+        raise NotCovered(f"lap {first.number} isn't in a lap pack")
+    # the comparison's line (its quickest picked lap's path) and its sections (from the quickest picked lap's trace)
+    w = pr.window(first.number)
+    line = track_line(w, pr.pack.laps[first.number])
+    length = line.length if line is not None else round(lap_length(w, pr.pack.laps[first.number]))
+    covered = [p for p in picks if runs[p.run] is not None and p.number in runs[p.run].pack.laps]
+    ref = min(covered, key=lambda p: runs[p.run].pack.laps[p.number].time)
+    ref_tr = runs[ref.run].trace(ref.number, line, length, KEEP)
+    sections, _ = make_sections(ref_tr, corners)
+    starts = np.array([s.start for s in sections])
+    ends = np.array([s.end for s in sections])
+
+    stints, laps_of = [], {}  # laps_of: run -> (lap numbers, times [lap, section], stored lap times)
+    for run in dict.fromkeys(p.run for p in picks):  # in the order picked
+        meta = next(p.meta for p in picks if p.run == run)
+        head = {"run": run, **{k: meta.get(k) for k in ("session_id", "session", "driver")}}
+        pr = runs[run]
+        numbers, rows, stored = [], [], []
+        for lap in pr.clean_laps() if pr is not None else []:
+            try:
+                t = pr.trace(lap.number, line, length, ())["t"]
+            except NotCovered:
+                continue
+            numbers.append(lap.number)
+            rows.append(t[ends] - t[starts])
+            stored.append(lap.time)
+        if not numbers:
+            stints.append({**head, "ready": False})
+            continue
+        times = np.array(rows)
+        laps_of[run] = (numbers, times, np.array(stored))
+        stints.append({**head, "ready": True, **_theoretical(times, np.array(stored),
+                                                             [(run, n) for n in numbers])})
+    combined = None
+    if len(laps_of) >= 2:
+        keys = [(run, n) for run, (numbers, _, _) in laps_of.items() for n in numbers]
+        combined = _theoretical(np.vstack([t for _, t, _ in laps_of.values()]),
+                                np.concatenate([s for _, _, s in laps_of.values()]), keys)
+
+    # the traces: each section from the lap holding it
+    holders = {tuple(f) for s in stints if s["ready"] for f in s["from"]} | \
+        ({tuple(f) for f in combined["from"]} if combined else set())
+    roles = tuple(CHART_ROLES)
+    traces = {}
+    for run, n in holders:
+        traces[(run, n)] = runs[run].trace(n, line, length, roles)
+    roles = tuple(r for r in CHART_ROLES if all(r in tr for tr in traces.values()))
+    idx = np.unique(np.r_[np.arange(0, len(ref_tr["distance"]), max(1, round(step))), len(ref_tr["distance"]) - 1])
+
+    def stitch(sources: list[list]) -> dict:
+        n = len(ref_tr["distance"])
+        out = {k: np.empty(n) for k in ("t", *roles)}
+        elapsed = 0.0
+        for k, s in enumerate(sections):
+            tr = traces[tuple(sources[k])]
+            sl = slice(s.start, s.end + 1)
+            out["t"][sl] = elapsed + tr["t"][sl] - tr["t"][s.start]
+            for r in roles:
+                out[r][sl] = tr[r][sl]
+            elapsed += float(tr["t"][s.end] - tr["t"][s.start])
+        packed_out = {"t": np.round(out["t"][idx], 3).tolist()}
+        for r in roles:
+            packed_out[r] = np.round(out[r][idx], CHART_ROLES[r]).tolist()
+        return packed_out
+
+    return {
+        "sections": [s.code for s in sections],
+        "stints": stints,
+        "combined": combined,
+        "traces": {"step_m": round(step), "distance": idx.tolist(), "roles": list(roles),
+                   "stints": [stitch(s["from"]) if s["ready"] else None for s in stints],
+                   "combined": stitch(combined["from"]) if combined else None},
+    }
+
+
+def _theoretical(times: np.ndarray, stored: np.ndarray, keys: list[tuple[str, int]]) -> dict:
+    """The quickest of these laps in each section (times: [lap, section]): its time, told as the quickest real lap
+    (stored) less what the sections gain on it on the line, and the (run, lap) holding each section."""
+    best = int(stored.argmin())
+    hold = times.argmin(axis=0)
+    gain = max(0.0, float(times[best].sum() - times.min(axis=0).sum()))
+    return {"time": round(float(stored[best]) - gain, 3), "gap_s": round(gain, 3),
+            "best_run": keys[best][0], "best_lap": keys[best][1], "best_time": round(float(stored[best]), 3),
+            "laps": len(keys), "from": [list(keys[i]) for i in hold]}
