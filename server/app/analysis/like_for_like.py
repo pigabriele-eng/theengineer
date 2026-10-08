@@ -12,7 +12,7 @@ taken to one tyre age and one fuel load, so a driver isn't quicker only for driv
 - Fuel: what is burnt on each lap is the log's (analysis/fuel.py, its own estimate from full-throttle time where a log
   has no fuel channel), its cost per kilogram the stint analysis's (fuel.py mass_cost). What is in the tank isn't
   logged: every run starts full, but a race's later stints carry on from the earlier stints' fuel (no refuelling at the
-  driver change, an assumption until it is confirmed).
+  driver change: Gabriele, 2026-10-08, "tire and fuel stay as they are").
 - Track grip between sessions can't be corrected: the drivers are compared in the sessions both drove, where there
   are any (the caller picks those runs).
 
@@ -169,7 +169,7 @@ def words(c: Corrected, fade: Fade | None, races: bool) -> list[str]:
     notes.append(f"{head}Not corrected: {', '.join(missing)}.")
     if c.fuel_done and races:
         notes.append("Every run taken to start full; a race's second stint carries on from the first stint's fuel "
-                     "(no refuelling at the driver change assumed) and runs on the same tyres, as the series does.")
+                     "and tyres, as the series runs it (no refuelling or tyre change at the driver change).")
     elif c.fuel_done:
         notes.append("Every run taken to start full: what was in the tank isn't logged.")
     if c.fuel_done and c.fuel_source == "estimate":

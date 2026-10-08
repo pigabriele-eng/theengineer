@@ -16,9 +16,9 @@ its only "lap" was a double pulse of the dash's marker), is checked the same way
 
 A run with a lap or two and none of them clean (an out-lap and an in-lap, a drive through the pit lane) has no lap to
 use either, and goes too (Gabriele, 2026-10-08: "R1 has two stints, please automatically delete no laps runs"): at
-startup, after every upload and after a re-timing, from what the database holds (no log is read). Only a debrief, a
-setup sheet or a name typed for it keeps such a run; a driver or tyres set on it don't (a question answered for every
-run of an event sets those).
+startup, after every upload and after a re-timing, from what the database holds (no log is read). As for a run with no
+laps, a debrief, a setup sheet, a name typed for it or a driver a person set on it keeps it (a driver the app set from
+the driving style or the season doesn't).
 """
 from __future__ import annotations
 
@@ -233,7 +233,7 @@ def no_lap_to_use(db: Session) -> list[int]:
     return [sid for sid, n, clean in rows if sid in made and n <= MAX_UNUSED_LAPS and not clean]
 
 
-def kept_anyway(db: Session, s: models.RunSession) -> str | None:
+def kept_anyway(db: Session, s: models.RunSession, driver_keeps: bool = True) -> str | None:
     """What keeps a run with no lap to use: something only a person puts on a run."""
     from app.results import models as rm
 
@@ -242,41 +242,99 @@ def kept_anyway(db: Session, s: models.RunSession) -> str | None:
     if db.scalar(select(setup_models.SessionSetup.id).where(setup_models.SessionSetup.session_id == s.id)) is not None:
         return "a setup sheet"
     mark = db.scalar(select(rm.RunNameMark).where(rm.RunNameMark.session_id == s.id))
-    return "a name typed for it" if mark is not None and mark.by_hand else None
+    if mark is not None and mark.by_hand:
+        return "a name typed for it"
+    if driver_keeps and s.driver_id is not None and "driver" not in _set_by_the_app(db, s):
+        return "a driver"
+    return None
 
 
-def drop_unused(session_id: int) -> bool:
-    """Remove the session if it still has a lap or two, none of them clean, and nothing a person put on it."""
+def _unused(db: Session, s: models.RunSession) -> str | None:
+    """Why the run has no lap to use, or None when it has one."""
+    if not s.laps or len(s.laps) > MAX_UNUSED_LAPS or any(lap.clean for lap in s.laps):
+        return None
+    laps = ", ".join(f"{lap.time_s:.1f} s" for lap in sorted(s.laps, key=lambda lap: lap.number))
+    return f"no lap to use, only {laps} not clean"
+
+
+GRID_PACE = 1.05  # a lap to grid's best lap is more than this much slower than the race's best clean lap
+
+
+def laps_to_grid(db: Session, event_ids: Collection[int]) -> list[int]:
+    """Each race's lap to grid (Gabriele, 2026-10-08: "You can delete the "lap to grid" which is normally the first
+    run from pits to grid"): the first run of a race (run_parts: R1, or a folder such as "04_R1"), made by an import,
+    of a lap or two, its best lap off the race's pace (slower than GRID_PACE times the best clean lap of the race's
+    other runs)."""
+    from app import run_labels, run_parts, run_tyres  # here: they import the routers
+
+    made = _made_by_import(db)
+    out = []
+    for eid in sorted(set(event_ids)):
+        runs = [s for s in db.scalars(select(models.RunSession).where(models.RunSession.event_id == eid)) if s.laps]
+        by_id = {s.id: s for s in runs}
+        for p in run_parts.parts(runs, run_labels.label_runs(runs)):
+            group = [by_id[i] for i in p.ids]
+            if len(group) < 2 or run_tyres.kind_of(group[0].kind.value, p.code) != "race":
+                continue
+            first, race = group[0], [lap.time_s for s in group[1:] for lap in s.laps if lap.clean]
+            if (first.id in made and len(first.laps) <= MAX_UNUSED_LAPS and race
+                    and min(lap.time_s for lap in first.laps) > GRID_PACE * min(race)):
+                out.append(first.id)
+    return out
+
+
+def _to_grid(db: Session, s: models.RunSession) -> str | None:
+    if s.event_id is None or s.id not in laps_to_grid(db, [s.event_id]):
+        return None
+    return f"the lap to grid of the race, best lap {min(lap.time_s for lap in s.laps):.1f} s"
+
+
+def _drop(session_id: int, why, driver_keeps: bool = True) -> str | None:
+    """Remove the session when why(db, session) still says why (and nothing a person put on it keeps it); returns
+    why, or None when it stays."""
     keys: list[str] = []
     with heavy.lock, app_db.SessionLocal() as db:  # nobody reads its log while it goes
         s = db.get(models.RunSession, session_id)
-        if s is None or not s.laps or len(s.laps) > MAX_UNUSED_LAPS or any(lap.clean for lap in s.laps):
-            return False
+        reason = why(db, s) if s is not None else None
+        if reason is None:
+            return None
         name = s.name or f"Session {s.id}"
-        hand = kept_anyway(db, s)
+        hand = kept_anyway(db, s, driver_keeps)
         if hand:
-            log.warning("Run %r (session %s) has no lap to use; kept: it has %s", name, s.id, hand)
-            return False
-        laps = ", ".join(f"{lap.time_s:.1f} s" for lap in sorted(s.laps, key=lambda lap: lap.number))
+            log.warning("Run %r (session %s): %s; kept: it has %s", name, s.id, reason, hand)
+            return None
         files = ", ".join(f.filename for f in s.files)
         keys = remove_session(db, s)
         db.commit()
-        log.warning("Removed run %r (session %s, %s): no lap to use, only %s not clean", name, session_id, files,
-                    laps)
+        log.warning("Removed run %r (session %s, %s): %s", name, session_id, files, reason)
     for key in keys:  # after the commit, as check_session does
         try:
             storage.delete(key)
         except Exception as e:
             log.warning("Couldn't delete the stored file %s: %s", key, e)
-    return True
+    return reason
 
 
-def cleanup(only: Collection[int] | None = None) -> dict[str, list[int]]:
-    """Check every session an import made that has no laps, or no lap to use (or those of only), one at a time."""
+def drop_unused(session_id: int) -> bool:
+    """Remove the session if it still has a lap or two, none of them clean, and nothing a person put on it."""
+    return _drop(session_id, _unused) is not None
+
+
+NO_LAP_TO_USE = "No lap to use: only an out-lap and an in-lap"
+LAP_TO_GRID = "The lap to grid: from the pits to the grid before the race"
+
+
+def cleanup(only: Collection[int] | None = None, why: dict[int, str] | None = None) -> dict[str, list[int]]:
+    """Check every session an import made that has no laps, or no lap to use, and every race's lap to grid (or those
+    of only), one at a time. why: filled with each removed run's reason, in words for the upload screen."""
     with app_db.SessionLocal() as db:
         ids = [i for i in candidates(db) if only is None or i in only]
         unused = [i for i in no_lap_to_use(db) if only is None or i in only]
+        events = db.scalars(select(models.RunSession.event_id).where(
+            models.RunSession.event_id.is_not(None),
+            *([models.RunSession.id.in_(list(only))] if only is not None else [])).distinct()).all()
     out: dict[str, list[int]] = {"removed": [], "kept": []}
+    why = why if why is not None else {}
     for sid in ids:
         try:
             what = check_session(sid)
@@ -289,8 +347,22 @@ def cleanup(only: Collection[int] | None = None) -> dict[str, list[int]]:
         try:
             if drop_unused(sid):
                 out["removed"].append(sid)
+                why[sid] = NO_LAP_TO_USE
         except Exception:
             log.exception("Checking run %s for a lap to use failed", sid)
+    try:  # after the runs with no lap to use: the race's first run left is the one to look at
+        with app_db.SessionLocal() as db:
+            grid = [i for i in laps_to_grid(db, events) if only is None or i in only]
+    except Exception:
+        log.exception("Looking for laps to grid failed")
+        grid = []
+    for sid in grid:
+        try:  # a driver set on it doesn't keep it: Gabriele asked for these to go
+            if _drop(sid, _to_grid, driver_keeps=False):
+                out["removed"].append(sid)
+                why[sid] = LAP_TO_GRID
+        except Exception:
+            log.exception("Checking run %s for a lap to grid failed", sid)
     return out
 
 

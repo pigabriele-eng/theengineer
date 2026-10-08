@@ -6,8 +6,9 @@ style groups had a driver change between them. The cut goes in the middle of the
 between the end of the earlier stint's last lap and the start of the later stint's first lap, read from the log's
 speed channel, on a whole second. Only a stop of MIN_STOP_S or more is a driver change: two styles without one are a
 driver on other tyres, not two drivers (the stops found are kept in memory, so such a run's log isn't read again on
-every pass). Each part keeps driver_style.MIN_STINT_LAPS clean laps or more, a run becomes MAX_PARTS runs at most,
-and only a run whose laps are all on its main log is split.
+every pass). In a race, a stop longer than a pit stop (RED_FLAG_S standing in all) is a red flag, not a driver change.
+Each part keeps driver_style.MIN_STINT_LAPS clean laps or more, a run becomes MAX_PARTS runs at most, and only a run
+whose laps are all on its main log is split.
 
 How: each part is a run of its own (RunSession) with a LoggerFile row that points at the same stored log, meta
 "window" [from_s, to_s] in seconds of the stored log; timing.read_file hands every reader its part, from 0 at the
@@ -57,11 +58,15 @@ log = logging.getLogger(__name__)
 
 STOP_KMH = 5.0  # slower than this, the car stands
 MIN_STOP_S = 20.0  # a stop at least this long between two styles is a driver change
+# ... but in a race, standing longer than a pit stop (about 1.5 minutes) in all is a red flag, not a driver change
+# (Gabriele, 2026-10-08: "any interruption during the race that is longer than a pitstop is a red flag")
+RED_FLAG_S = 150.0
 MAX_PARTS = 4
 MODES = ("groups", "tagged")  # guesses that tell drivers apart
 SEEN = 512  # stops looked for, kept: every background pass asks again about a run with two styles and no stop
 
-_seen: OrderedDict[tuple, tuple[float, float] | None] = OrderedDict()  # (file, path, window, from, to) -> stop
+# (file, path, window, from, to) -> the longest stop's start and end, and the time standing in all
+_seen: OrderedDict[tuple, tuple[float, float, float] | None] = OrderedDict()
 _seen_lock = threading.Lock()
 
 
@@ -110,9 +115,17 @@ def _cuts(s: models.RunSession, stints: list[ds.Stint]) -> list[float]:
             while len(_seen) > SEEN:
                 _seen.popitem(last=False)
     with _seen_lock:
-        stops = [x for k in keys if (x := _seen.get(k)) is not None and x[1] - x[0] >= MIN_STOP_S]
+        stops = [x for k in keys if (x := _seen.get(k)) is not None and len(x) == 3 and x[1] - x[0] >= MIN_STOP_S]
+    if stops and _race(s):
+        stops = [x for x in stops if x[2] <= RED_FLAG_S]
     stops = sorted(sorted(stops, key=lambda x: x[0] - x[1])[:MAX_PARTS - 1])  # the longest
-    return _enough([l for l in s.laps if l.clean], [float(round((a + b) / 2)) for a, b in stops])
+    return _enough([l for l in s.laps if l.clean], [float(round((a + b) / 2)) for a, b, _ in stops])
+
+
+def _race(s: models.RunSession) -> bool:
+    from app import run_labels, run_tyres  # here: they import the routers
+
+    return run_tyres.kind_of(s.kind.value, run_labels.base_name(s)) == "race"
 
 
 def _speed_names(s: models.RunSession) -> tuple[str, ...]:
@@ -120,8 +133,9 @@ def _speed_names(s: models.RunSession) -> tuple[str, ...]:
     return tuple(own) if own else DEFAULT_CHANNEL_MAP["speed"]
 
 
-def _stop(t: np.ndarray, v: np.ndarray, a: float, b: float) -> tuple[float, float] | None:
-    """The longest stretch slower than STOP_KMH from a to b (seconds into the log): when it began and ended."""
+def _stop(t: np.ndarray, v: np.ndarray, a: float, b: float) -> tuple[float, float, float] | None:
+    """The longest stretch slower than STOP_KMH from a to b (seconds into the log): when it began and ended; and the
+    time spent slower than that from a to b in all (a red flag's queue moves up now and then)."""
     i = np.flatnonzero((t >= a) & (t <= b))
     if not len(i):
         return None
@@ -130,7 +144,7 @@ def _stop(t: np.ndarray, v: np.ndarray, a: float, b: float) -> tuple[float, floa
     if not len(first):
         return None
     k = int(np.argmax(t[i[last]] - t[i[first]]))
-    return float(t[i[first[k]]]), float(t[i[last[k]]])
+    return float(t[i[first[k]]]), float(t[i[last[k]]]), float(np.sum(t[i[last]] - t[i[first]]))
 
 
 def _enough(clean: list[models.Lap], cuts: list[float]) -> list[float]:
