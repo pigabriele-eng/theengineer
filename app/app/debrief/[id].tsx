@@ -6,6 +6,7 @@ import { ActivityIndicator, StyleSheet } from 'react-native';
 import { FigRow, Notice, PageHead, useText } from '@/components/Picks';
 import { useBackTo } from '@/components/Back';
 import PrintButton from '@/components/PrintButton';
+import ShareText from '@/components/ShareText';
 import { Colophon, Fig, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { useEventFolder, useSessionEvent } from '@/components/SessionSwitcher';
 import { Text, View } from '@/components/Themed';
@@ -19,6 +20,8 @@ import {
   saidOf,
   Verdict,
 } from '@/lib/debriefCheck';
+import { debriefText, DebriefHeader } from '@/lib/debriefText';
+import { driversApi } from '@/lib/drivers';
 import { poll } from '@/lib/poll';
 import { face, Fonts, inkOn, Palette, themed, Type, useTheme } from '@/constants/Theme';
 
@@ -59,6 +62,28 @@ export default function DebriefReport() {
   const eventId = useSessionEvent(d?.session_id);
   const folder = useEventFolder(eventId);
   useBackTo(eventId != null ? { id: eventId, name: folder?.id === eventId ? folder.name : null } : null);
+
+  // the shared text's header: the event, the run and its driver (the text is made on the tap, so fetched beforehand)
+  const [head, setHead] = useState<DebriefHeader>({});
+  const sessionId = d?.session_id;
+  useEffect(() => {
+    if (sessionId == null) return;
+    let live = true;
+    (async () => {
+      try {
+        const s = (await api.session(sessionId)) as Awaited<ReturnType<typeof api.session>> & { driver_id?: number | null };
+        const driver = s.driver_id != null
+          ? (await driversApi.list().catch(() => [])).find((x) => x.id === s.driver_id)?.name ?? null
+          : null;
+        if (live) setHead({ event: s.event_name, run: s.name, driver });
+      } catch {
+        // shared without them
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [sessionId]);
 
   const load = useCallback(() => api.debrief(debriefId).then(setD, (e) => setError(e.message)), [debriefId]);
 
@@ -149,6 +174,10 @@ export default function DebriefReport() {
         <View style={styles.headLinks}>
           {d ? <TextLink label="Open the session" href={`/session/${d.session_id}`} arrow small /> : null}
           <PrintButton title={['Debrief report', dek].filter(Boolean).join(' · ')} />
+          {d?.status === 'ready' ? (
+            <ShareText title={['Debrief report', head.event, head.run].filter(Boolean).join(' · ')}
+              text={() => debriefText(d, SECTIONS, { ...head, date: day(d.created_at) })} />
+          ) : null}
         </View>
       </PageHead>
 
