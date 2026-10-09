@@ -492,3 +492,11 @@ def test_wheelspin_and_traction_control_on_the_way_out_are_read():
     assert _traction_words(_traction({**tr, "tc_on": np.zeros(n), "rear_slip": np.full(n, 2.0)}, 80, 150)) == ""
     bare = _traction({"t": tr["t"]}, 80, 150)
     assert bare == {"tc_s": None, "tc_from": None, "spin_pct": None, "spin_at": None} and _traction_words(bare) == ""
+
+
+def test_qualifying_build_laps_are_marked_and_left_out_of_habits():
+    from app.routers.technique import mark_build_laps
+    laps = [{"session_id": 1, "time": 106.0}, {"session_id": 1, "time": 103.1}, {"session_id": 1, "time": 103.4},
+            {"session_id": 2, "time": 110.0}, {"session_id": 2, "time": 104.0}]
+    mark_build_laps(laps, {1: "qualifying", 2: "practice"})
+    assert [x["build"] for x in laps] == [True, False, False, False, False]  # practice laps are never build laps

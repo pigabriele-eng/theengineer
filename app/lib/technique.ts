@@ -91,6 +91,7 @@ export type LapRow = {
   top: string | null;
   top_code: string | null;
   in_lap: boolean;
+  build?: boolean; // a qualifying lap building up to the push (or cooling down): left out of the repeats
 };
 
 export type Habit = {

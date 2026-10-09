@@ -304,15 +304,20 @@ export default function TechniqueScreen() {
                 const best = l.number === answer.best_lap;
                 return (
                   <Choice key={l.number} on={l.number === check?.number} onPress={() => pickLap(l.number)}
-                    label={`${l.number}`} detail={`${formatLap(l.time)}${l.in_lap ? ' in' : ''}`}
+                    label={`${l.number}`}
+                    detail={`${formatLap(l.time)}${l.in_lap ? ' in' : l.build ? ' build' : ''}`}
                     fill={best ? theme.timing.best : undefined} ink={best ? theme.timing.onBest : undefined}
-                    dim={l.in_lap}
-                    accessibilityLabel={`Lap ${l.number}, ${formatLap(l.time)}${best ? ', the quickest' : ''}`} />
+                    dim={l.in_lap || l.build}
+                    accessibilityLabel={`Lap ${l.number}, ${formatLap(l.time)}${best ? ', the quickest' : ''}${
+                      l.build ? ', a build lap' : ''}`} />
                 );
               })}
             </View>
             <Text style={t.small}>
               Clean laps only: out-laps and in-laps say little about technique.
+              {answer.laps.some((l) => l.build)
+                ? ' In qualifying, a lap 2% or more slower than the run’s quickest is a build lap: it is marked and left out of the mistakes that repeat.'
+                : ''}
               {answer.best_lap != null ? ' The quickest lap’s time is in purple.' : ''}
             </Text>
           </View>
