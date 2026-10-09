@@ -20,7 +20,9 @@ before is renamed. The kind of run (practice, qualifying, race, test) follows th
 
 Each driver has a qualifying of their own, so two runs in one qualifying are its two drivers: the second takes the day's
 other qualifying (Q2); more than two are asked about (a red flag can split one). A race has two stints, one per driver:
-R1 stint 1 and R1 stint 2.
+R1 stint 1 and R1 stint 2. Where the series' qualifying order is known (quali_order.py: ADAC GT4, Q1 PIA and Q2 SYL;
+Hockenheim 2026 has a Q3 and a Race 3 too), each known driver takes their own qualifying, the drivers the app set
+don't name runs (they came from these names), and once named the Q and race runs get their drivers from it.
 """
 from __future__ import annotations
 
@@ -274,61 +276,108 @@ def _clashing(windows: dict[int, tuple[datetime, datetime]]) -> set[int]:
     return out
 
 
+def _who(r: models.RunSession, drivers: dict[int, int | None] | None) -> int | None:
+    """The run's driver as naming counts it: ``drivers`` leaves out the ones it mustn't go by (quali_order.py)."""
+    return r.driver_id if drivers is None else drivers.get(r.id)
+
+
+def _starter(runs: list[models.RunSession], codes: dict[int, str], order: dict[int, tuple],
+             drivers: dict[int, int | None] | None) -> int | None:
+    """The Q1 driver when the series' order isn't known: the driver of Race 1's first stint (the Q1 driver starts
+    Race 1)."""
+    r1 = sorted((r for r in runs if codes.get(r.id) == "R1" and _who(r, drivers)), key=lambda r: (order[r.id], r.id))
+    return _who(r1[0], drivers) if r1 else None
+
+
 def _by_driver(runs: list[models.RunSession], codes: dict[int, str], asks: dict[int, list[str]],
-               order: dict[int, tuple]) -> dict[int, str]:
-    """Qualifying runs the lap times can't tell apart (Q1 or Q2), told by who drove: the Q1 driver starts Race 1,
-    so the run of the driver of Race 1's first stint is Q1 and a run of the other driver Q2."""
-    open_q = [r for r in runs if r.id in asks and set(asks[r.id]) <= {"Q1", "Q2"} and r.driver_id]
-    r1 = sorted((r for r in runs if codes.get(r.id) == "R1" and r.driver_id), key=lambda r: (order[r.id], r.id))
-    if not open_q or not r1:
+               order: dict[int, tuple], drivers: dict[int, int | None] | None = None,
+               q_order: tuple[int, int] | None = None) -> dict[int, str]:
+    """Qualifying runs the lap times can't tell apart, told by who drove: with the series' qualifying order
+    (quali_order.py: Q1 and Q3 one driver's, Q2 the other's), the one qualifying offered that is the run's driver's;
+    else between Q1 and Q2, the run of the Q1 driver (_starter) is Q1 and a run of the other driver Q2."""
+    if q_order is not None:
+        from app import quali_order
+
+        out = {}
+        for r in runs:
+            if r.id in asks and all(prefix(c) == "Q" for c in asks[r.id]) and _who(r, drivers):
+                fit = [c for c in asks[r.id] if quali_order.first_driver(c, q_order) == _who(r, drivers)]
+                if len(fit) == 1:
+                    out[r.id] = fit[0]
+        return out
+    open_q = [r for r in runs if r.id in asks and set(asks[r.id]) <= {"Q1", "Q2"} and _who(r, drivers)]
+    starter = _starter(runs, codes, order, drivers)
+    if not open_q or starter is None:
         return {}
-    starter = r1[0].driver_id
-    return {r.id: "Q1" if r.driver_id == starter else "Q2" for r in open_q}
+    return {r.id: "Q1" if _who(r, drivers) == starter else "Q2" for r in open_q}
+
+
+def _fit(by: list[tuple[int | None, list]], slots: list[str], q_order: tuple[int, int]) -> list[tuple]:
+    """Each driver's runs lined up with the qualifying sessions ``slots`` (in time order) by the series' order: the
+    session's own driver, else a driver not known (in the order they ran), else whoever is left."""
+    from app import quali_order
+
+    left, out = list(by), []
+    for c in slots:
+        want = quali_order.first_driver(c, q_order)
+        i = next((k for k, d in enumerate(left) if d[0] is not None and d[0] == want), None)
+        if i is None:
+            i = next((k for k, d in enumerate(left) if d[0] is None), 0 if left else None)
+        if i is None:
+            break
+        out.append(left.pop(i))
+    return out + left
 
 
 def _quali_per_driver(runs: list[models.RunSession], codes: dict[int, str], order: dict[int, tuple],
-                      table: list, fixed: set[int]) -> tuple[dict[int, str], dict[int, list[str]]]:
+                      table: list, fixed: set[int], drivers: dict[int, int | None] | None = None,
+                      q_order: tuple[int, int] | None = None) -> tuple[dict[int, str], dict[int, list[str]]]:
     """Qualifying runs that landed in one session (a log of both, one download after both) go one per driver
     (Gabriele, 2026-10-08: "there are no stints in Q, so a second run is the second driver"): the next driver's run
-    takes the day's next qualifying no run holds. The driver who starts Race 1 qualified first (Q1) when the drivers
-    are known, else the run that ran first did. Runs of one known driver stay together; a run whose session was
-    tapped (``fixed``) keeps it. More than two runs with a driver not known: a red flag split someone's qualifying
-    ("If you find more than 2 runs for quali, ask"), so each run not tapped yet is asked about, between the day's
-    qualifying sessions. Returns the runs to move and where, and the runs to ask about with the sessions to offer."""
+    takes the day's next qualifying no run holds. With the series' qualifying order (``q_order``, quali_order.py)
+    each known driver takes their own qualifying (_fit); else the Q1 driver (_starter: who starts Race 1) qualified
+    first when the drivers are known; else the run that ran first did. Runs of one known driver stay together; a run
+    whose session was tapped (``fixed``) keeps it. More than two runs with a driver not known: a red flag split
+    someone's qualifying ("If you find more than 2 runs for quali, ask"), so each run not tapped yet is asked about,
+    between the day's qualifying sessions. ``drivers``: as _who. Returns the runs to move and where, and the runs to
+    ask about with the sessions to offer."""
     day = {c: t0.date() for c, t0, _ in table}
     held = set(codes.values())
-    r1 = sorted((r for r in runs if codes.get(r.id) == "R1" and r.driver_id), key=lambda r: (order[r.id], r.id))
-    starter = r1[0].driver_id if r1 else None
+    starter = _starter(runs, codes, order, drivers)
     out: dict[int, str] = {}
     ask: dict[int, list[str]] = {}
     for code in sorted(c for c in set(codes.values()) if prefix(c) == "Q" and c in day):
-        drivers: list[tuple[int | None, list[models.RunSession]]] = []  # in the order they ran
+        by: list[tuple[int | None, list[models.RunSession]]] = []  # each driver's runs, in the order they ran
         for r in sorted((r for r in runs if codes.get(r.id) == code), key=lambda r: (order[r.id], r.id)):
-            same = next((d for d in drivers if r.driver_id and d[0] == r.driver_id), None)
+            same = next((d for d in by if _who(r, drivers) and d[0] == _who(r, drivers)), None)
             if same is not None:
                 same[1].append(r)
             else:
-                drivers.append((r.driver_id, [r]))
-        if len(drivers) < 2:
+                by.append((_who(r, drivers), [r]))
+        if len(by) < 2:
             continue
         free = sorted((c for c in day if prefix(c) == "Q" and c not in held and day[c] == day[code]),
                       key=lambda c: table_start(table, c))
         if not free:
             continue  # nowhere to go: each keeps the session, told apart by its driver (run_labels.py)
-        group = [r for _, rs in drivers for r in rs]
-        if len(group) > 2 and any(r.driver_id is None for r in group):
+        group = [r for _, rs in by for r in rs]
+        if len(group) > 2 and any(_who(r, drivers) is None for r in group):
             options = sorted([code, *free], key=lambda c: table_start(table, c))
             ask.update({r.id: options for r in group if r.id not in fixed})
             held.update(free)
             continue
-        stays = [d for d in drivers if any(r.id in fixed for r in d[1])]
+        stays = [d for d in by if any(r.id in fixed for r in d[1])]
         if stays:  # a tapped run keeps its session; the other drivers take the free ones
-            moving, slots = [d for d in drivers if d not in stays], free
+            moving, slots = [d for d in by if d not in stays], free
+            if q_order is not None:
+                moving = _fit(moving, slots, q_order)
         else:
             slots = sorted([code, *free], key=lambda c: table_start(table, c))
-            if slots[0] == "Q1" and starter is not None:  # the Race 1 starter first, a driver not known next
-                drivers.sort(key=lambda d: 0 if d[0] == starter else 1 if d[0] is None else 2)
-            moving = drivers
+            if q_order is not None:
+                by = _fit(by, slots, q_order)
+            elif slots[0] == "Q1" and starter is not None:  # the Race 1 starter first, a driver not known next
+                by.sort(key=lambda d: 0 if d[0] == starter else 1 if d[0] is None else 2)
+            moving = by
         for (_, rs), c in zip(moving, slots, strict=False):
             held.add(c)
             out.update({r.id: c for r in rs if r.id not in fixed and c != code})
@@ -340,8 +389,8 @@ LAPS_BEFORE_STOP_MIN = 20  # ... so laps adding up to this before a run (no form
 PIT_STOP_MIN = 2.5  # a stop longer than this (with the in-lap and out-lap around it) is a red flag: the stint goes on
 
 
-def _stints(code: str, group: list[models.RunSession], minute: dict[int, tuple[float, float]] | None = None
-            ) -> list[int]:
+def _stints(code: str, group: list[models.RunSession], minute: dict[int, tuple[float, float]] | None = None,
+            drivers: dict[int, int | None] | None = None) -> list[int]:
     """Each run's stint number in its session, in the order they ran. Elsewhere every run is a stint; a race has two,
     one per driver (Gabriele, 2026-10-08: "races for ADAC GT4 are only two stints", 60 minutes with the driver change
     between minute 25 and 35, a stop of about 1.5 minutes): a run of the same known driver as the run before it is
@@ -350,7 +399,7 @@ def _stints(code: str, group: list[models.RunSession], minute: dict[int, tuple[f
     lap ended), a run starting STOP_FROM_MIN or later is the second, unless the stop before it was longer than a pit
     stop ("any interruption during the race that is longer than a pitstop is a red flag": the stint goes on); without
     a clock, a run after LAPS_BEFORE_STOP_MIN of the race's laps is the second. A part of a run split at its driver
-    change (run_split.py) is the second."""
+    change (run_split.py) is the second. ``drivers``: as _who."""
     if prefix(code) != "R":
         return list(range(1, len(group) + 1))
     minute = minute or {}
@@ -358,8 +407,8 @@ def _stints(code: str, group: list[models.RunSession], minute: dict[int, tuple[f
     laps_min = 0.0
     for k, r in enumerate(group):
         prev = group[k - 1] if k else None
-        if prev is not None and r.driver_id is not None and prev.driver_id is not None:
-            n = out[-1] if r.driver_id == prev.driver_id else 2
+        if prev is not None and _who(r, drivers) is not None and _who(prev, drivers) is not None:
+            n = out[-1] if _who(r, drivers) == _who(prev, drivers) else 2
         elif prev is not None and any((f.meta or {}).get("split_from") for f in r.files):
             n = 2  # cut off a run at its driver change (run_split.py)
         elif r.id in minute:
@@ -387,6 +436,14 @@ def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | Non
     out: dict = {"offset_h": 0, "named": [], "questions": []}
     if not table or not runs:
         return out
+    from app import quali_order  # here: it uses the drivers' modules, which use the results
+
+    q_order = quali_order.order_for(db, event_id)
+    # with the series' qualifying order known, the drivers the app set don't name runs: they came from these names
+    drivers = None
+    if q_order is not None:
+        hide = quali_order.set_by_app(db, runs)
+        drivers = {r.id: None if r.id in hide else r.driver_id for r in runs}
     hints = {r.id: hint(r, marks.get(r.id)) for r in runs}
     timed = {k: w for k, w in windows.items() if k not in _clashing(windows)}
     allowed = {k: (hints[k][1],) if hints[k][1] else WANT.get(hints[k][0] or "", ()) for k in timed}
@@ -419,7 +476,7 @@ def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | Non
             codes[r.id] = code
         elif ask and looks_given(r, m):
             asks[r.id] = ask
-    for rid, code in _by_driver(runs, codes, asks, order).items():
+    for rid, code in _by_driver(runs, codes, asks, order, drivers, q_order).items():
         codes[rid] = code
         del asks[rid]
     # paid tests numbered in the order they ran, whatever their folders' numbers: the earliest is PT1
@@ -431,7 +488,8 @@ def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | Non
         for rid in ids:
             codes[rid] = f"T{i}"
     fixed = {r.id for r in runs if marks.get(r.id) is not None and marks[r.id].answered}
-    moves, ask_q = _quali_per_driver(runs, {k: v for k, v in codes.items() if v != NONE}, order, table, fixed)
+    moves, ask_q = _quali_per_driver(runs, {k: v for k, v in codes.items() if v != NONE}, order, table, fixed,
+                                     drivers, q_order)
     codes.update(moves)
     for r in runs:  # more than two qualifying runs: asked, not guessed
         if r.id in ask_q and looks_given(r, marks.get(r.id)):
@@ -457,7 +515,7 @@ def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | Non
                     at = windows[r.id][0] + timedelta(hours=h) - table_start(table, code)
                     minute[r.id] = ((at.total_seconds() + min(lap.start_s for lap in r.laps)) / 60,
                                     (at.total_seconds() + max(lap.start_s + lap.time_s for lap in r.laps)) / 60)
-        for i, r in zip(_stints(code, group, minute), group, strict=True):
+        for i, r in zip(_stints(code, group, minute, drivers), group, strict=True):
             want = run_name(code, i)
             m = marks.get(r.id)
             if not looks_given(r, m):
@@ -477,6 +535,9 @@ def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | Non
                 changed = True
             out["named"].append({"session_id": r.id, "name": want, "code": code})
     db.commit()
+    if q_order is not None and quali_order.apply(db, event_id):  # Q1, Q2 and the race stints get their drivers
+        db.commit()
+        changed = True
     if changed:
         from app.routers import events  # a run's name and kind are part of its event's report
 

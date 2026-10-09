@@ -84,8 +84,11 @@ def _event_guess(db: Session, event_id: int, ep: ds.EventPrint, status: str) -> 
         suggestion = {"group": s.group, "label": groups[s.group]["label"], "driver_id": grp.driver_id,
                       "driver": groups[s.group]["driver"], "confidence": ds.confidence(g, grp, s.share),
                       "share": round(s.share, 2), "laps": s.laps}
+        if g.mode == "alike":  # the drivers drive too alike to say which: nothing to suggest
+            suggestion.update(label="", driver_id=None, driver=None)
+            grp = ds.Group(None, "", 0)
         stints = []
-        if len(s.stints) > 1:
+        if len(s.stints) > 1 and g.mode != "alike":
             stints = [{"first_lap": st.laps[0], "last_lap": st.laps[-1], "laps": len(st.laps), "group": st.group,
                        "label": groups[st.group]["label"], "driver_id": g.groups[st.group].driver_id}
                       for st in s.stints]

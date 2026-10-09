@@ -8,7 +8,7 @@ export type DriverRun = { id: number; name: string; driver_id?: number | null; d
 
 export type DriverState =
   | { kind: 'set'; name: string } // named by a person
-  | { kind: 'auto'; name: string } // set by the app from the driving style
+  | { kind: 'auto'; name: string; how: string } // set by the app: how ("by style", "by qualifying order")
   | { kind: 'guess'; name: string; sure: boolean; confirm: number | null } // not set: what the style says
   | { kind: 'none' };
 
@@ -21,7 +21,8 @@ export function driverState(run: DriverRun, guess: RunGuess | undefined,
     id == null ? null : garage?.drivers.find((d) => d.id === id)?.name ?? null;
   if (run.driver_id != null) {
     const name = nameOf(run.driver_id) ?? run.driver ?? 'Driver set';
-    return guess?.auto && guess.driver_id === run.driver_id ? { kind: 'auto', name } : { kind: 'set', name };
+    return guess?.auto && guess.driver_id === run.driver_id ? { kind: 'auto', name, how: autoHow(guess.auto.source) }
+      : { kind: 'set', name };
   }
   if (!guess) return { kind: 'none' };
   if (guess.stints.length > 1) {
@@ -35,6 +36,13 @@ export function driverState(run: DriverRun, guess: RunGuess | undefined,
   const name = nameOf(s.driver_id) ?? s.driver;
   if (s.driver_id == null || !name) return { kind: 'none' };
   return { kind: 'guess', name, sure: s.confidence === 'sure', confirm: s.driver_id };
+}
+
+/** How the app set a run's driver, in a few words: from the qualifying order (Q1 PIA, Q2 SYL: server
+ * quali_order.py), the season's drivers, or the driving style. */
+export function autoHow(source: string): string {
+  if (source === 'quali' || source === 'race') return 'by qualifying order';
+  return source === 'season' ? "by season's drivers" : 'by style';
 }
 
 /** The line's words: the driver, "Probably <name>" for a guess the style isn't sure of, or "No driver". */
