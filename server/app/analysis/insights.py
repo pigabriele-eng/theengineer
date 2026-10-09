@@ -419,12 +419,13 @@ def _phase_losses(x: LapRecord, sim: SimLap, a: int, b: int) -> dict[str, float]
 
 # ---------- statistics ----------
 
-def corr(x: np.ndarray, y: np.ndarray) -> dict | None:
+def corr(x: np.ndarray, y: np.ndarray, min_n: int = MIN_LAPS_FOR_TRENDS) -> dict | None:
+    """None with fewer than min_n pairs (4 at the least: the p value needs n - 3 > 0)."""
     x, y = np.asarray(x, float), np.asarray(y, float)
     ok = ~(np.isnan(x) | np.isnan(y))
     x, y = x[ok], y[ok]
     n = len(x)
-    if n < MIN_LAPS_FOR_TRENDS or x.std() < 1e-9 or y.std() < 1e-9:
+    if n < max(min_n, 4) or x.std() < 1e-9 or y.std() < 1e-9:
         return None
     r = float(np.corrcoef(x, y)[0, 1])
     z = math.atanh(max(min(r, 0.9999), -0.9999)) * math.sqrt(n - 3)

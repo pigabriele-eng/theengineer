@@ -365,7 +365,7 @@ const VERDICT: Record<Verdict, { label: string; color: keyof ChartColors | null 
   minor: { label: 'Small loss', color: 'warning' },
   pushing: { label: 'Sign of pushing', color: 'good' },
   none: { label: 'No effect', color: null },
-  unknown: { label: 'Too few laps', color: null },
+  unknown: { label: 'Needs 4 laps', color: null }, // what TC costs compares 4 laps or more (grip.TC_FIT_LAPS)
 };
 
 function VerdictBadge({ v, c }: { v: Verdict; c: ChartColors }) {
@@ -408,6 +408,8 @@ function TractionControl({ data, c }: { data: GripResult; c: ChartColors }) {
     );
   }
   const costly = tc.zones.filter((z) => z.verdict === 'cost' || z.verdict === 'minor');
+  // the zones of fewer than 4 laps say what TC does there from what laps there are
+  const shown = tc.zones.filter((z) => z.verdict === 'cost' || z.verdict === 'minor' || z.verdict === 'unknown');
   const top = costly.find((z) => z.points.length > 0);
   const laps = (data.laps ?? []).filter((l) => l.tc_s != null && l.rear_tyre_c != null);
   const temp = tc.vs_rear_temp;
@@ -422,7 +424,9 @@ function TractionControl({ data, c }: { data: GripResult; c: ChartColors }) {
       <View style={styles.facts}>
         <View style={styles.fact}>
           <Text style={styles.tileLabel}>Lost to TC</Text>
-          <Text style={styles.factValue}>≈ {(tc.lost_per_lap_s ?? 0).toFixed(2)} s a lap</Text>
+          <Text style={styles.factValue}>
+            {tc.lost_per_lap_s != null ? `≈ ${tc.lost_per_lap_s.toFixed(2)} s a lap` : 'Needs 4 laps'}
+          </Text>
         </View>
         <View style={styles.fact}>
           <Text style={styles.tileLabel}>TC working</Text>
@@ -461,7 +465,7 @@ function TractionControl({ data, c }: { data: GripResult; c: ChartColors }) {
           </View>
         ))}
       </View>
-      {costly.map((z) => (
+      {shown.map((z) => (
         <View key={`n${z.start_m}`} style={styles.zoneCard}>
           <View style={styles.zoneHead}>
             <Text style={styles.bold}>
@@ -470,11 +474,13 @@ function TractionControl({ data, c }: { data: GripResult; c: ChartColors }) {
             <VerdictBadge v={z.verdict} c={c} />
           </View>
           <Text style={styles.note}>{z.note}</Text>
-          <Text style={styles.note}>
-            <Text style={styles.bold}>What to do: </Text>
-            {z.advice}
-          </Text>
-          {z.torque_cut_nm != null && (
+          {!!z.advice && (
+            <Text style={styles.note}>
+              <Text style={styles.bold}>What to do: </Text>
+              {z.advice}
+            </Text>
+          )}
+          {z.torque_cut_nm != null && z.verdict !== 'unknown' && (
             <Text style={styles.caption}>TC took about {z.torque_cut_nm.toFixed(0)} Nm of engine torque while it worked here.</Text>
           )}
         </View>
@@ -543,6 +549,8 @@ function TractionControl({ data, c }: { data: GripResult; c: ChartColors }) {
             The temperature is the air inside the tyre, from the pressure sensors.
           </Text>
         </>
+      ) : laps.length > 0 ? (
+        <Text style={styles.dim}>TC against the rear tyre temperature takes 4 laps.</Text>
       ) : (
         <Text style={styles.dim}>No rear tyre temperatures in these logs.</Text>
       )}
@@ -555,12 +563,12 @@ function TractionControl({ data, c }: { data: GripResult; c: ChartColors }) {
       )}
       {sw && (
         <Text style={styles.caption}>
-          The TC switch ({sw.channel}) was at {sw.positions.join(', ')} in these laps. On the M4 GT4 a higher number
-          is earlier and more traction control
+          The TC thumb wheel ({sw.channel}) was at {sw.positions.join(', ')} in these laps: where the wheel sits, which
+          in the logs isn&apos;t always the TC number on the dash
           {sw.vs_tc
             ? sw.vs_tc.p < 0.05
-              ? `; TC time follows it (r ${signedR(sw.vs_tc.r)}).`
-              : `, and it shows no clear link to how much TC works (r ${signedR(sw.vs_tc.r)}).`
+              ? `; TC time goes with it (r ${signedR(sw.vs_tc.r)}).`
+              : `; it shows no clear link to how much TC works (r ${signedR(sw.vs_tc.r)}).`
             : '.'}
         </Text>
       )}
