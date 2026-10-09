@@ -471,7 +471,8 @@ function SeasonSection({ no, season, lists, series, open, onToggle, questions, o
                 <Label muted>{fromSite ? 'Entry lists from the series’ site' : ''}</Label>
               </View>
               {season.rounds.map((r) => (
-                <RoundRow key={r.id} r={r} season={season} entries={r.round_id ? counts.get(r.round_id) ?? 0 : 0} />
+                <RoundRow key={r.id} r={r} season={season} entries={r.round_id ? counts.get(r.round_id) ?? 0 : 0}
+                  onChanged={onChanged} />
               ))}
               {season.rounds.length === 0 && (
                 <Note style={styles.noRounds}>
@@ -522,13 +523,33 @@ function SeasonHead({ no, season, open, onToggle, questions }: {
   );
 }
 
-function RoundRow({ r, season, entries }: { r: SeasonRound; season: Season; entries: number }) {
+function RoundRow({ r, season, entries, onChanged }: {
+  r: SeasonRound;
+  season: Season;
+  entries: number;
+  onChanged: (text?: string) => void;
+}) {
   const styles = useStyles();
   const wide = useWide();
   const c = useTheme();
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<EntryRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [making, setMaking] = useState(false);
+  // its event was deleted: the event there on its days at its venue, else a new planned one, empty, for its logs
+  const remake = async () => {
+    setMaking(true);
+    setError(null);
+    try {
+      const got = (await seasonsApi.remakeEvent(season.id, r.id)).rounds.find((x) => x.id === r.id);
+      onChanged(got?.made_event === false && got.event_name
+        ? `${r.name} is linked to “${got.event_name}” again.`
+        : `${r.name} has its event again, empty: upload its logs into it.`);
+    } catch (e) {
+      setError((e as Error).message);
+      setMaking(false);
+    }
+  };
   const toggle = () => {
     setOpen(!open);
     if (!rows && season.series && r.round_id) {
@@ -561,6 +582,11 @@ function RoundRow({ r, season, entries }: { r: SeasonRound; season: Season; entr
           <Text style={styles.roundSub} numberOfLines={2}>
             {[dateRange(r.start, r.end) ?? 'days not known', state].join(' · ')}
           </Text>
+          {r.event_id == null && (
+            making ? <ActivityIndicator style={styles.loadingSmall} />
+              : <TextLink onPress={remake} label="Make its event again" small />
+          )}
+          {r.event_id == null && error && !open && <ErrorLine>{error}</ErrorLine>}
         </View>
         {entries > 0 && <TextLink onPress={toggle} label={open ? 'Hide' : `Entry list (${entries})`} small />}
       </View>

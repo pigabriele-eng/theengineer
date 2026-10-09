@@ -140,3 +140,73 @@ def test_a_run_made_without_a_name_can_be_deleted(client):
     out = client.delete("/runs", params={"ids": str(sid)})
     assert out.status_code == 200, out.text
     assert out.json()["deleted"] == [sid]
+
+
+def test_every_run_of_an_event_goes_and_the_event_stays_empty(client, tmp_path):
+    """Gabriele, 2026-10-09: "Give me the ability to delete all data but keep the event in the app"."""
+    import time
+
+    from app import db as app_db, models, seasons
+    from app.driver_prints import StylePrint
+    from app.page_cache import PageCache
+    from app.prep.models import PrepCache
+    from app.season_match import SeasonMatch
+    from tests.test_imports import log_bytes
+
+    a, b = _import(client, "Red Bull Ring"), _import(client, "Spa test")
+    ev = a["event"]
+    assert client.get(f"/events/{ev}/shape").status_code == 200
+    season = client.post("/seasons", json={"name": "ADAC GT4 Germany 2026", "year": 2026}).json()
+    with app_db.SessionLocal() as db:
+        gone = {"events": set(), "run_sessions": set(a["sessions"]), "logger_files": _files(db, a["sessions"])}
+        keys = _keys(db, a["sessions"])
+        rnd = seasons.SeasonRound(season_id=season["id"], order=1, name="Red Bull Ring", event_id=ev)
+        if db.scalar(select(StylePrint).where(StylePrint.event_id == ev)) is None:  # the import's, else one
+            db.add(StylePrint(event_id=ev, signature="s", payload={}))
+        db.add_all([models.EventDates(event_id=ev), seasons.EventInfo(event_id=ev, drivers=[]), rnd,
+                    models.ReportCache(scope=f"pick:{ev}:abc", signature="s", status="done", result={}),
+                    PrepCache(scope=f"event:{ev}|car:logger:1", signature="s", result={"past": []}),
+                    SeasonMatch(event_id=ev, kind="driver", prompt="New driver found: who is this?",
+                                done={"sessions": a["sessions"]}),
+                    SeasonMatch(event_id=ev, kind="round", status="linked", prompt="Linked",
+                                done={"season_id": season["id"]})])
+        db.commit()
+        rnd_id = rnd.id
+    before = _stored(tmp_path)
+    folder_b = client.get(f"/events/{b['event']}").json()
+    size = client.get(f"/events/{ev}/size").json()
+
+    r = client.delete(f"/events/{ev}/runs")
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert (out["event_id"], out["kept"], out["name"]) == (ev, True, "Red Bull Ring")
+    assert {k: out[k] for k in ("runs", "laps", "logs")} == {k: size[k] for k in ("runs", "laps", "logs")}
+    assert out["runs"] == 2 and "events" not in out["rows"] and out["rows"]["style_prints"] == 1
+
+    with app_db.SessionLocal() as db:
+        assert references(db, gone) == []
+        assert db.get(models.Event, ev).name == "Red Bull Ring"
+        assert db.scalar(select(models.EventDates).where(models.EventDates.event_id == ev)) is not None
+        assert db.scalar(select(seasons.EventInfo).where(seasons.EventInfo.event_id == ev)) is not None
+        assert db.get(seasons.SeasonRound, rnd_id).event_id == ev
+        assert db.scalar(select(StylePrint).where(StylePrint.event_id == ev)) is None
+        assert db.scalar(select(PrepCache).where(PrepCache.scope == f"event:{ev}|car:logger:1")) is not None
+        assert db.scalars(select(SeasonMatch.status).where(SeasonMatch.event_id == ev)).all() == ["linked"]
+        for t in (models.ReportCache, models.TechniqueCache, PageCache):
+            assert not [s for s in db.scalars(select(t.scope))
+                        if s.startswith((f"event:{ev}", f"part:{ev}:", f"pick:{ev}:"))], t
+    after = _stored(tmp_path)
+    assert not set(keys) & set(after) and set(after) <= set(before)
+    assert _runs_of(client, ev) == []
+    assert client.get(f"/events/{b['event']}").json() == folder_b
+
+    # the right logs go into it
+    r = client.post("/imports", files=[("files", ("c.ld", log_bytes()))], data={"event_id": str(ev)})
+    assert r.status_code == 202, r.text
+    deadline = time.monotonic() + 120
+    while (job := client.get(f"/imports/{r.json()['id']}").json())["status"] not in ("done", "failed"):
+        assert time.monotonic() < deadline, job
+        time.sleep(0.05)
+    assert job["status"] == "done" and _runs_of(client, ev) == job["session_ids"]
+
+    assert client.delete("/events/99999/runs").status_code == 404

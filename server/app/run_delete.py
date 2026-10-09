@@ -10,6 +10,14 @@ A cached result of something that stays that names a run that goes (the event's 
 report drawing on it) is emptied, so it is worked out again. The event's own kept pages (map, shape, track grip, ...)
 are signed with the runs they were made from, so they no longer match; the prebuild (app/prebuild.py) is queued for
 the runs the events keep, so their report and pages are ready again before they are opened.
+
+DELETE /events/{id}/runs deletes every run of an event and keeps the event, empty, for the right logs to be uploaded
+into (Gabriele, 2026-10-09: "Give me the ability to delete all data but keep the event in the app"): its name, days,
+track, info, season round, calendar entry, results link, plan and setup notes stay. What was worked out for the event
+as a whole from its runs goes with them: its report, kept pages, technique check, track grip and driving-style print
+(the rows whose scope names it, "event:3|shape", "part:3:FP1", and style_prints), and the questions still open about
+its runs or its season. Its prep report stays: it is made from the events before it. GET /events/{id}/size says
+first what goes (the same runs, laps, logs and files).
 """
 from __future__ import annotations
 
@@ -28,6 +36,9 @@ log = logging.getLogger(__name__)
 MAX_RUNS = 500  # ids in one request
 IDS = Query(..., description="run (session) ids, e.g. 3,12")
 NONE = "none"  # the folder of the runs in no event (routers/events.py)
+NOT_FROM_ITS_RUNS = {"prep_cache"}  # kept for an event but made from the events before it: stays when its runs go
+PRINTS = "style_prints"  # an event's driving styles, worked out from its runs (driver_prints.py)
+OPEN = ("pending", "waiting")  # a question not answered yet (season_match.py)
 
 
 def _parse(text: str) -> list[int]:
@@ -101,3 +112,43 @@ def _rebuild(db: Session, event_ids: list[int]) -> None:
                            .order_by(models.RunSession.id)))
     if left:
         prebuild.after_upload(db, left)
+
+
+def _emptied(db: Session, event_id: int) -> dict[str, set[int]]:
+    """Every run of the event, and what was worked out for the event as a whole from them: the rows whose scope names
+    it (its report, kept pages, technique check, track grip), its driving-style print and the questions still open
+    about it (who drove its runs, which season it is: asked again if the next logs need it). Its season link and the
+    questions answered stay."""
+    from app.season_match import SeasonMatch  # here: it imports the routers
+
+    start = {"run_sessions": set(db.scalars(select(models.RunSession.id).where(
+        models.RunSession.event_id == event_id))),
+        SeasonMatch.__tablename__: set(db.scalars(select(SeasonMatch.id).where(
+            SeasonMatch.event_id == event_id, SeasonMatch.status.in_(OPEN))))}
+    named = {"events": {event_id}}
+    for t in event_delete._tables():
+        pk = event_delete._pk(t)
+        if pk is None or t.name in NOT_FROM_ITS_RUNS:
+            continue
+        if "scope" in t.c:
+            ids = {i for i, scope in db.execute(select(pk, t.c.scope)) if event_delete.scope_named(scope, named)}
+        elif t.name == PRINTS:
+            ids = set(db.scalars(select(pk).where(t.c.event_id == event_id)))
+        else:
+            continue
+        if ids:
+            start[t.name] = ids
+    return start
+
+
+@router.delete("/events/{event_id}/runs")
+def empty_event(event_id: int, db: Session = Depends(app_db.get_db)):
+    """Delete every run of the event with their logs and everything kept for them; the event stays, empty."""
+    name = event_delete._event_or_404(db, event_id).name
+    event_delete._not_importing(db)
+
+    def start() -> dict[str, set[int]]:
+        event_delete._event_or_404(db, event_id)  # again, under the locks
+        return _emptied(db, event_id)
+    out = event_delete._delete(db, start, name, str(event_id))
+    return {"event_id": event_id, "kept": True, **out}
