@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  addPick, bestFlags, bestInEachCorner, defaultPicks, dropPick, fastestSections, flagWords, flipPick, gapWords, lapKey,
-  MAX_PICKS,
+  addPick, bestFlags, bestInEachCorner, defaultPicks, dropPick, fastestSections, flagWords, flipPick, gapWords, kindWords,
+  lapKey, MAX_PICKS,
 } from './sessionLaps.ts';
 
 const lap = (number, time, sections = null) => ({ number, time, sections });
@@ -86,4 +86,28 @@ test('a tap puts a lap on the traces or takes it off; a seventh says to take one
   assert.deepEqual(dropPick(two, { session_id: 1, lap: 2 }), [{ session_id: 2, lap: 5, slot: 1 }]);
   assert.deepEqual(dropPick(dropPick(two, { session_id: 1, lap: 2 }), { session_id: 2, lap: 5 }), []);
   assert.deepEqual(dropPick(two, { session_id: 3, lap: 1 }), two); // not on them: nothing changes
+});
+
+test('out-laps and in-laps: their quicker corners count, they are never on the traces at first', () => {
+  // a qualifying run: out-lap, build lap, two pushes, a third push that turns into the in-lap (quickest through T1);
+  // a section null on a lap that isn't clean where it wasn't driven on the line
+  const q = run(1, [
+    { number: 1, time: 160.0, clean: false, kind: 'out', sections: [40.1, null, 26.0, 25.9] },
+    { number: 2, time: 112.0, clean: false, kind: 'build', sections: [27.0, 28.0, 27.5, 27.0] },
+    { number: 3, time: 100.0, clean: true, kind: null, sections: [25.0, 25.2, 25.0, 24.8] },
+    { number: 4, time: 100.3, clean: true, kind: null, sections: [25.1, 25.2, 25.1, 24.9] },
+    { number: 5, time: 130.0, clean: false, kind: 'in', sections: [24.85, 25.3, 30.0, 49.85] },
+  ], 'Ann');
+  const qa = { ...answer, runs: [q], fastest: { session_id: 1, lap: 3, time: 100.0 } };
+  assert.deepEqual(bestInEachCorner(qa).map((b) => [b.code, b.lap.number, b.gain]),
+    [['T1', 5, -0.15], ['T2-T5', 3, 0], ['T6', 3, 0], ['T8/T9', 3, 0]]);
+  assert.deepEqual(bestFlags(qa).get('1:5'), [{ code: 'T1', gain: -0.15 }]);
+  assert.equal(kindWords(q.laps[4]), 'in-lap');
+  assert.equal(kindWords(q.laps[1]), 'build lap');
+  assert.equal(kindWords(q.laps[2]), null);
+  assert.equal(kindWords({ clean: false }), 'slow lap'); // not clean, not said what
+  assert.equal(kindWords({}), null); // an answer from before: clean
+  // a quick part lap that isn't clean is never a stint's lap on the traces at first
+  const r = run(2, [{ number: 1, time: 99.0, clean: false, kind: 'in', sections: null }, lap(2, 100.4)]);
+  assert.deepEqual(defaultPicks([q, r]), [{ session_id: 1, lap: 3, slot: 0 }, { session_id: 2, lap: 2, slot: 1 }]);
 });

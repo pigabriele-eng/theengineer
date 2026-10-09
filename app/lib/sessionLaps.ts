@@ -1,6 +1,8 @@
 // The During tab's first section (Gabriele, 2026-10-08: the During tab "should open on: full comparison of the session
-// uploaded latest with traces; full comparison should flag laps that have better sections"): every clean lap of the
-// latest session, by stint, against the session's fastest lap. What the server answers (GET
+// uploaded latest with traces; full comparison should flag laps that have better sections"): every lap of the latest
+// session, by stint, against the session's fastest lap, out-laps and in-laps included (Gabriele, 2026-10-09: "it
+// should also pick sectors from the other laps and indicate if there are faster sectors in all driven laps, including
+// outlaps and inlaps"). What the server answers (GET
 // /events/{id}/latest-session/sections, server/app/session_sections.py), the laps put on the traces by default and with
 // a tap, and the flags: the corners where a lap holds the session's best time, with what it gained there on the
 // fastest lap (only the best per corner: on real data nearly every lap beats the fastest lap somewhere, so flagging
@@ -10,9 +12,26 @@
 export const MAX_PICKS = 6; // the laps a comparison takes (lib/compare.ts MAX_LAPS, POST /compare/laps)
 export const MIN_GAIN_S = 0.02; // a section quicker than the fastest lap's by less than this isn't flagged
 
-/** A clean lap: its number, its time and its time in each section (in `sections` order; null while they are worked
- * out, or when the lap couldn't be placed on the fastest lap's line). */
-export type SessionLap = { number: number; time: number; sections: number[] | null };
+/** What a lap that isn't clean is (server/app/session_sections.py lap_kinds). */
+export type LapKind = 'out' | 'build' | 'in' | 'slow';
+export const KIND_WORDS: Record<LapKind, string> = { out: 'out-lap', build: 'build lap', in: 'in-lap', slow: 'slow lap' };
+
+/** A lap: its number, its time, whether it is clean and what it is when not (an answer from before the laps that
+ * aren't clean were listed has neither: clean), and its time in each section (in `sections` order; null while they
+ * are worked out, or when the lap couldn't be placed on the fastest lap's line; a section null on a lap that isn't
+ * clean where it wasn't driven on the line). */
+export type SessionLap = {
+  number: number;
+  time: number;
+  clean?: boolean;
+  kind?: LapKind | null;
+  sections: (number | null)[] | null;
+};
+
+export const isClean = (l: Pick<SessionLap, 'clean'>) => l.clean !== false;
+/** "out-lap", "in-lap"; null for a clean lap. */
+export const kindWords = (l: Pick<SessionLap, 'clean' | 'kind'>) =>
+  (isClean(l) ? null : KIND_WORDS[l.kind ?? 'slow']);
 
 /** One stint (run) of the session, its clean laps in order. */
 export type SessionRun = {
@@ -31,7 +50,7 @@ export type LatestSession = {
   status: 'ready' | 'working' | 'empty'; // empty: no timed run yet
   session: { code: string; title: string } | null; // "R1", "05_R2"
   runs: SessionRun[]; // in the order they ran
-  left_out: number; // laps that aren't clean (out-laps, in-laps, laps off the pace)
+  left_out: number; // laps not listed: part laps (a crossing in the pit lane), the laps of stints without a clean lap
   fastest: { session_id: number; lap: number; time: number } | null;
   sections: SessionSection[] | null; // official corner groups ("T2-T5", "T8/T9"); null until worked out
   numbering: 'official' | 'detected' | null;
@@ -50,7 +69,7 @@ export const isFastest = (answer: Pick<LatestSession, 'fastest'>, l: LapRef) =>
   answer.fastest != null && sameLap(answer.fastest, l);
 
 /** The fastest lap's own section times, or null while they aren't known. */
-export function fastestSections(answer: LatestSession): number[] | null {
+export function fastestSections(answer: LatestSession): (number | null)[] | null {
   const f = answer.fastest;
   if (!f) return null;
   return answer.runs.find((r) => r.id === f.session_id)?.laps.find((l) => l.number === f.lap)?.sections ?? null;
@@ -88,8 +107,8 @@ export const gapWords = (time: number, fastest: number | null | undefined, best:
 
 export type CornerBest = { code: string; run: SessionRun; lap: SessionLap; gain: number; fastest: boolean };
 
-/** Each section's quickest lap of the session and what it gained there on the fastest lap; the fastest lap itself
- * where no lap was `min` quicker. Empty while the section times aren't known. */
+/** Each section's quickest lap of the session, out-laps and in-laps included, and what it gained there on the fastest
+ * lap; the fastest lap itself where no lap was `min` quicker. Empty while the section times aren't known. */
 export function bestInEachCorner(answer: LatestSession, min = MIN_GAIN_S): CornerBest[] {
   const fast = fastestSections(answer);
   const f = answer.fastest;
@@ -101,8 +120,9 @@ export function bestInEachCorner(answer: LatestSession, min = MIN_GAIN_S): Corne
     for (const run of answer.runs) {
       for (const lap of run.laps) {
         const t = lap.sections?.[k];
-        if (t == null || lap.sections!.length !== fast.length) continue;
-        const gain = round(t - fast[k]);
+        const f = fast[k];
+        if (t == null || f == null || lap.sections!.length !== fast.length) continue;
+        const gain = round(t - f);
         if (gain <= -min + 1e-9 && gain < best.gain) best = { code: s.code, run, lap, gain, fastest: false };
       }
     }
@@ -110,11 +130,12 @@ export function bestInEachCorner(answer: LatestSession, min = MIN_GAIN_S): Corne
   });
 }
 
-/** The laps on the traces at first: the fastest lap of each stint, in the order they ran; with more stints than a
- * comparison takes, the quickest stints'. */
+/** The laps on the traces at first: the fastest clean lap of each stint, in the order they ran; with more stints than
+ * a comparison takes, the quickest stints'. */
 export function defaultPicks(runs: SessionRun[], max = MAX_PICKS): LapPick[] {
   const bests = runs.flatMap((r, order) => {
-    const lap = r.laps.reduce<SessionLap | null>((b, l) => (b == null || l.time < b.time ? l : b), null);
+    const lap = r.laps.filter(isClean).reduce<SessionLap | null>((b, l) => (b == null || l.time < b.time ? l : b),
+      null);
     return lap ? [{ order, session_id: r.id, lap: lap.number, time: lap.time }] : [];
   });
   const kept = [...bests].sort((a, b) => a.time - b.time || a.order - b.order).slice(0, max)

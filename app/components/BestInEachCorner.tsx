@@ -7,7 +7,7 @@ import { LineKey } from '@/components/CompareViews';
 import { Text, View } from '@/components/Themed';
 import { TAP, themed, Type, face } from '@/constants/Theme';
 import { a11yState } from '@/lib/a11yState';
-import { CornerBest, LapRef, seconds } from '@/lib/sessionLaps';
+import { CornerBest, kindWords, LapRef, seconds } from '@/lib/sessionLaps';
 
 export function BestInEachCorner({ rows, colorOf, onPress, action }: {
   rows: CornerBest[];
@@ -25,7 +25,8 @@ export function BestInEachCorner({ rows, colorOf, onPress, action }: {
         const ref = { session_id: b.run.id, lap: b.lap.number };
         const color = colorOf(ref);
         const { words, checkbox } = act(b, color);
-        const who = `${b.run.name} · lap ${b.lap.number} · ${b.run.driver ?? 'driver not set'}`;
+        const kind = kindWords(b.lap); // an out-lap or in-lap can hold a corner's best too
+        const who = `${b.run.name} · lap ${b.lap.number}${kind ? ` (${kind})` : ''} · ${b.run.driver ?? 'driver not set'}`;
         return (
           <Pressable key={b.code} onPress={() => onPress(b, ref)} accessibilityRole={checkbox ? 'checkbox' : 'button'}
             {...(checkbox ? a11yState({ checked: color != null }) : {})} style={styles.corner}

@@ -15,15 +15,25 @@ runs to compare. Standard it should open the latest session but should be possib
 ran, each with its stints) and which one is the latest.
 
 The latest upload: a run's upload is the import it came in (every run of one zip counts as uploaded at once), else
-the time its log was stored; of the runs uploaded last, the one driven last. Out-laps, in-laps and laps off the pace
-are not clean and are left out (counted in "left_out"). Real laps only: never a theoretical or ideal lap.
+the time its log was stored; of the runs uploaded last, the one driven last. Real laps only: never a theoretical or
+ideal lap.
+
+Every lap driven, not only the clean ones (Gabriele, 2026-10-09, of a qualifying run: "one slow build lap, first push,
+second push, third push that turns into pit in"; "it should also pick sectors from the other laps and indicate if
+there are faster sectors in all driven laps, including outlaps and inlaps"): a lap that isn't clean is listed with what
+it is (lap_kinds: the out-lap, a build lap, the in-lap, a slow lap) and its section times like any other, so a quicker
+section on it is flagged too. The fastest lap is still the fastest clean one. A lap that isn't clean and is quicker
+than it is only part of a lap (a crossing of the line in the pit lane) and is left out ("left_out"); a section of a
+lap that isn't clean timed under MIN_SHARE of the fastest lap's there is a stretch it didn't drive on the line, and
+goes without a time.
 
 The section times come from the lap comparison itself (analysis/lapcompare.py compare_picks, as POST /compare/laps
 works them out), which takes at most six laps: the laps go in chunks of five, each with the session's fastest lap
-first, so every chunk is placed on the same line (the fastest lap's) and cut into the same sections. A chunk whose
-sections don't match the first one's (codes and bounds) is left out, its laps without section times. The laps are
-traced from the runs' lap packs (lappacks.py, no log read); a run without a pack is read from its log under
-heavy.lock, as the comparison always does.
+first, so every chunk is placed on the same line (the fastest lap's) and cut into the same sections. The clean laps
+first, traced from the runs' lap packs (lappacks.py, no log read); then the others, a run at a time: a pack holds only
+clean laps, so their run is read from its log under heavy.lock, as the comparison always does. The fastest lap traced
+from its log can put a section's ends a metre from where its pack does: a chunk's times go by section code. A chunk
+the comparison can't make is tried again a lap at a time, so one lap it can't place doesn't take the others' times.
 
 It is worked out in a thread of its own while the app asks again ("status": "working", the laps already listed), then
 kept in page_cache under a signature of the session's runs and laps, so the next visit answers at once. After an upload
@@ -53,10 +63,11 @@ from app.timing import read_file, track_line
 router = APIRouter()
 log = logging.getLogger(__name__)
 
-VERSION = 1  # raise when what is answered changes, so every kept answer is worked out again
+VERSION = 2  # raise when what is answered changes, so every kept answer is worked out again
 CHUNK = MAX_LAPS - 1  # laps per comparison beside the session's fastest
 STEP_M = 50.0  # the comparison's traces aren't used here: as few points as it takes
 RECENT_DAYS = 3  # the prebuild works it out for events whose newest run is this recent
+MIN_SHARE = 0.9  # a lap that isn't clean: a section timed under this share of the fastest lap's there isn't timed
 
 
 # ---------- the session ----------
@@ -73,6 +84,27 @@ def _laps(s: models.RunSession) -> list[models.Lap]:
 
 def _timed(s: models.RunSession) -> bool:
     return any(l.clean for l in _laps(s))
+
+
+def lap_kinds(laps: list[models.Lap]) -> dict[int, str | None]:
+    """What each lap of a run (in order) is when it isn't clean: its first lap the out-lap, the others before its
+    first clean lap build laps, its last lap after its last clean one the in-lap, any other a slow lap. None for a
+    clean lap."""
+    clean = [i for i, l in enumerate(laps) if l.clean]
+    first, last = (clean[0], clean[-1]) if clean else (len(laps), -1)
+    out: dict[int, str | None] = {}
+    for i, l in enumerate(laps):
+        if l.clean:
+            out[l.number] = None
+        elif i == 0:
+            out[l.number] = "out"
+        elif i < first:
+            out[l.number] = "build"
+        elif i == len(laps) - 1 and i > last:
+            out[l.number] = "in"
+        else:
+            out[l.number] = "slow"
+    return out
 
 
 def _sessions(db: Session, event_id: int) -> list[models.RunSession]:
@@ -175,21 +207,28 @@ def mixed(part: run_parts.Part, parts: list[run_parts.Part], add: list[int]) -> 
 
 def base(event_id: int, part: run_parts.Part, by_id: dict[int, models.RunSession],
          session_of: dict[int, str] | None = None) -> dict:
-    """The answer without the section times: the session, its clean laps by stint in the order they ran, how many
-    laps aren't clean, and its fastest lap (the first set on a tie). session_of: each run's session ("FP1"), for the
-    stints of other sessions mixed in."""
+    """The answer without the section times: the session, every lap of its stints with a clean lap, by stint in the
+    order they ran (each with whether it is clean and, when not, what it is: lap_kinds), how many laps are left out
+    (part laps, quicker than the fastest; the laps of stints without a clean lap), and its fastest lap (the quickest
+    clean one, the first set on a tie). session_of: each run's session ("FP1"), for the stints of other sessions mixed
+    in."""
+    timed = [(lab, _laps(by_id[lab.id])) for lab in part.runs]
+    quickest = min((l.time_s for _, laps in timed for l in laps if l.clean), default=None)
     runs, left_out = [], 0
-    for lab in part.runs:
+    for lab, laps in timed:
         s = by_id[lab.id]
-        laps = _laps(s)
-        clean = [l for l in laps if l.clean]
-        left_out += len(laps) - len(clean)
-        if clean:
+        kinds = lap_kinds(laps)
+        kept = [l for l in laps if l.clean or (quickest is not None and l.time_s >= quickest)]
+        if not any(l.clean for l in kept):
+            kept = []
+        left_out += len(laps) - len(kept)
+        if kept:
             runs.append({"id": s.id, "name": lab.name, "short": lab.short,
                          "driver": s.driver.name if s.driver else None, "driver_id": s.driver_id,
                          "session": (session_of or {}).get(s.id, part.title),
-                         "laps": [{"number": l.number, "time": round(l.time_s, 3), "sections": None} for l in clean]})
-    every = [(r["id"], l) for r in runs for l in r["laps"]]
+                         "laps": [{"number": l.number, "time": round(l.time_s, 3), "clean": l.clean,
+                                   "kind": kinds[l.number], "sections": None} for l in kept]})
+    every = [(r["id"], l) for r in runs for l in r["laps"] if l["clean"]]
     best = min(every, key=lambda x: x[1]["time"]) if every else None
     return {"event_id": event_id, "status": "working", "session": {"code": part.code, "title": part.title},
             "runs": runs, "left_out": left_out,
@@ -211,9 +250,22 @@ def chunks(laps: list[tuple[int, int]], fastest: tuple[int, int], size: int = CH
     return [[fastest, *others[i:i + size]] for i in range(0, len(others), size)]
 
 
-def layout(result: dict) -> list[tuple]:
-    """A comparison's sections as they must match from one chunk to the next: codes, bounds and corners."""
-    return [(s["code"], s["start_m"], s["end_m"], tuple(s.get("corners") or ())) for s in result["sections"]]
+def plan_chunks(answer: dict) -> list[list[tuple[int, int]]]:
+    """The comparisons to make: the clean laps' chunks first (their runs' packs hold them: no log read), then each
+    run's other laps in chunks of their own (their run's log is read once a chunk)."""
+    fastest = (answer["fastest"]["session_id"], answer["fastest"]["lap"])
+    clean = [(r["id"], l["number"]) for r in answer["runs"] for l in r["laps"] if l["clean"]]
+    plan = chunks(clean, fastest)
+    for r in answer["runs"]:
+        plan += chunks([fastest, *[(r["id"], l["number"]) for l in r["laps"] if not l["clean"]]], fastest)
+    return plan
+
+
+def by_code(codes: list[str], result: dict, lap: int) -> list[float | None]:
+    """A lap's time in each of `codes` (the first comparison's sections), from a comparison it was in (its place
+    `lap`): by section code, None for a code that comparison doesn't have."""
+    mine = {s["code"]: s["times"][lap] for s in result["sections"]}
+    return [mine.get(c) for c in codes]
 
 
 def work_out(db: Session, answer: dict, progress: dict | None = None) -> dict:
@@ -226,6 +278,7 @@ def work_out(db: Session, answer: dict, progress: dict | None = None) -> dict:
             answer["note"] = "One clean lap: nothing to put against it yet."
         return answer
     fastest = (answer["fastest"]["session_id"], answer["fastest"]["lap"])
+    dirty = {(r["id"], l["number"]) for r in answer["runs"] for l in r["laps"] if not l["clean"]}
     sessions = {sid: db.get(models.RunSession, sid) for sid in dict.fromkeys(sid for sid, _ in laps)}
     time_of = {(r["id"], l["number"]): l["time"] for r in answer["runs"] for l in r["laps"]}
     by_name = _tracks_by_name(db)
@@ -250,13 +303,14 @@ def work_out(db: Session, answer: dict, progress: dict | None = None) -> dict:
             return got
         return packed
 
-    plan = chunks(laps, fastest)
+    plan = plan_chunks(answer)
     if progress is not None:
         progress.update(done=0, total=len(plan))
-    times: dict[tuple[int, int], list[float]] = {}
-    first = None
+    times: dict[tuple[int, int], list[float | None]] = {}
+    codes: list[str] | None = None
     try:
-        for chunk in plan:
+        while plan:
+            chunk = plan.pop(0)
             if heavy.in_background():
                 heavy.lock.wait_for_others()  # the pages' requests first
             picks = [Pick(str(sid), n, time_of[(sid, n)], {"session_id": sid}) for sid, n in chunk]
@@ -265,24 +319,29 @@ def work_out(db: Session, answer: dict, progress: dict | None = None) -> dict:
                 numbers_of.setdefault(p.run, []).append(p.number)
             try:
                 res = compare_picks(picks, load, corners, STEP_M, guard=heavy.lock, packed=packed_for(numbers_of))
-            except Exception:  # a lap not in its log (timed again since), a log gone: these laps go without
+            except Exception:  # a lap not in its log (timed again since), a log gone, a lap it can't place
                 log.exception("Latest session of event %s: laps %s not compared", answer["event_id"], chunk)
                 res = None
+                if len(chunk) > 2:  # a lap at a time: the one it can't place goes without, not the others
+                    plan[:0] = [[fastest, x] for x in chunk[1:]]
+                    if progress is not None:
+                        progress["total"] += len(chunk) - 1
             if res is not None and res["reference"] != 0:
                 log.warning("Latest session of event %s: %s is quicker than the fastest lap %s", answer["event_id"],
                             chunk[res["reference"]], fastest)
             elif res is not None:
-                if first is None:
-                    first = layout(res)
+                if codes is None:
+                    codes = [s["code"] for s in res["sections"]]
                     answer["sections"] = [{k: s[k] for k in ("code", "start_m", "end_m", "apex_m", "corners")}
                                           for s in res["sections"]]
                     answer["numbering"] = res["numbering"]
-                if layout(res) == first:
-                    for i, x in enumerate(chunk):
-                        times[x] = [s["times"][i] for s in res["sections"]]
-                else:
-                    log.warning("Latest session of event %s: laps %s were cut into other sections",
-                                answer["event_id"], chunk)
+                    times[fastest] = by_code(codes, res, 0)
+                for i, x in enumerate(chunk[1:], 1):
+                    mine = by_code(codes, res, i)
+                    if x in dirty:  # quicker than the fastest lap by that much: a stretch it didn't drive
+                        mine = [t if t is None or f is None or t >= f * MIN_SHARE else None
+                                for t, f in zip(mine, times[fastest], strict=True)]
+                    times[x] = mine
             if progress is not None:
                 progress["done"] += 1
     finally:
@@ -294,7 +353,7 @@ def work_out(db: Session, answer: dict, progress: dict | None = None) -> dict:
         for lap in r["laps"]:
             lap["sections"] = times.get((r["id"], lap["number"]))
     answer["status"] = "ready"
-    if first is None:
+    if codes is None:
         answer["note"] = "The laps couldn't be placed on one line, so their sections can't be compared."
     elif any(lap["sections"] is None for r in answer["runs"] for lap in r["laps"]):
         answer["note"] = "Some laps couldn't be placed on the fastest lap's line: they show without sections."
@@ -331,12 +390,13 @@ def _job(scope: str, sig: str, answer: dict, progress: dict) -> None:
 def latest_session_sections(event_id: int, part: str | None = None,
                             add: str | None = Query(None, description="runs of other sessions to mix in, e.g. 3,12"),
                             db: Session = Depends(get_db)):
-    """The latest session's clean laps by stint (?part=<code>: that session's instead; ?add=: with these runs of other
-    sessions after its own), each with its time in each section of the lap comparison (in "sections" order; null while
-    worked out, or when it couldn't be placed on the fastest lap's line). "status": "working" while the section times
-    are worked out (the laps listed already; ask again), "ready" once they are, "empty" when the event has no timed
-    run. "sessions": the event's sessions to pick from, in the order they ran; "latest": the latest one's code;
-    "added": the runs mixed in."""
+    """The latest session's laps by stint, out-laps and in-laps included (?part=<code>: that session's instead; ?add=:
+    with these runs of other sessions after its own), each with whether it is clean, what it is when not ("out",
+    "build", "in", "slow") and its time in each section of the lap comparison (in "sections" order; null while worked
+    out, or when it couldn't be placed on the fastest lap's line; a section null when it wasn't driven on the line).
+    "status": "working" while the section times are worked out (the laps listed already; ask again), "ready" once they
+    are, "empty" when the event has no timed run. "sessions": the event's sessions to pick from, in the order they ran;
+    "latest": the latest one's code; "added": the runs mixed in."""
     if db.get(models.Event, event_id) is None:
         raise HTTPException(404, "Event not found")
     try:

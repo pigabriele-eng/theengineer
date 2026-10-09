@@ -1,7 +1,8 @@
 // The During tab's first sections (Gabriele, 2026-10-08: the During tab "should open on: full comparison of the session
-// uploaded latest with traces; full comparison should flag laps that have better sections"): every clean lap of the
+// uploaded latest with traces; full comparison should flag laps that have better sections"): every lap of the
 // official session holding the run uploaded last (FP1, Q1, R1..., server/app/session_sections.py), stint by stint,
-// each with its driver, its run's tyres (a tap on the stint's tag changes them, components/TyreTag.tsx), its time and
+// out-laps, build laps and in-laps included and said (Gabriele, 2026-10-09: "indicate if there are faster sectors in
+// all driven laps, including outlaps and inlaps"), each with its driver, its run's tyres (a tap on the stint's tag changes them, components/TyreTag.tsx), its time and
 // its gap to the session's fastest lap. A lap holding the session's best time in a corner is flagged in words with
 // those corners and what it gained there on the fastest lap, biggest gain first. Then the quickest lap in each corner, then where the time is and the traces
 // of the laps picked: each stint's fastest lap at first, any lap with a tap. Real laps, plus the two theoretical laps
@@ -28,7 +29,7 @@ import { poll } from '@/lib/poll';
 import { fetchLatestSession, PickedSession, sessionOf } from '@/lib/sessionCompare';
 import {
   bestFlags, bestInEachCorner, defaultPicks, dropPick, fastestSections, flagWords, flipPick, gapWords,
-  isFastest, lapKey, LapPick, LapRef, MAX_PICKS, MIN_GAIN_S, SessionLap, SessionRun,
+  isClean, isFastest, kindWords, lapKey, LapPick, LapRef, MAX_PICKS, MIN_GAIN_S, SessionLap, SessionRun,
 } from '@/lib/sessionLaps';
 import { LATEST, queryOf, SessionChoice, SessionPick } from '@/lib/sessionPick';
 import { TYRE_LABEL } from '@/lib/tyreLevels';
@@ -223,15 +224,15 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
   );
   const flags = bestFlags(answer);
   const flagged = flags.size;
-  const leftOut = answer.left_out === 0 ? 'every lap is clean'
-    : `${answer.left_out} ${answer.left_out === 1 ? 'lap' : 'laps'} that aren’t clean left out`;
+  const leftOut = answer.left_out === 0 ? '' : ` ${answer.left_out} part ${answer.left_out === 1 ? 'lap' : 'laps'}`
+    + ' (a crossing of the line in the pit lane) left out.';
   const waiting = error ? <ErrorLine>{`Can’t compare the laps: ${error}`}</ErrorLine>
     : laps.length < 2 ? <Note>Put at least two laps on the traces: tap them in the list above.</Note>
       : <View style={styles.working}><ActivityIndicator /><Note>Placing the laps on one line…</Note></View>;
   return (
     <>
       <Section no={no} title={title}
-        dek={`Every clean lap of the session, stint by stint, against its fastest lap (${leftOut}). A flag marks a lap with the session’s best time in a corner, and what it gained there on the fastest lap; tap a lap to put it on the traces or take it off.`}>
+        dek={`Every lap of the session, stint by stint, out-laps and in-laps included, against its fastest lap.${leftOut} A flag marks a lap with the session’s best time in a corner, and what it gained there on the fastest lap; tap a lap to put it on the traces or take it off.`}>
         {picker}
         {fastest && fastRun && (
           <Text style={StyleSheet.flatten([t.body, styles.summary])}>
@@ -350,7 +351,8 @@ function mixedFrom(run: SessionRun, shown: string | undefined): string | null {
 function StintHead({ run, tags, from }: { run: SessionRun; tags: TyreTags; from?: string | null }) {
   const styles = useStyles();
   const t = useText();
-  const best = Math.min(...run.laps.map((l) => l.time));
+  const clean = run.laps.filter(isClean);
+  const best = Math.min(...clean.map((l) => l.time));
   return (
     <>
       <View style={styles.stintHead}>
@@ -359,7 +361,7 @@ function StintHead({ run, tags, from }: { run: SessionRun; tags: TyreTags; from?
           <Text style={t.body}>{`${run.driver ?? 'Driver not set'} ·`}</Text>
           {tags.rowOf(run.id) ? <TyreTag tags={tags} id={run.id} run={run.name} size={16} />
             : <Text style={t.body}>Tyres not set</Text>}
-          <Text style={t.note}>{`· ${run.laps.length} ${run.laps.length === 1 ? 'lap' : 'laps'}, best ${formatLap(best)}`}</Text>
+          <Text style={t.note}>{`· ${run.laps.length} ${run.laps.length === 1 ? 'lap' : 'laps'}${clean.length < run.laps.length ? ` (${clean.length} clean)` : ''}, best ${formatLap(best)}`}</Text>
         </View>
       </View>
       <TyreChoices tags={tags} id={run.id} name={run.name} style={styles.choices} />
@@ -367,8 +369,8 @@ function StintHead({ run, tags, from }: { run: SessionRun; tags: TyreTags; from?
   );
 }
 
-/** One lap: a tap puts it on the traces or takes it off. Its driver, its run's tyres, its time and gap, and its flag
- * (the corners where it holds the session’s best), in words. */
+/** One lap: a tap puts it on the traces or takes it off. Its driver, its run's tyres, what it is when it isn't clean
+ * ("out-lap"), its time and gap, and its flag (the corners where it holds the session’s best), in words. */
 function LapRow({ run, lap, tyres, color, best, fastest, flag, onPress }: {
   run: SessionRun;
   lap: SessionLap;
@@ -382,14 +384,16 @@ function LapRow({ run, lap, tyres, color, best, fastest, flag, onPress }: {
   const styles = useStyles();
   const gap = gapWords(lap.time, fastest, best);
   const driver = run.driver ?? 'driver not set';
+  const kind = kindWords(lap);
   return (
     <Pressable onPress={onPress} accessibilityRole="checkbox" {...a11yState({ checked: color != null })}
-      accessibilityLabel={`Lap ${lap.number} of ${run.name} on the traces: ${driver}, ${tyres.replace('?', ' (a guess)')} tyres, ${formatLap(lap.time)}, ${best ? 'the fastest lap' : `${gap} on the fastest lap`}.${flag ? ` ${flag}.` : ''}`}
+      accessibilityLabel={`Lap ${lap.number} of ${run.name} on the traces: ${kind ? `${kind}, ` : ''}${driver}, ${tyres.replace('?', ' (a guess)')} tyres, ${formatLap(lap.time)}, ${best ? 'the fastest lap' : `${gap} on the fastest lap`}.${flag ? ` ${flag}.` : ''}`}
       style={styles.lap}>
       <View style={styles.lapLine}>
         <TickBox on={color != null} size={20} />
         <View style={styles.keyBox}>{color ? <LineKey color={color} /> : null}</View>
         <Text style={styles.lapNo}>{`L${lap.number}`}</Text>
+        {kind && <Text style={styles.lapKind}>{kind}</Text>}
         <Text style={styles.lapWho} numberOfLines={1}>{`${codeOf(run.driver) ?? 'No driver'} · ${tyres}`}</Text>
         <Text style={styles.lapTime}>{formatLap(lap.time)}</Text>
         <Text style={best ? styles.gapBest : styles.gap}>{gap}</Text>
@@ -427,6 +431,8 @@ const useStyles = themed((c) => ({
   keyBox: { width: 18, alignItems: 'center' },
   lapNo: { ...Type.number, fontFamily: face('label', 700), fontSize: 16, color: c.text, minWidth: 30 },
   lapWho: { fontFamily: face('label', 500), fontSize: 15, color: c.textSecondary, flex: 1, minWidth: 0 },
+  // "out-lap", "in-lap": what the lap is, in words, never cut short (the driver and tyres are, on a phone)
+  lapKind: { fontFamily: face('label', 700), fontSize: 15, color: c.text, flexShrink: 0 },
   lapTime: { ...Type.number, fontSize: 17, color: c.text },
   gap: { ...Type.number, fontSize: 15, color: c.textSecondary, minWidth: 64, textAlign: 'right' },
   gapBest: { ...Type.label, fontSize: 13, color: c.text, minWidth: 64, textAlign: 'right' },
