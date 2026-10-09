@@ -7,6 +7,7 @@ import PrintButton from '@/components/PrintButton';
 import { Colophon, Fig, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { LineChart, useChartColors } from '@/components/ReportCharts';
 import { SessionSwitcher, useEventFolder } from '@/components/SessionSwitcher';
+import StintCompareView from '@/components/StintCompare';
 import { BalanceDumbbell, ChangeBar, CornerText, FadeBars, MIN_SHIFT, OnCorner, ShiftRow, shiftColor,
   useBalanceColors } from '@/components/StintCharts';
 import { Text, View } from '@/components/Themed';
@@ -39,29 +40,31 @@ import {
   Words,
 } from '@/lib/stint';
 import { a11yState } from '@/lib/a11yState';
-import { face, Fonts, inkOn, Palette, phaseColor, themed, Type, useTheme } from '@/constants/Theme';
+import { face, Fonts, inkOn, Palette, phaseColor, TAP, themed, Type, useTheme } from '@/constants/Theme';
 
 const ALL = 'all';
+const COMPARE = 'compare'; // the tab with two stints side by side (components/StintCompare.tsx)
 const MAX_LOGS = 12; // the server reads at most this many logs in one view
 const SIDE_MAP = 900; // from this wide the track map has a column of its own on the right; narrower, it's pinned on top
 
 // Stint analysis: tick one or more logs, then each stint lap by lap: how the car fades (fuel burn and tyres apart,
 // by phase and corner), grip and balance per phase, and how the driver adapts. Tag laps lost to a safety car, FCY or
 // traffic and they leave the trends; count a lap the analysis leaves out (not a pit lap) and it joins them. Open with
-// ?session=<id> to start with that session's log ticked, or ?event=<id> with every run of the event. The track map
+// ?session=<id> to start with that session's log ticked, or ?event=<id> with every run of the event; &tab=compare
+// opens on the comparison. The track map
 // stays in view beside the report (on a phone, pinned on top, one tap to hide it); a corner the report names lights
 // up on it when hovered or tapped. A page of the race programme: the headline, the logs and stints to pick, then
-// numbered sections.
+// numbered sections. The "Compare stints" tab puts two stints side by side, to see whether a setup change worked.
 export default function StintScreen() {
   const styles = useStyles();
   const tx = useText();
   const theme = useTheme();
-  const params = useLocalSearchParams<{ session?: string; event?: string }>();
+  const params = useLocalSearchParams<{ session?: string; event?: string; tab?: string }>();
   const [events, setEvents] = useState<LogEvent[] | null>(null);
   const [ticked, setTicked] = useState<number[]>([]);
   const [pickerOpen, setPickerOpen] = useState(!params.session && !params.event);
   const [view, setView] = useState<StintView | null>(null);
-  const [scope, setScope] = useState<string>(ALL);
+  const [scope, setScope] = useState<string>(params.tab === COMPARE ? COMPARE : ALL);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tagging, setTagging] = useState<string | null>(null);
@@ -107,6 +110,7 @@ export default function StintScreen() {
         if (n !== request.current) return;
         setView(v);
         setScope((old) => {
+          if (old === COMPARE) return old; // a run added or taken away while comparing: still comparing
           if (keepScope && (old === ALL || v.stints.some((s) => s.key === old))) return old;
           const usable = v.stints.filter((s) => s.fitted_laps >= 2);
           return usable.length === 1 ? usable[0].key : ALL;
@@ -123,6 +127,7 @@ export default function StintScreen() {
   }, [ticked, load]);
 
   const toggle = (id: number) => setTicked((t) => (t.includes(id) ? t.filter((x) => x !== id) : [...t, id]));
+  const tickedKey = ticked.join(',');
 
   // the runs of the ticked logs' event, one tap away: a tap shows that run alone, "Whole event" ticks every run
   const where = useMemo(() => {
@@ -150,6 +155,13 @@ export default function StintScreen() {
   const wholeEvent = eventMains.length > 0 && eventMains.length === ticked.length
     && eventMains.every((f) => ticked.includes(f));
   const current = tickedSessions.length === 1 ? tickedSessions[0] ?? -1 : wholeEvent ? null : -1;
+  // the event's other runs, one tap from the comparison (each by its main log with laps)
+  const others = useMemo(() => {
+    if (ticked.length >= MAX_LOGS || eventId == null) return [];
+    const ev = (events ?? []).find((e) => e.id === (folder?.id ?? eventId));
+    return (ev?.sessions ?? []).flatMap((s) => s.files.filter((f) => f.main && f.laps > 0).slice(-1)
+      .filter((f) => !ticked.includes(f.id)).map((f) => ({ fileId: f.id, name: s.name })));
+  }, [events, folder?.id, eventId, tickedKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const tag = async (stint: Stint, lap: StintLap, to: Tag | 'none' | 'count' | null) => {
     if (stint.file_id == null) return;
@@ -202,6 +214,7 @@ export default function StintScreen() {
       ? [{ key: ALL, label: 'All stints', sub: `${view.overall.fitted_laps} laps in the trend` }] : []),
     ...(view?.stints ?? []).map((s) => ({ key: s.key, label: `${many ? `${s.run} · ` : ''}Stint ${s.number}`,
       sub: `laps ${s.first_lap}–${s.last_lap} · ${s.fitted_laps} in the trend` })),
+    ...(view ? [{ key: COMPARE, label: 'Compare stints', sub: 'did a setup change work?' }] : []),
   ];
   // the sections are numbered in the order they are shown
   let no = 0;
@@ -254,7 +267,12 @@ export default function StintScreen() {
           {view && words && scopes.length > 0 && <Tabs big label="Stint" value={scope} onChange={setScope} items={scopes} />}
         </View>
 
-        {view && words && (
+        {view && scope === COMPARE && (
+          <StintCompareView files={view.file_ids} refresh={view} others={others}
+            onAdd={(id) => setTicked((t) => (t.includes(id) ? t : [...t, id]))}
+            codes={codes} focus={corner} onCorner={pointAt} />
+        )}
+        {view && words && scope !== COMPARE && (
           <>
             <Section no={next()} title={stint ? `Stint ${stint.number}` : 'The stints'}
               dek={stint
@@ -926,8 +944,9 @@ const useStyles = themed((c) => ({
   picker: { gap: 8 },
   pickerHead: { flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderColor: c.rule,
     paddingBottom: 6 },
-  tickedRow: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 18, rowGap: 8, alignItems: 'center' },
-  tickedItem: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 2 },
+  tickedRow: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 18, alignItems: 'center', marginVertical: -12 },
+  // a full tap target round the name and its cross, taking no more room in the row than the name does
+  tickedItem: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: TAP, minWidth: TAP },
   tickedText: { fontFamily: face('body', 600), fontSize: 15, color: c.text },
   tickedX: { fontFamily: Fonts.label, fontSize: 12, color: c.textMuted },
   event: { gap: 2, marginTop: 8 },

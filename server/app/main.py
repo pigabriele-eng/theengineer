@@ -17,6 +17,7 @@ from app.routers import event_naming, events, garage, planned, technique
 from app.routers import prep as prep_report
 from app.routers import prep_guide
 from app.routers import stint as stint_tool
+from app.routers import stint_compare
 from app.routers import track_grip, trackshape
 from app.routers import report_drivers
 from app.routers import driver_style, habits
@@ -88,6 +89,7 @@ app.include_router(events.router, dependencies=signed_in)
 app.include_router(planned.router, dependencies=signed_in)
 app.include_router(event_naming.router, dependencies=signed_in)
 app.include_router(stint_tool.router, dependencies=signed_in)
+app.include_router(stint_compare.router, dependencies=signed_in)
 app.include_router(driver_style.router, dependencies=signed_in)
 app.include_router(habits.router, dependencies=signed_in)
 app.include_router(prep_report.router, dependencies=signed_in)
