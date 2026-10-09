@@ -4,8 +4,8 @@
 // Not in an event). What a full delete would remove is asked first (server/app/event_delete.py), so the choice says how
 // many runs and how much storage. The runs in no event ("Not in an event", id NO_EVENT) are deleted the same way, all
 // at once, with no folder to keep. In the programme's way: the question in Anton, the red line that it can't be undone,
-// then the choices one under the other, each with what it does: the two deletes as red blocks, removing only the
-// folder and keeping it as text links.
+// then the choices one under the other, each with what it does: deleting the logs as the red block, the whole event
+// (asked once more), only the folder and nothing as text links.
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { ActivityIndicator, ViewStyle } from 'react-native';
 
@@ -55,6 +55,7 @@ export function DeleteEvent({ id, name, onDeleted, onCancel }: {
   const wide = useWide();
   const [size, setSize] = useState<EventSize | null>(null);
   const [busy, setBusy] = useState<How | null>(null);
+  const [whole, setWhole] = useState(false); // the whole event chosen: asked once more
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -88,55 +89,68 @@ export function DeleteEvent({ id, name, onDeleted, onCancel }: {
   const runs = size?.runs ?? 0;
   const frees = size?.bytes ? ` (frees ${storageSize(size.bytes)})` : '';
   const loose = id === NO_EVENT;
+  // an event with runs: the question is what to delete (Gabriele, 2026-10-09: "The app should ask what I want to
+  // delete in a clear way, I did not want to delete the whole thing just swipe all the logs for the event"), the logs
+  // first; the whole event only after a second tap
+  const ask = !loose && runs > 0;
+  const holds = size && runs > 0 && (
+    <Text style={styles.text}>
+      {ask ? <>&ldquo;{name}&rdquo; holds </> : 'They are '}{plural(runs, 'run')} with {plural(size.laps, 'lap')} and{' '}
+      {plural(size.logs, 'log')}{size.bytes ? `, ${storageSize(size.bytes)} of storage` : ''}.
+    </Text>
+  );
   return (
     <View style={styles.box}>
-      <Label>{loose ? 'Delete the runs' : 'Delete the runs or the event'}</Label>
+      <Label>{loose ? 'Delete the runs' : 'Delete'}</Label>
       <Text style={wide ? styles.title : styles.titlePhone}>
-        {loose ? 'Delete the runs not in an event?' : <>Delete &ldquo;{name}&rdquo;?</>}
+        {loose ? 'Delete the runs not in an event?'
+          : whole ? 'Delete the whole event?'
+          : ask ? 'What do you want to delete?' : <>Delete &ldquo;{name}&rdquo;?</>}
       </Text>
       {!size && !error && <ActivityIndicator style={styles.spinner} />}
+      {holds}
       {size && runs > 0 && (
-        <>
-          <Text style={styles.text}>
-            It holds {plural(runs, 'run')} with {plural(size.laps, 'lap')} and {plural(size.logs, 'log')}
-            {size.bytes ? `, ${storageSize(size.bytes)} of storage` : ''}.
-          </Text>
-          <Text style={styles.warning}>
-            Deleting the runs can&apos;t be undone: they go for good, with their logs, laps, debriefs, setup sheets and
-            everything worked out from them.
-          </Text>
-        </>
+        <Text style={styles.warning}>
+          {whole ? `The event goes for good with everything in it: its name, days, place in its season, its ${
+            plural(runs, 'run')} and their logs, laps, debriefs and setup sheets.`
+            : 'Deleted logs can’t be brought back: the runs go for good, with their laps, debriefs, setup sheets and everything worked out from them.'}
+        </Text>
       )}
       {size && runs === 0 && (
         <Text style={styles.text}>{loose ? 'There are no runs here.' : 'It has no runs: only the event goes.'}</Text>
       )}
-      {size && (
+      {size && ask && !whole && (
         <View style={styles.choices}>
-          {runs > 0 && !loose && (
-            <View style={styles.choice}>
-              <MainButton danger busy={busy === 'empty'} disabled={busy != null} onPress={() => remove('empty')}
-                label={`Delete the ${plural(runs, 'run')} and their logs, keep the event${frees}`} />
-              <Note>The event stays, empty, with its name, days and season: upload the right logs into it.</Note>
-            </View>
-          )}
-          {(runs > 0 || !loose) && (
-            <View style={styles.choice}>
-              <MainButton danger busy={busy === 'runs'} disabled={busy != null} onPress={() => remove('runs')}
-                label={loose ? `Delete these ${plural(runs, 'run')} and their logs${frees}`
-                  : runs > 0 ? `Delete the event, its ${plural(runs, 'run')} and their logs${frees}` : 'Delete the event'} />
-              {runs > 0 && !loose && <Note>The event goes too.</Note>}
-            </View>
-          )}
-          {runs > 0 && !loose && (
-            <View style={styles.choice}>
-              <TextLink label="Only remove the folder, keep the runs" onPress={() => remove('folder')}
-                disabled={busy != null} />
-              <Note>They stay, with their logs, under Not in an event.</Note>
-            </View>
-          )}
           <View style={styles.choice}>
-            <TextLink label="Keep it" onPress={onCancel} disabled={busy != null} />
+            <MainButton danger busy={busy === 'empty'} disabled={busy != null} onPress={() => remove('empty')}
+              label="Only the logs, keep the event" sub={`${plural(runs, 'run')} and their logs${frees}`} />
+            <Note>The event stays, empty, with its name, days and season: upload the right logs into it.</Note>
+          </View>
+          <View style={styles.choice}>
+            <TextLink red label="The whole event…" onPress={() => setWhole(true)} disabled={busy != null} />
+            <Note>The event goes too, with its logs. Asked again before anything goes.</Note>
+          </View>
+          <View style={styles.choice}>
+            <TextLink label="Only the event, keep the logs" onPress={() => remove('folder')} disabled={busy != null} />
+            <Note>The runs stay, with their logs, under Not in an event.</Note>
+          </View>
+          <View style={styles.choice}>
+            <TextLink label="Nothing" onPress={onCancel} disabled={busy != null} />
             <Note>Nothing changes.</Note>
+          </View>
+        </View>
+      )}
+      {size && (whole || !ask) && (
+        <View style={styles.choices}>
+          <View style={styles.choice}>
+            <MainButton danger busy={busy === 'runs'} disabled={busy != null} onPress={() => remove('runs')}
+              label={loose ? `Delete these ${plural(runs, 'run')} and their logs${frees}`
+                : runs > 0 ? `Yes, delete the whole event${frees}` : 'Delete the event'} />
+          </View>
+          <View style={styles.choice}>
+            <TextLink label={whole ? 'Back' : 'Keep it'} onPress={whole ? () => setWhole(false) : onCancel}
+              disabled={busy != null} />
+            <Note>{whole ? 'To the choice of what to delete.' : 'Nothing changes.'}</Note>
           </View>
         </View>
       )}

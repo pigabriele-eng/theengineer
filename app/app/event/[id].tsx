@@ -305,7 +305,7 @@ export default function EventScreen() {
       <View style={styles.moreLinks}>
         <TextLink onPress={() => showPanel(panel === 'rename' ? null : 'rename')} label="Rename" small />
         <TextLink onPress={() => showPanel(panel === 'edit' ? null : 'edit')} label="Change dates" small />
-        <TextLink onPress={() => showPanel(panel === 'delete' ? null : 'delete')} label="Delete runs or event" small />
+        <TextLink onPress={() => showPanel(panel === 'delete' ? null : 'delete')} label="Delete logs or event" small />
       </View>
     </View>
   );
