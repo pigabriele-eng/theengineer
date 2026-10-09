@@ -33,7 +33,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app import db as app_db  # SessionLocal is looked up when used: the tests swap the database
 from app import heavy, models, storage
-from app.analysis.laps import TIMING_VERSION, LapTiming, TimingLine, time_laps
+from app.analysis.laps import TIMING_VERSION, Lap, LapTiming, TimingLine, apply_picks, time_laps
 from app.importers.csvlog import read_log
 from app.importers.motec import LdFile
 from app.importers.window import window
@@ -58,7 +58,26 @@ def read_file(f: models.LoggerFile) -> LdFile:
     of the stored log (meta "window"), from 0 at the part's start."""
     ld = read_log(storage.local_path(f.path))
     w = (f.meta or {}).get("window")
-    return window(ld, w[0], w[1]) if w else ld
+    ld = window(ld, w[0], w[1]) if w else ld
+    ld.lap_picks = (f.meta or {}).get("lap_picks")  # the laps set by hand win over the timing (laps.apply_picks)
+    return ld
+
+
+def picks_part(f: models.LoggerFile | None) -> list:
+    """For a signature: the laps set by hand, sorted; nothing at all when there are none, so the signatures made
+    before laps could be set by hand still hold."""
+    picks = (f.meta or {}).get("lap_picks") if f is not None else None
+    return [sorted(picks.items())] if picks else []
+
+
+def lap_picks(s: models.RunSession, f: models.LoggerFile | None) -> dict[int, str]:
+    """Lap number -> the lap's type as set by hand, for the log's laps as stored."""
+    picks = (f.meta or {}).get("lap_picks") if f is not None else None
+    if not picks:
+        return {}
+    timed = [Lap(l.number, l.start_s, l.start_s + l.time_s, l.time_s) for l in s.laps if l.file_id == f.id]
+    apply_picks(timed, picks)
+    return {l.number: l.pick for l in timed if l.pick}
 
 
 def track_line(track: models.Track | None) -> TimingLine | None:

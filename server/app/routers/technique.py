@@ -20,10 +20,9 @@ import queue
 import threading
 import time
 from collections import OrderedDict
-
-import numpy as np
 from typing import Literal
 
+import numpy as np
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -49,6 +48,7 @@ from app.analysis.technique import (
 from app.db import SessionLocal, get_db
 from app.routers import reports
 from app.routers.sessions import official_corners
+from app.timing import lap_picks
 
 router = APIRouter(prefix="/technique")
 log = logging.getLogger(__name__)
@@ -198,17 +198,23 @@ def _detail(row: models.TechniqueCache, member: str) -> dict | None:
 BUILD_SHARE = 0.02  # a qualifying lap this much slower than the run's quickest: a build (or cool-down) lap
 
 
-def mark_build_laps(laps: list[dict], kinds: dict[int, str]) -> None:
+def mark_build_laps(laps: list[dict], kinds: dict[int, str],
+                    picks: dict[int, dict[int, str]] | None = None) -> None:
     """In qualifying, the laps that build up to the push (Gabriele, 2026-10-09: "one slow build lap, first push"), or
     cool down after it: clean laps BUILD_SHARE or more slower than the run's quickest. They stay on the page, marked,
-    but say nothing of how the driver pushes, so the mistakes that repeat and their measured costs leave them out."""
+    but say nothing of how the driver pushes, so the mistakes that repeat and their measured costs leave them out.
+    A lap set by hand (session -> lap number -> its type, timing.lap_picks) is a build lap or a push lap as set, in
+    any run."""
+    picks = picks or {}
     best: dict[int, float] = {}
     for x in laps:
         if kinds.get(x["session_id"]) == "qualifying":
             best[x["session_id"]] = min(best.get(x["session_id"], np.inf), x["time"])
     for x in laps:
         b = best.get(x["session_id"])
-        x["build"] = b is not None and x["time"] >= b * (1 + BUILD_SHARE)
+        pick = picks.get(x["session_id"], {}).get(x["number"])
+        x["pick"] = pick
+        x["build"] = pick == "build" or (pick != "push" and b is not None and x["time"] >= b * (1 + BUILD_SHARE))
 
 
 def _lap_row(x: dict) -> dict:
@@ -216,7 +222,7 @@ def _lap_row(x: dict) -> dict:
     return {"number": x["number"], "time": x["time"], "tyres": x.get("tyres"), "mistakes_s": x["mistakes_s"],
             "without_mistakes": x["without_mistakes"], "count": len(ob), "top": ob[0]["title"] if ob else None,
             "top_code": ob[0]["code"] if ob else None, "in_lap": x.get("pit_from_m") is not None,
-            "build": bool(x.get("build"))}
+            "build": bool(x.get("build")), "pick": x.get("pick")}
 
 
 def _fastest(row: models.TechniqueCache, res: dict, x: dict) -> dict | None:
@@ -647,7 +653,7 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
                                                                                   prep.sections, shifts))
         blobs[member] = np.frombuffer(json.dumps(details[member]).encode(), np.uint8)
     del details
-    mark_build_laps(laps, kinds)
+    mark_build_laps(laps, kinds, {i.session.id: lap_picks(i.session, i.file) for i in reports._used(plan)})
     pushed = [(x, p) for x, p in zip(laps, passes, strict=True) if not x.get("build")]
     by_session: dict[int, list[list[dict]]] = {}
     for x, _ in pushed:  # the mistakes that repeat: the obvious ones, on the laps driven flat out

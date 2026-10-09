@@ -18,7 +18,6 @@ works the report out from the traces of that session's runs. A session of a sing
 """
 from __future__ import annotations
 
-from collections.abc import Callable
 import hashlib
 import json
 import logging
@@ -26,6 +25,7 @@ import math
 import queue
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import httpx
@@ -40,6 +40,7 @@ from app.analysis import compact
 from app.analysis.advice import build_report
 from app.db import SessionLocal, get_db
 from app.routers.sessions import _channel_map, _line, official_corners, read_file
+from app.timing import picks_part
 
 router = APIRouter(prefix="/reports")
 log = logging.getLogger(__name__)
@@ -105,7 +106,7 @@ def _track_of(db: Session, s: models.RunSession, f: models.LoggerFile | None) ->
 def _traces_signature(s: models.RunSession, f: models.LoggerFile, track: models.Track | None) -> str:
     laps = [(l.number, l.time_s, l.start_s, l.clean) for l in s.laps if l.file_id == f.id]
     return _hash([TRACES_VERSION, s.id, f.id, f.path, f.meta.get("beacons"), _channel_map(s),
-                  track.timing_line if track else None, laps])
+                  track.timing_line if track else None, laps, *picks_part(f)])
 
 
 def plan_for(db: Session, kind: str, id_: int, part: str | None = None, runs: list[int] | None = None,

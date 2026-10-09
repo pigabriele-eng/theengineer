@@ -93,6 +93,14 @@ class Lap:
     end: float
     time: float
     clean: bool = False
+    pick: str | None = None  # the driver's own reading of the lap, one of LAP_PICKS (apply_picks)
+
+
+# what a lap can be set to by hand (Gabriele, 2026-10-09: "add the ability to manually change the nature of the lap
+# in case the app gets it wrong"): an out-lap, a build lap (qualifying's slow lap before the push), a push lap or an
+# in-lap
+LAP_PICKS = ("out", "build", "push", "in")
+PICK_MATCH_S = 3.0  # a pick follows its lap when the laps are timed again: the lap starting within this many seconds
 
 
 @dataclass
@@ -315,7 +323,21 @@ def split_laps(ld: LdFile, beacons: list[float] | None = None,
         if clean and min(clean) > best:  # the fastest "lap" was not a real lap; judge against the best clean one
             for l in laps:
                 l.clean = l.clean and l.time <= min(clean) * CLEAN_LAP_MARGIN
+    apply_picks(laps, getattr(ld, "lap_picks", None))
     return laps, source
+
+
+def apply_picks(laps: list[Lap], picks: dict[str, str] | None) -> None:
+    """The laps set by hand (LoggerFile.meta "lap_picks": seconds into the log the lap started -> one of LAP_PICKS)
+    win over the app's reading: a push or build lap is clean, an out- or in-lap is not. Found by when the lap
+    started, so a pick stays on its lap when the laps are timed again and numbered differently."""
+    for start, pick in (picks or {}).items():
+        if pick not in LAP_PICKS or not laps:
+            continue
+        lap = min(laps, key=lambda l: abs(l.start - float(start)))
+        if abs(lap.start - float(start)) <= PICK_MATCH_S:
+            lap.pick = pick
+            lap.clean = pick in ("push", "build")
 
 
 def _driven(speed: tuple[np.ndarray, np.ndarray, int] | None, lap: Lap) -> float | None:
