@@ -229,10 +229,18 @@ def check_track(track_id: int | None) -> None:
 def _up_to_date(f: models.LoggerFile, track: models.Track | None) -> bool:
     """Timed by this version of the lap timing, and by the dash's own marker or from the track's line as it is
     now."""
-    if f.meta.get("timing_version") != TIMING_VERSION:
+    version = f.meta.get("timing_version")
+    if version != TIMING_VERSION and not (version == 2 and _has_a_clean_lap(f)):
         return False
     line = track.timing_line if track is not None else None
     return f.meta.get("lap_source") == "marker" or same_line(f.meta.get("timed_line"), line)
+
+
+def _has_a_clean_lap(f: models.LoggerFile) -> bool:
+    """Version 3 only changes which laps are clean when a cut-short lap was the quickest, which left a log with no
+    clean lap: a version 2 log with one (or too few laps to say) is timed as version 3 would, and isn't read again."""
+    laps = [l for l in f.session.laps if l.file_id == f.id]
+    return len(laps) < 3 or any(l.clean for l in laps)
 
 
 def files_at(db: Session, track: models.Track | None) -> list[models.LoggerFile]:
