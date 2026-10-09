@@ -4,7 +4,7 @@
 // tyres where there is one): what the setup sheets say changed, how like with like the two are, the lap time with
 // each lap on one tyre age and fuel load, grip and balance by phase, the corners where the balance moved, the tyre
 // fade and the driver aids (GET /stint/compare, server/app/routers/stint_compare.py).
-import { useEffect, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 
 import { Choice, Choices } from '@/components/Controls';
@@ -19,15 +19,22 @@ import { signed } from '@/lib/stint';
 import { balanceWords, CompareChoice, Diff, fetchStintCompare, PHASE_WORDS, StintCompare } from '@/lib/stintCompare';
 
 type Pick = { files: string; a: string; b: string }; // picked among these logs' stints
+const FOLD_OVER = 6; // more stints than this to pick from: the list folds
 
-export default function StintCompareView({ files, refresh, others, onAdd, codes, focus, onCorner }: {
-  files: number[]; // the ticked logs: their stints are the ones to pick from
-  refresh: unknown; // changes when the stints are read again (a lap tagged)
-  others: { fileId: number; name: string }[]; // runs of the event not ticked: one tap adds one
-  onAdd: (fileId: number) => void;
-  codes: string[]; // the corners a text may name
-  focus: string | null;
+type Part = { title: string; dek?: string; body: ReactNode };
+
+/** The comparison of two stints of these logs. On the stint analysis page each part is a numbered section of its
+ * own; in a report (bare) it is all one section, its parts under small heads. */
+export default function StintCompareView({ files, refresh, others = [], onAdd, codes = [], focus = null, onCorner,
+  bare }: {
+  files: number[]; // the logs: their stints are the ones to pick from
+  refresh?: unknown; // changes when the stints are read again (a lap tagged)
+  others?: { fileId: number; name: string }[]; // runs of the event not in view: one tap adds one
+  onAdd?: (fileId: number) => void;
+  codes?: string[]; // the corners the map can light up
+  focus?: string | null;
   onCorner?: OnCorner;
+  bare?: boolean; // in a report: one section, no numbered sections of its own
 }) {
   const styles = useStyles();
   const tx = useText();
@@ -67,7 +74,7 @@ export default function StintCompareView({ files, refresh, others, onAdd, codes,
     setPick({ files: key, ...next });
   };
 
-  const add = others.length > 0 && (
+  const add = others.length > 0 && onAdd && (
     <View style={styles.block}>
       <Label small>Add a run to compare</Label>
       <Choices>
@@ -75,180 +82,195 @@ export default function StintCompareView({ files, refresh, others, onAdd, codes,
       </Choices>
     </View>
   );
-
-  if (!data) {
-    return (
-      <Section no={1} title="Compare two stints"
-        dek="Did a setup change work? The stint before it against the stint after it, like with like.">
-        <View style={styles.block}>
-          {busy && (
-            <View style={styles.busy}>
-              <ActivityIndicator color={theme.text} />
-              <Text style={tx.note}>Comparing…</Text>
-            </View>
-          )}
-          {!busy && error && <Text style={tx.body}>{error}</Text>}
-          {add}
+  const head = { title: 'Compare two stints',
+    dek: 'Did a setup change work? The stint before it against the stint after it, like with like.' };
+  const status = (
+    <>
+      {busy && (
+        <View style={styles.busy}>
+          <ActivityIndicator color={theme.text} />
+          <Text style={tx.note}>{data ? 'Updating…' : 'Comparing…'}</Text>
         </View>
-      </Section>
-    );
+      )}
+      {error && <Text style={data ? tx.error : tx.body}>{error}</Text>}
+    </>
+  );
+
+  const parts: Part[] = [];
+  if (!data) {
+    parts.push({ ...head, body: <View style={styles.block}>{status}{add}</View> });
+    return <Parts parts={parts} bare={bare} />;
   }
 
   const { a, b, lap_time: time } = data;
   const names = { a: a.name, b: b.name };
   const barOf = (d: number | null) =>
     d == null || Math.abs(d) < 0.005 ? theme.rule : d > 0 ? theme.delta.loss : theme.delta.gain;
-  let no = 0;
-  const next = () => ++no;
 
-  return (
-    <>
-      <Section no={next()} title="Compare two stints"
-        dek="Did a setup change work? The stint before it against the stint after it, like with like.">
-        <View style={styles.block}>
-          <Picker label="Before the change" choices={data.choices} on={data.picked.a}
-            onPick={(k) => choose('a', k)} />
-          <Picker label="After the change" choices={data.choices} on={data.picked.b}
-            onPick={(k) => choose('b', k)} />
-          {data.picked.default && data.picked.why && (
-            <Text style={tx.note}>Picked to start with: {data.picked.why.charAt(0).toLowerCase() + data.picked.why.slice(1)}</Text>
-          )}
-          {add}
-          {busy && (
-            <View style={styles.busy}>
-              <ActivityIndicator color={theme.text} />
-              <Text style={tx.note}>Updating…</Text>
-            </View>
-          )}
-          {error && <Text style={tx.error}>{error}</Text>}
-
-          <Text style={StyleSheet.flatten([styles.headline, wide ? null : styles.headlinePhone])}>
-            {data.words.headline}
-          </Text>
-          {time && (
-            <FigRow style={styles.figs}>
-              {[
-                <Fig key="gap" label="Lap time" value={signed(time.change, 2)} unit="s/lap" size={wide ? 52 : 38}
-                  bar={barOf(time.change)} barHeight={6}
-                  note={time.clear ? 'a clear difference' : `within ±${time.within.toFixed(2)} s`} />,
-                <Fig key="a" label={names.a} value={formatLap(time.a)} size={wide ? 40 : 30}
-                  note={`typical · best ${formatLap(time.best.a)}`} />,
-                <Fig key="b" label={names.b} value={formatLap(time.b)} size={wide ? 40 : 30}
-                  note={`typical · best ${formatLap(time.best.b)}`} />,
-              ]}
-            </FigRow>
-          )}
-          {data.words.car.length > 0 && (
-            <View style={styles.list}>
-              <Text style={tx.sub}>The car</Text>
-              {data.words.car.map((s) => <Bullet key={s} text={s} />)}
-            </View>
-          )}
+  parts.push({ ...head, body: (
+    <View style={styles.block}>
+      <Picker label="Before the change" choices={data.choices} on={data.picked.a} onPick={(k) => choose('a', k)} />
+      <Picker label="After the change" choices={data.choices} on={data.picked.b} onPick={(k) => choose('b', k)} />
+      {data.picked.default && data.picked.why && (
+        <Text style={tx.note}>Picked to start with: {data.picked.why.charAt(0).toLowerCase() + data.picked.why.slice(1)}</Text>
+      )}
+      {add}
+      {status}
+      <Text style={StyleSheet.flatten([styles.headline, wide ? null : styles.headlinePhone])}>
+        {data.words.headline}
+      </Text>
+      {time && (
+        <FigRow style={styles.figs}>
+          {[
+            <Fig key="gap" label="Lap time" value={signed(time.change, 2)} unit="s/lap" size={wide ? 52 : 38}
+              bar={barOf(time.change)} barHeight={6}
+              note={time.clear ? 'a clear difference' : `within ±${time.within.toFixed(2)} s`} />,
+            <Fig key="a" label={names.a} value={formatLap(time.a)} size={wide ? 40 : 30}
+              note={`typical · best ${formatLap(time.best.a)}`} />,
+            <Fig key="b" label={names.b} value={formatLap(time.b)} size={wide ? 40 : 30}
+              note={`typical · best ${formatLap(time.best.b)}`} />,
+          ]}
+        </FigRow>
+      )}
+      {data.words.car.length > 0 && (
+        <View style={styles.list}>
+          <Text style={tx.sub}>The car</Text>
+          {data.words.car.map((s) => <Bullet key={s} text={s} />)}
         </View>
-      </Section>
+      )}
+    </View>
+  ) });
 
-      <Section no={next()} title="What changed on the car"
-        dek={`From ${names.a} to ${names.b}, as their setup sheets say.`}>
-        <SetupChanges data={data} />
-      </Section>
+  parts.push({ title: 'What changed on the car',
+    dek: data.setup.same_run ? undefined : `From ${names.a} to ${names.b}, as their setup sheets say.`,
+    body: <SetupChanges data={data} /> });
 
-      <Section no={next()} title="Like with like"
-        dek="A setup change shows best with the same driver, on the same tyres, in the same session.">
+  parts.push({ title: 'Like with like',
+    dek: 'A setup change shows best with the same driver, on the same tyres, in the same session.', body: (
+      <View style={styles.block}>
+        {data.like_for_like.map((c) => (
+          <View key={c.text} style={styles.check}>
+            <Text style={StyleSheet.flatten([styles.mark, !c.ok && styles.markOff])}
+              accessibilityLabel={c.ok ? 'Like with like' : 'Not like with like'}>{c.ok ? '✓' : '≠'}</Text>
+            <Text style={StyleSheet.flatten([tx.body, styles.flex])}>{c.text}</Text>
+          </View>
+        ))}
+        {data.correction.words.map((w) => <Text key={w} style={tx.body}>{w}</Text>)}
+      </View>
+    ) });
+
+  if (a.times.length >= 2 && b.times.length >= 2) {
+    parts.push({ title: 'Lap times',
+      dek: `Each lap in the trend by its lap in the stint${data.correction.tyres || data.correction.fuel
+        ? ', on one tyre age and fuel load' : ''}, in seconds against ${names.a}'s typical lap.`,
+      body: <LapTimes data={data} /> });
+  }
+
+  if (data.phases.length > 0) {
+    parts.push({ title: 'Grip and balance by phase',
+      dek: 'The mean over each stint\'s laps in the trend. Balance: the understeer angle against the car\'s normal at ' +
+        'the same cornering g, + understeer, − oversteer. "Not clear": within the lap-to-lap scatter.', body: (
         <View style={styles.block}>
-          {data.like_for_like.map((c) => (
-            <View key={c.text} style={styles.check}>
-              <Text style={StyleSheet.flatten([styles.mark, !c.ok && styles.markOff])}
-                accessibilityLabel={c.ok ? 'Like with like' : 'Not like with like'}>{c.ok ? '✓' : '≠'}</Text>
-              <Text style={StyleSheet.flatten([tx.body, styles.flex])}>{c.text}</Text>
+          {data.phases.map((p) => (
+            <View key={p.key} style={styles.phase}>
+              <Text style={tx.sub}>{p.label}</Text>
+              {p.grip && (
+                <Row label="Grip" text={`${p.grip.a.toFixed(2)} → ${p.grip.b.toFixed(2)} g`}
+                  change={p.grip.pct != null ? pct(p.grip.pct) : signed(p.grip.change, 3)} d={p.grip} />
+              )}
+              {p.balance && (
+                <Row label="Balance" text={`${deg(p.balance.a)} → ${deg(p.balance.b)}`}
+                  change={Math.abs(p.balance.change) < 0.05 ? 'the same' : balanceWords(p.balance.change)}
+                  d={p.balance} />
+              )}
             </View>
           ))}
-          {data.correction.words.map((w) => <Text key={w} style={tx.body}>{w}</Text>)}
         </View>
-      </Section>
+      ) });
+  }
 
-      {a.times.length >= 2 && b.times.length >= 2 && (
-        <Section no={next()} title="Lap times"
-          dek={`Each lap in the trend by its lap in the stint${data.correction.tyres || data.correction.fuel
-            ? ', on one tyre age and fuel load' : ''}, in seconds against ${names.a}'s typical lap.`}>
-          <LapTimes data={data} />
-        </Section>
-      )}
+  if (data.corners.length > 0) {
+    parts.push({ title: 'Corners where the balance moved',
+      dek: 'Each stint\'s early and late laps in that corner: fewer laps than the figures above, so only big moves ' +
+        `show.${onCorner ? ' Tap one to see it on the map.' : ''}`, body: (
+        <View>
+          {data.corners.map((c) => {
+            const text = `${c.code} ${PHASE_WORDS[c.phase]}: ${balanceWords(c.change)} (${deg(c.a)} → ${deg(c.b)})`;
+            if (!onCorner) return <Text key={`${c.code}${c.phase}`} style={StyleSheet.flatten([tx.body, styles.cornerText])}>{text}</Text>;
+            const on = codes.includes(c.code) && focus === c.code;
+            return (
+              <Pressable key={`${c.code}${c.phase}`} onPress={() => onCorner(on ? null : c.code)}
+                accessibilityRole="button" accessibilityLabel={`${text}. Show ${c.code} on the track map`}
+                style={StyleSheet.flatten([styles.corner, on && styles.cornerOn])}>
+                <Text style={StyleSheet.flatten([tx.body, styles.flex])}>{text}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) });
+  }
 
-      {data.phases.length > 0 && (
-        <Section no={next()} title="Grip and balance by phase"
-          dek={`The mean over each stint's laps in the trend. Balance: the understeer angle against the car's normal at the same cornering g, + understeer, − oversteer. "Not clear": within the lap-to-lap scatter.`}>
-          <View style={styles.block}>
-            {data.phases.map((p) => (
-              <View key={p.key} style={styles.phase}>
-                <Text style={tx.sub}>{p.label}</Text>
-                {p.grip && (
-                  <Row label="Grip" text={`${p.grip.a.toFixed(2)} → ${p.grip.b.toFixed(2)} g`}
-                    change={`${p.grip.pct != null ? `${p.grip.pct > 0 ? '+' : p.grip.pct < 0 ? '−' : ''}${Math.abs(p.grip.pct).toFixed(1)} %` : signed(p.grip.change, 3)}`}
-                    d={p.grip} />
-                )}
-                {p.balance && (
-                  <Row label="Balance" text={`${deg(p.balance.a)} → ${deg(p.balance.b)}`}
-                    change={Math.abs(p.balance.change) < 0.05 ? 'the same' : balanceWords(p.balance.change)}
-                    d={p.balance} />
-                )}
-              </View>
-            ))}
-          </View>
-        </Section>
-      )}
+  if (data.fade || data.aids.length > 0) {
+    parts.push({ title: 'Tyres and driver aids', body: (
+      <View style={styles.block}>
+        {data.fade && (
+          <Text style={tx.body}>
+            Lap time lost each lap on the set{data.fade.a.fuel_out && data.fade.b.fuel_out ? ' (fuel burn taken out)' : ''}:
+            {' '}{signed(data.fade.a.per_lap, 3)} s on {names.a}, {signed(data.fade.b.per_lap, 3)} s on {names.b}.
+          </Text>
+        )}
+        {data.aids.map((x) => (
+          <Row key={x.key} label={x.label} text={`${x.a.toFixed(1)} → ${x.b.toFixed(1)} s a lap`}
+            change={signed(x.change, 1)} d={x} />
+        ))}
+      </View>
+    ) });
+  }
+  return <Parts parts={parts} bare={bare} />;
+}
 
-      {data.corners.length > 0 && (
-        <Section no={next()} title="Corners where the balance moved"
-          dek={`Each stint's early and late laps in that corner: fewer laps than the figures above, so only big moves show.${
-            onCorner ? ' Tap one to see it on the map.' : ''}`}>
-          <View>
-            {data.corners.map((c) => {
-              const text = `${c.code} ${PHASE_WORDS[c.phase]}: ${balanceWords(c.change)} (${deg(c.a)} → ${deg(c.b)})`;
-              if (!onCorner) return <Text key={`${c.code}${c.phase}`} style={tx.body}>{text}</Text>;
-              const on = codes.includes(c.code) && focus === c.code;
-              return (
-                <Pressable key={`${c.code}${c.phase}`} onPress={() => onCorner(on ? null : c.code)}
-                  accessibilityRole="button" accessibilityLabel={`${text}. Show ${c.code} on the track map`}
-                  style={StyleSheet.flatten([styles.corner, on && styles.cornerOn])}>
-                  <Text style={StyleSheet.flatten([tx.body, styles.flex])}>{text}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </Section>
-      )}
-
-      {(data.fade || data.aids.length > 0) && (
-        <Section no={next()} title="Tyres and driver aids">
-          <View style={styles.block}>
-            {data.fade && (
-              <Text style={tx.body}>
-                Lap time lost each lap on the set{data.fade.a.fuel_out && data.fade.b.fuel_out ? ' (fuel burn taken out)' : ''}:
-                {' '}{signed(data.fade.a.per_lap, 3)} s on {names.a}, {signed(data.fade.b.per_lap, 3)} s on {names.b}.
-              </Text>
-            )}
-            {data.aids.map((x) => (
-              <Row key={x.key} label={x.label} text={`${x.a.toFixed(1)} → ${x.b.toFixed(1)} s a lap`}
-                change={signed(x.change, 1)} d={x} />
-            ))}
-          </View>
-        </Section>
-      )}
-    </>
+/** Numbered sections of their own, or (bare) one block with a small head over each part after the first. */
+function Parts({ parts, bare }: { parts: Part[]; bare?: boolean }) {
+  const styles = useStyles();
+  const tx = useText();
+  if (!bare) {
+    return <>{parts.map((p, i) => <Section key={p.title} no={i + 1} title={p.title} dek={p.dek}>{p.body}</Section>)}</>;
+  }
+  return (
+    <View style={styles.bare}>
+      {parts.map((p, i) => (
+        <View key={p.title} style={styles.block}>
+          {i > 0 && <Text style={styles.partHead}>{p.title}</Text>}
+          {i > 0 && p.dek ? <Text style={tx.body}>{p.dek}</Text> : null}
+          {p.body}
+        </View>
+      ))}
+    </View>
   );
 }
 
+const pct = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1)} %`;
 const deg = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1)}°`;
 
 function Picker({ label, choices, on, onPick }: { label: string; choices: CompareChoice[]; on: string;
   onPick: (k: string) => void }) {
   const styles = useStyles();
+  const [open, setOpen] = useState(false);
+  // a whole weekend has many stints: folded, only the one picked shows, and Change lists them all
+  const folds = choices.length > FOLD_OVER;
+  const shown = folds && !open ? choices.filter((c) => c.key === on) : choices;
   return (
     <View style={styles.picker}>
-      <Label small>{label}</Label>
+      <View style={styles.pickerHead}>
+        <Label small>{label}</Label>
+        {folds && <TextLink small label={open ? 'Done' : `Change (${choices.length} stints)`} onPress={() => setOpen(!open)} />}
+      </View>
       <Choices>
-        {choices.map((c) => (
-          <Choice key={c.key} label={c.name} on={c.key === on} onPress={() => onPick(c.key)}
+        {shown.map((c) => (
+          <Choice key={c.key} label={c.name} on={c.key === on} onPress={() => {
+            onPick(c.key);
+            setOpen(false);
+          }}
             sub={[c.driver ?? 'driver?', c.tyres_label ? `${c.tyres_label}${c.tyres_sure ? '' : '?'}` : null,
               `${c.laps} lap${c.laps === 1 ? '' : 's'}`].filter(Boolean).join(' · ')} />
         ))}
@@ -343,6 +365,11 @@ function LapTimes({ data }: { data: StintCompare }) {
 const useStyles = themed((c) => ({
   block: { gap: 14 },
   picker: { gap: 6 },
+  pickerHead: { flexDirection: 'row', alignItems: 'center', gap: 14, flexWrap: 'wrap' },
+  bare: { gap: 28 },
+  partHead: { fontFamily: face('label', 700), fontSize: 15, letterSpacing: 1.2, textTransform: 'uppercase',
+    color: c.text, borderTopWidth: 2, borderColor: c.text, paddingTop: 10 },
+  cornerText: { paddingVertical: 6 },
   busy: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   headline: { fontFamily: face('body', 600), fontSize: 24, lineHeight: 32, color: c.text, maxWidth: 860 },
   headlinePhone: { fontSize: 20, lineHeight: 27 },
