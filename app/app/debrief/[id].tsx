@@ -5,6 +5,7 @@ import { ActivityIndicator, StyleSheet } from 'react-native';
 
 import { FigRow, Notice, PageHead, useText } from '@/components/Picks';
 import { useBackTo } from '@/components/Back';
+import DebriefRun from '@/components/DebriefRun';
 import PrintButton from '@/components/PrintButton';
 import { Colophon, Fig, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { useEventFolder, useSessionEvent } from '@/components/SessionSwitcher';
@@ -154,6 +155,8 @@ export default function DebriefReport() {
 
       {!d && !error && <ActivityIndicator color={theme.text} style={styles.loading} />}
       {error && <Text style={StyleSheet.flatten([t.error, styles.gapTop])}>{error}</Text>}
+
+      {d && <DebriefRun d={d} changed={setD} />}
 
       {pending && (
         <Notice busy style={styles.notice}>

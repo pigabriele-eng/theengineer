@@ -158,9 +158,14 @@ class DebriefOut(Orm):
     has_audio: bool = False
     created_at: dt.datetime
     points: list[DebriefPointOut]
+    # recorded before its run was picked: how it came to this run (debrief/inbox.py describe)
+    linked: dict | None = None
 
     @classmethod
     def of(cls, d) -> Self:
+        from app.debrief.inbox import describe  # here: it imports the models and the pipeline
+
         out = cls.model_validate(d)
         out.has_audio = d.audio_path is not None
+        out.linked = describe(d.recording)
         return out
