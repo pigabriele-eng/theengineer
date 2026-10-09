@@ -1,6 +1,8 @@
 // Client for the The Engineer server (see /server). Set EXPO_PUBLIC_API_URL to point at a deployed server.
 import { accessToken, authEnabled, signOut } from './auth';
 import { counted } from './loadLast';
+import type { LiveSegment } from './liveSpeech';
+export type { LiveSegment } from './liveSpeech';
 
 // Render passes the server's bare host name (theengineer-api.onrender.com), so add https:// when there's no scheme.
 const baseUrl = (process.env.EXPO_PUBLIC_API_URL ?? '').trim() || 'http://localhost:8000';
@@ -250,21 +252,25 @@ export const api = {
     '/imports/storage'),
   createDebrief: (id: number, points: DebriefPointIn[]) =>
     request<Debrief>(`/sessions/${id}/debriefs`, json({ mode: 'individual', points })),
-  recordDebrief: (id: number, audio: PickedFile, mode: DebriefMode, language: DebriefLanguage) => {
+  // live: what the browser wrote down while recording (lib/liveSpeech), used when the server has no speech to text
+  recordDebrief: (id: number, audio: PickedFile, mode: DebriefMode, language: DebriefLanguage, live?: LiveSegment[]) => {
     const form = new FormData();
     form.append('audio', formFile(audio, 'audio/mp4'));
     form.append('mode', mode);
     form.append('language', language);
+    if (live?.length) form.append('live_transcript', JSON.stringify(live));
     return request<Debrief>(`/sessions/${id}/debriefs/audio`, { method: 'POST', body: form });
   },
   // For the run that ended just before the recording: it joins that run now, or waits for its log to be uploaded.
   // recordedAt: when it was recorded, local time on this device (localTime).
-  recordDebriefByTime: (audio: PickedFile, mode: DebriefMode, language: DebriefLanguage, recordedAt: string) => {
+  recordDebriefByTime: (audio: PickedFile, mode: DebriefMode, language: DebriefLanguage, recordedAt: string,
+    live?: LiveSegment[]) => {
     const form = new FormData();
     form.append('audio', formFile(audio, 'audio/mp4'));
     form.append('mode', mode);
     form.append('language', language);
     form.append('recorded_at', recordedAt);
+    if (live?.length) form.append('live_transcript', JSON.stringify(live));
     return request<{ debrief?: Debrief; waiting?: WaitingRecording }>('/debriefs/audio', { method: 'POST', body: form });
   },
   waitingRecordings: () => request<WaitingRecording[]>('/debriefs/waiting'),
