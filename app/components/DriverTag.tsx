@@ -1,6 +1,7 @@
 // The driver on a run's name line, first thing the eye meets: the driver's code in bold ink (PIA), a guess from the
 // driving style in the muted ink (PIA?), or "Driver?" when nobody knows. With `onPress`, a guess or "Driver?" opens
-// the run's driver list; inside a link (`onPress` left out) it is only words.
+// the run's driver list (dotted underline: a tap to set); inside a link (`onPress` left out) it is only words, without
+// the underline, so it never looks like a tap that does nothing.
 import { Pressable, StyleSheet } from 'react-native';
 
 import { Text } from '@/components/Themed';
@@ -13,7 +14,8 @@ export function DriverTag({ tag, run, onPress, size = 17 }: { tag: Tag; run: str
   const label = tag.kind === 'known' ? `Driver ${tag.name}`
     : tag.kind === 'guess' ? `Probably ${tag.name}, going by the driving style` : 'Driver not set';
   const text = (
-    <Text style={StyleSheet.flatten([tag.kind === 'known' ? styles.known : styles.unsure, { fontSize: size }])}
+    <Text style={StyleSheet.flatten([tag.kind === 'known' ? styles.known : onPress ? styles.unsureTap : styles.unsure,
+      { fontSize: size }])}
       accessibilityLabel={onPress ? undefined : label} numberOfLines={1}>
       {tag.text}
     </Text>
@@ -29,7 +31,8 @@ export function DriverTag({ tag, run, onPress, size = 17 }: { tag: Tag; run: str
 
 const useStyles = themed((c) => ({
   known: { fontFamily: Type.label.fontFamily, letterSpacing: 0.6, color: c.text },
-  unsure: { fontFamily: Fonts.label, letterSpacing: 0.6, color: c.textMuted, textDecorationLine: 'underline',
+  unsure: { fontFamily: Fonts.label, letterSpacing: 0.6, color: c.textMuted },
+  unsureTap: { fontFamily: Fonts.label, letterSpacing: 0.6, color: c.textMuted, textDecorationLine: 'underline',
     textDecorationStyle: 'dotted' },
   // the words are about 22 px tall: room to a 44 px target above and below without moving the line
   press: { ...tapRoom(11) },

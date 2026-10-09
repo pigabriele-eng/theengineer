@@ -6,12 +6,13 @@
 // only), each with the corners where most of the gap is and what the technique check found wrong there on the slower
 // lap; 02 to 05 the comparison itself, the first suggestion's already open (the laps, where the time is, the section
 // times, the traces); 06 the weekend's laps to pick by hand, each run with its tyres a tap to change
-// (components/TyreTag.tsx).
+// (components/TyreTag.tsx). A run's "Driver?" there and on the laps compared is a tap to set (components/DriverPick.tsx).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, LayoutChangeEvent, Pressable, StyleSheet } from 'react-native';
 
 import { CompareTraces, LineKey, SectionTable, useLapColors, WhereTheTimeIs } from '@/components/CompareViews';
 import { ErrorLine, Note } from '@/components/Controls';
+import { DriverPick, useDriverPick } from '@/components/DriverPick';
 import { DriverTag } from '@/components/DriverTag';
 import { SubFoldHead } from '@/components/Fold';
 import { Choice } from '@/components/Picks';
@@ -51,9 +52,12 @@ export default function WeekendLaps({ eventId, onShow, version }: {
   const [shown, setShown] = useState<Shown>({ kind: 'suggestion', index: 0 });
   const [tapped, setTapped] = useState(false); // a suggestion was tapped: open it now, whether its corners are known
   const [own, setOwn] = useState<LapPick[]>([]);
+  const [driversSet, setDriversSet] = useState(0);
+  const drivers = useDriverPick(eventId, () => setDriversSet((n) => n + 1));
 
   // the suggestions, asked again while the server works out their corners or the technique check the mistakes at them
-  // come from is worked out (lib/poll.ts), and after a pick on a run's tyres (they pair laps like with like)
+  // come from is worked out (lib/poll.ts), and after a pick on a run's tyres or driver (they pair laps like with like,
+  // and teammates head to head)
   const picks = tyreTags.state.picks;
   useEffect(() => poll((live) => fetchSuggestions(eventId).then((a) => {
     if (!live()) return false;
@@ -63,7 +67,7 @@ export default function WeekendLaps({ eventId, onShow, version }: {
   }, (e) => {
     if (live()) setError((e as Error).message);
     return true;
-  })), [eventId, picks]);
+  })), [eventId, picks, driversSet]);
 
   const suggestions = answer?.suggestions ?? [];
   const picked = shown.kind === 'suggestion' ? suggestions[shown.index] ?? null : null;
@@ -141,11 +145,11 @@ export default function WeekendLaps({ eventId, onShow, version }: {
       <View onLayout={(e: LayoutChangeEvent) => (compareY.current = e.nativeEvent.layout.y)}>
         <Comparison laps={laps} picked={picked} data={data?.key === key ? data.result : null} error={compareError}
           waiting={laps.length >= MIN_LAPS && !ready} answer={answer}
-          onTraces={toTraces} />
+          onTraces={toTraces} drivers={drivers} />
       </View>
 
       <PickYourOwn sessions={answer?.sessions ?? null} picks={own} onPicks={setOwn} tags={tyreTags}
-        onCompare={() => show({ kind: 'own', laps: own })} />
+        drivers={drivers} onCompare={() => show({ kind: 'own', laps: own })} />
     </>
   );
 }
@@ -195,21 +199,27 @@ function SuggestionRow({ no, s, on, onPress }: { no: number; s: Suggestion; on: 
   );
 }
 
-function LapLine({ lap, color }: { lap: SuggestedLap; color: string }) {
+/** A lap of a suggestion. `drivers`: its "Driver?" opens the run's driver list under it (not inside a suggestion's
+ * row, itself a tap). */
+function LapLine({ lap, color, drivers }: { lap: SuggestedLap; color: string; drivers?: DriverPick }) {
   const styles = useStyles();
   return (
-    <View style={styles.lapLine}>
-      <LineKey color={color} />
-      <DriverTag tag={tag(lap.driver)} run={lap.run} />
-      <Text style={styles.lapTime}>{formatLap(lap.time)}</Text>
-      <Text style={styles.lapWords} numberOfLines={2}>{lapWords(lap)}</Text>
-    </View>
+    <>
+      <View style={styles.lapLine}>
+        <LineKey color={color} />
+        <DriverTag tag={tag(drivers ? drivers.name(lap.session_id, lap.driver) : lap.driver)} run={lap.run}
+          onPress={drivers ? () => drivers.toggle(lap.session_id) : undefined} />
+        <Text style={styles.lapTime}>{formatLap(lap.time)}</Text>
+        <Text style={styles.lapWords} numberOfLines={2}>{lapWords(lap)}</Text>
+      </View>
+      {drivers?.panel({ id: lap.session_id, name: lap.run, driver: lap.driver }, styles.lapPicker)}
+    </>
   );
 }
 
 // ---------- the comparison ----------
 
-function Comparison({ laps, picked, data, error, waiting, answer, onTraces }: {
+function Comparison({ laps, picked, data, error, waiting, answer, onTraces, drivers }: {
   laps: LapPick[];
   picked: Suggestion | null;
   data: CompareResult | null;
@@ -217,6 +227,7 @@ function Comparison({ laps, picked, data, error, waiting, answer, onTraces }: {
   waiting: boolean;
   answer: Suggestions | null;
   onTraces: (y: number) => void; // scroll to the traces, y within the comparison
+  drivers: DriverPick;
 }) {
   const styles = useStyles();
   const wide = useWide();
@@ -264,15 +275,19 @@ function Comparison({ laps, picked, data, error, waiting, answer, onTraces }: {
         dek={picked ? suggestionTitle(picked, codeOf) : 'The laps you picked, on one line.'}>
         <View style={wide ? styles.vs : undefined}>
           <View style={styles.vsLaps}>
-            {picked ? picked.laps.map((l, i) => <LapLine key={i} lap={l} color={colors.laps[i]} />)
+            {picked ? picked.laps.map((l, i) => <LapLine key={i} lap={l} color={colors.laps[i]} drivers={drivers} />)
               : data?.laps.map((l, i) => (
-                <View key={i} style={styles.lapLine}>
-                  <LineKey color={colors.laps[i]} />
-                  <DriverTag tag={tag(l.driver)} run={l.session} />
-                  <Text style={styles.lapTime}>{formatLap(l.time)}</Text>
-                  <Text style={styles.lapWords} numberOfLines={2}>
-                    {`${l.session} · lap ${l.lap}${fastest != null && l.time > fastest ? ` · ${signedSeconds(l.time - fastest)}` : ''}`}
-                  </Text>
+                <View key={i}>
+                  <View style={styles.lapLine}>
+                    <LineKey color={colors.laps[i]} />
+                    <DriverTag tag={tag(drivers.name(l.session_id, l.driver))} run={l.session}
+                      onPress={() => drivers.toggle(l.session_id)} />
+                    <Text style={styles.lapTime}>{formatLap(l.time)}</Text>
+                    <Text style={styles.lapWords} numberOfLines={2}>
+                      {`${l.session} · lap ${l.lap}${fastest != null && l.time > fastest ? ` · ${signedSeconds(l.time - fastest)}` : ''}`}
+                    </Text>
+                  </View>
+                  {drivers.panel({ id: l.session_id, name: l.session, driver: l.driver }, styles.lapPicker)}
                 </View>
               ))}
           </View>
@@ -305,12 +320,13 @@ function Comparison({ laps, picked, data, error, waiting, answer, onTraces }: {
 
 // ---------- laps picked by hand ----------
 
-function PickYourOwn({ sessions, picks, onPicks, onCompare, tags }: {
+function PickYourOwn({ sessions, picks, onPicks, onCompare, tags, drivers }: {
   sessions: PickSession[] | null;
   picks: LapPick[];
   onPicks: (p: LapPick[]) => void;
   onCompare: () => void;
   tags: TyreTags;
+  drivers: DriverPick;
 }) {
   const styles = useStyles();
   // the latest session open, the others folded
@@ -329,16 +345,16 @@ function PickYourOwn({ sessions, picks, onPicks, onCompare, tags }: {
       {!sessions && <ActivityIndicator style={styles.left} />}
       {sessions?.length === 0 && <Note>No timed laps yet: upload the logs of a session on the Upload page.</Note>}
       {sessions?.map((p) => {
-        const drivers = [...new Set(p.runs.map((r) => codeOf(r.driver)).filter(Boolean))].join(', ');
+        const codes = [...new Set(p.runs.map((r) => codeOf(drivers.name(r.id, r.driver))).filter(Boolean))].join(', ');
         const best = Math.min(...p.runs.flatMap((r) => r.laps.filter((l) => l.clean).map((l) => l.time)));
-        const facts = [drivers || null, `${p.runs.length} run${p.runs.length === 1 ? '' : 's'}`,
+        const facts = [codes || null, `${p.runs.length} run${p.runs.length === 1 ? '' : 's'}`,
           Number.isFinite(best) ? `best ${formatLap(best)}` : null].filter(Boolean).join(' · ');
         return (
           <View key={p.code}>
             <SubFoldHead title={p.title} facts={facts} open={opened.has(p.code)} onToggle={() => toggle(p.code)}
               what={`the laps of ${p.title}`} />
             {opened.has(p.code) && p.runs.map((r) => (
-              <RunLaps key={r.id} run={r} picks={picks} tags={tags}
+              <RunLaps key={r.id} run={r} picks={picks} tags={tags} drivers={drivers}
                 onToggle={(lap) => onPicks(toggleLap(picks, { session_id: r.id, lap }, MAX_LAPS))} />
             ))}
           </View>
@@ -361,11 +377,12 @@ function PickYourOwn({ sessions, picks, onPicks, onCompare, tags }: {
   );
 }
 
-function RunLaps({ run, picks, onToggle, tags }: {
+function RunLaps({ run, picks, onToggle, tags, drivers }: {
   run: PickRun;
   picks: LapPick[];
   onToggle: (lap: number) => void;
   tags: TyreTags;
+  drivers: DriverPick;
 }) {
   const styles = useStyles();
   const theme = useTheme();
@@ -375,13 +392,14 @@ function RunLaps({ run, picks, onToggle, tags }: {
   return (
     <View style={styles.pickRun}>
       <View style={styles.pickRunHead}>
-        <DriverTag tag={tag(run.driver)} run={run.name} />
+        <DriverTag tag={tag(drivers.name(run.id, run.driver))} run={run.name} onPress={() => drivers.toggle(run.id)} />
         <Text style={styles.pickRunName} numberOfLines={1}>{run.name}</Text>
         {/* the tyres a tap to change, as on the run rows; the suggestions' own words until they are read */}
         {tags.rowOf(run.id) ? <TyreTag tags={tags} id={run.id} run={run.name} />
           : <Text style={styles.pickRunTyres}>{tyreWords(run)}</Text>}
       </View>
       <TyreChoices tags={tags} id={run.id} name={run.name} />
+      {drivers.panel({ id: run.id, name: run.name, driver_id: run.driver_id, driver: run.driver }, styles.lapPicker)}
       <View style={styles.lapChoices}>
         {run.laps.map((l) => {
           const on = picks.some((p) => p.session_id === run.id && p.lap === l.number);
@@ -422,6 +440,7 @@ const useStyles = themed((c) => ({
   onShow: { ...Type.label, fontSize: 14, color: c.textSecondary, marginTop: 6 },
 
   lapLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 10, rowGap: 2, paddingVertical: 3 },
+  lapPicker: { marginTop: 6, marginBottom: 10, maxWidth: 560 }, // a run's driver list, under its line
   lapTime: { ...Type.number, fontFamily: face('label', 700), fontSize: 18, color: c.text },
   lapWords: { fontFamily: face('label', 400), fontSize: 16, lineHeight: 21, color: c.textSecondary, flexShrink: 1 },
 
