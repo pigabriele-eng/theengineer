@@ -11,7 +11,7 @@ import ShareText from '@/components/ShareText';
 import { Colophon, Fig, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { useEventFolder, useSessionEvent } from '@/components/SessionSwitcher';
 import { Text, View } from '@/components/Themed';
-import { api, Debrief, DebriefCorner, DebriefPoint, SECTIONS } from '@/lib/api';
+import { api, Debrief, DebriefCorner, DebriefLanguage, DebriefPoint, SECTIONS } from '@/lib/api';
 import {
   CAUSE_LABEL,
   CheckedPoint,
@@ -145,10 +145,10 @@ export default function DebriefReport() {
 
   const checked = new Map((check?.points ?? []).map((c) => [c.id, c]));
 
-  const retry = async () => {
+  const retry = async (language?: DebriefLanguage) => {
     setError(null);
     try {
-      setD(await api.processDebrief(debriefId));
+      setD(await api.processDebrief(debriefId, language));
     } catch (e) {
       setError((e as Error).message);
     }
@@ -198,7 +198,7 @@ export default function DebriefReport() {
       {d?.status === 'failed' && (
         <Notice style={styles.notice}>
           <Text style={t.body}>The recording is saved, but it couldn&apos;t be processed: {d.error}</Text>
-          <TextLink label="Try again" onPress={retry} red />
+          <TextLink label="Try again" onPress={() => retry()} red />
         </Notice>
       )}
 
@@ -245,6 +245,14 @@ export default function DebriefReport() {
           {showTranscript && <Text style={StyleSheet.flatten([t.note, styles.transcript])}>{named(d.transcript, d.speakers)}</Text>}
         </Section>
       ) : null}
+
+      {d?.status === 'ready' && hasAudio && (
+        <View style={styles.redo}>
+          <Text style={t.body}>Words wrong? Run the recording through speech to text again, listening for Italian,
+            English and German.</Text>
+          <TextLink label="Transcribe again" onPress={() => retry('multi')} />
+        </View>
+      )}
 
       <Colophon left="Debrief report" right={d ? day(d.created_at) : undefined} />
     </Page>
@@ -444,6 +452,7 @@ function PointCheck({ c }: { c: CheckedPoint }) {
 }
 
 const useStyles = themed((c) => ({
+  redo: { marginTop: 28, gap: 10, maxWidth: 760 },
   headLinks: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 20, rowGap: 8, marginTop: 6 },
   loading: { alignSelf: 'flex-start', marginTop: 24 },
   gapTop: { marginTop: 18 },

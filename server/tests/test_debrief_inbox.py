@@ -157,3 +157,15 @@ def test_health_says_which_engines_debriefs_use(client, monkeypatch):
     assert client.get("/health").json() == {"status": "ok", "speech": "phone", "sorting": "keywords"}
     monkeypatch.setenv("DEEPGRAM_API_KEY", "x")
     assert client.get("/health").json()["speech"] == "deepgram"
+
+
+def test_transcribe_again_in_mixed_languages(client, settle, monkeypatch):
+    _no_keys(monkeypatch)
+    fp1 = _run(client, "FP1", "09/10/2026", "10:00:00", 1800)
+    r = client.post(f"/sessions/{fp1}/debriefs/audio", files={"audio": ("d.webm", b"x")}, data={"language": "en"})
+    settle()
+    did = r.json()["id"]
+    assert client.post(f"/debriefs/{did}/process", params={"language": "fr"}).status_code == 422
+    again = client.post(f"/debriefs/{did}/process", params={"language": "multi"})
+    assert again.status_code == 202 and again.json()["language"] == "multi"
+    settle()

@@ -205,12 +205,19 @@ def get_debrief(debrief_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/debriefs/{debrief_id}/process", response_model=schemas.DebriefOut, status_code=202)
-def reprocess_debrief(debrief_id: int, background: BackgroundTasks, db: Session = Depends(get_db)):
+def reprocess_debrief(debrief_id: int, background: BackgroundTasks, language: str | None = None,
+                      db: Session = Depends(get_db)):
+    """Runs the recording through speech to text and sorting again; ?language= redoes it in another language (an
+    older debrief sent as English that was spoken in Italian or mixed)."""
     d = _get(db, debrief_id)
+    if language is not None and language not in LANGUAGES:
+        raise HTTPException(422, f"Language must be one of {', '.join(LANGUAGES)}")
     if d.audio_path is None:
         raise HTTPException(409, "This debrief has no recording")
     if d.status == models.DebriefStatus.processing:
         raise HTTPException(409, "This debrief is already being processed")
+    if language is not None:
+        d.language = language
     d.status, d.error = models.DebriefStatus.queued, None
     db.commit()
     background.add_task(process_debrief, d.id)

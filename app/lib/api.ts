@@ -287,7 +287,8 @@ export const api = {
   debrief: (id: number) => request<Debrief>(`/debriefs/${id}`),
   debriefCorners: (id: number) =>
     request<{ corners: Record<string, DebriefCorner> }>(`/debriefs/${id}/corners`),
-  processDebrief: (id: number) => request<Debrief>(`/debriefs/${id}/process`, { method: 'POST' }),
+  processDebrief: (id: number, language?: DebriefLanguage) =>
+    request<Debrief>(`/debriefs/${id}/process${language ? `?language=${language}` : ''}`, { method: 'POST' }),
   // An audio player can't send headers, so when signed in the token goes in the query string.
   debriefAudioUrl: async (id: number) => {
     const token = await accessToken();
