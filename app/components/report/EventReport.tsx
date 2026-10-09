@@ -348,8 +348,8 @@ export default function EventReport({
       body: <TheLap report={report} names={names} width={Math.min(width, 1240) - 2 * gutter} /> });
     if (driversOn) {
       sections.push({ title: 'Drivers',
-        dek: 'Two drivers on the same tyres, corner by corner: how each brakes, turns and gets back on the throttle, ' +
-          'then their lap times on one tyre age and fuel load.',
+        dek: 'Two drivers on the same tyres (or on all of them), corner by corner: how each brakes, turns and gets ' +
+          'back on the throttle, then their lap times on one tyre age and fuel load.',
         onLayout: (e) => setDriversY(e.nativeEvent.layout.y),
         body: (
           <Box ref={driversAt} onLayout={(e) => {
