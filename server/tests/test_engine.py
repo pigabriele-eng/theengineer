@@ -398,3 +398,20 @@ def test_official_corners_follow_a_log_measured_from_another_line():
         secs, numbering = make_sections({"speed": v}, corners)
         assert numbering == "official"
         assert [s.code for s in secs] == [f"T{i}" for i in range(1, 11)], offset
+
+
+def test_a_stored_track_with_superseded_corners_gets_the_current_ones(client):
+    from app import db as app_db, models
+    from app.known_tracks import SUPERSEDED, refresh_stored
+    old = SUPERSEDED["Red Bull Ring"][0]
+    with app_db.SessionLocal() as db:
+        corners = [models.Corner(code=c, apex_m=m, sector=s) for c, m, s in old]
+        db.add(models.Track(name="Red Bull Ring", corners=corners))
+        db.add(models.Track(name="Spielberg", corners=[models.Corner(code="T1", apex_m=400)]))  # changed by hand
+        db.commit()
+        assert refresh_stored(db) == 1
+        assert refresh_stored(db) == 0
+    t = {t["name"]: t for t in client.get("/tracks").json()}
+    assert [(c["code"], c["apex_m"]) for c in t["Red Bull Ring"]["corners"]] == \
+        [(c, m) for c, m, _ in KNOWN["Red Bull Ring"]["corners"]]
+    assert [(c["code"], c["apex_m"]) for c in t["Spielberg"]["corners"]] == [("T1", 400)]

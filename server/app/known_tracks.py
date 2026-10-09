@@ -12,6 +12,7 @@ import logging
 import re
 import threading
 
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, object_session
 
@@ -92,15 +93,16 @@ KNOWN: dict[str, dict] = {
                     ("T10", 3007, None), ("T11", 3432, None), ("T12", 3656, None), ("T13", 4077, None),
                     ("T14", 4565, "T14-T16"), ("T16", 4627, "T14-T16"), ("T17", 4892, None)],
     },
-    # FIA numbering (10 turns, 4318 m) as on the circuit"s track guide; positions from a surveyed centre line.
+    # FIA numbering (10 turns, 4318 m) as on the circuit"s track guide; positions from the bacinger/f1-circuits
+    # centre line, which starts on the line (an earlier outline put every corner about 120 m late).
     "Red Bull Ring": {
         "aliases": ("red bull ring", "spielberg"),
         "words": ("red bull ring", "spielberg"),
         "length_m": 4318,
         "source": "https://commons.wikimedia.org/wiki/File:Spielberg_bare_map_numbers_contextless_2016_onwards.svg",
-        "corners": [("T1", 452, None), ("T2", 1063, None), ("T3", 1387, None), ("T4", 2208, None),
-                    ("T5", 2468, None), ("T6", 2740, None), ("T7", 3032, None), ("T8", 3222, None),
-                    ("T9", 3795, None), ("T10", 3997, None)],
+        "corners": [("T1", 330, None), ("T2", 941, None), ("T3", 1265, None), ("T4", 2086, None),
+                    ("T5", 2346, None), ("T6", 2618, None), ("T7", 2910, None), ("T8", 3100, None),
+                    ("T9", 3673, None), ("T10", 3875, None)],
     },
     # FIA circuit map numbering (19 turns, 4909 m) as stated by published track guides; positions from OSM-based
     # outline.
@@ -204,6 +206,33 @@ def known_track(name: str | None) -> tuple[str, dict] | None:
     return None
 
 
+# Corner lists a stored track may still have from an earlier version of KNOWN. A track holding one exactly (not
+# changed by hand) is given the current list when the server starts, and its pages are worked out again.
+SUPERSEDED: dict[str, list[list[tuple[str, int, str | None]]]] = {
+    "Red Bull Ring": [[("T1", 452, None), ("T2", 1063, None), ("T3", 1387, None), ("T4", 2208, None),
+                       ("T5", 2468, None), ("T6", 2740, None), ("T7", 3032, None), ("T8", 3222, None),
+                       ("T9", 3795, None), ("T10", 3997, None)]],
+}
+
+
+def refresh_stored(db: Session) -> int:
+    """Stored tracks still holding a superseded corner list get the current one. How many were changed."""
+    changed = 0
+    for track in db.scalars(select(models.Track)):
+        found = known_track(track.name)
+        if found is None or found[0] not in SUPERSEDED:
+            continue
+        held = [(c.code, round(c.apex_m) if c.apex_m is not None else None, c.sector) for c in track.corners]
+        if held in SUPERSEDED[found[0]]:
+            track.corners = []
+            db.flush()
+            _fill(track, found[1])
+            changed += 1
+            log.info("Gave %s the current official corners", track.name)
+    db.commit()
+    return changed
+
+
 def fill_corners(track: models.Track) -> None:
     """Give a track with no corners the official ones, when we know them.
 
@@ -239,3 +268,13 @@ def fill_corners(track: models.Track) -> None:
 def _fill(track: models.Track, t: dict) -> None:
     track.length_m = track.length_m or t["length_m"]
     track.corners = [models.Corner(code=c, apex_m=m, sector=s) for c, m, s in t["corners"]]
+
+
+def refresh_all() -> None:
+    """On startup: stored tracks holding a superseded corner list get the current one (see SUPERSEDED)."""
+    from app import db as app_db
+    try:
+        with app_db.SessionLocal() as db:
+            refresh_stored(db)
+    except SQLAlchemyError:
+        log.exception("Couldn't refresh the stored tracks' official corners")
