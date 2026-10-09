@@ -236,6 +236,10 @@ def run_import(job_id: int, folder: Path, uploads: list[tuple[str, Path]], event
                 db.commit()
             _drop_unused(db, job)
             _name_runs(db, topped_up if job.session_ids else set())
+            if job.session_ids:  # debriefs recorded before these logs were in join their runs (debrief/inbox.py)
+                from app.debrief import inbox
+
+                inbox.after_upload(db)
         try:  # work out the pages of what was imported now, in the background, so they are ready when opened
             if prebuild.enabled():
                 prebuild.after_upload(db, list(job.session_ids or []))

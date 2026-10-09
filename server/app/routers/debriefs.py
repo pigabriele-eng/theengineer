@@ -1,13 +1,17 @@
 """Debriefs: typed points, and voice recordings that are transcribed and structured in the background."""
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import models, schemas, storage
 from app.db import get_db
 from app.analysis.laps import analyze
+from app.debrief import inbox
 from app.debrief.corners import corner_data
 from app.debrief.pipeline import process_debrief
 from app.debrief.transcribe import LANGUAGES
@@ -62,6 +66,107 @@ def record_debrief(session_id: int, audio: UploadFile, background: BackgroundTas
     db.add(d)
     db.commit()
     background.add_task(process_debrief, d.id)
+    return schemas.DebriefOut.of(d)
+
+
+def _when(text: str | None) -> datetime:
+    """The recording's time as the phone gave it (local, no zone), else now on the server's clock."""
+    if not text:
+        return datetime.now()
+    try:
+        return datetime.fromisoformat(text).replace(tzinfo=None)
+    except ValueError:
+        raise HTTPException(422, f"Can't read the recording time '{text}'") from None
+
+
+def _recording(db: Session, recording_id: int) -> models.DebriefRecording:
+    rec = db.get(models.DebriefRecording, recording_id)
+    if rec is None:
+        raise HTTPException(404, "Recording not found")
+    return rec
+
+
+def _waiting_out(rec: models.DebriefRecording) -> dict:
+    return {"id": rec.id, "recorded_at": rec.recorded_at.isoformat(timespec="seconds"), "mode": rec.mode,
+            "language": rec.language, "filename": rec.filename}
+
+
+@router.post("/debriefs/audio", status_code=202)
+def record_for_last_run(audio: UploadFile, mode: models.DebriefMode = Form(models.DebriefMode.individual),
+                        language: str = Form("en"), recorded_at: str | None = Form(None),
+                        db: Session = Depends(get_db)):
+    """A recording for the run that ended just before it (debrief/inbox.py): it joins that run now if its log is
+    in, else waits and joins it after the upload that brings it. recorded_at: when the recording started, local
+    time on the phone ("2026-10-09T14:32:05"); now when not given.
+
+    Returns {"debrief": the debrief, when it joined a run} or {"waiting": the recording}.
+    """
+    ext = Path(audio.filename or "").suffix.lower()
+    if ext not in AUDIO:
+        raise HTTPException(415, f"Unsupported audio type '{ext}'. Supported: {', '.join(sorted(AUDIO))}")
+    if language not in LANGUAGES:
+        raise HTTPException(422, f"Language must be one of {', '.join(LANGUAGES)}")
+    when = _when(recorded_at)
+    key = storage.save(audio.file.read(), ext)
+    rec = models.DebriefRecording(audio_path=key, filename=(audio.filename or "")[:255] or None, mode=mode,
+                                  language=language, recorded_at=when)
+    db.add(rec)
+    db.commit()
+    d = inbox.place(db, rec)
+    return {"debrief": schemas.DebriefOut.of(d)} if d is not None else {"waiting": _waiting_out(rec)}
+
+
+@router.get("/debriefs/waiting")
+def waiting_recordings(db: Session = Depends(get_db)):
+    """Recordings no run has been found for yet, newest first."""
+    recs = db.scalars(select(models.DebriefRecording).where(models.DebriefRecording.debrief_id.is_(None))
+                      .order_by(models.DebriefRecording.recorded_at.desc())).all()
+    return [_waiting_out(r) for r in recs]
+
+
+class RunPick(BaseModel):
+    session_id: int
+
+
+@router.post("/debriefs/waiting/{recording_id}/run", response_model=schemas.DebriefOut)
+def pick_run_for_recording(recording_id: int, body: RunPick, db: Session = Depends(get_db)):
+    """The user picks the run a waiting recording goes with: it becomes that run's debrief and is processed."""
+    rec = _recording(db, recording_id)
+    return schemas.DebriefOut.of(inbox.link(db, rec, get_session(db, body.session_id), "user"))
+
+
+@router.delete("/debriefs/waiting/{recording_id}")
+def delete_waiting_recording(recording_id: int, db: Session = Depends(get_db)):
+    """A waiting recording the user doesn't want: it and its audio go. One that joined a run stays with it."""
+    rec = _recording(db, recording_id)
+    if rec.debrief_id is not None:
+        raise HTTPException(409, "This recording is a debrief of a run already")
+    key = rec.audio_path
+    db.delete(rec)
+    db.commit()
+    try:
+        storage.delete(key)
+    except Exception:  # a file left behind is harmless
+        pass
+    return {"deleted": recording_id}
+
+
+@router.post("/debriefs/{debrief_id}/run", response_model=schemas.DebriefOut)
+def set_debrief_run(debrief_id: int, body: RunPick, db: Session = Depends(get_db)):
+    """Confirms the run a debrief joined by time (the same run), or moves the debrief to another one. Either way it
+    stays there: a later upload no longer moves it."""
+    d = _get(db, debrief_id)
+    s = get_session(db, body.session_id)
+    rec = d.recording
+    if rec is None:  # recorded or typed for a picked run: a plain move
+        if d.session_id != s.id:
+            inbox.move(db, d, s)
+    elif d.session_id == s.id:
+        rec.confirmed = True
+        db.commit()
+    else:
+        inbox.link(db, rec, s, "user")
+    db.refresh(d)
     return schemas.DebriefOut.of(d)
 
 

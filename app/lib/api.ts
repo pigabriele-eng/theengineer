@@ -142,6 +142,26 @@ export type Debrief = {
   has_audio: boolean;
   created_at: string;
   points: DebriefPoint[];
+  // recorded before its run was picked: how it came to this run
+  linked: DebriefLink | null;
+};
+
+// by 'time': it joined the run that ended just before it was recorded; 'user': the run was picked
+export type DebriefLink = {
+  recording_id: number;
+  by: 'time' | 'user' | null;
+  confirmed: boolean;
+  recorded_at: string;
+  minutes_after_run?: number;
+};
+
+// a recording no run has been found for yet (its log isn't uploaded, or it was recorded long after the run)
+export type WaitingRecording = {
+  id: number;
+  recorded_at: string;
+  mode: DebriefMode;
+  language: DebriefLanguage;
+  filename: string | null;
 };
 
 // The report sections from the debrief concept, in report order (the server uses the same keys).
@@ -237,6 +257,24 @@ export const api = {
     form.append('language', language);
     return request<Debrief>(`/sessions/${id}/debriefs/audio`, { method: 'POST', body: form });
   },
+  // For the run that ended just before the recording: it joins that run now, or waits for its log to be uploaded.
+  // recordedAt: when it was recorded, local time on this device (localTime).
+  recordDebriefByTime: (audio: PickedFile, mode: DebriefMode, language: DebriefLanguage, recordedAt: string) => {
+    const form = new FormData();
+    form.append('audio', formFile(audio, 'audio/mp4'));
+    form.append('mode', mode);
+    form.append('language', language);
+    form.append('recorded_at', recordedAt);
+    return request<{ debrief?: Debrief; waiting?: WaitingRecording }>('/debriefs/audio', { method: 'POST', body: form });
+  },
+  waitingRecordings: () => request<WaitingRecording[]>('/debriefs/waiting'),
+  pickRunForRecording: (id: number, sessionId: number) =>
+    request<Debrief>(`/debriefs/waiting/${id}/run`, json({ session_id: sessionId })),
+  deleteWaitingRecording: (id: number) =>
+    request<{ deleted: number }>(`/debriefs/waiting/${id}`, { method: 'DELETE' }),
+  // the same run confirms the one found by time; another run moves the debrief there
+  setDebriefRun: (id: number, sessionId: number) =>
+    request<Debrief>(`/debriefs/${id}/run`, json({ session_id: sessionId })),
   debriefs: (sessionId: number) => request<Debrief[]>(`/sessions/${sessionId}/debriefs`),
   debrief: (id: number) => request<Debrief>(`/debriefs/${id}`),
   debriefCorners: (id: number) =>

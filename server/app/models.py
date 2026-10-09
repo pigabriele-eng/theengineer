@@ -164,6 +164,8 @@ class Debrief(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     session: Mapped[RunSession] = relationship(back_populates="debriefs")
     points: Mapped[list[DebriefPoint]] = relationship(back_populates="debrief", cascade="all, delete-orphan")
+    # how it came to its run, when it was recorded before the run was picked (DebriefRecording)
+    recording: Mapped[DebriefRecording | None] = relationship(viewonly=True, uselist=False)
 
 
 class DebriefPoint(Base):
@@ -180,6 +182,28 @@ class DebriefPoint(Base):
     phase: Mapped[CornerPhase | None] = mapped_column(Enum(CornerPhase))
     audio_start_s: Mapped[float | None] = mapped_column(Float)
     debrief: Mapped[Debrief] = relationship(back_populates="points")
+
+
+class DebriefRecording(Base):
+    """A voice debrief recorded before the run is picked, or before its log is uploaded (debrief/inbox.py).
+
+    It waits here with the time it was recorded until the run that ended just before it is in, or the user picks
+    the run; then it becomes a Debrief of that run (debrief_id). A run found by time is shown with a Confirm and a
+    Change until the user confirms it, and a better match from a later upload can still take it.
+    """
+    __tablename__ = "debrief_recordings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    audio_path: Mapped[str] = mapped_column(String(512))
+    filename: Mapped[str | None] = mapped_column(String(255))
+    mode: Mapped[DebriefMode] = mapped_column(Enum(DebriefMode), default=DebriefMode.individual)
+    language: Mapped[str] = mapped_column(String(8), default="en")
+    # when it was recorded, on the phone's clock: local time with no zone, as the logger's own date and time are
+    recorded_at: Mapped[datetime] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    debrief_id: Mapped[int | None] = mapped_column(ForeignKey("debriefs.id", ondelete="CASCADE"), index=True)
+    linked_by: Mapped[str | None] = mapped_column(String(8))  # "time" (found by when it was recorded) or "user"
+    confirmed: Mapped[bool] = mapped_column(default=False)
+    debrief: Mapped[Debrief | None] = relationship()
 
 
 class TyreMinimum(Base):
