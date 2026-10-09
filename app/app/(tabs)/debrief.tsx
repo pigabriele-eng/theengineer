@@ -59,7 +59,10 @@ export default function DebriefScreen() {
   const wide = useWide();
   const theme = useTheme();
   // ?session=<id>: the run to record for, already picked (the weekend page's and a run's "Record debrief")
-  const asked = Number(useLocalSearchParams<{ session?: string }>().session) || null;
+  const params = useLocalSearchParams<{ session?: string; go?: string }>();
+  const asked = Number(params.session) || null;
+  // ?go=1: opened from the record key on any page, so it records at once (once: the parameter is then cleared)
+  const go = params.go === '1';
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sessionId, setSessionId] = useState<number | null>(asked ?? BY_TIME);
   useEffect(() => {
@@ -152,6 +155,21 @@ export default function DebriefScreen() {
       live.current = null;
     }
   };
+
+  // opened from the record key: start straight away (if the browser asks for the microphone first, that is the one tap)
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (!go) {
+      autoStarted.current = false; // the next tap on the key records again
+      return;
+    }
+    if (autoStarted.current) return;
+    autoStarted.current = true;
+    router.setParams({ go: undefined });
+    start().catch((e) => setStatus((e as Error).message));
+    // start reads the current choices; it only runs once, on arrival
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [go]);
 
   const stop = async () => {
     const said = stopHearing();
