@@ -5,12 +5,14 @@ timetable (results/: every session's start; its end is the next session's start 
 The logger's clock can be off or set to another time zone, so the whole event is tried at whole-hour offsets of up
 to three hours and the one that puts the most runs squarely in a session is kept (no offset on a tie).
 
-What the run's names say comes first: its folders ("05_R1", "01_PTS/02") and the logger's session name ("R1",
-"PTS"). A name that gives the session ("R1", "FP2") names the run; a paid test is numbered by its folder ("01_PTS/02",
-"02_PTS2": PT2) even when the official timetable lists fewer tests than were run. A name that gives only the kind ("FP",
-"Q") leaves the time to tell: logs whose times overlap another's were saved or downloaded after the session, so the
-session is the last one of that kind to start before the log's time (with any earlier one of that kind the same day,
-told apart by our car's official best lap: Q1 or Q2).
+What the run's names say comes first: its folders ("05_R1", "01_PTS/02") and the logger's session name ("R1", "PTS"). A
+name that gives the session ("R1", "FP2") names the run; a paid test is numbered by its folder ("01_PTS/02", "02_PTS2":
+PT2) even when the official timetable lists fewer tests than were run. A name that gives two qualifying sessions ("Q23",
+"Q2+Q3": both downloaded together) names the run one of the two: the one its driver drove, else the one no other run
+holds, the runs in the order they ran (Hockenheim 2026, Gabriele 2026-10-09: "Hockenheim Q3 was imported somehow as Q23,
+which is wrong"). A name that gives only the kind ("FP", "Q") leaves the time to tell: logs whose times overlap
+another's were saved or downloaded after the session, so the session is the last one of that kind to start before the
+log's time (with any earlier one of that kind the same day, told apart by our car's official best lap: Q1 or Q2).
 
 A run that sits squarely in one session is named after it; one that overlaps two, or barely touches one, becomes a
 question ("if you are not sure, ask"): GET /results/events/{id}/run-names lists them, POST /results/run-names/{id}
@@ -166,13 +168,25 @@ def looks_given(s: models.RunSession, mark: rm.RunNameMark | None) -> bool:
         meta = f.meta or {}
         stem = re.sub(r"\.[A-Za-z0-9]+$", "", f.filename or "")
         session = (meta.get("event_session") or "").strip()
-        if name in {stem, session} or (session and re.fullmatch(rf"\d{{1,3}}[ _-]+{re.escape(session)}", name)):
+        folders = {x for x in str(meta.get("folder") or "").split("/") if x}  # "Q23": the folder it came in
+        if name in {stem, session, *folders} or (session and re.fullmatch(rf"\d{{1,3}}[ _-]+{re.escape(session)}",
+                                                                        name)):
             return True
     return bool(re.fullmatch(r"\d{1,3}([ _-]+\S+)?", name))  # a numbered folder: "01_D1S1", "03_Q", "02"
 
 
 WANT = {"practice": ("FP", "PQ"), "qualifying": ("Q",), "race": ("R",), "test": ("T",)}
 TEST = re.compile(r"\b(?:pts?|paid ?tests?)\s*(\d)?\b")
+# two qualifying sessions in one name: "Q23", "Q2 3" ("Q2_3"), "Q2 Q3", "Q2+Q3", "Q2&3"; the second after the first
+PAIR = re.compile(r"\bq\s*([1-9])\s*(?:[+&/]|and|und)?\s*q?\s*([1-9])\b")
+
+
+def _pair(text: str | None) -> tuple[str, ...]:
+    """'07_Q23' -> ('Q2', 'Q3'): a folder (or a logger's session name) of two qualifying sessions downloaded together;
+    () for any other name."""
+    t = re.sub(r"[_\-.]+", " ", text or "").lower()
+    m = PAIR.search(t)
+    return (f"Q{m.group(1)}", f"Q{m.group(2)}") if m and m.group(2) > m.group(1) else ()
 
 
 def _hint(text: str | None) -> tuple[str | None, str | None]:
@@ -180,6 +194,8 @@ def _hint(text: str | None) -> tuple[str | None, str | None]:
     '04_PQ' -> ('practice', 'PQ')."""
     from app.results import summary  # the results' reading of a session name
 
+    if _pair(text):  # "Q23": a qualifying, which of the two is told apart later (pair)
+        return "qualifying", None
     t = re.sub(r"[_\-.]+", " ", text or "").lower()
     if re.search(r"\b(?:pq|pre ?q\w*)\b", t):  # pre-qualifying: a practice (FP2 where the series has no PQ)
         return "practice", "PQ"
@@ -194,14 +210,27 @@ def _folders(s: models.RunSession) -> list[str]:
     return next(((f.meta or {}).get("folder") or "" for f in s.files if (f.meta or {}).get("folder")), "").split("/")
 
 
-def hint(s: models.RunSession, mark: rm.RunNameMark | None) -> tuple[str | None, str | None]:
-    """What the run's names say it was: (kind, session code or None). Its folders first, innermost out, then the
-    logger's session name, then its own name while that is still the upload's (not one given here)."""
+def _texts(s: models.RunSession, mark: rm.RunNameMark | None) -> list[str | None]:
+    """The run's names that say what it was: its folders, innermost out, then the logger's session name, then its own
+    name while that is still the upload's (not one given here)."""
     own = _plain_name(s.name)
     mine = not (mark is not None and mark.auto_name and own == _plain_name(mark.auto_name))
-    texts = [*reversed(_folders(s)), *((f.meta or {}).get("event_session") for f in s.files),
-             *([own] if mine and looks_given(s, mark) else [])]
-    kind, code = next((h for h in map(_hint, texts) if h[0]), (None, None))
+    return [*reversed(_folders(s)), *((f.meta or {}).get("event_session") for f in s.files),
+            *([own] if mine and looks_given(s, mark) else [])]
+
+
+def pair(s: models.RunSession, mark: rm.RunNameMark | None) -> tuple[str, ...]:
+    """The two qualifying sessions the run's names give ("Q23": ('Q2', 'Q3')), when the first name that says what it
+    was gives two; else ()."""
+    return next((_pair(t) for t in _texts(s, mark) if _hint(t)[0]), ())
+
+
+def hint(s: models.RunSession, mark: rm.RunNameMark | None) -> tuple[str | None, str | None]:
+    """What the run's names say it was: (kind, session code or None), from the first of its names (_texts) that
+    says."""
+    own = _plain_name(s.name)
+    mine = not (mark is not None and mark.auto_name and own == _plain_name(mark.auto_name))
+    kind, code = next((h for h in map(_hint, _texts(s, mark)) if h[0]), (None, None))
     if kind == "test" and code is None:  # a test's folder numbered inside a test folder: "01_PTS/02" is PT2
         folders = [x for x in _folders(s) if x] or ([own] if mine else [])
         if folders and re.fullmatch(r"\d{1,2}", folders[-1]) and int(folders[-1]) > 0:
@@ -246,13 +275,14 @@ def _by_lap(s: models.RunSession, cands: list[str], rnd: rm.ResultRound, number:
 
 
 def _hinted(s: models.RunSession, kind: str | None, t: datetime | None, table: list, rnd: rm.ResultRound,
-            number: str | None) -> tuple[str | None, list[str]]:
-    """For a run whose log time isn't when the car ran: the session of the kind its names say, by when the log was
-    saved, else by our car's official best lap (Q: Q1 or Q2); else the sessions to ask between."""
+            number: str | None, only: tuple[str, ...] = ()) -> tuple[str | None, list[str]]:
+    """For a run whose log time isn't when the car ran: the session of the kind its names say (``only``: one of these,
+    a pair its names give), by when the log was saved, else by our car's official best lap (Q: Q1 or Q2); else the
+    sessions to ask between."""
     codes = [c for c, _, _ in table]
-    cands = [c for c in codes if prefix(c) in WANT.get(kind or "", ())]
+    cands = [c for c in codes if (c in only if only else prefix(c) in WANT.get(kind or "", ()))]
     if t is not None and kind in WANT:
-        cands = _by_time(t, kind, table) or cands
+        cands = [c for c in _by_time(t, kind, table) if c in cands] or cands
     if len(cands) == 1:
         return cands[0], []
     if (code := _by_lap(s, cands, rnd, number)) is not None:
@@ -310,6 +340,22 @@ def _by_driver(runs: list[models.RunSession], codes: dict[int, str], asks: dict[
     if not open_q or starter is None:
         return {}
     return {r.id: "Q1" if _who(r, drivers) == starter else "Q2" for r in open_q}
+
+
+def _by_pair(runs: list[models.RunSession], codes: dict[int, str], asks: dict[int, list[str]],
+             order: dict[int, tuple], table: list, pairs: dict[int, tuple[str, ...]]) -> dict[int, str]:
+    """Runs asked about between the two sessions their names give (``pairs``: "Q23"), that their driver didn't tell
+    apart: the sessions no other run holds, one each, in the order the runs ran (the one that ran first in the earlier
+    session, as _quali_per_driver does); asked still when the runs and the free sessions don't pair up (one run, two
+    free)."""
+    out: dict[int, str] = {}
+    for p in {frozenset(pairs[rid]) for rid in asks if rid in pairs}:
+        left = sorted((r for r in runs if r.id in asks and frozenset(pairs.get(r.id, ())) == p),
+                      key=lambda r: (order[r.id], r.id))
+        free = sorted((c for c in p if c not in codes.values()), key=lambda c: table_start(table, c))
+        if left and len(left) == len(free):
+            out.update({r.id: c for r, c in zip(left, free, strict=True)})
+    return out
 
 
 def _fit(by: list[tuple[int | None, list]], slots: list[str], q_order: tuple[int, int]) -> list[tuple]:
@@ -445,11 +491,13 @@ def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | Non
         hide = quali_order.set_by_app(db, runs)
         drivers = {r.id: None if r.id in hide else r.driver_id for r in runs}
     hints = {r.id: hint(r, marks.get(r.id)) for r in runs}
+    codes_in = {c for c, _, _ in table}
+    # the two sessions a name like "Q23" gives, those in the timetable (one left: that one)
+    pairs = {r.id: p for r in runs if (p := tuple(c for c in pair(r, marks.get(r.id)) if c in codes_in))}
     timed = {k: w for k, w in windows.items() if k not in _clashing(windows)}
-    allowed = {k: (hints[k][1],) if hints[k][1] else WANT.get(hints[k][0] or "", ()) for k in timed}
+    allowed = {k: (hints[k][1],) if hints[k][1] else pairs.get(k) or WANT.get(hints[k][0] or "", ()) for k in timed}
     h, verdicts = place(list(timed.items()), table, allowed) if timed else (0, {})
     out["offset_h"] = h
-    codes_in = {c for c, _, _ in table}
     codes: dict[int, str] = {}
     order: dict[int, tuple] = {}  # by the log's start, then by its first lap (runs split from one log)
     asks: dict[int, list[str]] = {}
@@ -463,8 +511,18 @@ def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | Non
             continue
         kind, said = hints[r.id]
         verdict = verdicts.get(r.id)
+        only = pairs.get(r.id, ())
         if said and (said in codes_in or kind == "test"):  # its names say which session (a test: which test)
             code, ask = said, []
+        elif len(only) == 1:
+            code, ask = only[0], []
+        elif only:  # one of two ("Q23"): the log's time when it sits squarely in one, else as a log saved after
+            if verdict and verdict[0] in only:
+                code, ask = verdict
+            else:
+                t = windows[r.id][0] + timedelta(hours=h) if r.id in windows else None
+                code, ask = _hinted(r, kind, t, table, rnd, number, only)
+                ask = sorted(ask, key=lambda c: table_start(table, c))
         elif verdict and verdict[0] and (kind is None or verdict[0] == NONE or prefix(verdict[0]) in WANT[kind]):
             code, ask = verdict
         elif kind is None and verdict:
@@ -477,6 +535,9 @@ def name_runs(db: Session, event_id: int, rnd: rm.ResultRound, number: str | Non
         elif ask and looks_given(r, m):
             asks[r.id] = ask
     for rid, code in _by_driver(runs, codes, asks, order, drivers, q_order).items():
+        codes[rid] = code
+        del asks[rid]
+    for rid, code in _by_pair(runs, codes, asks, order, table, pairs).items():
         codes[rid] = code
         del asks[rid]
     # paid tests numbered in the order they ran, whatever their folders' numbers: the earliest is PT1
