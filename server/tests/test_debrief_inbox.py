@@ -150,3 +150,10 @@ def test_keyword_sorting_in_three_languages():
     assert got == [("balance", "T3", "entry"), ("balance", "T12", "exit"), ("setup", None, None),
                    ("traction", "T1", None)]
     assert out["speakers"] == [{"label": "S0", "role": "driver", "name": None}]
+
+
+def test_health_says_which_engines_debriefs_use(client, monkeypatch):
+    _no_keys(monkeypatch)
+    assert client.get("/health").json() == {"status": "ok", "speech": "phone", "sorting": "keywords"}
+    monkeypatch.setenv("DEEPGRAM_API_KEY", "x")
+    assert client.get("/health").json()["speech"] == "deepgram"

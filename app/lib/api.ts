@@ -230,6 +230,8 @@ const json = (body: unknown): RequestInit => ({
 });
 
 export const api = {
+  // which engines debriefs go through: Deepgram or the phone's own words, Claude or keyword sorting
+  health: () => request<{ status: string; speech?: 'deepgram' | 'phone'; sorting?: 'claude' | 'keywords' }>('/health'),
   sessions: () => request<Session[]>('/sessions'),
   session: (id: number) => request<SessionDetail>(`/sessions/${id}`),
   analysis: (id: number) => request<Analysis>(`/sessions/${id}/analysis`),

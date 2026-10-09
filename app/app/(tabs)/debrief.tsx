@@ -75,7 +75,14 @@ export default function DebriefScreen() {
     if (asked != null) setSessionId(asked);
   }, [asked]);
   const [mode, setMode] = useState<DebriefMode>('individual');
-  const [language, setLanguage] = useState<DebriefLanguage>('en');
+  // Mixed by default: Gabriele's debriefs switch between Italian, English and German, and a recording told it is one
+  // language comes out garbled where it isn't (2026-10-09)
+  const [language, setLanguage] = useState<DebriefLanguage>('multi');
+  // Deepgram writes the debrief once it's sent: the words the phone shows while recording are only a rough preview
+  const [server, setServer] = useState<'deepgram' | 'phone' | null>(null);
+  useEffect(() => {
+    api.health().then((h) => setServer(h.speech ?? null), () => setServer(null));
+  }, []);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [typing, setTyping] = useState(false);
@@ -341,7 +348,9 @@ export default function DebriefScreen() {
   const session = sessions.find((s) => s.id === sessionId);
   const byTime = sessionId === BY_TIME;
   // typed points go with a real run: the newest when the run is left to be found by time
-  const typedFor = byTime ? sessions[0]?.id ?? null : sessionId;
+  // typed points go with the run picked for them (Gabriele, 2026-10-09), else the newest run
+  const [typedRun, setTypedRun] = useState<number | null>(null);
+  const typedFor = typedRun ?? (byTime ? sessions[0]?.id ?? null : sessionId);
   const runName = (s: Session) => s.name ?? `Session ${s.id}`;
 
   const recording = phase === 'recording';
@@ -372,7 +381,10 @@ export default function DebriefScreen() {
 
   const liveBlock = Platform.OS === 'web' && (recording || held) && (canHear ? (
           <View style={styles.live} accessibilityLiveRegion="polite" aria-live="polite">
-            <Label small>Writing down what you say</Label>
+            <Label small>{server === 'deepgram' ? 'Rough preview from the phone' : 'Writing down what you say'}</Label>
+            {server === 'deepgram' && (
+              <Text style={styles.liveNote}>Deepgram writes the debrief properly once you send it.</Text>
+            )}
             <Text style={styles.liveText}>
               {heard.finals.map((f) => f.text).join(' ')}
               {heard.interim ? <Text style={styles.liveInterim}>{`${heard.finals.length ? ' ' : ''}${heard.interim}`}</Text> : null}
@@ -485,10 +497,15 @@ export default function DebriefScreen() {
         </Section>
       )}
 
-      <Section no={waiting.length > 0 ? 4 : 3} title="Or type it" dek={byTime && sessions[0]
-        ? `Points written by hand, filed under the report's sections. They go with ${runName(sessions[0])}.`
-        : "Points written by hand, filed under the report's sections."}>
+      <Section no={waiting.length > 0 ? 4 : 3} title="Or type it"
+        dek="Points written by hand, filed under the report's sections, for the run you pick.">
         <TextLink label={typing ? 'Hide typed points' : 'Type points by hand'} onPress={() => setTyping((v) => !v)} />
+        {typing && (
+          <View style={styles.typedRun}>
+            <Tabs label="Goes with" value={typedFor} onChange={setTypedRun}
+              items={offered(sessions, typedFor).map((s) => ({ key: s.id, label: runName(s) }))} />
+          </View>
+        )}
         {typing && typedFor != null && <TypedPoints sessionId={typedFor} />}
       </Section>
 
@@ -638,6 +655,7 @@ const useStyles = themed((c) => ({
   liveInterim: { fontFamily: face('body', 400, true), color: c.textSecondary } as TextStyle,
   liveNote: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 22, color: c.textSecondary } as TextStyle,
   typed: { gap: 18, marginTop: 20, maxWidth: 760 },
+  typedRun: { marginTop: 20 },
   inputLabel: { marginBottom: 6 },
   input: { borderWidth: 1, borderColor: c.rule, borderRadius: 0, padding: 12, minHeight: 88, fontSize: 16, lineHeight: 22,
     fontFamily: Fonts.body, color: c.text, backgroundColor: c.background, textAlignVertical: 'top',
