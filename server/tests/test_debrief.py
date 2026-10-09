@@ -101,6 +101,17 @@ def test_recording_is_kept_until_keys_exist_then_processed(client, monkeypatch):
     assert p2["corner_code"] == "T2"
 
 
+def test_accepts_a_whatsapp_voice_note(client):
+    # WhatsApp shares voice notes as .opus, often typed application/ogg or octet-stream; the extension decides
+    s = client.post("/sessions", json={}).json()
+    r = client.post(f"/sessions/{s['id']}/debriefs/audio",
+                    files={"audio": ("PTT-20261009-WA0003.opus", b"fake opus", "application/octet-stream")},
+                    data={"mode": "individual", "language": "en"})
+    assert r.status_code == 202, r.text
+    d = client.get(f"/debriefs/{r.json()['id']}").json()
+    assert d["has_audio"] and client.get(f"/debriefs/{d['id']}/audio").content == b"fake opus"
+
+
 def test_rejects_non_audio(client):
     s = client.post("/sessions", json={}).json()
     r = client.post(f"/sessions/{s['id']}/debriefs/audio", files={"audio": ("notes.txt", b"x")})

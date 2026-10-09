@@ -19,7 +19,10 @@ router = APIRouter()
 # The recording is played by URL, where the app can't set headers: its sign-in may come as ?access_token=
 media_router = APIRouter()
 
-AUDIO = {".m4a", ".mp3", ".wav", ".webm", ".ogg", ".aac", ".caf", ".mp4", ".flac"}
+# Recordings Deepgram reads, phone voice notes included: WhatsApp's .opus, Android's .amr and .3gp, .weba from a
+# browser, .m4b (an .m4a by another name)
+AUDIO = {".m4a", ".mp3", ".wav", ".webm", ".weba", ".ogg", ".opus", ".aac", ".caf", ".mp4", ".m4b", ".flac", ".amr",
+         ".3gp"}
 
 
 def _get(db: Session, debrief_id: int) -> models.Debrief:

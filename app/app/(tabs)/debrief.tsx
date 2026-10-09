@@ -119,7 +119,14 @@ export default function DebriefScreen() {
   };
 
   const pick = async () => {
-    const res = await DocumentPicker.getDocumentAsync({ type: 'audio/*', copyToCacheDirectory: true });
+    // WhatsApp voice notes (.opus) come typed as application/ogg or as plain bytes on some phones, so those are offered
+    // too; the server takes only audio file types (server/app/routers/debriefs.py AUDIO)
+    const res = await DocumentPicker.getDocumentAsync({
+      type: Platform.OS === 'web'
+        ? ['audio/*', 'application/ogg', '.opus', '.amr', '.3gp']
+        : ['audio/*', 'application/ogg', 'application/octet-stream'],
+      copyToCacheDirectory: true,
+    });
     if (res.canceled) return;
     const a = res.assets[0];
     await send({ uri: a.uri, name: a.name, file: a.file });
