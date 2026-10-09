@@ -2,11 +2,11 @@
 for, so they open at once instead of working it out while Gabriele waits.
 
 For each uploaded run and the event it is in, in this order (the pages that ask for it in brackets):
-1. the run's compact lap traces, one log at a time (Report, Technique, Track grip, the event's side by side);
-2. the event's report, then the reports of the official sessions (FP1, Q1, R1...) the runs are in, then the runs'
-   lap packs (Compare laps, the Laps tab, the Run comparison), then its track map and shape, track grip, grip use,
-   balance and its main logs' stint view (Report; the weekend page's session reports; the session page's best section
-   times);
+1. the run's compact lap traces, one log at a time (Report, Technique, Track grip, the event's side by side), then
+   the runs' lap packs (Compare laps, the Laps tab, the Run comparison);
+2. the event's report, then the reports of the official sessions (FP1, Q1, R1...) the runs are in, then its track
+   map and shape, track grip, grip use, balance and its main logs' stint view (Report; the weekend page's session
+   reports; the session page's best section times);
 3. the run's lap analysis, the lap comparison it opens on, stint view, track map and track shape (the session page);
 4. the event's technique check, or the run's when it is in no event (Technique);
 5. the run's tyre prep (Quali), and its own report, grip use and balance (Report of one run);
@@ -106,14 +106,15 @@ def pieces(db: Session, session_ids: list[int], prep: bool = True) -> list[Piece
     out: list[Piece] = [("traces", (sid,)) for sid in sids]
     from app.routers import reports  # here: the routers import this module
 
+    # the lap packs, from the compact traces just made, before the reports: comparing the new run with the others is
+    # what's opened first, and without its pack a comparison reads the logs, minutes on the live server (Gabriele
+    # 2026-10-09: "uploaded a run but taking forever to compare")
+    if sids:
+        out.append(("lap packs", (tuple(sids),)))
     for e in events:
         out += [("report", ("event", e))]
         # its sessions' reports: from the traces the event's report has just made, so they take little more
         out += [("report", ("part", e, code)) for code in reports.parts_with(db, e, sids)]
-    # the lap packs, from the compact traces just made: Compare laps, the Laps tab and the Run comparison read them
-    # instead of the logs (an event's technique check below takes minutes on the live server)
-    if sids:
-        out.append(("lap packs", (tuple(sids),)))
     for e in events:
         out += [("event map", (e,)), ("event shape", (e,)), ("track grip", (e,)), ("grip", ("event", e)),
                 ("balance", ("event", e)), ("event stint", (e,))]
