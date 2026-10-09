@@ -234,6 +234,7 @@ def test_a_lap_that_ends_in_the_pit_lane(env, k, lim):
     assert out["pit_from_m"] is not None and 850 <= out["pit_from_m"] <= 940
     assert out["budget"]["pit_lane"] > 1
     assert all(x["end_m"] <= out["pit_from_m"] for x in out["mistakes"])
+    assert all(x["start_m"] < out["pit_from_m"] for x in out["obvious"])  # the pit-lane lift is no mistake
 
 
 def test_mistakes_that_repeat():

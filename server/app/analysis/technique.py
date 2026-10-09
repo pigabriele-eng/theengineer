@@ -1776,6 +1776,8 @@ def check_lap(tr: dict[str, np.ndarray], perfect: PlaceLimits, held: PlaceLimits
     braking: dict[str, dict] = {}
     obvious = obvious_mistakes(tr, corners, env, env_r, shifts, braking)
     obvious = _with_exit_lifts(obvious, items, tr)
+    if pit_from is not None:  # a push lap that turns into the in-lap is judged up to the lift for the pit lane only
+        obvious = [o for o in obvious if o["start_m"] < pit_from]
     trace_time = float(tr["t"][-1])
     named_at = {x["start_m"] for x in items}
     named = sum(p.cost for p in pieces if p.start in named_at)
