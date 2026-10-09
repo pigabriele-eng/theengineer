@@ -149,7 +149,8 @@ BMW_M4_GT4_EVO = Template(
             Row("brake_balance", "Brake balance", "% front", step=0.5, up="more front",
                 note="Manual, on the AP Racing pedal box. The range is not public."),
             Row("tc", "TC", "position", kind="position", min=1, max=10, up="more intervention",
-                note=f"10 steps (BMW); the EVO adds a TC-off button. Higher = more intervention, as in {SIM_ONLY}."),
+                note="10 steps (BMW); the EVO adds a TC-off button. Higher = earlier and more intervention, on the "
+                     "EVO and the earlier car alike (Gabriele, 2026-10-09)."),
             Row("abs", "ABS", "position", kind="position", min=0, up="more intervention", confidence="unknown",
                 note="Adjustable, but the steps are not public. This sheet takes a higher number as more "
                      "intervention: check it on the car."),

@@ -293,7 +293,8 @@ LEVERS: tuple[Lever, ...] = (
           cost="If it regulates too early, the stops get longer."),
     Lever("tc_more", "TC one step more", _t(Target("tc", "more intervention", 1)),
           {"traction": 1.5, "oversteer_exit": 0.5},
-          kind="electronics", expected="TC trims wheelspin earlier on exit.",
+          kind="electronics", expected="TC steps in earlier and trims more wheelspin on exit (a higher number is "
+                                       "earlier and more TC on the M4 GT4).",
           cost="Too much TC cuts the drive out of slow corners: check how long it works in the data."),
     Lever("toe_rear_in", "More rear toe-in", _t(Target("toe", "more toe-in", 0.5, REARS)),
           {"oversteer_entry": 1, "oversteer_exit": 1, "traction": 0.5, "braking_stability": 1,
