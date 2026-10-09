@@ -363,6 +363,13 @@ export default function EventReport({
     sections.push({ title: report.gains.length === 3 ? 'Top three gains' : 'Where to gain',
       dek: `Where a typical lap (${formatLap(h.typical)}) gives the most away to the top 10% of passes.`,
       body: <Gains report={report} onPick={showOnMap} /> });
+    const ct = report.combined_theoretical;
+    if (ct && ct.corners.length) {
+      sections.push({ title: 'Corner by corner',
+        dek: `The combined theoretical (${formatLap(ct.time)}) takes the quickest pass of each corner from any of ` +
+          `these laps. What it does against a typical pass, and what that is worth, biggest first.`,
+        body: <CombinedTheory report={report} onPick={showOnMap} /> });
+    }
   }
   if (hasLaps) {
     sections.push({ title: 'Section by section',
@@ -750,6 +757,37 @@ function Gains({ report, onPick }: { report: Report; onPick: (code: string) => v
       </View>
       <Text style={styles.summary}>{report.summary}</Text>
     </>
+  );
+}
+
+/** The combined theoretical's technique in each corner against a typical pass, biggest gain first. */
+function CombinedTheory({ report, onPick }: { report: Report; onPick: (code: string) => void }) {
+  const styles = useStyles();
+  const c = useTheme();
+  const ct = report.combined_theoretical!;
+  return (
+    <View>
+      {ct.corners.map((k) => (
+        <View key={k.code} style={styles.theoryRow}>
+          <Pressable accessibilityRole="button" accessibilityLabel={`${k.code}: show on the map`}
+            onPress={() => onPick(k.code)} style={styles.theoryHead}>
+            <Text style={styles.lostName}>{k.code}</Text>
+            <Text style={StyleSheet.flatten([styles.theoryWorth, { color: c.delta.gain }])}>{`${k.worth_s.toFixed(2)} s`}</Text>
+            <Text style={styles.theoryFrom}>{`from ${k.run} lap ${k.lap}`}</Text>
+          </Pressable>
+          {k.advice.map((a) => (
+            <View key={a} style={styles.bulletRow}>
+              <View style={styles.bulletMark} />
+              <Text style={styles.bulletText}>{a}</Text>
+            </View>
+          ))}
+        </View>
+      ))}
+      <Text style={styles.note}>
+        {`Against a typical lap (${formatLap(ct.typical)}). Each corner's worth is a typical pass's time less the ` +
+          'quickest pass there; only differences that go with a quicker corner lap to lap are told.'}
+      </Text>
+    </View>
   );
 }
 
@@ -1218,6 +1256,10 @@ const useStyles = themed((c) => ({
   rankText: { fontFamily: Fonts.display, fontSize: 20, lineHeight: 22, color: c.background },
   gainCode: { fontFamily: Fonts.display, fontSize: 34, lineHeight: 36, textTransform: 'uppercase', color: c.text },
   gainLead: { fontFamily: Fonts.body, fontWeight: '600', fontSize: 19, lineHeight: 25, marginTop: 14, color: c.text },
+  theoryRow: { borderTopWidth: 1, borderColor: c.rule, paddingBottom: 8 },
+  theoryHead: { flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', gap: 12, minHeight: TAP, paddingTop: 8 },
+  theoryWorth: { fontFamily: Fonts.display, fontSize: 19, lineHeight: 21 },
+  theoryFrom: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 22, color: c.textSecondary },
   bulletRow: { flexDirection: 'row', gap: 9, paddingVertical: 5, borderTopWidth: 1, borderColor: c.separator },
   bulletMark: { width: 7, height: 7, backgroundColor: c.rule, marginTop: 8 },
   bulletText: { flex: 1, fontFamily: Fonts.body, fontSize: 16, lineHeight: 22, color: c.text },

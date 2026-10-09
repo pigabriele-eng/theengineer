@@ -45,7 +45,7 @@ from app.timing import picks_part
 router = APIRouter(prefix="/reports")
 log = logging.getLogger(__name__)
 
-REPORT_VERSION = 12  # raise when the advice or the sections change, so every kept report is worked out again
+REPORT_VERSION = 13  # raise when the advice or the sections change, so every kept report is worked out again
 TRACES_VERSION = compact.FORMAT  # raise (in compact.py) when the reduction changes
 IMPORT_WAIT_S = 1800  # longest the report waits for an import that is reading logs
 MAX_LAPS = 250  # the quickest laps of an event the report works from, to keep within the server's memory
