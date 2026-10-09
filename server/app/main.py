@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import DataError, IntegrityError
 
 from app import calendar_sync, coaching, driver_prints, empty_runs, event_delete, event_modes, prebuild, run_delete
-from app import compare_suggest, storage, timing
+from app import compare_suggest, known_tracks, storage, timing
 from app.auth import check_settings, require_user, require_user_or_query_token
 from app.plain_errors import PlainErrors
 from app.db import create_tables
@@ -42,6 +42,7 @@ async def lifespan(_: FastAPI):
     check_settings()
     create_tables()
     imports.fail_interrupted()
+    known_tracks.refresh_all()  # tracks holding corner positions we have since corrected get the corrected ones
     storage.backend().setup()
     storage.start_copy()  # in the background: files kept in Supabase are copied to Backblaze B2 when it's set up
     timing.check_all_tracks()  # in the background: logs timed from an older start/finish line are re-timed

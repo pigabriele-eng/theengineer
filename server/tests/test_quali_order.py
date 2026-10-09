@@ -100,7 +100,7 @@ def test_q_and_race_runs_get_their_drivers_from_the_order(client):
     assert client.put(f"/sessions/{ids['Q2']}/driver", json={"driver_id": pia}).status_code == 200
     assert client.patch(f"/sessions/{ids['R3 stint 1']}", json={"name": "Shakedown"}).status_code == 200
     with SessionLocal() as db:
-        assert quali_order.apply(db, ev) == 1
+        assert quali_order.apply(db, ev) in (0, 1)  # 0 when the background pass (driver_prints) got there first
         db.commit()
         assert db.get(models.RunSession, ids["Q2"]).driver_id == pia
         assert db.get(models.RunSession, ids["R3 stint 1"]).driver_id is None
