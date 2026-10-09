@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app import models, schemas, storage
 from app.db import get_db
 from app.analysis.laps import analyze
-from app.debrief import inbox
+from app.debrief import covers, inbox
 from app.debrief.corners import corner_data
 from app.debrief.pipeline import process_debrief
 from app.debrief.transcribe import LANGUAGES
@@ -184,6 +184,7 @@ def delete_debrief(debrief_id: int, db: Session = Depends(get_db)):
     key = d.audio_path
     for rec in db.scalars(select(models.DebriefRecording).where(models.DebriefRecording.debrief_id == d.id)):
         db.delete(rec)
+    _clear_runs(db, d)
     if key:
         for live in db.scalars(select(models.LiveTranscript).where(models.LiveTranscript.audio_path == key)):
             db.delete(live)
@@ -203,6 +204,8 @@ def set_debrief_run(debrief_id: int, body: RunPick, db: Session = Depends(get_db
     stays there: a later upload no longer moves it."""
     d = _get(db, debrief_id)
     s = get_session(db, body.session_id)
+    if d.session_id != s.id:
+        _clear_runs(db, d)  # the runs it covered were the old run's
     rec = d.recording
     if rec is None:  # recorded or typed for a picked run: a plain move
         if d.session_id != s.id:
@@ -214,6 +217,51 @@ def set_debrief_run(debrief_id: int, body: RunPick, db: Session = Depends(get_db
         inbox.link(db, rec, s, "user")
     db.refresh(d)
     return schemas.DebriefOut.of(d)
+
+
+def _clear_runs(db: Session, d: models.Debrief) -> None:
+    for x in db.scalars(select(models.DebriefRun).where(models.DebriefRun.debrief_id == d.id)):
+        db.delete(x)
+
+
+class CoveredRun(BaseModel):
+    session_id: int
+    group: int = 0  # runs with the same number ran the same setup
+
+
+@router.get("/debriefs/{debrief_id}/runs")
+def debrief_runs(debrief_id: int, db: Session = Depends(get_db)):
+    """The runs the debrief covers, split by setup (debrief/covers.py), and the other runs of its event it could
+    cover."""
+    d = _get(db, debrief_id)
+    out = covers.describe(db, d)
+    s = d.session
+    pool = [s] if s.event_id is None else db.scalars(
+        select(models.RunSession).where(models.RunSession.event_id == s.event_id)).all()
+    out["choices"] = [{"session_id": r.id, "name": r.name or f"Session {r.id}"}
+                      for r in sorted(pool, key=lambda r: (covers.end_of(r) is None, covers.end_of(r) or 0, r.id))]
+    return out
+
+
+@router.put("/debriefs/{debrief_id}/runs")
+def set_debrief_runs(debrief_id: int, body: list[CoveredRun], db: Session = Depends(get_db)):
+    """Sets the runs the debrief covers and where the setup changed; an empty list goes back to the worked-out
+    runs. The debrief's own run is always covered."""
+    d = _get(db, debrief_id)
+    picked = {x.session_id: x.group for x in body}
+    if picked:
+        if len(picked) > covers.MOST:
+            raise HTTPException(422, f"A debrief can cover up to {covers.MOST} runs")
+        picked.setdefault(d.session_id, max(picked.values()))
+        for sid in picked:
+            r = get_session(db, sid)
+            if sid != d.session_id and r.event_id != d.session.event_id:
+                raise HTTPException(422, "Pick runs from the debrief's own event")
+    _clear_runs(db, d)
+    for sid, group in picked.items():
+        db.add(models.DebriefRun(debrief_id=d.id, session_id=sid, group=group))
+    db.commit()
+    return covers.describe(db, d)
 
 
 @router.get("/sessions/{session_id}/debriefs", response_model=list[schemas.DebriefOut])
