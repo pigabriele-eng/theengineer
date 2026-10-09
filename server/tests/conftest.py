@@ -185,7 +185,8 @@ def client(tmp_path, monkeypatch):
         importlib.reload(m)
     import app.laptags
     import app.routers.stint
-    for m in (app.laptags, app.routers.stint):
+    import app.routers.stint_compare
+    for m in (app.laptags, app.routers.stint, app.routers.stint_compare):
         importlib.reload(m)
     import app.driver_prints
     import app.routers.driver_style
