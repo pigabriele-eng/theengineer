@@ -26,14 +26,16 @@ export function RunDriverLine({ run, guess, garage, open, onOpen, onPick, childr
   const st = driverState(run, guess, garage);
   const label = st.kind === 'none' ? `${run.name}: no driver`
     : st.kind === 'set' ? `${run.name}: driven by ${st.name}`
-    : st.kind === 'auto' ? `${run.name}: driven by ${st.name}, set from the driving style`
+    : st.kind === 'auto' ? `${run.name}: driven by ${st.name}, set ${st.how}`
     : `${run.name}: ${st.sure ? '' : 'probably '}driven by ${st.name}, going by the driving style`;
   return (
     <View style={styles.line}>
       <Text style={st.kind === 'set' || st.kind === 'auto' ? styles.name : styles.guess} numberOfLines={1}
         accessibilityLabel={label}>
         {driverWords(st)}
-        {(st.kind === 'auto' || st.kind === 'guess') && <Text style={styles.how}> · by style</Text>}
+        {(st.kind === 'auto' || st.kind === 'guess') && (
+          <Text style={styles.how}> · {st.kind === 'auto' ? st.how : 'by style'}</Text>
+        )}
       </Text>
       <View style={styles.acts}>
         {st.kind === 'guess' && st.confirm != null && (

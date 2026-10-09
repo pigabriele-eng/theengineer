@@ -42,7 +42,7 @@ export type RunGuess = {
 
 export type EventGuess = {
   status: 'ready' | 'working';
-  mode: 'tagged' | 'groups' | 'one style' | 'too few laps';
+  mode: 'tagged' | 'alike' | 'groups' | 'one style' | 'too few laps'; // alike: tagged drivers too alike to tell apart
   separation: number | null;
   groups: StyleGroup[];
   sessions: RunGuess[];
@@ -90,7 +90,12 @@ export const fingerprintsApi = {
 /** The run's line under its driver: what the style says, or null when there is nothing worth saying. */
 export function guessLine(g: RunGuess | undefined, mode: EventGuess['mode'] | undefined): string | null {
   if (g?.auto?.source === 'season' && g.driver_id != null) return "Driver set from the season's drivers";
+  if (g?.auto?.source === 'quali' && g.driver_id != null) return 'Driver set from the qualifying order';
+  if (g?.auto?.source === 'race' && g.driver_id != null) {
+    return 'Driver set from the qualifying order: the Q1 driver starts Race 1, the Q2 driver Race 2';
+  }
   if (!g || !mode || mode === 'too few laps') return null;
+  if (mode === 'alike') return g.driver_id == null ? "The drivers drive too alike to tell apart here: pick who drove" : null;
   const s = g.suggestion;
   if (g.auto && g.driver_id != null) return 'Driver set from the driving style';
   if (g.stints.length > 1) {

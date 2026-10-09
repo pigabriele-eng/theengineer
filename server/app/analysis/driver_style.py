@@ -195,7 +195,7 @@ class Group:
 
 @dataclass
 class Guess:
-    mode: str  # "tagged", "groups", "one style", "too few laps"
+    mode: str  # "tagged", "alike" (tagged, but too alike to tell apart), "groups", "one style", "too few laps"
     separation: float | None  # silhouette of the groups
     groups: list[Group]
     sessions: list[SessionGuess]
@@ -382,6 +382,18 @@ def style_groups(p: np.ndarray, min_split: float = KNOWN_SPLIT, max_groups: int 
     return best
 
 
+def told_apart(p: np.ndarray, driver: np.ndarray, tagged: list[int]) -> bool:
+    """Whether the tagged drivers' laps (``driver``: each lap's driver id, -1 untagged) separate by style as clearly
+    as two drivers do when the style finds them by itself (silhouette LIKELY_SPLIT). Two drivers who drive alike
+    (Gabriele, 2026-10-09: "The driving style between SYL and PIA is apparently too similar for the app to
+    recognize") separate no better than one driver's runs on other tyres do, so their other runs can't be put to
+    the nearer of them. With fewer than MIN_GROUP_LAPS laps of a driver there is too little to tell: as before."""
+    mine = driver >= 0
+    if any(np.count_nonzero(driver == d) < MIN_GROUP_LAPS for d in tagged):
+        return True
+    return silhouette(p[mine], driver[mine]) >= LIKELY_SPLIT
+
+
 def _cos(a: np.ndarray, b: np.ndarray) -> float:
     na, nb = np.linalg.norm(a), np.linalg.norm(b)
     return float(a @ b / (na * nb)) if na > 0 and nb > 0 else 0.0
@@ -474,7 +486,7 @@ def guess(ep: EventPrint, tags: dict[int, int | None], known: dict[int, np.ndarr
     tagged = sorted({int(d) for d in driver if d >= 0})
     separation = None
     if len(tagged) >= 2:
-        mode = "tagged"
+        mode = "tagged" if told_apart(p, driver, tagged) else "alike"
         centres = np.array([p[driver == d].mean(0) for d in tagged])
         lab = ((p[:, None] - centres[None]) ** 2).sum(2).argmin(1)
         groups = [Group(d, "tag", 0) for d in tagged]
@@ -521,7 +533,7 @@ def guess(ep: EventPrint, tags: dict[int, int | None], known: dict[int, np.ndarr
 
 def confidence(g: Guess, grp: Group, share: float) -> str:
     """"sure" or "likely" for a suggestion from that group with that share of the run's laps in it."""
-    if share < 0.8:
+    if share < 0.8 or g.mode == "alike":
         return "likely"
     if g.mode == "tagged" or (grp.source == "fingerprint" and (grp.match or 0) >= 0.5):
         return "sure"

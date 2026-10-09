@@ -32,6 +32,12 @@ the only ones its runs can be. With two, the style only has to say which way rou
 once one of them has a fingerprint. Asked only when the style can't tell: three or more drivers, no drivers listed,
 or a pair the app knows neither of yet.
 
+Qualifying and the races (app/quali_order.py, Gabriele, 2026-10-09: "ADAC GT4 Q1 always PIA, Q2 always SYL"): where
+the series' qualifying order is known, the Q runs and race stints get their drivers from it (StyleTag "quali" and
+"race"), before the style is looked at. Those runs teach and anchor the event's style like a person's tags. When the
+tagged drivers' laps don't separate (ds.told_apart: "too similar for the app to recognize"), the style sets no
+driver (the ones it had set are taken back) and the runs left are asked about one at a time.
+
 What the pages ask is kept (app/page_cache.py): what the tagged runs teach ("drivers|learned") and the fingerprints
 page's answer ("drivers|fingerprints"), each under a signature of the stored fingerprints, the runs' drivers and the
 names it shows, read from a few small queries. The background pass ends by working both out, so the page answers at
@@ -54,7 +60,7 @@ from sqlalchemy import JSON, DateTime, Float, Integer, String, delete, func, sel
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app import db as app_db  # SessionLocal is looked up when used: the tests swap the database
-from app import garage, heavy, models, page_cache, storage
+from app import garage, heavy, models, page_cache, quali_order, storage
 from app.analysis import compact
 from app.analysis import driver_style as ds
 from app.db import Base
@@ -81,14 +87,16 @@ class StylePrint(Base):
 
 
 class StyleTag(Base):
-    """A run's driver set by the app (from the driving style, or from the season's drivers: source "season"), not by
-    a person: it doesn't teach the fingerprints, and the style may set it again."""
+    """A run's driver set by the app (from the driving style, from the season's drivers: source "season", or from
+    the qualifying order: "quali" and "race", quali_order.py), not by a person: it doesn't teach the fingerprints
+    (the qualifying order's do: it is what Gabriele said, not a guess), and the style may set it again (not the
+    qualifying order's)."""
     __tablename__ = "style_tags"
     id: Mapped[int] = mapped_column(primary_key=True)
     session_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
     event_id: Mapped[int] = mapped_column(Integer, index=True)
     driver_id: Mapped[int] = mapped_column(Integer)
-    source: Mapped[str] = mapped_column(String(16))  # where the name came from: tag, fingerprint, entry, pair, season
+    source: Mapped[str] = mapped_column(String(16))  # tag, fingerprint, entry, pair, season, quali, race
     match: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -269,7 +277,7 @@ def _state(db: Session) -> list:
     runs = [list(r) for r in db.execute(select(models.RunSession.id, models.RunSession.driver_id)
                                         .where(models.RunSession.event_id.in_(evs))
                                         .order_by(models.RunSession.id)).all()] if evs else []
-    auto = [list(r) for r in db.execute(select(StyleTag.session_id, StyleTag.driver_id)
+    auto = [list(r) for r in db.execute(select(StyleTag.session_id, StyleTag.driver_id, StyleTag.source)
                                         .order_by(StyleTag.session_id)).all()]
     return [ds.VERSION, prints, runs, auto]
 
@@ -368,26 +376,29 @@ def unmark(db: Session, session_ids: list[int]) -> None:
 
 
 def tags_of(db: Session, ep: ds.EventPrint, people_only: bool = True) -> dict[int, int | None]:
-    """The event's runs' drivers: those a person set (people_only), or as they are now."""
+    """The event's runs' drivers: those a person set or the qualifying order gave (people_only), or as they are
+    now."""
     ids = sorted(set(ep.sessions))
     rows = db.execute(select(models.RunSession.id, models.RunSession.driver_id)
                       .where(models.RunSession.id.in_(ids))).all()
     if not people_only:
         return {sid: did for sid, did in rows}
     auto = set_by_style(db, ids)
-    return {sid: None if sid in auto and auto[sid].driver_id == did else did for sid, did in rows}
+    return {sid: None if sid in auto and auto[sid].driver_id == did and auto[sid].source not in quali_order.SOURCES
+            else did for sid, did in rows}
 
 
 def taught(db: Session, prints: dict[int, ds.EventPrint]) -> dict[int, list[tuple[int, dict[str, float], int]]]:
     """What a person's picks teach: driver id -> (event id, the driver's fingerprint by kind there, laps) for every
     event whose laps show more than one style (relative fingerprints need a teammate), from the laps of the runs a
-    person put that driver on, and only those: laps the app gave a driver never teach."""
+    person (or the qualifying order) put that driver on, and only those: laps the app guessed a driver for never
+    teach."""
     out: dict[int, list] = {}
     for ev_id, ep in prints.items():
         tags = tags_of(db, ep)
         if not any(tags.values()):
             continue
-        if ds.guess(ep, tags).mode not in ("tagged", "groups"):
+        if ds.guess(ep, tags).mode not in ("tagged", "alike", "groups"):
             continue
         by = np.array([tags.get(int(sid)) or -1 for sid in ep.sessions])
         for did in sorted({int(d) for d in by if d >= 0}):
@@ -558,6 +569,23 @@ def _question(db: Session, event_id: int, g: ds.Guess | None, entry: list[int], 
             why += " The other runs then go to the car's other driver."
         return {"prompt": f"New driver found in {runs_text(db, runs)}: who is this?", "why": why,
                 "options": _options(db, event_id, entry, taken, g.groups[i].hint), "runs": runs}
+    if g is not None and g.mode == "alike":  # each run on its own: one answer can't be told to fit the others
+        runs = [s.session_id for s in g.sessions if left(s.session_id)]
+        if not runs:
+            return None
+        run = min(runs, key=lambda sid: (*_run_order(db, sid), sid))
+        names = [d.name for grp in g.groups if (d := db.get(models.Driver, grp.driver_id)) is not None]
+        why = (f"{' and '.join(names) if len(names) == 2 else 'The drivers'} drive too alike here for the app to tell "
+               "apart by their style, so it asks run by run.")
+        if quali_order.order_for(db, event_id) is not None:
+            why += " Qualifying and the races take their drivers from the qualifying order."
+        from app.season_match import MAX_OPTIONS
+        tagged = [{"key": f"driver:{d.id}", "label": d.name[:120], "why": "Drove other runs of this event",
+                   "driver_id": d.id} for grp in g.groups if (d := db.get(models.Driver, grp.driver_id)) is not None]
+        options = [*(o for o in tagged if not entry or o["driver_id"] in entry),
+                   *(o for o in _options(db, event_id, entry, set(), None)
+                     if o["driver_id"] not in {t["driver_id"] for t in tagged})][:MAX_OPTIONS]
+        return {"prompt": f"Who drove {runs_text(db, [run])}?", "why": why, "options": options, "runs": [run]}
     if g is not None and g.mode == "tagged":
         return None
     with_laps = set(db.scalars(select(models.Lap.session_id).distinct()
@@ -572,13 +600,27 @@ def _question(db: Session, event_id: int, g: ds.Guess | None, entry: list[int], 
             "options": _options(db, event_id, entry, set(), None), "runs": runs}
 
 
+def _run_order(db: Session, session_id: int) -> tuple:
+    """When the run's log started (runs without a time last), for asking about runs in the order they ran."""
+    from app.results import run_names  # looked up when used: it uses the results
+
+    s = db.get(models.RunSession, session_id)
+    win = run_names.run_window(s) if s is not None else None
+    return (win is None, win[0] if win else 0)
+
+
+STYLE_SOURCES = ("tag", "fingerprint", "entry", "pair")  # StyleTag sources of a driver the style set
+
+
 def settle(db: Session, event_id: int, ep: ds.EventPrint | None, learned: dict) -> int:
     """Every run of the event whose driving style is a driver the app knows gets that driver by itself (StyleTag:
     shown as set from the style, with a way to change it), whether the style was named after a tagged run here, a
     fingerprint learned elsewhere (SURE_MATCH), the car's other driver, or which way round the car's two drivers fit.
     A person's tag, change or clear stands. A run whose driver changed at a stop is first split into one run per
     driver (run_split.py); its parts are settled on a later pass.
-    A style nobody knows is then asked about (season_match.ask_new_driver), with the likely names. Commits. How
+    A style nobody knows is then asked about (season_match.ask_new_driver), with the likely names. Runs whose driver
+    came from the qualifying order (quali_order.py) keep it. When the tagged drivers drive too alike to tell apart
+    (ds mode "alike"), the drivers the style set are taken back and each run left is asked about. Commits. How
     many runs were set."""
     n = 0
     entry = entry_drivers(db, event_id)
@@ -591,10 +633,19 @@ def settle(db: Session, event_id: int, ep: ds.EventPrint | None, learned: dict) 
     now = dict(db.execute(select(models.RunSession.id, models.RunSession.driver_id)
                           .where(models.RunSession.event_id == event_id)).all())
     auto = set_by_style(db, list(now))
+    for s in g.sessions if g is not None and g.mode == "alike" else []:  # the style's guesses don't hold here
+        st = auto.get(s.session_id)
+        if st is not None and st.source in STYLE_SOURCES and st.driver_id == now.get(s.session_id):
+            run = db.get(models.RunSession, s.session_id)
+            if run is not None:
+                run.driver_id = now[run.id] = None
+            db.delete(st)
     for s in g.sessions if g is not None and g.mode in ("tagged", "groups") else []:
         grp, st, current = g.groups[s.group], auto.get(s.session_id), now.get(s.session_id)
         if (st is None and current is not None) or (st is not None and st.driver_id != current):
             continue  # a person's tag, change or clear stands
+        if st is not None and st.source in quali_order.SOURCES:
+            continue  # the qualifying order's
         if grp.driver_id is None or grp.driver_id == current or db.get(models.Driver, grp.driver_id) is None:
             continue
         run = db.get(models.RunSession, s.session_id)
@@ -624,6 +675,13 @@ def settle_all(db: Session, state: dict | None = None) -> int:
     with calendar_sync._lock:
         season_match.mark_filled(db)
         db.commit()
+    for ev_id in db.scalars(select(models.Event.id).order_by(models.Event.id)).all():
+        try:  # Q and race runs from the qualifying order, before the style is looked at
+            if quali_order.apply(db, ev_id):
+                db.commit()
+        except Exception:
+            db.rollback()
+            log.exception("Setting the drivers of event %s from the qualifying order failed", ev_id)
     rows = db.scalars(select(StylePrint).order_by(StylePrint.event_id)).all()
     prints = {r.event_id: ep for r in rows if (ep := ds.EventPrint.from_json(r.payload or {})) is not None}
     knows = learned(db)
