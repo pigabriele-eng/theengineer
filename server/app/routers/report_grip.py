@@ -18,6 +18,7 @@ from app.routers.sessions import _channel_map, _get, _line, _track_for, official
 router = APIRouter(prefix="/report")
 
 CACHE_SIZE = 8
+FEW_LAPS = 8  # the laps TC needed to say what it costs before it took 4 (analysis/grip.TC_FIT_LAPS)
 _cache: OrderedDict[tuple, tuple[tuple, bytes]] = OrderedDict()  # its JSON text, as sent
 _cache_lock = threading.Lock()
 
@@ -73,10 +74,13 @@ def grip_report(session: int | None = None, event: int | None = None, db: Sessio
             return page_cache.RawJSON(hit[1])
     # kept in the database too (app/page_cache.py); else built under heavy.lock, one log-reading job at a time (each
     # holds a whole log in memory while it reads it): a request that waited on the lock may find it built meanwhile
+    # TC from one lap (2026-10-09) changed only the reports of fewer than 8 clean laps: those are worked out again,
+    # while the rest keep their kept answer, which reads the same, so a restart doesn't read every log again
+    few = ["tc from one lap"] if sum(l.clean for s in sessions for l in s.laps) < FEW_LAPS else []
     result = page_cache.cached(
         db, f"{key[0]}:{key[1]}|grip",
         lambda: page_cache.signature("grip", page_cache.sessions_part(db, sessions), page_cache.track_part(track),
-                                     *run_labels.renamed(labels[s.id] for s in sessions)),
+                                     *run_labels.renamed(labels[s.id] for s in sessions), *few),
         lambda: _build(db, sessions, track, names), raw=True)
     with _cache_lock:
         _cache[key] = (fp, result)

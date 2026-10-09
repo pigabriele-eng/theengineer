@@ -12,7 +12,8 @@ phase by phase.
 Traction control is the logger's TC intervention flag with the throttle open. A zone is a stretch where TC works on
 at least one quick lap in twelve. In each zone, passes with more TC are compared with passes with less at the same
 entry speed: the speed 150 m later and the time to the next braking point say whether TC costs time there or only
-trims wheelspin while the driver pushes.
+trims wheelspin while the driver pushes. One lap is enough to find the zones and what TC does in them; what it costs
+takes TC_FIT_LAPS laps through the zone.
 
 Many runs (a test day, an event) are read one at a time: each run's clean laps are placed on one track line and cut
 down to a dozen channels per metre (about 0.2 MB a lap) before the next run is read, so memory stays flat however
@@ -27,7 +28,7 @@ import numpy as np
 
 from app.analysis.align import TrackLine, aligned_trace, track_line
 from app.analysis.channels import BRAKE, EXIT, MID, POWER, TRAIL, math_channels
-from app.analysis.insights import LapRecord, _within, corr, grip_limits, road_shape
+from app.analysis.insights import MIN_LAPS_FOR_TRENDS, LapRecord, _within, corr, grip_limits, road_shape
 from app.analysis.laps import CornerSpec, Lap, SessionData, Section, lap_length, make_sections
 from app.analysis.limits import CarLimits
 from app.heavy import trim
@@ -47,6 +48,10 @@ TC_ZONE_SHARE = 0.08  # TC on at least one quick lap in twelve
 TC_ZONE_MIN_M, TC_ZONE_GAP_M = 15, 30
 TC_BEFORE_M, TC_AFTER_M, TC_FAR_M = 40, 20, 150
 TC_PASS_S = 0.05  # a pass with more TC than this counts as a pass with TC
+# TC works from one lap (Gabriele, 2026-10-09: "lower it to 1"): where it cuts in, for how long, the wheelspin and the
+# torque it takes. What it costs compares passes with more TC and less at the same entry speed, which takes this many
+# laps through the zone, the fewest that fit works from (was 8); so do TC against tyre temperature and lap time.
+TC_FIT_LAPS = 4
 SIGNIFICANT = 0.05
 KERB_G = 0.5  # vertical g spike that marks a kerb strike
 MAP_STEP_M, GG_STEP_M = 5, 5
@@ -77,28 +82,28 @@ def _dt(t: np.ndarray) -> np.ndarray:
     return np.diff(t, append=t[-1] + (t[-1] - t[-2]))
 
 
-def _fit(x, y) -> dict | None:
+def _fit(x, y, min_n: int = MIN_LAPS_FOR_TRENDS) -> dict | None:
     """corr() with the line's intercept, for drawing it."""
     x, y = np.asarray(x, float), np.asarray(y, float)
-    c = corr(x, y)
+    c = corr(x, y, min_n)
     if c is None:
         return None
     ok = ~(np.isnan(x) | np.isnan(y))
     return {**c, "intercept": float(y[ok].mean() - c["slope"] * x[ok].mean())}
 
 
-def partial(y, x, z) -> dict | None:
+def partial(y, x, z, min_n: int = MIN_LAPS_FOR_TRENDS) -> dict | None:
     """The effect of x on y with z held fixed: least squares on both, and the correlation of what is left of x
     and y once z is taken out."""
     y, x, z = (np.asarray(a, float) for a in (y, x, z))
     ok = ~(np.isnan(x) | np.isnan(y) | np.isnan(z))
     y, x, z = y[ok], x[ok], z[ok]
-    if len(x) < 8 or x.std() < 1e-9 or z.std() < 1e-9:
+    if len(x) < max(min_n, 4) or x.std() < 1e-9 or z.std() < 1e-9:
         return None
     coef, *_ = np.linalg.lstsq(np.c_[x, z, np.ones(len(x))], y, rcond=None)
     rx = x - np.polyval(np.polyfit(z, x, 1), z)
     ry = y - np.polyval(np.polyfit(z, y, 1), z)
-    c = corr(rx, ry)
+    c = corr(rx, ry, min_n)
     if c is None:
         return None
     return {"r": c["r"], "p": c["p"], "n": c["n"], "coef": float(coef[0])}
@@ -541,8 +546,9 @@ class TractionControl:
         zones = [self._zone(a, b, freq, tq) for a, b in _runs_of(freq > TC_ZONE_SHARE, TC_ZONE_MIN_M, TC_ZONE_GAP_M)]
         zones = [z for z in zones if z is not None]
         lost = sum(z["time_cost_s"] * z["quick_share"] for z in zones if z["verdict"] == "cost")
+        known = not zones or any(z["verdict"] != "unknown" for z in zones)  # else too few laps to say what it costs
         out = {"available": True, "channel": rep.s.sources.get("tc"), "zones": zones,
-               "lost_per_lap_s": _r(lost), "_freq": freq[:n]}
+               "lost_per_lap_s": _r(lost) if known else None, "_freq": freq[:n]}
         out.update(self._lap_links(rows, notes))
         if not any("rear_slip" in x.trace for x in self.laps):
             notes.append("No wheel speeds (nWheelXX) in these logs, so wheelspin can't be measured.")
@@ -597,9 +603,9 @@ class TractionControl:
         if not hit.any():
             return None
         vin = [p["v_in"] for p in passes]
-        speed = partial([p["v_far"] for p in passes], tct, vin)
-        zone_t = partial([p["t_zone"] for p in passes], tct, vin)
-        run_t = partial([p["t_run"] for p in passes], tct, vin)
+        speed = partial([p["v_far"] for p in passes], tct, vin, TC_FIT_LAPS)
+        zone_t = partial([p["t_zone"] for p in passes], tct, vin, TC_FIT_LAPS)
+        run_t = partial([p["t_run"] for p in passes], tct, vin, TC_FIT_LAPS)
         mid = (za + zb) // 2
         sec = next((s for s in rep.sections if s.start <= mid < s.end), rep.sections[-1])
         apex = rep.apex[sec.code]
@@ -623,7 +629,8 @@ class TractionControl:
         z = {
             "start_m": za, "end_m": zb, "section": sec.code, "where": where, "verdict": verdict,
             "quick_share": _r(np.mean([p["tc_s"] > TC_PASS_S for p in qp])),
-            "clean_share": _r(hit.mean()), "passes": len(passes), "tc_s": _r(tc_mean, 2),
+            "clean_share": _r(hit.mean()), "passes": len(passes), "passes_tc": int(hit.sum()),
+            "tc_s": _r(tc_mean, 2),
             "speed_in_kmh": _r(np.median(vin), 0), "speed_out_kmh": _r(med(passes, "v_out"), 0),
             "speed_per_tc_s": _r(speed["coef"], 2) if speed else None,
             "speed_r": speed["r"] if speed else None, "speed_p": _r(speed["p"], 4) if speed else None,
@@ -691,16 +698,16 @@ class TractionControl:
             notes.append("No rear tyre temperatures in these logs, so TC can't be set against them.")
             out["vs_rear_temp"] = None
         else:
-            out["vs_rear_temp"] = _stat(_fit(temp, tc))
-            out["vs_rear_temp_within"] = _stat(corr(_within(temp, runs), _within(tc, runs)))
-        out["vs_time"] = _stat(_fit(tc, times))
-        out["vs_time_within"] = _stat(corr(_within(tc, runs), _within(times, runs)))
+            out["vs_rear_temp"] = _stat(_fit(temp, tc, TC_FIT_LAPS))
+            out["vs_rear_temp_within"] = _stat(corr(_within(temp, runs), _within(tc, runs), TC_FIT_LAPS))
+        out["vs_time"] = _stat(_fit(tc, times, TC_FIT_LAPS))
+        out["vs_time_within"] = _stat(corr(_within(tc, runs), _within(times, runs), TC_FIT_LAPS))
         sw = np.array([np.nan if r["tc_switch"] is None else r["tc_switch"] for r in rows])
         if np.isnan(sw).all():
             out["switch"] = None
         else:
             seen = sorted({int(v) for v in sw[~np.isnan(sw)]})
-            c = corr(sw, tc) if len(seen) > 1 else None
+            c = corr(sw, tc, TC_FIT_LAPS) if len(seen) > 1 else None
             out["switch"] = {"channel": self.rep.s.sources.get("tc_switch"), "positions": seen, "vs_tc": _stat(c)}
         return out
 
@@ -781,7 +788,15 @@ def tc_words(z: dict) -> tuple[str, str]:
     share = round(100 * (z["quick_share"] or 0))
     v = z["verdict"]
     if v == "unknown":
-        return (f"TC cuts in on {share} % of quick laps; too few laps to tell what it costs.", "")
+        n, k = z["passes"], z["passes_tc"]
+        slip = f", with {z['slip_pct']:.0f} % wheelspin when it starts" if z["slip_pct"] is not None else ""
+        took = f", taking about {z['torque_cut_nm']:.0f} Nm" if z["torque_cut_nm"] is not None else ""
+        kerb = (f". It starts with a {z['kerb_g']:.2f} g vertical spike: the kerb sets it off"
+                if z["kerb_g"] is not None and z["kerb_g"] >= KERB_G else "")
+        why = (f"What it costs takes {TC_FIT_LAPS} laps through here, to compare passes with more TC and less."
+               if n < TC_FIT_LAPS else "The passes are too alike to tell what it costs.")
+        return (f"TC cuts in here on {k} of {n} lap{'s' if n != 1 else ''} for {z['tc_s']:.2f} s{slip}{took}{kerb}. "
+                + why, "")
     if v == "pushing":
         return (f"TC cuts in on {share} % of quick laps. Passes with TC are as quick or quicker through here: it "
                 "is trimming wheelspin while you push.", "No change needed.")

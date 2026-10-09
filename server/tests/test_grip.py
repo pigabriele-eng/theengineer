@@ -15,8 +15,9 @@ TC_FROM_M = 720.0  # TC cuts in on the exit of the second corner (apex at 700 m)
 TC_GROWTH_M = 6.0  # ... for 6 m more on every lap, as the rear tyres warm up
 
 
-def with_tc(channels: dict, lap_times: list[float]) -> dict:
-    """Add a TC flag on the second corner's exit, wheel speeds and rear tyre temperatures rising lap by lap."""
+def with_tc(channels: dict, lap_times: list[float], base_m: float = 0.0) -> dict:
+    """Add a TC flag on the second corner's exit (base_m long on the first flying lap), wheel speeds and rear tyre
+    temperatures rising lap by lap."""
     v = channels["vCar"][2]
     hz = 100
     t = np.arange(len(v)) / hz
@@ -25,7 +26,7 @@ def with_tc(channels: dict, lap_times: list[float]) -> dict:
     dist = np.cumsum(v / 3.6 / hz)
     within = dist - np.interp(starts[lap], t, dist)
     flying = (lap >= 1) & (lap <= len(lap_times) - 2)
-    reach = TC_FROM_M + TC_GROWTH_M * (lap - 1)
+    reach = TC_FROM_M + base_m + TC_GROWTH_M * (lap - 1)
     tc = (flying & (within >= TC_FROM_M) & (within < reach)).astype(float)
     wheel = v / 3.6 / 0.33
     out = dict(channels)
@@ -120,6 +121,29 @@ def test_traction_control_zone_and_tyre_temperature(report):
     # the synthetic log has no engine torque or TC switch: said so, not failed
     assert report["channels"]["engine_torque"] is None and tc["switch"] is None
     assert any("MEngine" in n for n in tc["notes"])
+
+
+def _tc_report(paces):
+    channels, lap_times = simulate(paces)
+    ld = read_ld(write_ld(with_tc(channels, lap_times, base_m=30.0)))
+    study = GripStudy()
+    study.add("Run 1", load_session(ld), ld)
+    return study.report()
+
+
+def test_traction_control_from_one_lap():
+    """Gabriele, 2026-10-09: TC from one lap. One lap finds the zone and what TC does there; what it costs takes 4."""
+    r = _tc_report([0.97])
+    assert r["clean_laps"] == 1
+    zone = next(z for z in r["tc"]["zones"] if z["start_m"] < 730 < z["end_m"])
+    assert zone["verdict"] == "unknown" and zone["passes"] == 1 and zone["passes_tc"] == 1
+    assert zone["note"].startswith(f"TC cuts in here on 1 of 1 lap for {zone['tc_s']:.2f} s, with ")
+    assert "takes 4 laps through here" in zone["note"] and zone["advice"] == ""
+    assert r["tc"]["lost_per_lap_s"] is None  # not "0.00 s": too few laps to say
+    four = _tc_report([0.97, 0.985, 1.0, 0.975])
+    zone = next(z for z in four["tc"]["zones"] if z["start_m"] < 730 < z["end_m"])
+    assert zone["passes"] == 4 and zone["verdict"] != "unknown" and zone["speed_per_tc_s"] is not None
+    assert four["tc"]["lost_per_lap_s"] is not None and four["tc"]["vs_rear_temp"] is not None
 
 
 def test_logs_without_tc_say_so():
