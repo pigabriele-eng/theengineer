@@ -4,7 +4,9 @@
 // numbers side by side, the differences in words, what the technique check finds in one driver's laps there, the
 // balance on entry, mid-corner and exit, and the time in it, second. Then their lap times put on one tyre age and fuel
 // load (and what wasn't), grip use, where the balance differs, and both best laps on the full-lap traces. Real laps
-// only, never a summed one. The picks and words are lib/reportDrivers.ts, the requests lib/reportDriversApi.ts.
+// only, never a summed one. "All" next to the tyre levels compares their laps whatever the tyres (Gabriele, 2026-10-09:
+// "even with different tyre mileage"), saying which tyres each driver's laps were on. The picks and words are
+// lib/reportDrivers.ts, the requests lib/reportDriversApi.ts.
 import { RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, View as Box, StyleSheet } from 'react-native';
 
@@ -20,9 +22,10 @@ import { CompareResult, compareLaps, formatLap, LAP_COLORS } from '@/lib/compare
 import { fetchGrip } from '@/lib/grip';
 import { afterOthers } from '@/lib/loadLast';
 import {
-  balanceDiffs, balanceFor, balanceRows, checkLines, codeOf, cornerOrder, DEFAULT_TRACES, differenceWords, DriverCorner,
-  DriverGrip, DriversCorners, flipTrace, gapLine, gapWords, GRIP_PHASES, gripBySide, GROUPS, GroupKey, LevelReport,
-  levelDrivers, matchedLines, NEGLIGIBLE_S, numberRows, onTraces, pickLevel, pickPair, repick, Side, SIDES, traceLaps,
+  ALL, balanceDiffs, balanceFor, balanceRows, checkLines, codeOf, cornerOrder, DEFAULT_TRACES, differenceWords,
+  DriverCorner, DriverGrip, DriverOnLevel, DriversCorners, flipTrace, gapLine, gapWords, GRIP_PHASES, gripBySide, GROUPS,
+  GroupKey, LevelDrivers, LevelKey, levelDrivers, levelLabel, levelOfRun, LevelReport, matchedLines, NEGLIGIBLE_S,
+  numberRows, onTraces, pickLevel, pickPair, repick, Side, SIDES, sideTyres, traceLaps, tyreWords,
 } from '@/lib/reportDrivers';
 import { DriversBalance, DriversFlags, fetchDriversBalance, fetchDriversCorners, fetchDriversFlags } from '@/lib/reportDriversApi';
 import { TYRE_LABEL, TyreLevel } from '@/lib/tyreLevels';
@@ -57,6 +60,8 @@ export function hasTwoDrivers(levels: LevelReport[], driverOf: (id: number) => s
 }
 
 const lapCount = (n: number) => `${n} ${n === 1 ? 'lap' : 'laps'}`;
+/** "new, fresh": the levels a driver drove on, on "All". */
+const levelsOf = (d: DriverOnLevel) => (d.tyres ?? []).map((t) => TYRE_LABEL[t].toLowerCase()).join(', ');
 
 export default function DriversCompare({ levels, driverOf, shown, runName, runIdOf, gripEvent }: {
   levels: LevelReport[]; // the report of every tyre level, unfiltered
@@ -72,12 +77,13 @@ export default function DriversCompare({ levels, driverOf, shown, runName, runId
   const scheme = useColorScheme() === 'dark' ? 'dark' : 'light';
   const sideColor: Record<Side, string> = { a: LAP_COLORS[scheme][0], b: LAP_COLORS[scheme][1] };
   const all = useMemo(() => levelDrivers(levels, driverOf), [levels, driverOf]);
-  const [pickedLevel, setPickedLevel] = useState<TyreLevel | null>(null);
+  const [pickedLevel, setPickedLevel] = useState<LevelKey | null>(null);
   const [picked, setPicked] = useState<[string, string] | null>(null);
   const [group, setGroup] = useState<GroupKey>('median');
   const [showClose, setShowClose] = useState(false);
   const [traceKeys, setTraceKeys] = useState<string[]>(DEFAULT_TRACES);
-  const { both, level, only } = pickLevel(all, pickedLevel, shown);
+  const { both, all: every, level, only } = pickLevel(all, pickedLevel, shown);
+  const levelOf = useMemo(() => levelOfRun(all), [all]);
   const pair = level ? pickPair(level, picked) : null;
   const runs = pair ? { a: pair[0].runs, b: pair[1].runs } : null;
   const key = runs ? `${runs.a.join(',')}|${runs.b.join(',')}` : '';
@@ -147,25 +153,26 @@ export default function DriversCompare({ levels, driverOf, shown, runName, runId
   const traceColors = useLapColors(lapsOn.map((l) => l.slot));
   const palette = useLapColors([0, 1, 2, 3]).laps;
 
-  if (!both.length) {
-    return <Text style={t.body}>No tyre level where two drivers both drove: nothing to compare like with like.</Text>;
+  if (!level || !pair || !runs) {
+    return <Text style={t.body}>No two drivers with clean laps: nothing to compare.</Text>;
   }
-  if (!level || !pair || !runs) return null;
   const names: Record<Side, string> = { a: pair[0].name, b: pair[1].name };
   const codes: Record<Side, string> = { a: pair[0].code, b: pair[1].code };
-  const levelWord = TYRE_LABEL[level.tyres].toLowerCase();
+  const onAll = level.tyres === ALL;
+  // the tyre choices: each level two drivers drove on, then All (every level's laps together) when it adds something
+  const levelChoices: LevelDrivers[] = [...both, ...(every ? [every] : [])];
 
   const picks = (
     <View style={styles.picks}>
-      {both.length > 1 && (
+      {levelChoices.length > 1 && (
         <View style={styles.pickRow}>
           <Label small muted style={styles.pickLabel}>Tyres</Label>
           <View style={styles.choices}>
-            {both.map((l) => (
-              <Choice key={l.tyres} label={TYRE_LABEL[l.tyres]} on={l.tyres === level.tyres}
+            {levelChoices.map((l) => (
+              <Choice key={l.tyres} label={levelLabel(l.tyres)} on={l.tyres === level.tyres}
                 detail={`${l.drivers[0].code} ${l.drivers[0].laps.length} · ${l.drivers[1].code} ${l.drivers[1].laps.length} laps`}
-                accessibilityLabel={`Compare on ${TYRE_LABEL[l.tyres].toLowerCase()} tyres: ${l.drivers.map((d) =>
-                  `${d.name} ${lapCount(d.laps.length)}`).join(', ')}`}
+                accessibilityLabel={`Compare on ${tyreWords(l.tyres)}${l.tyres === ALL ? ', whatever the tyres' : ''}: ` +
+                  l.drivers.map((d) => `${d.name} ${lapCount(d.laps.length)}`).join(', ')}
                 onPress={() => setPickedLevel(l.tyres)} />
             ))}
           </View>
@@ -176,9 +183,10 @@ export default function DriversCompare({ levels, driverOf, shown, runName, runId
           <Label small muted style={styles.pickLabel}>{i === 0 ? 'Driver' : 'against'}</Label>
           <View style={styles.choices}>
             {level.drivers.map((d) => (
-              <Choice key={d.name} label={d.code} detail={lapCount(d.laps.length)} on={pair[i].name === d.name}
+              <Choice key={d.name} label={d.code} on={pair[i].name === d.name}
+                detail={onAll ? `${lapCount(d.laps.length)} · ${levelsOf(d)}` : lapCount(d.laps.length)}
                 accessibilityLabel={`${i === 0 ? 'Compare' : 'Against'} ${d.name}, ${lapCount(d.laps.length)} on ` +
-                  `${levelWord} tyres`}
+                  (onAll ? `${levelsOf(d).replace(/, ([^,]*)$/, ' and $1')} tyres` : tyreWords(level.tyres))}
                 onPress={() => setPicked(repick([pair[0].name, pair[1].name], side, d.name))} />
             ))}
           </View>
@@ -274,7 +282,8 @@ export default function DriversCompare({ levels, driverOf, shown, runName, runId
       (lapsOn[i] ? { ...l, session: `${l.session}, ${codes[lapsOn[i].side]}` } : l)) } : null;
     return (
       <>
-        {matchedLines(data.matched, TYRE_LABEL[level.tyres], { a: sides.a.laps, b: sides.b.laps }, names).map((l) => (
+        {matchedLines(data.matched, levelLabel(level.tyres), { a: sides.a.laps, b: sides.b.laps }, names,
+          onAll ? sideTyres(data.matched.runs, levelOf) : null).map((l) => (
           <Text key={l} style={styles.matched}>{l}</Text>
         ))}
         <Tabs label="Passes drawn in each corner" value={group} onChange={setGroup} style={styles.groups}
@@ -383,8 +392,8 @@ export default function DriversCompare({ levels, driverOf, shown, runName, runId
     <View style={styles.root}>
       {only && (
         <Text style={t.body}>
-          Only {only.driver.code} drove on {TYRE_LABEL[only.tyres]} tyres; comparing on {TYRE_LABEL[level.tyres]}, where
-          both drove.
+          Only {only.driver.code} drove on {tyreWords(only.tyres)}; comparing on {tyreWords(level.tyres)}, where both
+          drove{every ? ', or pick All to compare whatever the tyres' : ''}.
         </Text>
       )}
       {picks}

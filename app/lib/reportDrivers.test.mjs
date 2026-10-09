@@ -5,9 +5,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  balanceDiffs, balanceFor, balanceRows, checkLines, codeOf, cornerNumbers, cornerOrder, DEFAULT_TRACES,
-  differenceWords, flipTrace, fromApex, gapLine, gapWords, gripBySide, inSection, levelDrivers, matchedLines,
-  numberRows, onTraces, pickLevel, pickPair, repick, traceLaps,
+  ALL, allLevels, balanceDiffs, balanceFor, balanceRows, checkLines, codeOf, cornerNumbers, cornerOrder,
+  DEFAULT_TRACES, differenceWords, flipTrace, fromApex, gapLine, gapWords, gripBySide, inSection, levelDrivers,
+  levelLabel, levelOfRun, matchedLines, numberRows, onTraces, pickLevel, pickPair, repick, sideTyres, traceLaps,
+  tyreWords,
 } from './reportDrivers.ts';
 
 // a race weekend: Piana on runs 1, 3, 7, Rackl on 2, 4, 6; quali on new tyres (Piana one lap, Rackl three), the races
@@ -59,6 +60,41 @@ test('the level compared: the most laps both drivers have, or the one picked; a 
   p = pickLevel(alone, null, 'used');
   assert.equal(p.level, null);
   assert.equal(p.only, null);
+});
+
+test('all tyres: every level\'s laps together, picked or when no level has both drivers', () => {
+  const levels = levelDrivers([FRESH, NEW, USED], driverOf);
+  const all = allLevels(levels);
+  assert.equal(all.tyres, ALL);
+  assert.deepEqual(all.drivers.map((d) => [d.code, d.runs, d.laps.length, d.tyres]), [
+    ['RAC', [2, 4, 6, 9], 9, ['new', 'fresh', 'used']],
+    ['PIA', [1, 3, 7], 6, ['new', 'fresh']],
+  ]);
+  assert.deepEqual(all.drivers[1].laps.map((l) => l.time), [102.44, 104.48, 104.6, 104.84, 105.1, 105.7]);
+  // same tyres stay the first choice; All is there to pick
+  let p = pickLevel(levels, null, 'fresh');
+  assert.equal(p.level.tyres, 'fresh');
+  assert.equal(p.all.tyres, ALL);
+  p = pickLevel(levels, ALL, 'used');
+  assert.equal(p.level.tyres, ALL);
+  assert.equal(p.only, null); // the used tab's one driver isn't said on All
+  // Piana only on new tyres, Rackl only on used ones: no level has both, so all of them
+  const apart = levelDrivers([level('new', [[1, 'Q']], [['Q', 1, 102.44]]), USED], driverOf);
+  p = pickLevel(apart, null, 'new');
+  assert.deepEqual(p.both, []);
+  assert.equal(p.level.tyres, ALL);
+  assert.deepEqual(p.level.drivers.map((d) => [d.code, d.tyres]), [['RAC', ['used']], ['PIA', ['new']]]);
+  assert.equal(p.only, null);
+  // one level only: All would add nothing
+  assert.equal(allLevels(levelDrivers([FRESH], driverOf)), null);
+  assert.equal(pickLevel(levelDrivers([FRESH], driverOf), ALL, null).level.tyres, 'fresh');
+  // the words
+  assert.equal(levelLabel(ALL), 'All');
+  assert.equal(levelLabel('worn'), 'Very used');
+  assert.equal(tyreWords(ALL), 'all tyres');
+  assert.equal(tyreWords('worn'), 'very used tyres');
+  // the tyres of each side's runs, new first
+  assert.deepEqual(sideTyres({ a: [7, 1], b: [9, 4] }, levelOfRun(levels)), { a: ['new', 'fresh'], b: ['fresh', 'used'] });
 });
 
 test('the pair: the two with the most laps, or two picked; a pick of a side swaps when it is the other one', () => {
@@ -160,6 +196,17 @@ test('what was matched, in a line; the sessions apart when they differ; the runs
     'Piana\'s laps are from FP1, Rackl\'s from FP2: the track can differ.');
   const out = { ...m, parts: ['FP1'], left_out: [{ session_id: 9, name: 'FP2', side: 'a' }] };
   assert.equal(matchedLines(out, 'Used', { a: 9, b: 11 }, names)[1], 'Left out: Piana\'s FP2, where only Piana drove.');
+  // all tyres: which tyres each driver's laps were on, and what that means when they differ
+  const mixed = matchedLines(m, 'All', { a: 29, b: 32 }, names, { a: ['new', 'fresh'], b: ['used'] });
+  assert.deepEqual(mixed, [
+    'All tyres, clean laps in 04_R1 and 05_R2, where both drove (29 of Piana\'s, 32 of Rackl\'s); each corner\'s ' +
+    'passes ranked against the laps either side in the same stint.',
+    'Not like with like on tyres: Piana\'s laps on new and fresh tyres, Rackl\'s on used. The lap times are put on ' +
+    'one tyre age and fuel load where each set\'s age is known; the corners are as driven, so newer tyres can show as ' +
+    'more grip.',
+  ]);
+  assert.equal(matchedLines(m, 'All', { a: 29, b: 32 }, names, { a: ['fresh'], b: ['fresh'] })[1],
+    'Both on fresh tyres.');
 });
 
 test('the balance where the drivers differ, one line per corner, the biggest difference first', () => {
