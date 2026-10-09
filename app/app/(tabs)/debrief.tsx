@@ -7,7 +7,7 @@ import {
 } from 'expo-audio';
 import * as DocumentPicker from 'expo-document-picker';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, TextInput, TextStyle } from 'react-native';
 
 import { MainAction, PageHead, Tabs, useText } from '@/components/Picks';
@@ -24,7 +24,8 @@ import {
   WaitingRecording,
 } from '@/lib/api';
 import { fileRecordedAt, localTime, recordedLabel } from '@/lib/debriefTime';
-import { Fonts, themed, useTheme } from '@/constants/Theme';
+import { LiveSegment, speechLang, speechSupported, startLiveSpeech } from '@/lib/liveSpeech';
+import { face, Fonts, themed, useTheme } from '@/constants/Theme';
 
 const MODES: [DebriefMode, string][] = [
   ['individual', 'One driver'],
@@ -74,6 +75,18 @@ export default function DebriefScreen() {
   const [startedAt, setStartedAt] = useState<string | null>(null);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const rec = useAudioRecorderState(recorder, 250);
+  // what the browser writes down while recording (web only): sent with the recording, used when the server has no
+  // speech to text of its own
+  const canHear = Platform.OS === 'web' && speechSupported();
+  const live = useRef<{ stop(): LiveSegment[] } | null>(null);
+  const [heard, setHeard] = useState<{ finals: LiveSegment[]; interim: string }>({ finals: [], interim: '' });
+  useEffect(() => () => {
+    try {
+      live.current?.stop();
+    } catch {
+      // nothing to stop
+    }
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -82,14 +95,14 @@ export default function DebriefScreen() {
     }, []),
   );
 
-  const send = async (audio: { uri: string; name: string; file?: File | Blob }, recordedAt: string) => {
+  const send = async (audio: { uri: string; name: string; file?: File | Blob }, recordedAt: string, said?: LiveSegment[]) => {
     if (sessionId == null) return;
     setBusy(true);
     setStatus(null);
     setSaved(null);
     try {
       if (sessionId === BY_TIME) {
-        const r = await api.recordDebriefByTime(audio, mode, language, recordedAt);
+        const r = await api.recordDebriefByTime(audio, mode, language, recordedAt, said);
         if (r.debrief) {
           router.push({ pathname: '/debrief/[id]', params: { id: r.debrief.id } });
         } else if (r.waiting) {
@@ -99,7 +112,7 @@ export default function DebriefScreen() {
         }
         return;
       }
-      const d = await api.recordDebrief(sessionId, audio, mode, language);
+      const d = await api.recordDebrief(sessionId, audio, mode, language, said);
       router.push({ pathname: '/debrief/[id]', params: { id: d.id } });
     } catch (e) {
       setStatus((e as Error).message);
@@ -119,9 +132,30 @@ export default function DebriefScreen() {
     await recorder.prepareToRecordAsync();
     setStartedAt(localTime(new Date()));
     recorder.record();
+    setHeard({ finals: [], interim: '' });
+    if (canHear) {
+      try {
+        live.current = startLiveSpeech(speechLang(language, navigator.language), Date.now(),
+          (finals, interim) => setHeard({ finals, interim }));
+      } catch {
+        live.current = null;
+      }
+    }
+  };
+
+  const stopHearing = (): LiveSegment[] => {
+    try {
+      return live.current?.stop() ?? [];
+    } catch {
+      return [];
+    } finally {
+      live.current = null;
+    }
   };
 
   const stop = async () => {
+    const said = stopHearing();
+    setHeard((h) => ({ ...h, interim: '' }));
     await recorder.stop();
     await setAudioModeAsync({ allowsRecording: false });
     const uri = recorder.uri;
@@ -131,9 +165,9 @@ export default function DebriefScreen() {
     }
     if (Platform.OS === 'web') {
       const blob = await (await fetch(uri)).blob();
-      await send({ uri, name: 'debrief.webm', file: blob }, startedAt ?? localTime(new Date()));
+      await send({ uri, name: 'debrief.webm', file: blob }, startedAt ?? localTime(new Date()), said);
     } else {
-      await send({ uri, name: 'debrief.m4a' }, startedAt ?? localTime(new Date()));
+      await send({ uri, name: 'debrief.m4a' }, startedAt ?? localTime(new Date()), said);
     }
   };
 
@@ -195,6 +229,20 @@ export default function DebriefScreen() {
             {busy && <ActivityIndicator style={styles.left} color={theme.text} />}
           </View>
         </View>
+        {Platform.OS === 'web' && rec.isRecording && (canHear ? (
+          <View style={styles.live} accessibilityLiveRegion="polite" aria-live="polite">
+            <Label small>Writing down what you say</Label>
+            <Text style={styles.liveText}>
+              {heard.finals.map((f) => f.text).join(' ')}
+              {heard.interim ? <Text style={styles.liveInterim}>{`${heard.finals.length ? ' ' : ''}${heard.interim}`}</Text> : null}
+              {!heard.finals.length && !heard.interim ? <Text style={styles.liveInterim}>Listening…</Text> : null}
+            </Text>
+          </View>
+        ) : (
+          <Text style={StyleSheet.flatten([styles.liveNote, styles.gapTop])}>
+            This browser can't write down speech. The recording is kept and written up once speech to text is set up.
+          </Text>
+        ))}
         <View style={styles.links}>
           <TextLink label="Upload a recording instead" onPress={pick} disabled={busy || rec.isRecording} />
         </View>
@@ -359,6 +407,11 @@ const useStyles = themed((c) => ({
   dim: { opacity: 0.4 },
   left: { alignSelf: 'flex-start' },
   links: { marginTop: 22 },
+  // the words heard so far under the record key: a ruled block, no box
+  live: { marginTop: 22, paddingTop: 12, borderTopWidth: 1, borderColor: c.rule, gap: 8, maxWidth: 760 },
+  liveText: { fontFamily: Fonts.body, fontSize: 17, lineHeight: 25, color: c.text } as TextStyle,
+  liveInterim: { fontFamily: face('body', 400, true), color: c.textSecondary } as TextStyle,
+  liveNote: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 22, color: c.textSecondary } as TextStyle,
   typed: { gap: 18, marginTop: 20, maxWidth: 760 },
   inputLabel: { marginBottom: 6 },
   input: { borderWidth: 1, borderColor: c.rule, borderRadius: 0, padding: 12, minHeight: 88, fontSize: 16, lineHeight: 22,
