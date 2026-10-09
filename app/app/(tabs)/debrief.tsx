@@ -75,7 +75,14 @@ export default function DebriefScreen() {
     if (asked != null) setSessionId(asked);
   }, [asked]);
   const [mode, setMode] = useState<DebriefMode>('individual');
-  const [language, setLanguage] = useState<DebriefLanguage>('en');
+  // Mixed by default: Gabriele's debriefs switch between Italian, English and German, and a recording told it is one
+  // language comes out garbled where it isn't (2026-10-09)
+  const [language, setLanguage] = useState<DebriefLanguage>('multi');
+  // Deepgram writes the debrief once it's sent: the words the phone shows while recording are only a rough preview
+  const [server, setServer] = useState<'deepgram' | 'phone' | null>(null);
+  useEffect(() => {
+    api.health().then((h) => setServer(h.speech ?? null), () => setServer(null));
+  }, []);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [typing, setTyping] = useState(false);
@@ -372,7 +379,10 @@ export default function DebriefScreen() {
 
   const liveBlock = Platform.OS === 'web' && (recording || held) && (canHear ? (
           <View style={styles.live} accessibilityLiveRegion="polite" aria-live="polite">
-            <Label small>Writing down what you say</Label>
+            <Label small>{server === 'deepgram' ? 'Rough preview from the phone' : 'Writing down what you say'}</Label>
+            {server === 'deepgram' && (
+              <Text style={styles.liveNote}>Deepgram writes the debrief properly once you send it.</Text>
+            )}
             <Text style={styles.liveText}>
               {heard.finals.map((f) => f.text).join(' ')}
               {heard.interim ? <Text style={styles.liveInterim}>{`${heard.finals.length ? ' ' : ''}${heard.interim}`}</Text> : null}

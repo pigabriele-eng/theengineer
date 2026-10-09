@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
@@ -133,6 +134,8 @@ def _storage_failed(_: Request, e: storage.StorageError):
 
 # async: answered on the event loop, never queued behind requests that wait for the heavy-work lock in the thread
 # pool (Render stops sending traffic to a server whose health check doesn't answer within 5 s for 15 s)
+# speech/sorting: which engines debriefs go through, so the app (and a person checking a key took) can tell
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {"status": "ok", "speech": "deepgram" if os.environ.get("DEEPGRAM_API_KEY") else "phone",
+            "sorting": "claude" if os.environ.get("ANTHROPIC_API_KEY") else "keywords"}
