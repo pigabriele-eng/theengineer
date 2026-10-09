@@ -20,7 +20,7 @@ import PrintButton from '@/components/PrintButton';
 import { RenameEvent } from '@/components/RenameEvent';
 import { ResultsPanel } from '@/components/ResultsPanel';
 import { RunNameQuestions } from '@/components/RunNames';
-import { byTouch, closesRows, DeleteLink, RunPanel, SwipeRow, useRunActions } from '@/components/RunActions';
+import { byTouch, closesRows, RunLinks, RunPanel, SwipeRow, useRunActions } from '@/components/RunActions';
 import { SeasonMatch } from '@/components/SeasonMatch';
 import {
   filledNote, localPick, PickerKind, RunChips, RunNameEditor, RunPicker, useEventDrivers, useGarage,
@@ -320,7 +320,7 @@ export default function EventScreen() {
   // (components/weekend/Laps.tsx). A suggestion tapped scrolls down to its comparison.
   const lapsTab = laps && eventId != null && (
     <View onLayout={(e) => (lapsY.current = e.nativeEvent.layout.y)}>
-      <WeekendLaps eventId={eventId} version={version} onRunDeleted={runDeleted}
+      <WeekendLaps eventId={eventId} version={version} onRunDeleted={runDeleted} onRunRenamed={load}
         onShow={(y) => scroll.current?.scrollTo({ y: Math.max(topH.current + lapsY.current + y - 12, 0), animated: true })} />
     </View>
   );
@@ -701,9 +701,9 @@ function DayHead({ days, date }: { days: Folder['days']; date: string | null }) 
 
 // ---------- one run ----------
 
-/** One run: tick it for side by side, tap its name to rename it in place, its driver to set it, its tyres to change
- * them (the four levels open under it), its best lap (a purple block for the event's best, else a red bar for the gap
- * to it) or its laps to open it, and Delete under its best lap. Swiped left it shows Delete too; held, a menu of
+/** One run: tick it for side by side, tap its name (or Rename) to rename it in place, its driver to set it, its tyres
+ * to change them (the four levels open under it), its best lap (a purple block for the event's best, else a red bar
+ * for the gap to it) or its laps to open it, and Rename and Delete under its best lap. Swiped left it shows Delete too; held, a menu of
  * Delete, Change driver, Rename and Tyres (components/RunActions.tsx; Tyres opens the same four levels). */
 function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, editing, onEdit, onSaved, garage,
   eventDrivers, open, onOpen, onPick, note, onNoteClose, guess, guessMode, inEvent, onDeleted, tags }: {
@@ -805,8 +805,9 @@ function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, e
                 )}
               </Pressable>
             </Link>
-            {/* Delete in sight (Gabriele, 2026-10-09: "i still do not see a way to quickly remove runs") */}
-            <DeleteLink run={run} name={s.name} />
+            {/* Rename and Delete in sight (Gabriele, 2026-10-09: "i still do not see a way to quickly remove runs",
+                "give option to rename runs") */}
+            <RunLinks run={run} name={s.name} renaming={editing} style={styles.runLinks} />
             </View>
           )}
         </View>
@@ -887,13 +888,15 @@ const useStyles = themed((c) => ({
   nameLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 10, rowGap: 0 },
   nameWho: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1, minWidth: 0 },
   // Rename: the name's 23 px line with room to a 44 px target above and below; the run's details start under that room
-  namePress: { flexDirection: 'row', alignItems: 'baseline', gap: 6, flexShrink: 1, ...tapRoom(11) },
+  namePress: { flexDirection: 'row', alignItems: 'baseline', gap: 6, flexShrink: 1, minWidth: TAP, ...tapRoom(11) },
   runName: { fontFamily: Type.label.fontFamily, fontSize: 17, letterSpacing: 0.3, color: c.text, flexShrink: 1 },
   pencil: { fontFamily: Fonts.label, fontSize: 13, color: c.textMuted },
   runSub: { fontFamily: face('label', 400), fontSize: 13, lineHeight: 17, color: c.textSecondary, marginTop: 8 },
   // the run opens from here: as tall as the row, and never under a tap target's height
   runEnd: { width: 96, alignItems: 'flex-end', alignSelf: 'stretch' },
   runBest: { width: 96, alignItems: 'flex-end', flexGrow: 1, minHeight: TAP },
+  // Rename over Delete: side by side they'd reach into the run's own lines on a phone
+  runLinks: { flexDirection: 'column', alignItems: 'flex-end', gap: 0 },
   runTime: { fontFamily: Type.label.fontFamily, fontSize: 19, fontVariant: ['tabular-nums'], paddingHorizontal: 5,
     paddingVertical: 1, color: c.text },
   noLap: { fontFamily: face('label', 400), fontSize: 13, color: c.textMuted, paddingTop: 3 },

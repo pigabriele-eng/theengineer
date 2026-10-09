@@ -14,7 +14,7 @@ import {
 import { RenameEvent } from '@/components/RenameEvent';
 import { DriverTag } from '@/components/DriverTag';
 import { RunDriverLine } from '@/components/RunDriverLine';
-import { closesRows, DeleteLink, RunPanel, SwipeRow, useRunActions } from '@/components/RunActions';
+import { closesRows, RunLinks, RunPanel, SwipeRow, useRunActions } from '@/components/RunActions';
 import { filledNote, localPick, RunNameEditor, RunPicker, useEventDrivers, useGarage } from '@/components/RunChips';
 import { deletedLine } from '@/components/DeleteRuns';
 import { Said } from '@/components/Controls';
@@ -596,8 +596,9 @@ function Feature({ f, detail, garage, onGarage, onChanged }: {
 
 /** One run: its line opens it (number, name, time, laps, best lap and the gap to the event's best); under it, outside
  * the link, its driver line (with its tyres) under its name, then (children) its driver list or its tyres' four
- * levels when open, the row's width. Delete at the end of its driver line asks first under the row; swiped left it
- * shows Delete too, and held a menu of Delete, Change driver, Rename and Tyres (components/RunActions.tsx). */
+ * levels when open, the row's width. Rename and Delete at the end of its driver line open the name's editor and the
+ * confirm under the row; swiped left it shows Delete too, and held a menu of Delete, Change driver, Rename and Tyres
+ * (components/RunActions.tsx). */
 function RunRow({ s, no, best, maxGap, tag, driver, onDriver, onTyres, onChanged, onDeleted, children }: {
   s: FolderSession;
   no: number;
@@ -655,9 +656,9 @@ function RunRow({ s, no, best, maxGap, tag, driver, onDriver, onTyres, onChanged
         </Link>
         <View style={styles.runMore}>
           <View style={styles.runMoreDriver}>{driver}</View>
-          {/* Delete in sight on every row (Gabriele, 2026-10-08: "still no way to quickly delete runs in the home
-              page"): the same confirm as the swipe and the hold, under the row */}
-          <DeleteLink run={run} name={s.name} disabled={renaming} />
+          {/* Rename and Delete in sight on every row (Gabriele, 2026-10-08: "still no way to quickly delete runs in
+              the home page"; 10-09: "give option to rename runs"): the name's editor and the confirm under the row */}
+          <RunLinks run={run} name={s.name} renaming={renaming} />
         </View>
       </SwipeRow>
       {renaming && (

@@ -1,8 +1,9 @@
 // A run row's quick actions (Gabriele, 2026-10-07: "Quick hold/swipe to delete runs in phone app"): swipe the row to
 // the left for a red Delete, or hold it for a small menu (Delete, Change driver, Rename and, for a run of an event,
-// Tyres: the four levels its tyres tag opens, components/TyreTag.tsx). And Delete in sight on the row (DeleteLink:
-// Gabriele, 2026-10-08 and 10-09: "still no way to quickly delete runs", "i still do not see a way to quickly remove
-// runs"; a mouse swipes nothing and a hold is found by no one). Delete always asks first,
+// Tyres: the four levels its tyres tag opens, components/TyreTag.tsx). And Rename and Delete in sight on the row
+// (RunLinks: Gabriele, 2026-10-08 and 10-09: "still no way to quickly delete runs", "i still do not see a way to
+// quickly remove runs", "give option to rename runs"; a mouse swipes nothing and a hold is found by no one). Delete
+// always asks first,
 // with the confirm the ticked runs' Delete… uses (components/DeleteRuns.tsx), so a stray swipe never loses a run.
 // Never the only way: screen readers get the same as actions on the row's link, the keyboard on the web opens
 // the menu with the menu key or Shift+F10, and ticking runs then Delete… stays. The numbers behind the swipe and the
@@ -267,6 +268,41 @@ export function DeleteLink({ run, name, disabled, style }: {
   );
 }
 
+/** Rename in sight on a run row: opens the row's name to edit, as Rename in the menu does (`renaming`: it is open). */
+export function RenameLink({ run, name, renaming, disabled, style }: {
+  run: RunActions;
+  name: string;
+  renaming?: boolean;
+  disabled?: boolean;
+  style?: ViewStyle;
+}) {
+  const styles = useStyles();
+  return (
+    <Pressable onPress={() => run.act('rename')} disabled={disabled || renaming} accessibilityRole="button"
+      accessibilityLabel={`Rename ${name}`} {...a11yState({ expanded: !!renaming })}
+      style={StyleSheet.flatten([styles.inSight, style])}>
+      <Text style={styles.inSightText}>Rename</Text>
+    </Pressable>
+  );
+}
+
+/** Rename and Delete in sight on a run row, side by side at its end. */
+export function RunLinks({ run, name, renaming, disabled, style }: {
+  run: RunActions;
+  name: string;
+  renaming?: boolean;
+  disabled?: boolean;
+  style?: ViewStyle;
+}) {
+  const styles = useStyles();
+  return (
+    <View style={StyleSheet.flatten([styles.links, style])}>
+      <RenameLink run={run} name={name} renaming={renaming} disabled={disabled} />
+      <DeleteLink run={run} name={name} disabled={disabled} />
+    </View>
+  );
+}
+
 /** The menu a hold opens: the run's name and Close over a rule, then Delete…, Change driver, Rename (and Tyres), each
  * a full line to tap. */
 function RunMenu({ name, actions, onAction, onClose, focus }: {
@@ -318,6 +354,7 @@ const useStyles = themed((c) => ({
   deleteText: { ...Type.link, fontSize: 16, color: c.background },
   inSight: { minHeight: TAP, minWidth: TAP, justifyContent: 'center', alignItems: 'flex-end', paddingLeft: 6 },
   inSightText: { ...Type.link, fontSize: 13, color: c.textSecondary, textDecorationLine: 'underline' },
+  links: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 8 },
 
   menu: { borderTopWidth: 3, borderColor: c.rule, maxWidth: 420, marginBottom: 6 },
   menuHead: { flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderColor: c.rule },

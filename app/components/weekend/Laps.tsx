@@ -7,12 +7,14 @@
 // lap; 02 to 05 the comparison itself, the first suggestion's already open (the laps, where the time is, the section
 // times, the traces); 06 the weekend's laps to pick by hand, each run with its tyres a tap to change
 // (components/TyreTag.tsx). A run's "Driver?" there and on the laps compared is a tap to set (components/DriverPick.tsx);
-// its Delete in sight asks first under it, as on the run rows (components/RunActions.tsx).
+// its Rename and Delete in sight open the name's editor and the confirm under it, as on the run rows
+// (components/RunActions.tsx).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, LayoutChangeEvent, Pressable, StyleSheet } from 'react-native';
 
 import { CompareTraces, LineKey, SectionTable, useLapColors, WhereTheTimeIs } from '@/components/CompareViews';
-import { DeleteLink, RunPanel, useRunActions } from '@/components/RunActions';
+import { RunLinks, RunPanel, useRunActions } from '@/components/RunActions';
+import { RunNameEditor } from '@/components/RunChips';
 import { ErrorLine, Note } from '@/components/Controls';
 import { DriverPick, useDriverPick } from '@/components/DriverPick';
 import { DriverTag } from '@/components/DriverTag';
@@ -30,6 +32,7 @@ import {
 import { poll } from '@/lib/poll';
 import { DETECTED_CORNERS_NOTE } from '@/lib/api';
 import { RunsDeleted } from '@/lib/deleteRuns';
+import { eventsApi } from '@/lib/events';
 import { a11yState } from '@/lib/a11yState';
 import { face, Fonts, TAP, themed, Type, useTheme } from '@/constants/Theme';
 
@@ -43,12 +46,13 @@ const tag = (driver: string | null) => (driver ? { text: codeOf(driver)!, kind: 
 
 /** The Laps tab. `onShow(y)`: scroll the page to y within the tab (the comparison, once a suggestion is tapped).
  * `version`: the page's reads of the event's runs (their tyres are read again with them). `onRunDeleted`: a run
- * deleted from its laps (the page reads the event again and says so). */
-export default function WeekendLaps({ eventId, onShow, version, onRunDeleted }: {
+ * deleted from its laps (the page reads the event again and says so); `onRunRenamed`: one renamed there. */
+export default function WeekendLaps({ eventId, onShow, version, onRunDeleted, onRunRenamed }: {
   eventId: number;
   onShow?: (y: number) => void;
   version?: number;
   onRunDeleted?: (d: RunsDeleted) => void;
+  onRunRenamed?: () => void;
 }) {
   const styles = useStyles();
   const tyreTags = useTyreTags(eventId, version);
@@ -67,6 +71,11 @@ export default function WeekendLaps({ eventId, onShow, version, onRunDeleted }: 
     setShown((v) => (v.kind === 'own' ? { kind: 'own', laps: v.laps.filter((l) => !gone(l)) } : v));
     setDeletes((n) => n + 1);
     onRunDeleted?.(d);
+  };
+  // a run renamed: the suggestions are asked again (a run's name says its session)
+  const runRenamed = () => {
+    setDeletes((n) => n + 1);
+    onRunRenamed?.();
   };
 
   // the suggestions, asked again while the server works out their corners or the technique check the mistakes at them
@@ -163,7 +172,8 @@ export default function WeekendLaps({ eventId, onShow, version, onRunDeleted }: 
       </View>
 
       <PickYourOwn sessions={answer?.sessions ?? null} picks={own} onPicks={setOwn} tags={tyreTags}
-        drivers={drivers} onCompare={() => show({ kind: 'own', laps: own })} onDeleted={runDeleted} />
+        drivers={drivers} onCompare={() => show({ kind: 'own', laps: own })} onDeleted={runDeleted}
+        onRenamed={runRenamed} />
     </>
   );
 }
@@ -334,7 +344,7 @@ function Comparison({ laps, picked, data, error, waiting, answer, onTraces, driv
 
 // ---------- laps picked by hand ----------
 
-function PickYourOwn({ sessions, picks, onPicks, onCompare, tags, drivers, onDeleted }: {
+function PickYourOwn({ sessions, picks, onPicks, onCompare, tags, drivers, onDeleted, onRenamed }: {
   sessions: PickSession[] | null;
   picks: LapPick[];
   onPicks: (p: LapPick[]) => void;
@@ -342,6 +352,7 @@ function PickYourOwn({ sessions, picks, onPicks, onCompare, tags, drivers, onDel
   tags: TyreTags;
   drivers: DriverPick;
   onDeleted: (d: RunsDeleted) => void;
+  onRenamed: () => void;
 }) {
   const styles = useStyles();
   // the latest session open, the others folded
@@ -370,6 +381,7 @@ function PickYourOwn({ sessions, picks, onPicks, onCompare, tags, drivers, onDel
               what={`the laps of ${p.title}`} />
             {opened.has(p.code) && p.runs.map((r) => (
               <RunLaps key={r.id} run={r} picks={picks} tags={tags} drivers={drivers} onDeleted={onDeleted}
+                onRenamed={onRenamed}
                 onToggle={(lap) => onPicks(toggleLap(picks, { session_id: r.id, lap }, MAX_LAPS))} />
             ))}
           </View>
@@ -392,18 +404,20 @@ function PickYourOwn({ sessions, picks, onPicks, onCompare, tags, drivers, onDel
   );
 }
 
-function RunLaps({ run, picks, onToggle, tags, drivers, onDeleted }: {
+function RunLaps({ run, picks, onToggle, tags, drivers, onDeleted, onRenamed }: {
   run: PickRun;
   picks: LapPick[];
   onToggle: (lap: number) => void;
   tags: TyreTags;
   drivers: DriverPick;
   onDeleted: (d: RunsDeleted) => void;
+  onRenamed: () => void;
 }) {
   const styles = useStyles();
   const theme = useTheme();
-  // only its Delete here: the driver and the tyres have their own taps on the line, renaming is the run rows'
-  const actions = useRunActions({ onDriver: () => drivers.toggle(run.id), onRename: () => undefined });
+  const [renaming, setRenaming] = useState(false);
+  // its Rename and Delete here: the driver and the tyres have their own taps on the line
+  const actions = useRunActions({ onDriver: () => drivers.toggle(run.id), onRename: () => setRenaming(true) });
   const clean = run.laps.filter((l) => l.clean);
   const best = clean.length ? clean.reduce((a, b) => (b.time < a.time ? b : a)).number : null;
   const full = picks.length >= MAX_LAPS;
@@ -415,8 +429,17 @@ function RunLaps({ run, picks, onToggle, tags, drivers, onDeleted }: {
         {/* the tyres a tap to change, as on the run rows; the suggestions' own words until they are read */}
         {tags.rowOf(run.id) ? <TyreTag tags={tags} id={run.id} run={run.name} />
           : <Text style={styles.pickRunTyres}>{tyreWords(run)}</Text>}
-        <DeleteLink run={actions} name={run.name} style={styles.pickRunDelete} />
+        <RunLinks run={actions} name={run.name} renaming={renaming} style={styles.pickRunDelete} />
       </View>
+      {renaming && (
+        <View style={styles.lapPicker}>
+          <RunNameEditor id={run.id} name={run.name} kind={run.kind} onCancel={() => setRenaming(false)}
+            save={(id, body) => eventsApi.updateSession(id, body)} onSaved={() => {
+              setRenaming(false);
+              onRenamed();
+            }} />
+        </View>
+      )}
       <RunPanel run={actions} id={run.id} name={run.name} inEvent onDeleted={onDeleted} style={styles.lapPicker} />
       <TyreChoices tags={tags} id={run.id} name={run.name} />
       {drivers.panel({ id: run.id, name: run.name, driver_id: run.driver_id, driver: run.driver }, styles.lapPicker)}

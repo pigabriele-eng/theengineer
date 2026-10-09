@@ -234,11 +234,14 @@ export const QUICK_LABELS: { label: string; kind: SessionKind }[] = [
   { label: 'FP3', kind: 'practice' },
   { label: 'Q1', kind: 'qualifying' },
   { label: 'Q2', kind: 'qualifying' },
+  { label: 'Q3', kind: 'qualifying' }, // a weekend of three (Hockenheim 2026: Q1, Q2, Q3 and three races)
   // the race stints as the timetable names them (R1 stint 1 even after a DNF), the same as the run-name question
   { label: 'R1 stint 1', kind: 'race' },
   { label: 'R1 stint 2', kind: 'race' },
   { label: 'R2 stint 1', kind: 'race' },
   { label: 'R2 stint 2', kind: 'race' },
+  { label: 'R3 stint 1', kind: 'race' },
+  { label: 'R3 stint 2', kind: 'race' },
   { label: 'Warm-up', kind: 'practice' },
   { label: 'Test', kind: 'test' },
 ];
