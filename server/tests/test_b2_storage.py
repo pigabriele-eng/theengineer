@@ -130,7 +130,7 @@ def test_new_files_go_to_b2_and_older_ones_stay_readable_in_supabase(tmp_path):
     both = TwoStorages(new_fake.storage(tmp_path / "cache"), old)
     both.setup()
     after = both.save(b"\x40 a new log", ".ld")
-    assert f"{after}.gz" in new_fake.objects and f"logs/{after}.gz" not in old_fake.objects
+    assert f"{after}.gz" in new_fake.objects and f"logs/{after}.gz" in old_fake.objects  # a spare while room
     shutil.rmtree(tmp_path / "cache")
     assert both.local_path(before).read_bytes() == b"\x40 an older log"  # not in B2: read from Supabase
     assert both.local_path(after).read_bytes() == b"\x40 a new log"
@@ -183,7 +183,7 @@ def test_older_files_are_copied_to_b2_and_kept_in_supabase(tmp_path, monkeypatch
     for key in keys:
         name = old._object(key)
         assert new_fake.objects[name] == old_fake.objects[f"logs/{name}"]  # as stored: still compressed
-    assert len(old_fake.objects) == 4  # Supabase keeps its copies
+    assert len(old_fake.objects) == 5  # Supabase keeps its copies (and a spare of the new file)
     assert both.used() == sum(len(b) for b in new_fake.objects.values())
     shutil.rmtree(tmp_path / "cache")
     old_fake.objects.clear()
@@ -240,3 +240,20 @@ def test_files_come_from_supabase_while_b2_refuses_downloads(tmp_path):
     assert both.local_path(kept).read_bytes() == b"\x40 an older log"
     with pytest.raises(storage.StorageError, match="download_cap_exceeded"):
         both.local_path(only_b2)  # no other copy: the reason is passed on
+
+
+def test_new_files_keep_a_spare_copy_in_supabase_while_it_has_room(tmp_path, monkeypatch):
+    """Gabriele, 2026-10-09, with Backblaze's daily cap reached: "Today I want to upload and access data"."""
+    old_fake, new_fake = FakeSupabaseStorage(), FakeB2()
+    both = TwoStorages(new_fake.storage(tmp_path / "cache"), old_fake.storage(tmp_path / "cache"))
+    both.setup()
+    key = both.save(b"\x40 today's log", ".ld")
+    assert old_fake.objects[f"logs/{key}.gz"] == new_fake.objects[f"{key}.gz"]
+    shutil.rmtree(tmp_path / "cache")
+    both.new.client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(403, text="download_cap")))
+    assert both.local_path(key).read_bytes() == b"\x40 today's log"  # B2 refuses: the spare answers
+
+    both.new.client = httpx.Client(transport=httpx.MockTransport(new_fake.handler))
+    both.old._used = 2 * 1024**3  # Supabase full
+    other = both.save(b"\x40 another", ".ld")
+    assert f"{other}.gz" in new_fake.objects and f"logs/{other}.gz" not in old_fake.objects  # stored all the same

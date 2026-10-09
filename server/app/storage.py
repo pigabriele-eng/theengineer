@@ -142,6 +142,7 @@ class RemoteStorage:
     def __init__(self, cache_dir: Path):
         self.cache_dir = cache_dir
         self._used: int | None = None  # bytes stored, once listed (used())
+        self.mirror: RemoteStorage | None = None  # also stores each file here when it has room (TwoStorages)
         self._used_lock = threading.Lock()
 
     # ---- what each service does ----
@@ -208,6 +209,11 @@ class RemoteStorage:
         with self._used_lock:
             if self._used is not None:
                 self._used += len(body)
+        if self.mirror is not None:
+            try:
+                self.mirror._upload(key, body)
+            except (StorageError, StorageFull, httpx.HTTPError) as e:  # the copy is only a spare
+                logging.getLogger(__name__).info("No %s copy of %s: %s", self.mirror.service, key, e)
 
     def local_path(self, key: str) -> Path:
         p = self.cache_dir / key
@@ -515,6 +521,10 @@ class TwoStorages:
         except (StorageError, httpx.HTTPError) as e:
             logging.getLogger(__name__).error("New files stay in %s: %s", self.old.service, e)
             self.new = None
+            return
+        # new files get a spare copy in Supabase while it has room: readable on days Backblaze's free download cap is
+        # reached (Gabriele 2026-10-09: "Today I want to upload and access data")
+        self.new.mirror = self.old
 
     def save(self, data: bytes, suffix: str) -> str:
         return self.current.save(data, suffix)
