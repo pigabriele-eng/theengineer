@@ -20,7 +20,7 @@ import PrintButton from '@/components/PrintButton';
 import { RenameEvent } from '@/components/RenameEvent';
 import { ResultsPanel } from '@/components/ResultsPanel';
 import { RunNameQuestions } from '@/components/RunNames';
-import { byTouch, closesRows, RunPanel, SwipeRow, useRunActions } from '@/components/RunActions';
+import { byTouch, closesRows, DeleteLink, RunPanel, SwipeRow, useRunActions } from '@/components/RunActions';
 import { SeasonMatch } from '@/components/SeasonMatch';
 import {
   filledNote, localPick, PickerKind, RunChips, RunNameEditor, RunPicker, useEventDrivers, useGarage,
@@ -320,7 +320,7 @@ export default function EventScreen() {
   // (components/weekend/Laps.tsx). A suggestion tapped scrolls down to its comparison.
   const lapsTab = laps && eventId != null && (
     <View onLayout={(e) => (lapsY.current = e.nativeEvent.layout.y)}>
-      <WeekendLaps eventId={eventId} version={version}
+      <WeekendLaps eventId={eventId} version={version} onRunDeleted={runDeleted}
         onShow={(y) => scroll.current?.scrollTo({ y: Math.max(topH.current + lapsY.current + y - 12, 0), animated: true })} />
     </View>
   );
@@ -703,8 +703,8 @@ function DayHead({ days, date }: { days: Folder['days']; date: string | null }) 
 
 /** One run: tick it for side by side, tap its name to rename it in place, its driver to set it, its tyres to change
  * them (the four levels open under it), its best lap (a purple block for the event's best, else a red bar for the gap
- * to it) or its laps to open it. Swiped left it shows Delete; held, a menu of Delete, Change driver, Rename and Tyres
- * (components/RunActions.tsx; Tyres opens the same four levels). */
+ * to it) or its laps to open it, and Delete under its best lap. Swiped left it shows Delete too; held, a menu of
+ * Delete, Change driver, Rename and Tyres (components/RunActions.tsx; Tyres opens the same four levels). */
 function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, editing, onEdit, onSaved, garage,
   eventDrivers, open, onOpen, onPick, note, onNoteClose, guess, guessMode, inEvent, onDeleted, tags }: {
   s: Run;
@@ -782,6 +782,7 @@ function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, e
           {/* while the name is edited, the editor takes the row's width. Link asChild hands its child's style to a web
               anchor, which can't take a style array: one object */}
           {!editing && (
+            <View style={styles.runEnd}>
             <Link href={href} asChild>
               <Pressable style={styles.runBest} accessibilityRole="link" accessibilityLabel={`Open ${s.name}`}
                 {...run.hold} {...run.a11y}>
@@ -804,6 +805,9 @@ function SessionRow({ s, no, color, eventBest, maxGap, picked, full, onToggle, e
                 )}
               </Pressable>
             </Link>
+            {/* Delete in sight (Gabriele, 2026-10-09: "i still do not see a way to quickly remove runs") */}
+            <DeleteLink run={run} name={s.name} />
+            </View>
           )}
         </View>
       </SwipeRow>
@@ -888,7 +892,8 @@ const useStyles = themed((c) => ({
   pencil: { fontFamily: Fonts.label, fontSize: 13, color: c.textMuted },
   runSub: { fontFamily: face('label', 400), fontSize: 13, lineHeight: 17, color: c.textSecondary, marginTop: 8 },
   // the run opens from here: as tall as the row, and never under a tap target's height
-  runBest: { width: 96, alignItems: 'flex-end', alignSelf: 'stretch', minHeight: TAP },
+  runEnd: { width: 96, alignItems: 'flex-end', alignSelf: 'stretch' },
+  runBest: { width: 96, alignItems: 'flex-end', flexGrow: 1, minHeight: TAP },
   runTime: { fontFamily: Type.label.fontFamily, fontSize: 19, fontVariant: ['tabular-nums'], paddingHorizontal: 5,
     paddingVertical: 1, color: c.text },
   noLap: { fontFamily: face('label', 400), fontSize: 13, color: c.textMuted, paddingTop: 3 },

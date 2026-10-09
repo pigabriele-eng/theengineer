@@ -14,7 +14,7 @@ import {
 import { RenameEvent } from '@/components/RenameEvent';
 import { DriverTag } from '@/components/DriverTag';
 import { RunDriverLine } from '@/components/RunDriverLine';
-import { closesRows, RunPanel, SwipeRow, useRunActions } from '@/components/RunActions';
+import { closesRows, DeleteLink, RunPanel, SwipeRow, useRunActions } from '@/components/RunActions';
 import { filledNote, localPick, RunNameEditor, RunPicker, useEventDrivers, useGarage } from '@/components/RunChips';
 import { deletedLine } from '@/components/DeleteRuns';
 import { Said } from '@/components/Controls';
@@ -657,11 +657,7 @@ function RunRow({ s, no, best, maxGap, tag, driver, onDriver, onTyres, onChanged
           <View style={styles.runMoreDriver}>{driver}</View>
           {/* Delete in sight on every row (Gabriele, 2026-10-08: "still no way to quickly delete runs in the home
               page"): the same confirm as the swipe and the hold, under the row */}
-          <Pressable onPress={() => run.act('delete')} disabled={renaming} accessibilityRole="button"
-            accessibilityLabel={`Delete ${s.name}`} accessibilityHint="Asks first, under the run"
-            {...a11yState({ expanded: run.shown === 'delete' })} style={styles.runDelete}>
-            <Text style={styles.runDeleteText}>Delete</Text>
-          </Pressable>
+          <DeleteLink run={run} name={s.name} disabled={renaming} />
         </View>
       </SwipeRow>
       {renaming && (
@@ -768,8 +764,6 @@ const useStyles = themed((c) => ({
   runMore: { marginLeft: RUN_NO_W + 10, flexDirection: 'row', alignItems: 'center', gap: 8 },
   runMoreDriver: { flex: 1, minWidth: 0 },
   // the row's Delete: a 44 px target, quiet until wanted (the confirm under the row is where it turns red)
-  runDelete: { minHeight: TAP, minWidth: TAP, justifyContent: 'center', alignItems: 'flex-end', paddingLeft: 6 },
-  runDeleteText: { ...Type.link, fontSize: 13, color: c.textSecondary, textDecorationLine: 'underline' },
   runPicker: { marginTop: 10 },
   deleted: { marginBottom: 14, maxWidth: 640 },
   runSaid: { fontFamily: Fonts.body, fontSize: 14, lineHeight: 19, color: c.textSecondary, borderLeftWidth: 3,

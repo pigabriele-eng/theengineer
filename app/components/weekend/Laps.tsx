@@ -6,11 +6,13 @@
 // only), each with the corners where most of the gap is and what the technique check found wrong there on the slower
 // lap; 02 to 05 the comparison itself, the first suggestion's already open (the laps, where the time is, the section
 // times, the traces); 06 the weekend's laps to pick by hand, each run with its tyres a tap to change
-// (components/TyreTag.tsx). A run's "Driver?" there and on the laps compared is a tap to set (components/DriverPick.tsx).
+// (components/TyreTag.tsx). A run's "Driver?" there and on the laps compared is a tap to set (components/DriverPick.tsx);
+// its Delete in sight asks first under it, as on the run rows (components/RunActions.tsx).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, LayoutChangeEvent, Pressable, StyleSheet } from 'react-native';
 
 import { CompareTraces, LineKey, SectionTable, useLapColors, WhereTheTimeIs } from '@/components/CompareViews';
+import { DeleteLink, RunPanel, useRunActions } from '@/components/RunActions';
 import { ErrorLine, Note } from '@/components/Controls';
 import { DriverPick, useDriverPick } from '@/components/DriverPick';
 import { DriverTag } from '@/components/DriverTag';
@@ -27,6 +29,7 @@ import {
 } from '@/lib/lapsFirst';
 import { poll } from '@/lib/poll';
 import { DETECTED_CORNERS_NOTE } from '@/lib/api';
+import { RunsDeleted } from '@/lib/deleteRuns';
 import { a11yState } from '@/lib/a11yState';
 import { face, Fonts, TAP, themed, Type, useTheme } from '@/constants/Theme';
 
@@ -39,11 +42,13 @@ const tag = (driver: string | null) => (driver ? { text: codeOf(driver)!, kind: 
   : { text: 'Driver?', kind: 'none' as const, name: null });
 
 /** The Laps tab. `onShow(y)`: scroll the page to y within the tab (the comparison, once a suggestion is tapped).
- * `version`: the page's reads of the event's runs (their tyres are read again with them). */
-export default function WeekendLaps({ eventId, onShow, version }: {
+ * `version`: the page's reads of the event's runs (their tyres are read again with them). `onRunDeleted`: a run
+ * deleted from its laps (the page reads the event again and says so). */
+export default function WeekendLaps({ eventId, onShow, version, onRunDeleted }: {
   eventId: number;
   onShow?: (y: number) => void;
   version?: number;
+  onRunDeleted?: (d: RunsDeleted) => void;
 }) {
   const styles = useStyles();
   const tyreTags = useTyreTags(eventId, version);
@@ -54,6 +59,15 @@ export default function WeekendLaps({ eventId, onShow, version }: {
   const [own, setOwn] = useState<LapPick[]>([]);
   const [driversSet, setDriversSet] = useState(0);
   const drivers = useDriverPick(eventId, () => setDriversSet((n) => n + 1));
+  const [deletes, setDeletes] = useState(0);
+  // a run deleted: its laps leave the picks and what is on show, the suggestions are asked again
+  const runDeleted = (d: RunsDeleted) => {
+    const gone = (l: LapPick) => d.deleted.includes(l.session_id);
+    setOwn((v) => v.filter((l) => !gone(l)));
+    setShown((v) => (v.kind === 'own' ? { kind: 'own', laps: v.laps.filter((l) => !gone(l)) } : v));
+    setDeletes((n) => n + 1);
+    onRunDeleted?.(d);
+  };
 
   // the suggestions, asked again while the server works out their corners or the technique check the mistakes at them
   // come from is worked out (lib/poll.ts), and after a pick on a run's tyres or driver (they pair laps like with like,
@@ -67,7 +81,7 @@ export default function WeekendLaps({ eventId, onShow, version }: {
   }, (e) => {
     if (live()) setError((e as Error).message);
     return true;
-  })), [eventId, picks, driversSet]);
+  })), [eventId, picks, driversSet, deletes]);
 
   const suggestions = answer?.suggestions ?? [];
   const picked = shown.kind === 'suggestion' ? suggestions[shown.index] ?? null : null;
@@ -149,7 +163,7 @@ export default function WeekendLaps({ eventId, onShow, version }: {
       </View>
 
       <PickYourOwn sessions={answer?.sessions ?? null} picks={own} onPicks={setOwn} tags={tyreTags}
-        drivers={drivers} onCompare={() => show({ kind: 'own', laps: own })} />
+        drivers={drivers} onCompare={() => show({ kind: 'own', laps: own })} onDeleted={runDeleted} />
     </>
   );
 }
@@ -320,13 +334,14 @@ function Comparison({ laps, picked, data, error, waiting, answer, onTraces, driv
 
 // ---------- laps picked by hand ----------
 
-function PickYourOwn({ sessions, picks, onPicks, onCompare, tags, drivers }: {
+function PickYourOwn({ sessions, picks, onPicks, onCompare, tags, drivers, onDeleted }: {
   sessions: PickSession[] | null;
   picks: LapPick[];
   onPicks: (p: LapPick[]) => void;
   onCompare: () => void;
   tags: TyreTags;
   drivers: DriverPick;
+  onDeleted: (d: RunsDeleted) => void;
 }) {
   const styles = useStyles();
   // the latest session open, the others folded
@@ -354,7 +369,7 @@ function PickYourOwn({ sessions, picks, onPicks, onCompare, tags, drivers }: {
             <SubFoldHead title={p.title} facts={facts} open={opened.has(p.code)} onToggle={() => toggle(p.code)}
               what={`the laps of ${p.title}`} />
             {opened.has(p.code) && p.runs.map((r) => (
-              <RunLaps key={r.id} run={r} picks={picks} tags={tags} drivers={drivers}
+              <RunLaps key={r.id} run={r} picks={picks} tags={tags} drivers={drivers} onDeleted={onDeleted}
                 onToggle={(lap) => onPicks(toggleLap(picks, { session_id: r.id, lap }, MAX_LAPS))} />
             ))}
           </View>
@@ -377,15 +392,18 @@ function PickYourOwn({ sessions, picks, onPicks, onCompare, tags, drivers }: {
   );
 }
 
-function RunLaps({ run, picks, onToggle, tags, drivers }: {
+function RunLaps({ run, picks, onToggle, tags, drivers, onDeleted }: {
   run: PickRun;
   picks: LapPick[];
   onToggle: (lap: number) => void;
   tags: TyreTags;
   drivers: DriverPick;
+  onDeleted: (d: RunsDeleted) => void;
 }) {
   const styles = useStyles();
   const theme = useTheme();
+  // only its Delete here: the driver and the tyres have their own taps on the line, renaming is the run rows'
+  const actions = useRunActions({ onDriver: () => drivers.toggle(run.id), onRename: () => undefined });
   const clean = run.laps.filter((l) => l.clean);
   const best = clean.length ? clean.reduce((a, b) => (b.time < a.time ? b : a)).number : null;
   const full = picks.length >= MAX_LAPS;
@@ -397,7 +415,9 @@ function RunLaps({ run, picks, onToggle, tags, drivers }: {
         {/* the tyres a tap to change, as on the run rows; the suggestions' own words until they are read */}
         {tags.rowOf(run.id) ? <TyreTag tags={tags} id={run.id} run={run.name} />
           : <Text style={styles.pickRunTyres}>{tyreWords(run)}</Text>}
+        <DeleteLink run={actions} name={run.name} style={styles.pickRunDelete} />
       </View>
+      <RunPanel run={actions} id={run.id} name={run.name} inEvent onDeleted={onDeleted} style={styles.lapPicker} />
       <TyreChoices tags={tags} id={run.id} name={run.name} />
       {drivers.panel({ id: run.id, name: run.name, driver_id: run.driver_id, driver: run.driver }, styles.lapPicker)}
       <View style={styles.lapChoices}>
@@ -455,6 +475,7 @@ const useStyles = themed((c) => ({
   pickRunHead: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: 10, rowGap: 4 },
   pickRunName: { fontFamily: Type.label.fontFamily, fontSize: 17, letterSpacing: 0.3, color: c.text, flexShrink: 1 },
   pickRunTyres: { fontFamily: face('label', 400), fontSize: 16, color: c.textSecondary },
+  pickRunDelete: { marginLeft: 'auto', alignSelf: 'center' },
   lapChoices: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 10 },
   pickBar: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 22, rowGap: 12, marginTop: 18,
     borderTopWidth: 3, borderColor: c.rule, paddingTop: 12 },
