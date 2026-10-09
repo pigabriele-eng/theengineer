@@ -555,7 +555,8 @@ function TractionControl({ data, c }: { data: GripResult; c: ChartColors }) {
       )}
       {sw && (
         <Text style={styles.caption}>
-          The TC switch ({sw.channel}) was at {sw.positions.join(', ')} in these laps. What each position does is not known
+          The TC switch ({sw.channel}) was at {sw.positions.join(', ')} in these laps. On the M4 GT4 a higher number
+          is earlier and more traction control
           {sw.vs_tc
             ? sw.vs_tc.p < 0.05
               ? `; TC time follows it (r ${signedR(sw.vs_tc.r)}).`
