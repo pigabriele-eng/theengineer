@@ -235,7 +235,11 @@ def test_an_import_is_prebuilt_and_every_page_then_opens_at_once(client, monkeyp
     (ev,) = [e["id"] for e in client.get("/events").json()]
     sids = job["session_ids"]
     with app_db.SessionLocal() as db:
-        upload_pieces = set(prebuild.pieces(db, sids))
+        ordered = prebuild.pieces(db, sids)
+        upload_pieces = set(ordered)
+    # the new runs' lap packs right after their traces, before the reports: a comparison of the new run opens first
+    # (Gabriele 2026-10-09: "uploaded a run but taking forever to compare")
+    assert ordered[len(sids)] == ("lap packs", (tuple(sids),)) and ordered[len(sids) + 1][0] == "report"
     for sid in sids:
         assert {f"session:{sid}|{p}" for p in ("analysis", "map", "shape", "tyreprep")} <= _scopes()
         assert f"session:{sid}|insights" not in _scopes()  # no page asks for them
