@@ -1,4 +1,5 @@
 """Debriefs: typed points, and voice recordings that are transcribed and structured in the background."""
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -49,7 +50,8 @@ def create_debrief(session_id: int, body: schemas.DebriefIn, db: Session = Depen
 @router.post("/sessions/{session_id}/debriefs/audio", response_model=schemas.DebriefOut, status_code=202)
 def record_debrief(session_id: int, audio: UploadFile, background: BackgroundTasks,
                    mode: models.DebriefMode = Form(models.DebriefMode.individual),
-                   language: str = Form("en"), db: Session = Depends(get_db)):
+                   language: str = Form("en"), live_transcript: str | None = Form(None),
+                   db: Session = Depends(get_db)):
     """Saves the recording first, then transcribes and structures it in the background.
 
     If processing fails (for example the API keys are not set yet), the recording is kept and
@@ -61,12 +63,32 @@ def record_debrief(session_id: int, audio: UploadFile, background: BackgroundTas
         raise HTTPException(415, f"Unsupported audio type '{ext}'. Supported: {', '.join(sorted(AUDIO))}")
     if language not in LANGUAGES:
         raise HTTPException(422, f"Language must be one of {', '.join(LANGUAGES)}")
+    live = _live(live_transcript)
     key = storage.save(audio.file.read(), ext)  # a plain def: storing may be a network call
+    _keep_live(db, key, live)
     d = models.Debrief(session=s, mode=mode, language=language, audio_path=key, status=models.DebriefStatus.queued)
     db.add(d)
     db.commit()
     background.add_task(process_debrief, d.id)
     return schemas.DebriefOut.of(d)
+
+
+def _live(text: str | None) -> list[dict] | None:
+    """What the phone wrote down while recording: [{"start", "end", "text"}], seconds into the recording."""
+    if not text:
+        return None
+    try:
+        rows = json.loads(text)
+        out = [{"start": round(float(r.get("start") or 0), 2), "end": round(float(r.get("end") or 0), 2),
+                "text": str(r["text"]).strip()[:2000]} for r in rows if str(r.get("text") or "").strip()]
+    except (ValueError, TypeError, KeyError, AttributeError):
+        raise HTTPException(422, "Can't read what the phone wrote down while recording") from None
+    return out[:2000] or None
+
+
+def _keep_live(db: Session, key: str, live: list[dict] | None) -> None:
+    if live:
+        db.add(models.LiveTranscript(audio_path=key, segments=live))
 
 
 def _when(text: str | None) -> datetime:
@@ -94,7 +116,7 @@ def _waiting_out(rec: models.DebriefRecording) -> dict:
 @router.post("/debriefs/audio", status_code=202)
 def record_for_last_run(audio: UploadFile, mode: models.DebriefMode = Form(models.DebriefMode.individual),
                         language: str = Form("en"), recorded_at: str | None = Form(None),
-                        db: Session = Depends(get_db)):
+                        live_transcript: str | None = Form(None), db: Session = Depends(get_db)):
     """A recording for the run that ended just before it (debrief/inbox.py): it joins that run now if its log is
     in, else waits and joins it after the upload that brings it. recorded_at: when the recording started, local
     time on the phone ("2026-10-09T14:32:05"); now when not given.
@@ -107,7 +129,9 @@ def record_for_last_run(audio: UploadFile, mode: models.DebriefMode = Form(model
     if language not in LANGUAGES:
         raise HTTPException(422, f"Language must be one of {', '.join(LANGUAGES)}")
     when = _when(recorded_at)
+    live = _live(live_transcript)
     key = storage.save(audio.file.read(), ext)
+    _keep_live(db, key, live)
     rec = models.DebriefRecording(audio_path=key, filename=(audio.filename or "")[:255] or None, mode=mode,
                                   language=language, recorded_at=when)
     db.add(rec)

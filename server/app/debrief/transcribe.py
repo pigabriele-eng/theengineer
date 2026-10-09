@@ -48,7 +48,8 @@ class Transcript:
 def transcribe(path: Path, language: str = "en", key_terms: list[str] | None = None) -> Transcript:
     key = os.environ.get("DEEPGRAM_API_KEY")
     if not key:
-        raise NotConfigured("Speech to text isn't set up yet: DEEPGRAM_API_KEY is missing on the server")
+        raise NotConfigured("This recording wasn't written down while it was recorded, and speech to text for "
+                            "recordings isn't set up yet (DEEPGRAM_API_KEY is missing on the server)")
     params: list[tuple[str, str | bool]] = [
         ("model", "nova-3"), ("language", LANGUAGES.get(language, "multi")),
         ("smart_format", "true"), ("diarize", "true"), ("utterances", "true"),
