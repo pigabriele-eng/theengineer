@@ -8,8 +8,8 @@ import { Platform, useWindowDimensions } from 'react-native';
 
 import { WIDE } from '@/constants/Theme';
 
-import { whenOf } from '@/lib/calendar';
-import { FolderSummary } from '@/lib/events';
+import { todayIso, whenOf } from '@/lib/calendar';
+import { eventsApi, FolderSummary } from '@/lib/events';
 import { nextWeekend, weekendsOf } from '@/lib/weekendOpen';
 
 // 'list': opened on the event list and the event that's on not looked for yet; 'done': opened on another page, or
@@ -66,4 +66,21 @@ export function currentEvent(folders: FolderSummary[], today: string): FolderSum
     return (b.id ?? 0) - (a.id ?? 0);
   });
   return on[0] ?? null;
+}
+
+/** "Go to data" on the phone's Debrief page: the race weekend that's on (else the next one within 14 days), else the
+ * list of weekends. */
+export async function goToData(): Promise<void> {
+  try {
+    const weekends = weekendsOf(await eventsApi.folders());
+    const today = todayIso();
+    const ev = currentEvent(weekends, today) ?? nextWeekend(weekends, today);
+    if (ev) {
+      router.push({ pathname: '/event/[id]', params: { id: ev.key } });
+      return;
+    }
+  } catch {
+    // the list then
+  }
+  router.push('/');
 }

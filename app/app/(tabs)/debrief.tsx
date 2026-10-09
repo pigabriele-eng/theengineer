@@ -23,9 +23,10 @@ import {
   Session,
   WaitingRecording,
 } from '@/lib/api';
+import { goToData } from '@/lib/openCurrent';
 import { fileRecordedAt, localTime, recordedLabel } from '@/lib/debriefTime';
 import { LiveSegment, speechLang, speechSupported, startLiveSpeech } from '@/lib/liveSpeech';
-import { face, Fonts, themed, useTheme } from '@/constants/Theme';
+import { face, Fonts, inkOn, themed, useTheme } from '@/constants/Theme';
 
 const MODES: [DebriefMode, string][] = [
   ['individual', 'One driver'],
@@ -73,6 +74,7 @@ export default function DebriefScreen() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [typing, setTyping] = useState(false);
+  const [full, setFull] = useState(false); // on a phone: the whole page instead of the one big button
   const [saved, setSaved] = useState<string | null>(null);
   const [waiting, setWaiting] = useState<WaitingRecording[]>([]);
   const [startedAt, setStartedAt] = useState<string | null>(null);
@@ -210,6 +212,56 @@ export default function DebriefScreen() {
   const typedFor = byTime ? sessions[0]?.id ?? null : sessionId;
   const runName = (s: Session) => s.name ?? `Session ${s.id}`;
 
+  const liveBlock = Platform.OS === 'web' && rec.isRecording && (canHear ? (
+          <View style={styles.live} accessibilityLiveRegion="polite" aria-live="polite">
+            <Label small>Writing down what you say</Label>
+            <Text style={styles.liveText}>
+              {heard.finals.map((f) => f.text).join(' ')}
+              {heard.interim ? <Text style={styles.liveInterim}>{`${heard.finals.length ? ' ' : ''}${heard.interim}`}</Text> : null}
+              {!heard.finals.length && !heard.interim ? <Text style={styles.liveInterim}>Listening…</Text> : null}
+            </Text>
+          </View>
+        ) : (
+          <Text style={StyleSheet.flatten([styles.liveNote, styles.gapTop])}>
+            This browser can't write down speech. The recording is kept and written up once speech to text is set up.
+          </Text>
+        ));
+
+  // On a phone, opened as the app's first page or from the record key: one big red button, and a way to the data
+  // (Gabriele, 2026-10-09). The choices keep their defaults (the last run by time, one driver) until More options.
+  if (!wide && asked == null && !full) {
+    const recording = rec.isRecording;
+    return (
+      <Page keyboardShouldPersistTaps="handled">
+        <View style={styles.quick}>
+          <Pressable accessibilityRole="button" accessibilityLabel={recording ? 'Stop and send' : 'Record a debrief'}
+            disabled={busy} onPress={recording ? stop : start}
+            style={StyleSheet.flatten([styles.bigKey, recording && styles.bigKeyOn, busy && styles.dim])}>
+            {recording ? <View style={styles.bigStop} /> : null}
+            <Text style={StyleSheet.flatten([styles.bigLabel, { color: inkOn(recording ? theme.text : theme.mark) }])}>
+              {busy ? 'Sending…' : recording ? `Stop and send  ${clock(rec.durationMillis)}` : 'Record debrief'}
+            </Text>
+          </Pressable>
+          {busy && <ActivityIndicator color={theme.text} />}
+          {liveBlock}
+          {saved && <Text style={t.note}>{saved}</Text>}
+          {status && <Text style={t.error}>{status}</Text>}
+          {!recording && (
+            <Text style={t.note}>
+              {`Goes with the run that ended just before. ${MODES.find(([k]) => k === mode)?.[1]}, ${
+                LANGUAGES.find(([k]) => k === language)?.[1]}.`}
+              {waiting.length ? ` ${waiting.length} recording${waiting.length > 1 ? 's' : ''} waiting for a run.` : ''}
+            </Text>
+          )}
+          <View style={styles.quickLinks}>
+            <TextLink label="Go to data" onPress={goToData} arrow disabled={recording} />
+            <TextLink label="More options" onPress={() => setFull(true)} disabled={recording} />
+          </View>
+        </View>
+      </Page>
+    );
+  }
+
   return (
     <Page keyboardShouldPersistTaps="handled">
       <PageHead title="Debrief"
@@ -247,20 +299,7 @@ export default function DebriefScreen() {
             {busy && <ActivityIndicator style={styles.left} color={theme.text} />}
           </View>
         </View>
-        {Platform.OS === 'web' && rec.isRecording && (canHear ? (
-          <View style={styles.live} accessibilityLiveRegion="polite" aria-live="polite">
-            <Label small>Writing down what you say</Label>
-            <Text style={styles.liveText}>
-              {heard.finals.map((f) => f.text).join(' ')}
-              {heard.interim ? <Text style={styles.liveInterim}>{`${heard.finals.length ? ' ' : ''}${heard.interim}`}</Text> : null}
-              {!heard.finals.length && !heard.interim ? <Text style={styles.liveInterim}>Listening…</Text> : null}
-            </Text>
-          </View>
-        ) : (
-          <Text style={StyleSheet.flatten([styles.liveNote, styles.gapTop])}>
-            This browser can't write down speech. The recording is kept and written up once speech to text is set up.
-          </Text>
-        ))}
+        {liveBlock}
         <View style={styles.links}>
           <TextLink label="Upload a recording instead" onPress={pick} disabled={busy || rec.isRecording} />
         </View>
@@ -439,6 +478,13 @@ const useStyles = themed((c) => ({
   inputFocus: { borderWidth: 2, padding: 11 },
   waiting: { gap: 12, paddingVertical: 16, borderBottomWidth: 1, borderColor: c.separator },
   sure: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 20, rowGap: 8 },
+  quick: { gap: 20, paddingTop: 24, paddingBottom: 96 },
+  bigKey: { minHeight: 280, backgroundColor: c.mark, borderWidth: 3, borderColor: c.rule, alignItems: 'center',
+    justifyContent: 'center', gap: 18, padding: 20 },
+  bigKeyOn: { backgroundColor: c.text },
+  bigStop: { width: 56, height: 56, backgroundColor: c.mark },
+  bigLabel: { fontFamily: Fonts.display, fontSize: 40, lineHeight: 46, textTransform: 'uppercase', textAlign: 'center' },
+  quickLinks: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 28, rowGap: 12 },
   points: { borderTopWidth: 1, borderColor: c.rule },
   point: { gap: 3, paddingVertical: 10, borderBottomWidth: 1, borderColor: c.separator },
 }));
