@@ -44,7 +44,7 @@ export type Tyres = TyreLevel; // a lap's own tyres here are new or not ('new' |
  * a race Fresh, for sure); with how many of the event's clean laps it is compared with. */
 export type RunTyres = RunTyresLevel;
 
-export type InputRole = 'speed' | 'throttle' | 'brake' | 'steer' | 'gear' | 'rpm';
+export type InputRole = 'speed' | 'throttle' | 'brake' | 'steer' | 'gear' | 'rpm' | 'rear_slip' | 'tc_on';
 /** The driver's inputs at the speed trace's points (every step_m metres): throttle %, brake pressure, steering,
  * gear and revs as the log's channels for those roles have them; null (or missing, from an older check) where the log
  * has no such channel. */

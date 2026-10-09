@@ -49,7 +49,7 @@ PICKUP = 20.0  # % pedal: the throttle is back on
 PIT_SPEED_SHARE = 0.6  # over the line slower than this share of perfect driving's speed: the lap ends in the pits
 TRACE_STEP_M = 5
 # the driver's inputs sent with the trace: decimals
-INPUT_ROLES = {"throttle": 0, "brake": 1, "steer": 1, "gear": 0, "rpm": 0}
+INPUT_ROLES = {"throttle": 0, "brake": 1, "steer": 1, "gear": 0, "rpm": 0, "rear_slip": 1, "tc_on": 0}
 # perfect driving's own phases (model_phases): braking, at the grip limit (part throttle), full throttle; no coasting
 MODEL_PHASES = ("braking", "grip limit", "full throttle")
 
@@ -981,6 +981,41 @@ def _power_slide(tr: dict[str, np.ndarray], a: int, b: int, side: float,
     return None
 
 
+SPIN_PCT = 6.0  # % rear wheels faster than the fronts: wheelspin (what TC lets through when it cuts in, on our logs)
+TC_CUT_S = 0.1  # traction control cutting the power this long or longer: it is why the drive went
+
+
+def _traction(tr: dict[str, np.ndarray], a: int, b: int) -> dict:
+    """Wheelspin and traction control from metre a to b: TC's time cutting the power and where it started ("tc_s",
+    "tc_from", None without the TC channel), and the most the rear wheels spun ("spin_pct", "spin_at", None without
+    wheel speeds)."""
+    b = max(b, a + 1)
+    out: dict = {"tc_s": None, "tc_from": None, "spin_pct": None, "spin_at": None}
+    if "tc_on" in tr:
+        on = np.asarray(tr["tc_on"][a:b + 1], float) > 0.5
+        out["tc_s"] = float((_dt(tr)[a:b + 1] * on).sum())
+        out["tc_from"] = a + int(np.argmax(on)) if on.any() else None
+    if "rear_slip" in tr:
+        slip = np.asarray(tr["rear_slip"][a:b + 1], float)
+        k = int(np.argmax(slip))
+        out["spin_pct"], out["spin_at"] = float(slip[k]), a + k
+    return out
+
+
+def _traction_words(x: dict) -> str:
+    """What the wheelspin and TC did, for a mistake's text: "" when neither shows (or the log has neither)."""
+    parts = []
+    if x["tc_s"] is not None and x["tc_s"] >= TC_CUT_S:
+        parts.append(f"the traction control cut the power for {x['tc_s']:.2f} s from {x['tc_from']} m")
+    if x["spin_pct"] is not None and x["spin_pct"] >= SPIN_PCT:
+        parts.append(f"the rear wheels spun up to {x['spin_pct']:.0f}% faster than the fronts at {x['spin_at']} m")
+    return " and ".join(parts)
+
+
+def _rounded(x: dict) -> dict:
+    return {k: (round(v, 2) if isinstance(v, float) else v) for k, v in x.items()}
+
+
 def _median(x: np.ndarray) -> float:
     """np.median of a short array without NaN, to the last bit, without numpy's overhead on every call."""
     s = sorted(x.tolist())
@@ -1189,19 +1224,34 @@ def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Enve
                 drop = float(v[j] - v[j:e + 1].min())
                 how = f"dropped {drop:.0f} km/h" if drop >= 1 else "stopped climbing"
                 least = float(thr[j:e + 1].min())
+                grip = _traction(tr, j, e)
+                lost = _traction_words(grip)
+                title = f"Speed stalled on the exit of {c.code}"
+                do = ("Keep the car accelerating from the slowest point to the next brake point: open the steering "
+                      "and add throttle steadily; no lift, no scrub.")
                 if least < FULL_THROTTLE:
-                    why = f" with the throttle down to {least:.0f}%"
+                    why = f" with the throttle down to {least:.0f}%" + (f"; {lost}" if lost else "")
+                elif lost:
+                    tc = grip["tc_s"] is not None and grip["tc_s"] >= TC_CUT_S
+                    why = (f" at full throttle: {lost}, so the power wasn't reaching the road"
+                           if tc else f" at full throttle: {lost}, so the power went into wheelspin")
+                    title += ": traction control cut the power" if tc else ": wheelspin"
+                    do = ("Open the steering before the last of the throttle and squeeze it on as the car straightens, "
+                          "so the rear tyres can take the power: the less they spin, the less "
+                          + ("TC cuts." if tc else "drive is lost."))
                 elif st is not None and np.abs(st[j:e + 1]).max() >= 1.15 * abs(st[j]) + 0.5:
                     why = " at full throttle while the steering was wound on: the tyres scrubbed it off"
                 else:
-                    why = " at full throttle: the car slid or ran wide"
+                    none = [w for w, k in (("traction control", "tc_s"), ("wheelspin", "spin_pct"))
+                            if grip[k] is not None]
+                    why = (" at full throttle with no " + " and no ".join(none) + ": the car slid or ran wide"
+                           if none else " at full throttle: the car slid or ran wide (this log has no traction "
+                           "control or wheel speed channel to tell whether TC or wheelspin took the drive)")
                 what = (f"On the way out of {c.code} the speed was climbing ({was:.2f} g) and then {how} from {j} m "
                         f"to {e} m, at {v[j]:.0f} km/h,{why}, before any braking for the next corner. Speed that "
                         "stops building on the way out is lost all the way down the next straight.")
-                out.append(item("exit_stall", c, j, e, j, f"Speed stalled on the exit of {c.code}", what,
-                                "Keep the car accelerating from the slowest point to the next brake point: open the "
-                                "steering and add throttle steadily; no lift, no scrub.",
-                                gain_cost(tr, j, e, extra, stop, most)))
+                out.append(item("exit_stall", c, j, e, j, title, what, do, gain_cost(tr, j, e, extra, stop, most)))
+                out[-1]["traction"] = _rounded(grip)
             # ---- the rear stepping out under power: opposite lock on the throttle while still cornering
             slide = _power_slide(tr, a, b, side, steer_sign) if steer_sign else None
             if slide is not None:
@@ -1217,17 +1267,25 @@ def obvious_mistakes(tr: dict[str, np.ndarray], corners: list[Corner], env: Enve
                 for x in over:  # the slide is why: one mistake, named for its cause
                     out.remove(x)
                     cost = max(cost, x["cost_s"])
-                rs = (f", the rear slipping up to {float(np.max(tr['rear_slip'][j:e + 1])):.0f}%"
-                      if "rear_slip" in tr and np.max(tr["rear_slip"][j:e + 1]) > 0 else "")
-                tc = " with the traction control cutting in" if "tc_on" in tr and np.any(tr["tc_on"][j:e + 1] > 0.5) \
-                    else ""
+                grip = _traction(tr, j, upto)
+                lost = _traction_words(grip)
+                drop = float(was - np.min(acc[j:upto])) if upto > j else 0.0
+                if lost:
+                    how = f" On the way out {lost}" + (f", and the car's acceleration fell by {drop / 9.81:.2f} g"
+                                                       if drop > 0.5 else "") + "."
+                else:
+                    none = [w for w, k in (("traction control", "tc_s"), ("wheelspin", "spin_pct"))
+                            if grip[k] is not None]
+                    how = (" There was no " + " and no ".join(none) + " to speak of: the rear slid on cornering load, "
+                           "not on the power." if none else "")
                 what = (f"On the way out of {c.code} at full throttle the rear stepped out at {v[j]:.0f} km/h: from "
                         f"{lock_at} m you had to hold {lock:.0f}° of opposite lock while the car was still cornering "
-                        f"at {abs(float(ay[lock_at])):.1f} g{rs}{tc}. The drive the slide took is speed lost all "
-                        "the way down the next straight.")
+                        f"at {abs(float(ay[lock_at])):.1f} g.{how} The drive the slide took is speed lost all the way "
+                        "down the next straight.")
                 out.append(item("power_oversteer", c, j, upto, j, f"Oversteer on the power out of {c.code}", what,
                                 "Open the steering before adding the last of the throttle, and squeeze it on as the "
                                 "lock comes off, so the rear tyres are never asked for more than they have.", cost))
+                out[-1]["traction"] = _rounded(grip)
         # ---- the upshifts on the way out, early or late against the revs where the next gear drives harder
         if shifts is not None and c.pickup is not None:
             def gear_of(m: int) -> int:

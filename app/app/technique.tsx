@@ -342,7 +342,7 @@ export default function TechniqueScreen() {
 
       {check && answer && (
         <Section no={next()} title="On the track"
-          dek="The lap against your best real passes on the same tyres, the picked mistake close up, then the driver's inputs.">
+          dek="The picked mistake close up, then the whole lap: speed and the driver's inputs, with wheelspin and traction control where the log has them, against your best real passes on the same tyres.">
           <OnTheTrack answer={answer} check={check} selected={selected} onSelect={pick} sideBySide={sideBySide}
             cursor={cursor} onCursor={setCursor} />
         </Section>
@@ -400,8 +400,8 @@ const METHOD = [
   'Corners are named by their official numbers only.',
 ];
 
-/** The lap on the map and against the best real passes' speed (a close-up of the picked mistake, then the whole lap), with
- * the driver's inputs under the whole lap's speed. One cursor runs through every chart. */
+/** The lap's speed and the driver's inputs (with wheelspin and traction control) against the best real passes: a close-up
+ * of the picked mistake, then the whole lap. One cursor runs through every chart. */
 function OnTheTrack({ answer, check, selected, onSelect, sideBySide, cursor, onCursor: setCursor }: {
   answer: SessionTechnique; check: LapCheck; selected: number | null; onSelect: (n: number) => void;
   sideBySide: boolean; cursor: number | null; onCursor: (i: number | null) => void }) {
@@ -416,57 +416,66 @@ function OnTheTrack({ answer, check, selected, onSelect, sideBySide, cursor, onC
   const corners = answer.corners ?? [];
   const fastest = check.fastest;
   const scope = answer.scope === 'event' ? 'event' : 'session';
+  // the driver's inputs, with the speed on top: one set of charts for the close-up and for the whole lap
+  const inputsOf = (from?: number, to?: number) => tr?.inputs ? (
+    <TechniqueInputs stepM={tr.step_m} points={tr.driven.length}
+      inputs={{ ...tr.inputs, speed: tr.driven }}
+      fastest={fastest && !fastest.this_lap ? fastest.inputs : null}
+      fastestLabel={fastest && !fastest.this_lap
+        ? `Fastest lap: ${fastest.run} L${fastest.number} · ${formatLap(fastest.time)}` : null}
+      model={overlay === 'best' ? best : null}
+      modelLabel={OVERLAYS.find((o) => o.key === overlay)?.legend ?? null}
+      marks={check.obvious.map((m) => ({ at_m: m.at_m, code: m.code }))}
+      channels={answer.inputs} bands={bands} selected={selected} onSelect={onSelect}
+      corners={corners} from={from} to={to} cursor={cursor} onCursor={setCursor} tall={sideBySide} />
+  ) : null;
   return (
     <View style={styles.track}>
+      {fastest?.this_lap && (
+        <Text style={t.note}>
+          This is the {scope}&apos;s fastest lap, the one the report measures from: there is no quicker lap to lay
+          under it.
+        </Text>
+      )}
+      {tr?.inputs && best && (
+        <Tabs label="Laid over the lap, dashed" value={overlay} onChange={setOverlay} items={OVERLAYS} />
+      )}
+      {tr?.inputs && overlay === 'best' && best && <BestSources best={best} />}
       {tr && mistake && (
-        <TechniqueTrace stepM={tr.step_m} driven={tr.driven} best={best?.speed}
-          bands={bands} selected={selected} onSelect={onSelect} corners={corners}
-          from={mistake.start_m - CLOSE_UP_M} to={mistake.end_m + CLOSE_UP_M}
-          title={`Close-up of ${selected}. ${mistake.title} (${mistake.code})`} cursor={cursor} onCursor={setCursor} />
+        tr.inputs ? (
+          <View style={styles.inputs}>
+            <Text style={styles.subhead}>{`Close-up of ${selected}. ${mistake.title} (${mistake.code})`}</Text>
+            {inputsOf(mistake.start_m - CLOSE_UP_M, mistake.end_m + CLOSE_UP_M)}
+          </View>
+        ) : (
+          <TechniqueTrace stepM={tr.step_m} driven={tr.driven} best={best?.speed}
+            bands={bands} selected={selected} onSelect={onSelect} corners={corners}
+            from={mistake.start_m - CLOSE_UP_M} to={mistake.end_m + CLOSE_UP_M}
+            title={`Close-up of ${selected}. ${mistake.title} (${mistake.code})`} cursor={cursor} onCursor={setCursor} />
+        )
       )}
-      {/* the whole lap's speed and the inputs under it zoom together; the close-up zooms on its own */}
+      {/* the whole lap's charts zoom together; the close-up zooms on its own */}
       <ZoomGroup>
-      {tr ? (
-        <TechniqueTrace stepM={tr.step_m} driven={tr.driven} best={best?.speed}
-          bands={bands} selected={selected} onSelect={onSelect} corners={corners} height={sideBySide ? 260 : 240}
-          title="Speed over the whole lap" cursor={cursor} onCursor={setCursor} />
-      ) : (
+      {!tr ? (
         <Text style={t.note}>The speed trace of this lap isn&apos;t available; refresh to work it out.</Text>
-      )}
-      {tr && (
+      ) : tr.inputs ? (
         <View style={styles.inputs}>
-          <Text style={styles.subhead}>The driver&apos;s inputs</Text>
-          {fastest?.this_lap && (
-            <Text style={t.note}>
-              This is the {scope}&apos;s fastest lap, the one the report measures from: there is no quicker lap to lay
-              under it.
-            </Text>
-          )}
-          {tr.inputs && best && (
-            <Tabs label="Laid over the driver's inputs, dashed" value={overlay} onChange={setOverlay} items={OVERLAYS} />
-          )}
-          {tr.inputs && overlay === 'best' && best && <BestSources best={best} />}
-          {tr.inputs ? (
-            <TechniqueInputs stepM={tr.step_m} points={tr.driven.length}
-              inputs={overlay === 'best' && best ? { ...tr.inputs, speed: tr.driven } : tr.inputs}
-              fastest={fastest && !fastest.this_lap ? fastest.inputs : null}
-              fastestLabel={fastest && !fastest.this_lap
-                ? `Fastest lap: ${fastest.run} L${fastest.number} · ${formatLap(fastest.time)}` : null}
-              model={overlay === 'best' ? best : null}
-              modelLabel={OVERLAYS.find((o) => o.key === overlay)?.legend ?? null}
-              marks={check.obvious.map((m) => ({ at_m: m.at_m, code: m.code }))}
-              channels={answer.inputs} bands={bands} selected={selected} onSelect={onSelect}
-              corners={corners} cursor={cursor} onCursor={setCursor} tall={sideBySide} />
-          ) : (
-            <Text style={t.note}>This lap&apos;s inputs come with the new check, worked out in the background.</Text>
-          )}
+          <Text style={styles.subhead}>The whole lap</Text>
+          {inputsOf()}
         </View>
+      ) : (
+        <>
+          <TechniqueTrace stepM={tr.step_m} driven={tr.driven} best={best?.speed}
+            bands={bands} selected={selected} onSelect={onSelect} corners={corners} height={sideBySide ? 260 : 240}
+            title="Speed over the whole lap" cursor={cursor} onCursor={setCursor} />
+          <Text style={t.note}>This lap&apos;s inputs come with the new check, worked out in the background.</Text>
+        </>
       )}
       </ZoomGroup>
       <Text style={t.small}>
-        {Platform.OS === 'web' ? 'Hover over' : 'Drag across'} a chart to read the speeds and inputs at that point on
+        {Platform.OS === 'web' ? 'Hover over' : 'Drag across'} a chart to read the speed and inputs at that point on
         every chart; tap a numbered band or a mistake above to see it on the map and close up. {ZOOM_HINT} The whole
-        lap&apos;s speed and the inputs zoom together.
+        lap&apos;s charts zoom together.
       </Text>
     </View>
   );

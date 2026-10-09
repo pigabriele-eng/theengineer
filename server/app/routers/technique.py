@@ -53,7 +53,7 @@ from app.routers.sessions import official_corners
 router = APIRouter(prefix="/technique")
 log = logging.getLogger(__name__)
 
-TECHNIQUE_VERSION = 19  # raise when the check changes, so every kept one is worked out again
+TECHNIQUE_VERSION = 20  # raise when the check changes, so every kept one is worked out again
 # 5: perfect driving on a lap's own line at limits never below that lap's own (local_limits.on_own_line)
 # 6: the driver's inputs and perfect driving's phases with each lap's speed trace
 # 7: the obvious mistakes (exit lifts, power stepped on, soft straight-line braking); the theoretical lap never quicker
@@ -536,6 +536,10 @@ def run_job(scope: str) -> None:
         db.commit()
 
 
+# inputs worked out from a logger channel of another role: the one named for them
+INPUT_FROM = {"rear_slip": "wheel_rl", "tc_on": "tc"}
+
+
 def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tuple[dict, bytes]:
     """Every clean lap checked: their summaries and habits (kept in the database) and every lap's full check (a
     compressed file with one member per lap, so one lap is read without the rest)."""
@@ -547,8 +551,9 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
         if cs is not None and cs.n_laps:
             sessions.append((item.session.id, cs))
             for r in INPUT_ROLES:
-                if r in cs.traces and r in cs.sources:
-                    channels.setdefault(r, cs.sources[r])
+                src = cs.sources.get(INPUT_FROM.get(r, r))
+                if r in cs.traces and src:
+                    channels.setdefault(r, src)
     if not sessions:
         raise TechniqueError("No clean laps to check")
     sessions, left_out = reports._quickest(sessions)
