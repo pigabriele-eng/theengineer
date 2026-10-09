@@ -348,7 +348,9 @@ export default function DebriefScreen() {
   const session = sessions.find((s) => s.id === sessionId);
   const byTime = sessionId === BY_TIME;
   // typed points go with a real run: the newest when the run is left to be found by time
-  const typedFor = byTime ? sessions[0]?.id ?? null : sessionId;
+  // typed points go with the run picked for them (Gabriele, 2026-10-09), else the newest run
+  const [typedRun, setTypedRun] = useState<number | null>(null);
+  const typedFor = typedRun ?? (byTime ? sessions[0]?.id ?? null : sessionId);
   const runName = (s: Session) => s.name ?? `Session ${s.id}`;
 
   const recording = phase === 'recording';
@@ -495,10 +497,15 @@ export default function DebriefScreen() {
         </Section>
       )}
 
-      <Section no={waiting.length > 0 ? 4 : 3} title="Or type it" dek={byTime && sessions[0]
-        ? `Points written by hand, filed under the report's sections. They go with ${runName(sessions[0])}.`
-        : "Points written by hand, filed under the report's sections."}>
+      <Section no={waiting.length > 0 ? 4 : 3} title="Or type it"
+        dek="Points written by hand, filed under the report's sections, for the run you pick.">
         <TextLink label={typing ? 'Hide typed points' : 'Type points by hand'} onPress={() => setTyping((v) => !v)} />
+        {typing && (
+          <View style={styles.typedRun}>
+            <Tabs label="Goes with" value={typedFor} onChange={setTypedRun}
+              items={offered(sessions, typedFor).map((s) => ({ key: s.id, label: runName(s) }))} />
+          </View>
+        )}
         {typing && typedFor != null && <TypedPoints sessionId={typedFor} />}
       </Section>
 
@@ -648,6 +655,7 @@ const useStyles = themed((c) => ({
   liveInterim: { fontFamily: face('body', 400, true), color: c.textSecondary } as TextStyle,
   liveNote: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 22, color: c.textSecondary } as TextStyle,
   typed: { gap: 18, marginTop: 20, maxWidth: 760 },
+  typedRun: { marginTop: 20 },
   inputLabel: { marginBottom: 6 },
   input: { borderWidth: 1, borderColor: c.rule, borderRadius: 0, padding: 12, minHeight: 88, fontSize: 16, lineHeight: 22,
     fontFamily: Fonts.body, color: c.text, backgroundColor: c.background, textAlignVertical: 'top',
