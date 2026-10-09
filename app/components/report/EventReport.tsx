@@ -366,8 +366,9 @@ export default function EventReport({
     const ct = report.combined_theoretical;
     if (ct && ct.corners.length) {
       sections.push({ title: 'Corner by corner',
-        dek: `The combined theoretical (${formatLap(ct.time)}) takes the quickest pass of each corner from any of ` +
-          `these laps. What it does against a typical pass, and what that is worth, biggest first.`,
+        dek: `${report.condition?.label ? `${report.condition.label}, the` : 'The'} combined theoretical ` +
+          `(${formatLap(ct.time)}) takes the quickest pass of each corner from every lap on these tyres. What it ` +
+          'does against a typical pass, and what that is worth, biggest first.',
         body: <CombinedTheory report={report} onPick={showOnMap} /> });
     }
   }
