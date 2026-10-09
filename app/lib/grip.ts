@@ -79,8 +79,17 @@ export type TcZone = {
   time_cost_s: number;
   torque_cut_nm: number | null;
   points: [number, number, boolean][]; // TC s, speed 150 m on against the same entry speed (km/h), quick lap
-  passes_tc_off?: number; // laps TC was off here (the override or the switch): left out
-  override?: boolean; // M4 GT4 EVO: the kerb triggers TC here, a place to press TC override
+  passes_tc_off?: number; // laps TC was off here (the override or the switch): left out of the TC comparison
+  override?: boolean; // M4 GT4 EVO: the kerb triggers TC here and the override wasn't used: a place to try it
+  // M4 GT4 EVO: the laps with the override on through here against the laps with TC, at the same entry speed (time to
+  // the next braking point, override minus TC)
+  override_vs_tc?: {
+    passes_override: number;
+    passes_tc: number;
+    diff_s: number;
+    within_s: number | null;
+    clear: boolean;
+  } | null;
   note: string;
   advice: string;
 };

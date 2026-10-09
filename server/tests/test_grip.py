@@ -5,7 +5,8 @@ import json
 import numpy as np
 import pytest
 
-from app.analysis.grip import ROLES, GripStudy, _runs_of, partial, tc_words
+from app.analysis.grip import (ROLES, TRY_OVERRIDE, GripStudy, _override_headline, _override_vs_tc, _runs_of,
+                               _vs_words, partial, tc_words)
 from app.analysis.laps import load_session
 from app.importers.motec import read_ld
 from tests.synthetic import simulate, write_ld
@@ -193,46 +194,67 @@ def test_tc_level_is_the_dash_number_and_override_passes_are_left_out():
     assert r["channels"]["tc_switch"] == "NTCStatus"
     zone = next(z for z in tc["zones"] if z["start_m"] < 760 < z["end_m"])
     assert zone["passes_tc_off"] == 1 and zone["passes"] == len(PACES) - 1
-    assert "TC was off here on 1 other lap (the override or the switch): that pass is left out." in zone["note"]
+    vs = zone["override_vs_tc"]  # the lap with the override on through here, against the laps with TC
+    assert vs["passes_override"] == 1 and vs["passes_tc"] == len(PACES) - 1 and not vs["clear"]
+    assert f"1 lap with the override on through here against {len(PACES) - 1} with TC: " in zone["note"]
+    assert "not clear yet: it takes two laps of each." in zone["note"]
+    assert zone["advice"] == "Not clear yet whether the override pays here: more laps of each tell."
     row = next(x for x in r["laps"] if x["lap"] == off_lap)
     assert row["tc_off_s"] > 2 and row["tc_s"] is not None
     assert all(x["tc_off_s"] == 0 for x in r["laps"] if x["lap"] != off_lap)
     assert any("TC was off for part of 1 of" in n and "the TC override" in n for n in tc["notes"])
-    assert not zone["override"]  # no kerb triggers it
+    assert not zone["override"]  # no kerb triggers it, and the override was used here
 
 
-def test_where_to_press_tc_override():
-    """Gabriele, 2026-10-09: point out where the TC override should be used, on the EVO only ("useful on kerbs")."""
+def test_where_to_try_tc_override():
+    """Gabriele, 2026-10-09: "suggest areas where tc was never overridden but tc is triggered by curb riding", on the
+    EVO only."""
     channels, lap_times = simulate([0.97])
     channels = with_tc(channels, lap_times, base_m=30.0)
     evo = _bmw(channels, lap_times, lambda lap, m: np.full(len(lap), 12), kerb=True)
     for logs, expected in ((evo, True), ({k: v for k, v in evo.items() if k != "BSTW TC"}, False)):
-        ld = read_ld(write_ld(logs))
-        study = GripStudy()
-        study.add("Run 1", load_session(ld), ld)
-        r = study.report()
+        r = _study(logs)
         zone = next(z for z in r["tc"]["zones"] if z["start_m"] < 730 < z["end_m"])
-        assert zone["kerb_g"] >= 0.5 and zone["verdict"] == "unknown"
+        assert zone["kerb_g"] >= 0.5 and zone["verdict"] == "unknown" and zone["override_vs_tc"] is None
         assert zone["override"] is expected  # the earlier car has no override button
-        assert ("Press TC override just before the kerb here (EVO)" in zone["advice"]) is expected
-        assert any(h["key"] == "tc_override" for h in r["headlines"]) is expected
-    head = next(h for h in grip_headlines(evo) if h["key"] == "tc_override")
-    assert head["value"] == zone["where"]
-    assert head["action"] == f"Press TC override just before the kerb at {zone['where']}."
+        assert (zone["advice"] == TRY_OVERRIDE) is expected
+        heads = [h for h in r["headlines"] if h["key"] == "tc_override"]
+        assert bool(heads) is expected
+    assert heads == [] and expected is False
+    (head,) = [h for h in _study(evo)["headlines"] if h["key"] == "tc_override"]
+    assert head["value"] == zone["where"] and head["action"] == f"Try it just before the kerb at {zone['where']}."
 
 
-def grip_headlines(logs: dict) -> list[dict]:
+def _study(logs: dict) -> dict:
     ld = read_ld(write_ld(logs))
     study = GripStudy()
     study.add("Run 1", load_session(ld), ld)
-    return study.report()["headlines"]
+    return study.report()
 
 
-def test_override_advice_counts_the_laps_it_was_pressed():
-    z = {"passes_tc_off": 13, "passes": 2, "passes_tc": 2}
-    from app.analysis.grip import _override
-    assert _override(z) == ("Press TC override before the kerb here every lap (EVO): TC was already off here on 13 "
-                            "of 15 laps, and on 2 of the other 2 the kerb triggered TC.")
+def test_override_against_tc_at_the_same_entry_speed():
+    """Gabriele, 2026-10-09: "use the laps where tc was sometimes overridden to calculate laptime difference on
+    average. This should help inform if override is worth it"."""
+    tc = [{"v_in": 100 + i, "t_run": 5.0 - 0.02 * i + 0.01 * (i % 2)} for i in range(6)]
+    off = [{"v_in": 100.5 + i, "t_run": 4.9 - 0.02 * (i + 0.5) + 0.01 * (i % 2)} for i in range(5)]
+    vs = _override_vs_tc(tc, off)
+    assert vs["passes_override"] == 5 and vs["passes_tc"] == 6 and vs["clear"]
+    assert vs["diff_s"] == pytest.approx(-0.1, abs=0.01) and vs["within_s"] < 0.05
+    note, advice = _vs_words(vs)
+    assert note.startswith("5 laps with the override on through here against 6 with TC: 0.10 s quicker with the "
+                           "override to the next braking point, at the same entry speed.")
+    assert advice == "Press TC override here every lap: it was about 0.10 s quicker to the next braking point."
+    slower = _override_vs_tc(off, tc)
+    assert slower["clear"] and slower["diff_s"] > 0
+    assert _vs_words(slower)[1].startswith("Keep TC on here: the override was about 0.10 s slower")
+    one = _override_vs_tc(tc, off[:1])
+    assert not one["clear"] and one["within_s"] is None
+    assert _override_vs_tc(tc, []) is None and _override_vs_tc([], off) is None
+    head = _override_headline([{"where": "T7 exit", "override": False, "override_vs_tc": vs},
+                               {"where": "T3", "override": True, "override_vs_tc": None},
+                               {"where": "T9", "override": False, "override_vs_tc": slower}])
+    assert head["value"] == "≈ 0.10 s a lap"
+    assert head["action"] == "Press it every lap at T7 exit. Keep TC on at T9. Try it just before the kerb at T3."
 
 
 def test_logs_without_tc_say_so():

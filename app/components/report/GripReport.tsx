@@ -427,8 +427,12 @@ function TractionControl({ data, c }: { data: GripResult; c: ChartColors }) {
     );
   }
   const costly = tc.zones.filter((z) => z.verdict === 'cost' || z.verdict === 'minor');
-  // the zones of fewer than 4 laps say what TC does there from what laps there are
-  const shown = tc.zones.filter((z) => z.verdict === 'cost' || z.verdict === 'minor' || z.verdict === 'unknown');
+  // the zones of fewer than 4 laps say what TC does there from what laps there are; on the EVO, the zones where the
+  // override was used or is worth trying say so
+  const shown = tc.zones.filter(
+    (z) =>
+      z.verdict === 'cost' || z.verdict === 'minor' || z.verdict === 'unknown' || z.override || z.override_vs_tc != null,
+  );
   const top = costly.find((z) => z.points.length > 0);
   const laps = (data.laps ?? []).filter((l) => l.tc_s != null && l.rear_tyre_c != null);
   const temp = tc.vs_rear_temp;
