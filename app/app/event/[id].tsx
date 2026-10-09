@@ -305,7 +305,7 @@ export default function EventScreen() {
       <View style={styles.moreLinks}>
         <TextLink onPress={() => showPanel(panel === 'rename' ? null : 'rename')} label="Rename" small />
         <TextLink onPress={() => showPanel(panel === 'edit' ? null : 'edit')} label="Change dates" small />
-        <TextLink onPress={() => showPanel(panel === 'delete' ? null : 'delete')} label="Delete event" small />
+        <TextLink onPress={() => showPanel(panel === 'delete' ? null : 'delete')} label="Delete runs or event" small />
       </View>
     </View>
   );
@@ -361,7 +361,14 @@ export default function EventScreen() {
       )}
       {panel === 'delete' && eventId != null && (
         <DeleteEvent id={eventId} name={folder.name} onCancel={() => setPanel(null)}
-          onDeleted={() => router.replace('/')} />
+          onDeleted={(how, said) => {
+            if (how !== 'empty') return router.replace('/');
+            // its runs went, the event stays: said here, the page empty for the right logs
+            setPicks([]);
+            setPanel(null);
+            setNotice(said ?? null);
+            load();
+          }} />
       )}
       {panel === 'move' && picks.length > 0 && (
         <MoveSessions fromKey={key} count={picks.length} onMove={moveTo} onCancel={() => setPanel(null)} />

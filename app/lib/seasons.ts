@@ -192,6 +192,8 @@ export const seasonsApi = {
   update: (id: number, body: SeasonFields) => call<Season>(`/seasons/${id}`, send('PUT', body)),
   remove: (id: number) => call<{ deleted: number; events_removed: number }>(`/seasons/${id}`, { method: 'DELETE' }),
   fillEntry: (id: number, row: EntryRow) => call<Season>(`/seasons/${id}/fill-entry`, send('POST', row)),
+  // a round whose event was deleted gets one again: the event there on its days at its venue, else a new planned one
+  remakeEvent: (id: number, roundId: number) => call<Season>(`/seasons/${id}/rounds/${roundId}/event`, { method: 'POST' }),
   info: (eventId: number) => call<EventInfo>(`/events/${eventId}/info`),
 };
 

@@ -106,6 +106,8 @@ export type EventFields = { name?: string; start?: string | null; end?: string |
 export type EventSize = { event_id: number | null; name: string; runs: number; laps: number; logs: number; files: number;
   bytes: number | null };
 export type EventDeleted = Omit<EventSize, 'event_id'> & { deleted: number | null; rows: Record<string, number> };
+// Its runs deleted, the event kept, empty (server/app/run_delete.py): what went, as for a full delete.
+export type EventEmptied = Omit<EventSize, 'event_id'> & { event_id: number; kept: true; rows: Record<string, number> };
 
 export const eventsApi = {
   folders: () => call<FolderSummary[]>('/events/folders'),
@@ -118,6 +120,8 @@ export const eventsApi = {
   size: (id: number | typeof NO_EVENT) => call<EventSize>(id === NO_EVENT ? '/loose-runs/size' : `/events/${id}/size`),
   removeWithRuns: (id: number | typeof NO_EVENT) =>
     call<EventDeleted>(id === NO_EVENT ? '/loose-runs' : `/events/${id}?runs=delete`, { method: 'DELETE' }),
+  // its runs, their logs and everything kept for them, for good; the event stays, empty, for the right logs
+  removeRuns: (id: number) => call<EventEmptied>(`/events/${id}/runs`, { method: 'DELETE' }),
   // move sessions into an event, or out of their events with NO_EVENT
   move: (key: string, sessionIds: number[]) =>
     call<Folder>(`/events/${key}/sessions`, send('POST', { session_ids: sessionIds })),

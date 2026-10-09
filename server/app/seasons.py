@@ -549,6 +549,23 @@ def delete_season(season_id: int, db: Session = Depends(get_db)):
     return {"deleted": season_id, "events_removed": gone}
 
 
+@router.post("/seasons/{season_id}/rounds/{rnd}/event")
+def remake_event(season_id: int, rnd: int, db: Session = Depends(get_db)):
+    """A round whose event was deleted gets one again, as a new round does: the event already there on its days at
+    its venue, else a new planned event, empty, for its logs to go into. A round that has its event keeps it."""
+    s = _season(db, season_id)
+    with calendar_sync._lock:
+        r = db.get(SeasonRound, rnd)
+        if r is None or r.season_id != s.id:
+            raise HTTPException(404, "Round not found")
+        if _event_alive(db, r) is None:
+            taken = {x.event_id for x in rounds_of(db, s.id) if x.id != r.id and x.event_id is not None}
+            _attach(db, s, r, taken, calendar_sync._Events(db))
+        db.commit()
+    _match(db, s.id)
+    return season_row(db, s)
+
+
 # ---------- our entry from the series' entry list ----------
 
 class EntryRowIn(BaseModel):

@@ -312,3 +312,37 @@ def test_after_an_upload_the_form_is_filled_from_the_previous_event_of_the_same_
     assert (prev["event_id"], prev["tyre_kind_id"], prev["drivers"]) == (before, tyre["id"], [driver["id"]])
     assert client.get("/event-info/for-runs", params={"ids": "x"}).status_code == 422
     assert client.get(f"/events/{before}/info").json()["previous"] is None  # nothing before it
+
+
+def test_a_round_whose_event_was_deleted_gets_one_again(client):
+    rounds = [{"name": "Red Bull Ring", "venue": "Red Bull Ring", "start": "2026-08-14", "end": "2026-08-16"},
+              {"name": "Sachsenring", "venue": "Sachsenring", "start": "2026-09-04", "end": "2026-09-06"}]
+    season = client.post("/seasons", json={"name": "ADAC GT4 Germany 2026", "year": 2026, "rounds": rounds}).json()
+    rbr, other = season["rounds"]
+    first = rbr["event_id"]
+    assert client.delete(f"/events/{first}", params={"runs": "delete"}).status_code == 200
+    gone = client.get(f"/seasons/{season['id']}").json()["rounds"][0]
+    assert (gone["event_id"], gone["plan_id"], gone["made_event"]) == (None, None, False)
+
+    r = client.post(f"/seasons/{season['id']}/rounds/{rbr['id']}/event")
+    assert r.status_code == 200, r.text
+    back = r.json()["rounds"][0]
+    made = back["event_id"]
+    assert made not in (None, first) and back["made_event"] and back["plan_id"] is not None
+    folder = _folders(client)[made]
+    assert folder["name"] == "Red Bull Ring · ADAC GT4 Germany 2026"
+    assert (folder["start"], folder["end"]) == ("2026-08-14", "2026-08-16")
+    assert client.get(f"/events/{made}/info").json()["season"]["round"]["name"] == "Red Bull Ring"
+    # a round that has its event keeps it
+    again = client.post(f"/seasons/{season['id']}/rounds/{rbr['id']}/event").json()["rounds"]
+    assert [x["event_id"] for x in again] == [made, other["event_id"]]
+
+    # an event already there on the round's days at its venue is the one it gets
+    assert client.delete(f"/events/{made}", params={"runs": "delete"}).status_code == 200
+    there = _event(client, "Red Bull Ring test", "2026-08-14", "2026-08-15")
+    back = client.post(f"/seasons/{season['id']}/rounds/{rbr['id']}/event").json()["rounds"][0]
+    assert back["event_id"] == there and not back["made_event"]
+
+    assert client.post(f"/seasons/{season['id']}/rounds/99999/event").status_code == 404
+    another = client.post("/seasons", json={"name": "GT4 European Series 2026", "year": 2026}).json()
+    assert client.post(f"/seasons/{another['id']}/rounds/{rbr['id']}/event").status_code == 404

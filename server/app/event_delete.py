@@ -2,9 +2,10 @@
 entered for them.
 
 DELETE /events/{id}?runs=delete (routers/events.py hands it here; without runs=delete only the folder goes and its
-runs stay, under "Not in an event"); DELETE /loose-runs deletes the runs in no event the same way. GET /events/{id}/size
-(and GET /loose-runs/size) says first what it would remove: the runs, their laps,
-their logs, the stored files and the bytes they take in storage (as stored: logs are compressed on Supabase).
+runs stay, under "Not in an event"; DELETE /events/{id}/runs deletes its runs and keeps the event, empty:
+run_delete.py); DELETE /loose-runs deletes the runs in no event the same way. GET /events/{id}/size (and GET
+/loose-runs/size) says first what it would remove: the runs, their laps, their logs, the stored files and the bytes
+they take in storage (as stored: logs are compressed on Supabase).
 
 What goes is found from the tables' own description (the SQLAlchemy metadata), not from a list kept by hand, so a
 table added later is covered too:
@@ -57,9 +58,10 @@ KEEP: dict[tuple[str, str], dict] = {
 }
 STORED = {"logger_files": ("path",), "debriefs": ("audio_path",), "session_traces": ("path",),
           "lap_packs": ("path",), "technique_cache": ("details",)}  # columns holding storage keys
-# scope parts naming an event or a run: "event:3", "session:12", "event:3|car:...", "part:3:FP1" (an event's session)
-SCOPES = ("event", "session", "part")
-SCOPE_TABLES = {"event": "events", "session": "run_sessions", "part": "events"}
+# scope parts naming an event or a run: "event:3", "session:12", "event:3|car:...", "part:3:FP1" (an event's session),
+# "pick:3:<hash>" (runs of the event picked by hand: routers/reports.py)
+SCOPES = ("event", "session", "part", "pick")
+SCOPE_TABLES = {"event": "events", "session": "run_sessions", "part": "events", "pick": "events"}
 MENTION_KEYS = {"event_id": "events", "session_id": "run_sessions", "file_id": "logger_files"}
 CHUNK = 500  # ids per IN (...)
 SWEEP_WAIT_S = 1800  # longest the sweep waits for running analysis jobs
@@ -118,7 +120,7 @@ def scope_named(scope: str | None, doomed: dict[str, set[int]]) -> bool:
     """Whether a cache scope names an event or a run that goes: "event:3", "session:12", "event:3|car:logger:7"."""
     for part in (scope or "").split("|"):
         kind, _, value = part.partition(":")
-        value = value.split(":", 1)[0] if kind == "part" else value  # "part:3:FP1": event 3's FP1
+        value = value.split(":", 1)[0] if kind in ("part", "pick") else value  # "part:3:FP1": event 3's FP1
         if kind in SCOPE_TABLES and value.isdigit() and int(value) in doomed.get(SCOPE_TABLES[kind], ()):
             return True
     return False
