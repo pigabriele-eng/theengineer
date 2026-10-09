@@ -26,6 +26,7 @@ import {
 import { debriefText, DebriefHeader } from '@/lib/debriefText';
 import { driversApi } from '@/lib/drivers';
 import { poll } from '@/lib/poll';
+import { editable, readable } from '@/lib/transcriptText';
 import { face, Fonts, inkOn, Palette, themed, Type, useTheme } from '@/constants/Theme';
 
 // Status colours (good, warning, critical) mark the verdict next to its icon and label, never on their own.
@@ -280,9 +281,16 @@ export default function DebriefReport() {
           <TextLink label={showTranscript ? 'Hide transcript' : 'Show transcript'} onPress={() => setShowTranscript((s) => !s)} />
           {showTranscript && !editing && (
             <>
-              <Text style={StyleSheet.flatten([t.body, styles.transcript])}>{named(d.transcript, d.speakers)}</Text>
+              <View style={styles.transcript}>
+                {readable(d.transcript, d.speakers).map((p, i) => (
+                  <Text key={i} style={t.body}>
+                    {p.who ? <Text style={t.strong}>{`${p.who}: `}</Text> : null}
+                    {p.text}
+                  </Text>
+                ))}
+              </View>
               <TextLink label="Edit transcript" onPress={() => {
-                setDraft(d.transcript ?? '');
+                setDraft(editable(d.transcript ?? ''));
                 setEditing(true);
               }} disabled={pending} />
             </>
@@ -326,14 +334,6 @@ export default function DebriefReport() {
       <Colophon left="Debrief report" right={d ? day(d.created_at) : undefined} />
     </Page>
   );
-}
-
-// Transcript lines start with a speaker label ("S1: ..."); show who that is once it's known.
-function named(transcript: string, speakers: Debrief['speakers']) {
-  return transcript.replace(/^(S\d+):/gm, (label, key: string) => {
-    const sp = speakers?.[key];
-    return sp ? `${sp.name ?? sp.role}:` : label;
-  });
 }
 
 // What the logger recorded at the corner: the reference lap, and the best lap through it if different.
@@ -562,7 +562,7 @@ const useStyles = themed((c) => ({
   data: { ...Type.number, fontSize: 13, lineHeight: 19, color: c.textSecondary },
   dataLabel: { ...Type.label, fontSize: 11, color: c.text },
   groups: { marginTop: 20, gap: 6 },
-  transcript: { marginTop: 14, maxWidth: 760 },
+  transcript: { marginTop: 14, maxWidth: 760, gap: 12 },
   twoCols: { flexDirection: 'row', gap: 40, marginTop: 30, alignItems: 'flex-start' },
   oneCol: { gap: 28, marginTop: 26 },
   col: { flex: 1, minWidth: 0 },
