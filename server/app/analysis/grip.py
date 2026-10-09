@@ -15,6 +15,12 @@ entry speed: the speed 150 m later and the time to the next braking point say wh
 trims wheelspin while the driver pushes. One lap is enough to find the zones and what TC does in them; what it costs
 takes TC_FIT_LAPS laps through the zone.
 
+On the BMW M4 GT4 (EVO and the earlier car) the TC level is the one on the dash, read from the TC status (NTCStatus):
+a higher number cuts in earlier and more. Where TC wasn't at a level (the EVO's TC override button switches it off for
+about 10 s a press; TC switched off) a pass isn't read as one with little TC: it is left out of its zone, and the
+lap's TC is counted at the rate of the rest of the lap. On the EVO, a zone where a kerb strike starts TC is a place
+to press the override (Gabriele, 2026-10-09: "useful on kerbs").
+
 Many runs (a test day, an event) are read one at a time: each run's clean laps are placed on one track line and cut
 down to a dozen channels per metre (about 0.2 MB a lap) before the next run is read, so memory stays flat however
 many runs there are.
@@ -61,10 +67,12 @@ EXTRA = (
     ("engine_torque", ("MEngine", "Engine Torque", "TqEngine", "Torque"), False),
     ("g_vert", ("G Force Vert", "gVert", "Vertical Accel", "G Vert", "aVert"), False),
     ("tc_switch", ("NSTWThumbSlip", "TC Switch", "TC Map", "TC Setting", "TC Level"), True),
+    ("tc_status", ("NTCStatus",), True),  # BMW M4 GT4: read into tc_switch and tc_off (GripStudy._tc_status)
 )
+TC_OVERRIDE = "BSTW TC"  # the BMW M4 GT4 EVO's TC override button: logs that have it come from a car that has it
 # What a lap keeps once it is on the track line
 KEEP = ("speed", "ax", "ay", "throttle", "brake", "tc_on", "rear_slip", "steer_wheel", "steer", "rpm",
-        "engine_torque", "g_vert", "tc_switch", "turn_g", "az", "altitude")  # the last three: the road's shape
+        "engine_torque", "g_vert", "tc_switch", "tc_off", "turn_g", "az", "altitude")  # the last three: road shape
 STATE = ("tyre_t_rl", "tyre_t_rr", "tc_switch")  # kept per lap as the lap's median
 # The standard roles the math channels need; everything else is dropped before they are worked out
 MATH_IN = ("speed", "g_long", "g_lat", "yaw", "steer", "throttle", "brake", "lat", "lon", "tc",
@@ -197,11 +205,30 @@ class GripStudy:
                     channels[role] = np.interp(data.t, ct, cv)
                 self.sources.setdefault(role, ch.name)
                 self.units.setdefault(role, ch.unit)
+            status = channels.pop("tc_status", None)
+            if status is not None:
+                self._tc_status(channels, status, ld.channel(TC_OVERRIDE) is not None)
         for role, src in data.sources.items():
             self.sources.setdefault(role, src)
             if ld is not None and role not in self.units:
                 ch = ld.channel(src)
                 self.units[role] = ch.unit if ch is not None else ""
+
+    def _tc_status(self, channels: dict[str, np.ndarray], status: np.ndarray, override: bool) -> None:
+        """The BMW M4 GT4's TC status: 10 + the TC level on the dash while TC is at a level, 0 while the EVO's TC
+        override has it off, 30 with TC off, other values for a moment while it changes. The level is the dash number
+        (Gabriele, 2026-10-09: he runs 1 to 5) and takes the place of the thumb wheel, which isn't; while TC is off it
+        stays at the last level. tc_off: where TC wasn't at a level."""
+        status = np.rint(status)
+        at = (status >= 11) & (status <= 19)
+        channels.pop("tc_switch", None)
+        if at.any():
+            last = np.maximum.accumulate(np.where(at, np.arange(len(status)), -1))
+            channels["tc_switch"] = status[np.where(last < 0, int(np.argmax(at)), last)] - 10
+        channels["tc_off"] = (~at).astype(float)
+        self.sources["tc_switch"], self.units["tc_switch"] = "NTCStatus", ""
+        if override:
+            self.sources["tc_override"] = TC_OVERRIDE
 
     def add_laps(self, name: str, data: SessionData, driver: str | None = None) -> None:
         """add's second half: the math channels, then the run's clean laps on the track line."""
@@ -314,15 +341,27 @@ class Report:
             "run": x.run, "lap": x.number, "time": x.time, "quick": x in self.quick,
             "grip_use": _pct(_wmean(u, dt * (ph < POWER))),
             "phases": {name: _pct(_wmean(u, dt * (ph == p))) for p, name in GRIP_PHASES},
-            "tc_s": _r((dt * self.tc_active(x)).sum(), 2) if "tc_on" in x.trace else None,
+            "tc_s": None,
             "rear_tyre_c": _r(np.mean(rear), 1) if len(rear) == 2 else None,
             "tc_switch": round(st["tc_switch"]) if "tc_switch" in st else None,
         }
+        if "tc_on" in x.trace:
+            tc = float((dt * self.tc_active(x)).sum())
+            if "tc_off" in x.trace:  # TC off for part of the lap: counted at the rate of the rest of the lap
+                off = float((dt * (x.trace["tc_off"] > 0.5)).sum())
+                row["tc_off_s"] = _r(off, 1)
+                tc = tc * x.time / (x.time - off) if off < x.time / 2 else None
+            row["tc_s"] = _r(tc, 2)
         return row
 
     def tc_active(self, x: LapRecord) -> np.ndarray:
         on = x.trace["tc_on"] > 0.5
         return on & (x.trace["throttle"] > TC_THROTTLE) if "throttle" in x.trace else on
+
+    @staticmethod
+    def tc_at_level(x: LapRecord) -> np.ndarray:
+        """Where TC was at a level (not off, by the override or the switch)."""
+        return x.trace["tc_off"] <= 0.5 if "tc_off" in x.trace else np.ones(len(x.trace["t"]), bool)
 
     def _lap_grip(self, rows: list[dict]) -> dict:
         times = np.array([r["time"] for r in rows])
@@ -529,6 +568,7 @@ class TractionControl:
         self.rep = rep
         self.laps = [x for x in rep.laps if "tc_on" in x.trace]
         self.quick = [x for x in rep.quick if "tc_on" in x.trace]
+        self.override = "tc_override" in rep.s.sources  # the logs come from the EVO, which has the override button
 
     def build(self, rows: list[dict]) -> dict:
         if not self.laps:
@@ -541,7 +581,9 @@ class TractionControl:
             notes.append(f"{len(rep.laps) - len(self.laps)} of {len(rep.laps)} clean laps come from logs without the "
                          "TC channel and are left out of this part.")
         base = self.quick or self.laps
-        freq = _box(np.mean([rep.tc_active(x) for x in base], 0).astype(float), 11)
+        at = np.array([rep.tc_at_level(x) for x in base])  # each metre's share of the laps TC was at a level on
+        on = (np.array([rep.tc_active(x) for x in base]) & at).sum(0)
+        freq = _box(np.where(at.any(0), on / np.maximum(at.sum(0), 1), 0.0), 11)
         tq = self._torque_map()
         zones = [self._zone(a, b, freq, tq) for a, b in _runs_of(freq > TC_ZONE_SHARE, TC_ZONE_MIN_M, TC_ZONE_GAP_M)]
         zones = [z for z in zones if z is not None]
@@ -550,6 +592,12 @@ class TractionControl:
         out = {"available": True, "channel": rep.s.sources.get("tc"), "zones": zones,
                "lost_per_lap_s": _r(lost) if known else None, "_freq": freq[:n]}
         out.update(self._lap_links(rows, notes))
+        off = [r for r in rows if (r.get("tc_off_s") or 0) >= 0.5]
+        if off:
+            what = "the TC override or TC switched off" if self.override else "TC switched off"
+            notes.append(f"TC was off for part of {len(off)} of {len(rows)} laps ({what}). Where it was off, a pass "
+                         "isn't read as one with little TC: it is left out of that place, and the lap's TC is counted "
+                         "at the rate of the rest of the lap.")
         if not any("rear_slip" in x.trace for x in self.laps):
             notes.append("No wheel speeds (nWheelXX) in these logs, so wheelspin can't be measured.")
         if tq is None:
@@ -597,7 +645,11 @@ class TractionControl:
         n = rep.n
         a0, b0 = max(za - TC_BEFORE_M, 0), min(zb + TC_AFTER_M, n - 1)
         quick = {x.key for x in self.quick}
-        passes = [self._pass(x, a0, b0, tq) | {"quick": x.key in quick} for x in self.laps]
+        # a pass with TC off here (the override, the switch) says nothing of what TC does: left out
+        laps = [x for x in self.laps if rep.tc_at_level(x)[a0:b0].all()]
+        passes = [self._pass(x, a0, b0, tq) | {"quick": x.key in quick} for x in laps]
+        if not passes:
+            return None
         tct = np.array([p["tc_s"] for p in passes])
         hit = tct > TC_PASS_S
         if not hit.any():
@@ -630,6 +682,7 @@ class TractionControl:
             "start_m": za, "end_m": zb, "section": sec.code, "where": where, "verdict": verdict,
             "quick_share": _r(np.mean([p["tc_s"] > TC_PASS_S for p in qp])),
             "clean_share": _r(hit.mean()), "passes": len(passes), "passes_tc": int(hit.sum()),
+            "passes_tc_off": len(self.laps) - len(laps),
             "tc_s": _r(tc_mean, 2),
             "speed_in_kmh": _r(np.median(vin), 0), "speed_out_kmh": _r(med(passes, "v_out"), 0),
             "speed_per_tc_s": _r(speed["coef"], 2) if speed else None,
@@ -648,6 +701,9 @@ class TractionControl:
             "steer_unit": "°" if rep.s.units.get("steer_wheel" if "steer_wheel" in rep.s.sources else "steer",
                                                  "").lower().startswith("deg") else "",
         }
+        # on the EVO, TC the kerb triggers where it costs or may cost: a place for the override
+        z["override"] = bool(self.override and verdict in ("cost", "minor", "unknown")
+                             and z["kerb_g"] is not None and z["kerb_g"] >= KERB_G)
         z["note"], z["advice"] = tc_words(z)
         return z
 
@@ -783,20 +839,39 @@ def _spot_words(sp: dict, unit: str, harder_slower: str) -> str:
     return text + harder_slower
 
 
+def _override(z: dict) -> str:
+    """Where to press the EVO's TC override: before the kerb that triggers TC, every lap when it is pressed on some."""
+    off, n, k = z.get("passes_tc_off") or 0, z["passes"], z["passes_tc"]
+    if off:
+        return (f"Press TC override before the kerb here every lap (EVO): TC was already off here on {off} of "
+                f"{off + n} laps, and on {k} of the other {n} the kerb triggered TC.")
+    return ("Press TC override just before the kerb here (EVO): TC then stays out for about 10 s, so the kerb can't "
+            "cut the power.")
+
+
 def tc_words(z: dict) -> tuple[str, str]:
-    """The zone's finding and what to do about it."""
+    """The zone's finding and what to do about it, with the passes TC was off in."""
+    note, advice = _tc_words(z)
+    k = z.get("passes_tc_off") or 0
+    if k:
+        note += (f" TC was off here on {k} other lap{'s' if k != 1 else ''} (the override or the switch): "
+                 f"{'those passes are' if k != 1 else 'that pass is'} left out.")
+    return note, advice
+
+
+def _tc_words(z: dict) -> tuple[str, str]:
     share = round(100 * (z["quick_share"] or 0))
     v = z["verdict"]
     if v == "unknown":
         n, k = z["passes"], z["passes_tc"]
         slip = f", with {z['slip_pct']:.0f} % wheelspin when it starts" if z["slip_pct"] is not None else ""
         took = f", taking about {z['torque_cut_nm']:.0f} Nm" if z["torque_cut_nm"] is not None else ""
-        kerb = (f". It starts with a {z['kerb_g']:.2f} g vertical spike: the kerb sets it off"
+        kerb = (f". It starts with a {z['kerb_g']:.2f} g vertical spike: the kerb triggers it"
                 if z["kerb_g"] is not None and z["kerb_g"] >= KERB_G else "")
         why = (f"What it costs takes {TC_FIT_LAPS} laps through here, to compare passes with more TC and less."
                if n < TC_FIT_LAPS else "The passes are too alike to tell what it costs.")
         return (f"TC cuts in here on {k} of {n} lap{'s' if n != 1 else ''} for {z['tc_s']:.2f} s{slip}{took}{kerb}. "
-                + why, "")
+                + why, _override(z) if z.get("override") else "")
     if v == "pushing":
         return (f"TC cuts in on {share} % of quick laps. Passes with TC are as quick or quicker through here: it "
                 "is trimming wheelspin while you push.", "No change needed.")
@@ -805,15 +880,18 @@ def tc_words(z: dict) -> tuple[str, str]:
                 "No change needed.")
     slip = f", with {z['slip_pct']:.0f} % wheelspin when it starts" if z["slip_pct"] is not None else ""
     loss = f"Each second of TC leaves you {abs(z['speed_per_tc_s']):.1f} km/h down {TC_FAR_M} m later"
+    kerb = (f" It starts with a {z['kerb_g']:.2f} g vertical spike: the kerb triggers it."
+            if z["kerb_g"] is not None and z["kerb_g"] >= KERB_G else "")
     if v == "minor":
         return (f"TC cuts in on {share} % of quick laps for {z['tc_s']:.1f} s{slip}. {loss}, but no lap-time cost "
-                "shows before the next braking point.",
+                "shows before the next braking point." + (kerb if z.get("override") else ""),
+                _override(z) if z.get("override") else
                 "Let the car run out a little earlier so it is straighter when the throttle is fully open.")
     note = (f"TC cuts in on {share} % of quick laps for {z['tc_s']:.1f} s{slip}. {loss} and "
             f"{1000 * z['time_per_tc_s']:.0f} ms slower to the next braking point: about {z['time_cost_s']:.2f} s "
             "each time.")
-    if z["kerb_g"] is not None and z["kerb_g"] >= KERB_G:
-        return (note + f" It starts with a {z['kerb_g']:.2f} g vertical spike: the kerb sets it off.",
+    if kerb:
+        return (note + kerb, _override(z) + " Or keep the wheels off the kerb." if z.get("override") else
                 "Keep the wheels off the kerb on this exit, or be straight and settled before the car crosses it.")
     advice = []
     st, sn, u = z["steer_tc"], z["steer_no_tc"], z["steer_unit"]
@@ -876,6 +954,16 @@ def headlines(r: dict) -> list[dict]:
             out.append({"key": "tc_cost", "label": "Lost to traction control", "value": "none measured",
                         "detail": "Where TC cuts in, passes with more TC are no slower than passes with less.",
                         "action": "No change needed."})
+        places = [z for z in tc["zones"] if z.get("override")]
+        if places:
+            names = [z["where"] for z in places]
+            where = " and ".join([", ".join(names[:-1]), names[-1]] if len(names) > 1 else names)
+            out.append({"key": "tc_override", "label": "Where to use TC override",
+                        "value": places[0]["where"] if len(places) == 1 else f"{len(places)} exits",
+                        "detail": "The kerb triggers TC on " + ("this exit" if len(places) == 1 else "these exits")
+                                  + ": it starts with a vertical spike as the car hits the kerb, not with wheelspin. "
+                                  "On the EVO the TC override button keeps TC out for about 10 s.",
+                        "action": f"Press TC override just before the kerb at {where}."})
         within = tc.get("vs_rear_temp_within") is not None
         w = tc.get("vs_rear_temp_within") or tc.get("vs_rear_temp")
         if w is not None and w["p"] is not None and w["p"] < SIGNIFICANT and w["slope"] > 0:

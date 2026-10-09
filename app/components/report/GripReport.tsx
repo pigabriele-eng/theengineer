@@ -23,6 +23,9 @@ import { a11yState } from '@/lib/a11yState';
 import { ChartColors, Dumbbell, GgDiagram, GripMap, inkOn, LegendItem, ramp, Scatter, useChartColors } from './GripCharts';
 import { Fonts, legibleFill, TAP, tapRoom, themed, Type } from '@/constants/Theme';
 
+const UPDATE_EVERY_MS = 20000;
+const UPDATE_TRIES = 30;
+
 // bare: inside a report section that already names it, so without its own heading
 type Props = { session?: number; event?: number; bare?: boolean };
 
@@ -34,13 +37,24 @@ export function GripReport({ session, event, bare }: Props) {
   useEffect(() => {
     if (session == null && event == null) return;
     let live = true;
+    let tries = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     setData(null);
     setError(null);
-    fetchGrip({ session, event })
-      .then((r) => live && setData(r))
-      .catch((e) => live && setError((e as Error).message));
+    // a report worked out by the earlier version of the page comes marked updating while the server works out the
+    // new one: shown meanwhile, and asked for again until the new one is there
+    const load = () =>
+      fetchGrip({ session, event })
+        .then((r) => {
+          if (!live) return;
+          setData(r);
+          if (r.updating && ++tries < UPDATE_TRIES) timer = setTimeout(load, UPDATE_EVERY_MS);
+        })
+        .catch((e) => live && tries === 0 && setError((e as Error).message));
+    load();
     return () => {
       live = false;
+      clearTimeout(timer);
     };
   }, [session, event]);
 
@@ -90,6 +104,11 @@ function Report({ data, bare }: { data: GripResult; bare?: boolean }) {
           is the share of the car's grip limit in use while braking and cornering.
         </Text>
         {data.quickest_laps && <Text style={styles.dim}>{quickestLapsLine(data.quickest_laps)}</Text>}
+        {data.updating && (
+          <Text style={styles.dim}>
+            This report is being brought up to date with the newest version of the analysis. It refreshes by itself.
+          </Text>
+        )}
       </View>
 
       <View style={styles.tiles}>
@@ -563,8 +582,9 @@ function TractionControl({ data, c }: { data: GripResult; c: ChartColors }) {
       )}
       {sw && (
         <Text style={styles.caption}>
-          The TC thumb wheel ({sw.channel}) was at {sw.positions.join(', ')} in these laps: where the wheel sits, which
-          in the logs isn&apos;t always the TC number on the dash
+          {sw.channel === 'NTCStatus'
+            ? `TC level on the dash: ${sw.positions.join(', ')} in these laps (a higher number cuts in earlier and more)`
+            : `The TC thumb wheel (${sw.channel}) was at ${sw.positions.join(', ')} in these laps: where the wheel sits, which in the logs isn't always the TC number on the dash`}
           {sw.vs_tc
             ? sw.vs_tc.p < 0.05
               ? `; TC time goes with it (r ${signedR(sw.vs_tc.r)}).`

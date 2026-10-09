@@ -19,9 +19,10 @@ export type GripLap = {
   quick: boolean; // within 1 % of the best
   grip_use: number | null; // % of the car's grip, braking and cornering only
   phases: Record<PhaseKey, number | null>;
-  tc_s: number | null; // seconds of TC with the throttle open
+  tc_s: number | null; // seconds of TC with the throttle open (at the rate of the rest of the lap where TC was off)
+  tc_off_s?: number | null; // seconds TC was off (the EVO's TC override, or switched off)
   rear_tyre_c: number | null;
-  tc_switch: number | null;
+  tc_switch: number | null; // the TC level on the dash when the channel is NTCStatus (BMW M4 GT4), else the switch
 };
 
 export type Spot = {
@@ -78,6 +79,8 @@ export type TcZone = {
   time_cost_s: number;
   torque_cut_nm: number | null;
   points: [number, number, boolean][]; // TC s, speed 150 m on against the same entry speed (km/h), quick lap
+  passes_tc_off?: number; // laps TC was off here (the override or the switch): left out
+  override?: boolean; // M4 GT4 EVO: the kerb triggers TC here, a place to press TC override
   note: string;
   advice: string;
 };
@@ -137,6 +140,7 @@ export type GripResult = {
   map?: { x: number[]; y: number[]; step_m: number; grip_use: (number | null)[]; tc: (number | null)[] | null } | null;
   channels?: { accelerometers: boolean; tc: string | null; tyre_temps: boolean; brake_unit: string };
   quickest_laps?: QuickestLaps; // a long event is worked out from its quickest laps only
+  updating?: boolean; // worked out by the report's earlier version: the server is working out the new one
 };
 
 /** How many of how many clean laps a long event's report used (only there when it left some out). */

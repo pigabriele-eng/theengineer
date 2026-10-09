@@ -234,9 +234,12 @@ def _event_shape(eid: int) -> None:
     _with_db(lambda db: _quietly(trackshape.get_event_shape, eid, db))
 
 
-def _grip(kind: str, id_: int) -> None:
+def _grip(kind: str, id_: int, earlier: str = "keep") -> None:
+    """earlier: a report kept by the page's version before is left as it is (keep), or worked out again (build: it
+    was opened, and shown out of date meanwhile); see report_grip.grip_text."""
     from app.routers import report_grip
-    _with_db(lambda db: _quietly(report_grip.grip_report, *((id_, None) if kind == "session" else (None, id_)), db))
+    _with_db(lambda db: _quietly(report_grip.grip_text, db, *((id_, None) if kind == "session" else (None, id_)),
+                                 earlier))
 
 
 def _balance(kind: str, id_: int) -> None:
@@ -317,6 +320,13 @@ def warm(session_ids: list[int]) -> None:
             log.exception("Prebuild warm-up %s of runs %s failed", getattr(fn, "__name__", fn), session_ids)
 
 
+def refresh(items: list[Piece]) -> None:
+    """Work these out again before the start-up pass's pieces: a page that showed an answer out of date asks for them,
+    and asks for the page again once they are done."""
+    if enabled():
+        _put(UPLOAD, items)
+
+
 def register(fn: Callable[[list[int]], None]) -> Callable[[list[int]], None]:
     """Add a per-session warm-up: fn(session_ids) runs after the other pieces of an upload, and in the start-up pass."""
     if fn not in _warmers:
@@ -329,6 +339,7 @@ RUN: dict[str, Callable] = {
     "shape": _shape,
     "event map": _event_map, "event shape": _event_shape, "technique": _technique, "track grip": _track_grip,
     "tyre prep": _tyre_prep, "prep": _prep, "grip": _grip, "balance": _balance, "event stint": _event_stint,
+    "grip now": lambda kind, id_: _grip(kind, id_, "build"),
     "warm": lambda sids: warm(list(sids)),
     "lap packs": lambda sids: _lap_packs(list(sids)),
 }

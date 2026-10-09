@@ -35,7 +35,7 @@ from app.db import Base
 log = logging.getLogger(__name__)
 
 # Raise a page's version when what it answers changes, so every kept answer of that page is worked out again.
-VERSIONS = {"insights": 1, "analysis": 1, "compare": 1, "stint": 1, "map": 1, "shape": 1, "tyreprep": 1, "grip": 1,
+VERSIONS = {"insights": 1, "analysis": 1, "compare": 1, "stint": 1, "map": 1, "shape": 1, "tyreprep": 1, "grip": 2,
             "balance": 2, "tyreruns": 1}
 KEPT_ERRORS = (404, 422)  # answers that say what a log can't give (no lap, no GPS): the same log gives the same answer
 
@@ -80,6 +80,12 @@ def track_part(track: models.Track | None) -> list:
 
 def signature(page: str, *parts) -> str:
     return digest([page, VERSIONS[page], *parts])
+
+
+def earlier_signature(page: str, *parts) -> str:
+    """The signature the page's version before this one gave the same inputs: an answer kept under it is out of date
+    only because the page changed (report_grip shows it while the new one is worked out)."""
+    return digest([page, VERSIONS[page] - 1, *parts])
 
 
 def known_track(db: Session, s: models.RunSession, f: models.LoggerFile | None) -> models.Track | None:
