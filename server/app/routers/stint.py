@@ -27,6 +27,7 @@ from app.routers.drivers import main_file, session_track
 from app.routers.sessions import _channel_map, _get, _line, _track_for, official_corners, read_file
 from app.setup.models import SessionSetup
 from app.setup.sheet import VEHICLE_LINKS
+from app.timing import picks_part
 from app.vehicle.presets import preset_detail
 
 router = APIRouter()
@@ -83,7 +84,7 @@ def _car(db: Session, s: models.RunSession) -> tuple[str | None, tuple[float, st
 def _signature(f: models.LoggerFile, s: models.RunSession, preset: str | None, mass: tuple[float, str]) -> tuple:
     """Changes when the log is replaced, its laps are timed again or the car's values change."""
     laps = tuple((l.number, round(l.start_s, 2), round(l.time_s, 3), l.clean) for l in s.laps if l.file_id == f.id)
-    return (VERSION, f.id, f.path, laps, s.car_id, preset, round(mass[0], 1), s.name)
+    return (VERSION, f.id, f.path, laps, s.car_id, preset, round(mass[0], 1), s.name, *map(str, picks_part(f)))
 
 
 def _label(s: models.RunSession, f: models.LoggerFile) -> str:

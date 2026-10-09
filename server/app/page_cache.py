@@ -31,6 +31,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app import heavy, models
 from app.db import Base
+from app.timing import picks_part
 
 log = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ def log_part(s: models.RunSession, f: models.LoggerFile | None) -> list:
         return [s.id, None]
     laps = sorted((l.number, l.start_s, l.time_s, l.clean) for l in s.laps if l.file_id == f.id)
     return [s.id, s.name, s.driver.name if s.driver else None, f.id, f.path, f.meta.get("beacons"), laps,
-            s.car.channel_map if s.car else None]
+            s.car.channel_map if s.car else None, *picks_part(f)]
 
 
 def track_part(track: models.Track | None) -> list:

@@ -357,7 +357,7 @@ def _section(prep: Prepared, s: Section, prev: str | None, realistic, brake_unit
     flat = s.apex is None
     theo = _theoretical_values(prep, s, points)
     catalogue = (FLAT_HABITS if flat else HABITS) + points
-    habits, actions = [], []
+    habits, actions, combined = [], [], []
     for h in catalogue:
         st = _habit_stats(rows, h.key, times, runs, quick)
         if st is None:
@@ -383,6 +383,15 @@ def _section(prep: Prepared, s: Section, prev: str | None, realistic, brake_unit
         if big and (linked or unlinked) and (not h.outcome or h.key in ("exit_speed", "entry_speed")):
             actions.append({"key": h.key, "phase": h.phase, "worth": worth, "typical": t, "quick": q, "row": row,
                             "text": _sentence(h, t, q, brake_unit, prev)})
+        # what the combined theoretical (the quickest pass here) does differently from a typical pass, where that
+        # goes with a quicker section lap to lap (or the link can't be measured yet)
+        b = float(st["values"][best_i])
+        if (np.isfinite(b) and abs(b - t) >= need and (r is None or r * (b - t) < 0)
+                and (not h.outcome or (flat and h.key == "entry_speed"))):
+            spu = st["seconds_per_unit"]
+            combined.append({"key": h.key, "phase": h.phase, "typical": t, "quick": b,
+                             "worth": abs(spu * (b - t)) if spu is not None and r is not None else None,
+                             "text": _combined_sentence(h, t, b, brake_unit, prev)})
     by_phase = _phase_split(prep, s, quick, gain)
     # the most telling habits, told in the order they happen in the corner
     ranked = sorted(actions, key=lambda a: (-(a["worth"] or 0), PHASE_ORDER.index(a["phase"])))
@@ -417,11 +426,13 @@ def _section(prep: Prepared, s: Section, prev: str | None, realistic, brake_unit
                     "standing out: compare the speed traces")
     else:
         headline = None
+    best_t = float(times[best_i])
+    combined_out = {"run": laps[best_i].run, "lap": laps[best_i].number, "time": round(best_t, 3),
+                    "worth_s": round(max(typical_t - best_t, 0.0), 3), "advice": _combined_advice(combined)}
     habits.sort(key=lambda h: (not h["used"], {"strong": 0, "clear": 1}.get(h["link"], 2), -(h["worth_s"] or 0)))
     sim_t = float(prep.sim.t[s.end] - prep.sim.t[s.start])
     real_t = float(realistic.t[s.end] - realistic.t[s.start])
     fast_t = float(times[ref_i])
-    best_t = float(times[best_i])
     return {
         **s.to_dict(), "corners": s.corners, "flat": flat,
         "times": {"fastest_lap": round(fast_t, 3), "best": round(best_t, 3), "best_lap": laps[best_i].key,
@@ -437,10 +448,35 @@ def _section(prep: Prepared, s: Section, prev: str | None, realistic, brake_unit
         "headline": headline,
         "advice": [a["text"] for a in chosen],
         "habits": habits,
+        "combined": combined_out,
         "spread_s": round(float(np.percentile(times, 75) - np.percentile(times, 25)), 3),
         "_quick": quick,
         "_rows": rows,
     }
+
+
+def _combined_sentence(h: Habit, t: float, b: float, brake_unit: str, prev: str | None) -> str:
+    if h.key == "entry_speed":
+        where = f"the exit of {prev}" if prev else "the corner before"
+        return (f"Flat out: its time is set by {where}. The combined theoretical starts it at {b:.1f} km/h "
+                f"against {t:.1f}")
+    return _sentence(h, t, b, brake_unit, prev)
+
+
+def _combined_advice(found: list[dict]) -> list[str]:
+    """The combined theoretical's technique in a corner, against a typical pass: the differences worth the most
+    (then in the order they happen), at most MAX_ADVICE and at most MAX_SPEED_ADVICE of them speeds, told in the
+    order they happen in the corner."""
+    ranked = sorted(found, key=lambda a: (-(a["worth"] or 0), PHASE_ORDER.index(a["phase"])))
+    chosen, speeds = [], 0
+    for a in ranked:
+        if a["key"] == "min_speed" or a["key"].startswith("corner_speed_"):
+            speeds += 1
+            if speeds > MAX_SPEED_ADVICE:
+                continue
+        chosen.append(a)
+    chosen = sorted(chosen[:MAX_ADVICE], key=lambda a: PHASE_ORDER.index(a["phase"]))
+    return [a["text"] for a in _merge_release(chosen)]
 
 
 def _loss_line(sec: dict) -> str:
@@ -667,6 +703,11 @@ def build_report(prep: Prepared, extras: Extras | None = None, corners: list | N
                       "action": sec["headline"], "advice": sec["advice"],
                       "fastest_lap_to_best": sec["ladder"]["driving"]})
     where_total = {k: round(sum(sec["where"][k] for sec in sections), 3) for k in WHERE.values()}
+    # Gabriele, 2026-10-09: the "combined theoretical" (the quickest pass of each corner, from any of the laps) told
+    # as technique, corner by corner: what it does against a typical pass and what that is worth, biggest first
+    theory = sorted(({"code": sec["code"], **sec["combined"]} for sec in sections
+                     if sec["combined"]["advice"] and sec["combined"]["worth_s"] >= 0.02),
+                    key=lambda c: -c["worth_s"])
 
     # trends and consistency
     by_run: dict[str, list[LapRecord]] = {}
@@ -706,6 +747,7 @@ def build_report(prep: Prepared, extras: Extras | None = None, corners: list | N
         },
         "summary": summary,
         "gains": gains,
+        "combined_theoretical": {"time": round(ideal, 3), "typical": round(typical_lap, 3), "corners": theory},
         "where_total": where_total,
         "sections": sections,
         "trace": trace,

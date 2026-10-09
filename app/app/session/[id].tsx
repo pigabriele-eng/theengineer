@@ -18,7 +18,8 @@ import { SetupCard } from '@/components/SetupCard';
 import { Text, View } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
 import { UntimedNote } from '@/components/UntimedNote';
-import { Analysis, api, Debrief, DETECTED_CORNERS_NOTE, formatLap, prefetch, SessionDetail } from '@/lib/api';
+import { Analysis, api, Debrief, DETECTED_CORNERS_NOTE, formatLap, LapPick, prefetch, SessionDetail } from '@/lib/api';
+import { LapTypeMenu, LapTypeState, lapTypeWords, useLapType } from '@/components/LapType';
 import { encodePicks, MAX_LAPS } from '@/lib/compare';
 import { Tagged } from '@/lib/drivers';
 import { dayLabel, KIND_NAMES, sessionsInOrder } from '@/lib/events';
@@ -40,9 +41,9 @@ const metres = (m: number) => `${Math.round(m).toLocaleString('en-GB')} m`;
 // "T2-T5" -> "T2-5", "T8/T9" -> "T8/9": the official numbers, short enough for a column
 const shortCode = (code: string) => code.replace(/([-/])T/g, '$1');
 
-type Status = 'fastest' | 'clean' | 'out' | 'in' | 'pit' | 'slow' | 'other';
+type Status = 'fastest' | 'clean' | 'out' | 'in' | 'pit' | 'slow' | 'build' | 'other';
 const STATUS_NAME: Record<Status, string> = {
-  fastest: 'Fastest', clean: 'Clean', out: 'Out', in: 'In', pit: 'Pit', slow: 'Slow', other: 'Not clean',
+  fastest: 'Fastest', clean: 'Clean', out: 'Out', in: 'In', pit: 'Pit', slow: 'Slow', build: 'Build', other: 'Not clean',
 };
 
 type ChartLap = {
@@ -50,6 +51,7 @@ type ChartLap = {
   time: number;
   clean: boolean;
   status: Status;
+  pick: LapPick | null; // the lap's type as set by hand (components/LapType.tsx)
   sec: (number | null)[]; // each section's time, in lap order (clean laps only)
   p: (number | null)[]; // hot pressure FL, FR, RL, RR, bar
   t: (number | null)[]; // TPMS temperature, °C
@@ -81,13 +83,15 @@ function buildChart(session: SessionDetail, analysis: Analysis | null, stints: S
   const best = clean.length ? Math.min(...clean.map((l) => l.time_s)) : null;
   const rows: ChartLap[] = laps.map((l) => {
     const sl = byLap.get(l.number);
-    const status: Status = l.clean ? (l.time_s === best ? 'fastest' : 'clean')
+    const status: Status = l.pick === 'build' ? 'build' : l.pick === 'out' || l.pick === 'in' ? l.pick
+      : l.clean ? (l.time_s === best ? 'fastest' : 'clean')
       : sl && sl.kind !== 'flying' ? sl.kind : 'other';
     return {
       number: l.number,
       time: l.time_s,
       clean: l.clean,
       status,
+      pick: l.pick ?? null,
       sec: corners.map((c) => (l.clean ? c.laps[String(l.number)]?.time ?? null : null)),
       p: CORNERS.map((k) => sl?.tyres?.pressure_bar?.[k] ?? null),
       t: CORNERS.map((k) => sl?.tyres?.temperature_c?.[k] ?? null),
@@ -140,6 +144,7 @@ export default function SessionScreen() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [debriefs, setDebriefs] = useState<Debrief[]>([]);
   const [stints, setStints] = useState<StintView | null>(null);
+  const [kindsRead, setKindsRead] = useState(0); // a lap's type set by hand: the stint view read again
   const [eventSections, setEventSections] = useState<Record<string, number> | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -218,7 +223,13 @@ export default function SessionScreen() {
     return () => {
       live = false;
     };
-  }, [mainFile]);
+  }, [mainFile, kindsRead]);
+  // a lap's type set by hand: the run as it is now, and what reads the laps read again
+  const lapType = useLapType(sessionId, mainFile, (s) => {
+    setSession(s);
+    setKindsRead((n) => n + 1);
+    load();
+  });
 
   // the event's best pass of each section, from its report; while the server works it out, only how far it is is
   // asked for again (lib/poll.ts: less and less often), and the report once more when it's ready
@@ -318,7 +329,7 @@ export default function SessionScreen() {
         : 'Every lap in numbers: its time and the time of each section.') +
         ' Tick two to six laps, then Compare laps at the foot of the screen.',
       body: <LapChart chart={chart} runs={order.filter((s) => s.best_lap_s != null).length} ticked={ticked}
-        onTick={tick} /> });
+        onTick={tick} lapType={lapType} /> });
   }
   if (hasClean && ready) {
     sections.push({ title: 'The track', dek: 'Its sections, numbered as the lap chart has them.',
@@ -514,8 +525,8 @@ function tyreTone(c: Palette, chart: Chart, lap: ChartLap, v: number | null, m: 
 const pText = (v: number | null) => (v == null ? '–' : v.toFixed(2));
 const tText = (v: number | null) => (v == null ? '–' : String(Math.round(v)));
 
-function LapChart({ chart, runs, ticked, onTick }: { chart: Chart; runs: number; ticked: number[];
-  onTick: (lap: number) => void }) {
+function LapChart({ chart, runs, ticked, onTick, lapType }: { chart: Chart; runs: number; ticked: number[];
+  onTick: (lap: number) => void; lapType: LapTypeState }) {
   const styles = useStyles();
   const wide = useWide();
   const c = useTheme();
@@ -558,17 +569,32 @@ function LapChart({ chart, runs, ticked, onTick }: { chart: Chart; runs: number;
         )}
       </View>
 
-      {wide ? <ChartTable chart={chart} fastest={fastestColor} ticked={ticked} onTick={onTick} />
-        : <ChartBlocks chart={chart} fastest={fastestColor} ticked={ticked} onTick={onTick} />}
+      {wide ? <ChartTable chart={chart} fastest={fastestColor} ticked={ticked} onTick={onTick} lapType={lapType} />
+        : <ChartBlocks chart={chart} fastest={fastestColor} ticked={ticked} onTick={onTick} lapType={lapType} />}
 
       <Text style={styles.chartNote}>
         Times in seconds.{chart.eventBest ? ` Purple: the quickest pass of the section in all ${runs} runs of the event;` : ''}
         {chart.eventBest ? ' green' : ' Green'}: the quickest in this run. Out, in and pit laps have no section times and stay
-        out of the colours.{chart.tyres ? ' Pressures are hot and temperatures from the TPMS; each is coloured against the ' +
+        out of the colours. Tap a lap&apos;s status to set its type by hand (out, build, push or in lap) when the app reads it
+        wrong: every page then reads it your way.{chart.tyres ? ' Pressures are hot and temperatures from the TPMS; each is coloured against the ' +
           'middle of the run’s clean laps, steps of 0.03 and 0.06 bar, 4 and 10 °C (no published window to compare with).'
           : ''}
       </Text>
     </View>
+  );
+}
+
+/** A lap's status, tapped to set the lap's type by hand (components/LapType.tsx); set by hand, a dot after it. */
+function StatusButton({ lap, fastest, lapType }: { lap: ChartLap; fastest: string; lapType: LapTypeState }) {
+  const styles = useStyles();
+  const open = lapType.open === lap.number;
+  return (
+    <Pressable onPress={() => lapType.toggle(lap.number)} accessibilityRole="button"
+      accessibilityLabel={`Lap ${lap.number}: ${lapTypeWords(lap.pick, lap.status)}${lap.pick ? ', set by you' : ''}. Change its type`}
+      {...a11yState({ expanded: open })} style={styles.statusButton}>
+      <StatusMark status={lap.status} fastest={fastest} />
+      {lap.pick && <Text style={styles.pickDot}>•</Text>}
+    </Pressable>
   );
 }
 
@@ -607,8 +633,8 @@ function Cell({ w, children, bg, fg, bold, left, style, text }: {
   );
 }
 
-function ChartTable({ chart, fastest, ticked, onTick }: { chart: Chart; fastest: string; ticked: number[];
-  onTick: (lap: number) => void }) {
+function ChartTable({ chart, fastest, ticked, onTick, lapType }: { chart: Chart; fastest: string; ticked: number[];
+  onTick: (lap: number) => void; lapType: LapTypeState }) {
   const styles = useStyles();
   const c = useTheme();
   const n = chart.codes.length;
@@ -674,7 +700,9 @@ function ChartTable({ chart, fastest, ticked, onTick }: { chart: Chart; fastest:
                   </View>
                   <Text style={StyleSheet.flatten([styles.lapNo, off && styles.offText])}>{l.number}</Text>
                 </Pressable>
-                <Cell w={W.stat} left><StatusMark status={l.status} fastest={fastest} /></Cell>
+                <Cell w={W.stat} left>
+                  <StatusButton lap={l} fastest={fastest} lapType={lapType} />
+                </Cell>
                 <Cell w={W.time} bg={l.status === 'fastest' ? fastest : undefined} fg={l.status === 'fastest' ? c.timing.onBest : undefined}
                   text={StyleSheet.flatten([styles.timeText, off && styles.offText])}>{formatLap(l.time)}</Cell>
                 <Cell w={W.gap} text={styles.gapText}>{gap}</Cell>
@@ -697,6 +725,11 @@ function ChartTable({ chart, fastest, ticked, onTick }: { chart: Chart; fastest:
                   </>
                 )}
               </View>
+              {lapType.open === l.number && (
+                <View style={styles.typeRow}>
+                  <LapTypeMenu lap={l.number} now={lapTypeWords(l.pick, l.status)} picked={l.pick} state={lapType} />
+                </View>
+              )}
             </Fragment>
           );
         })}
@@ -730,8 +763,8 @@ const lines = (n: number) => {
   return Array.from({ length: rows }, (_, r) => Array.from({ length: Math.min(per, n - r * per) }, (_, k) => r * per + k));
 };
 
-function ChartBlocks({ chart, fastest, ticked, onTick }: { chart: Chart; fastest: string; ticked: number[];
-  onTick: (lap: number) => void }) {
+function ChartBlocks({ chart, fastest, ticked, onTick, lapType }: { chart: Chart; fastest: string; ticked: number[];
+  onTick: (lap: number) => void; lapType: LapTypeState }) {
   const styles = useStyles();
   const c = useTheme();
   const gutter = useGutter();
@@ -804,8 +837,11 @@ function ChartBlocks({ chart, fastest, ticked, onTick }: { chart: Chart; fastest
                   </Text>
                 </View>
                 <Text style={styles.gapText}>{gap}</Text>
-                <View style={styles.pushRight}><StatusMark status={l.status} fastest={fastest} /></View>
+                <View style={styles.pushRight}><StatusButton lap={l} fastest={fastest} lapType={lapType} /></View>
               </View>
+              {lapType.open === l.number && (
+                <LapTypeMenu lap={l.number} now={lapTypeWords(l.pick, l.status)} picked={l.pick} state={lapType} />
+              )}
               {l.clean && chart.codes.length > 0 && strip((i) => {
                 const tone = secTone(c, chart, l, i);
                 return (
@@ -874,6 +910,10 @@ function Corners({ analysis }: { analysis: Analysis }) {
 }
 
 const useStyles = themed((c) => ({
+  // a full tap target over the row's height, the row itself no taller
+  statusButton: { flexDirection: 'row', alignItems: 'center', gap: 3, minHeight: TAP, minWidth: TAP, marginVertical: -6 },
+  pickDot: { fontSize: 14, color: c.textSecondary },
+  typeRow: { paddingLeft: 8, paddingBottom: 4 },
   body: { backgroundColor: 'transparent' },
   screen: { flex: 1, backgroundColor: c.background },
   // the ticked laps' bar at the foot of the screen, as the event page has it for runs

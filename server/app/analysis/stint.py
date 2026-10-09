@@ -121,16 +121,19 @@ def lap_kinds(stint: list[Lap], stops: list[tuple[float, float]]) -> list[str]:
     """pit (the stop is in it), out, in, slow (not a clean lap) or flying.
 
     The laps that are not clean at the start of a stint are its out-laps (tyres and brakes coming in), those at
-    its end its in-laps.
+    its end its in-laps. A lap set by hand (Lap.pick) is what it was set to: a push lap flying, a build lap slow.
     """
-    kinds = ["pit" if any(l.start <= a < l.end for a, _ in stops) else "flying" if l.clean else "slow"
+    picked = {"out": "out", "in": "in", "push": "flying", "build": "slow"}
+    kinds = [picked[l.pick] if getattr(l, "pick", None) in picked
+             else "pit" if any(l.start <= a < l.end for a, _ in stops) else "flying" if l.clean else "slow"
              for l in stint]
+    fixed = [getattr(l, "pick", None) in picked for l in stint]
     for i, k in enumerate(kinds):
-        if k != "slow":
+        if k != "slow" or fixed[i]:
             break
         kinds[i] = "out"
     for i in reversed(range(len(kinds))):
-        if kinds[i] not in ("slow", "pit"):
+        if kinds[i] not in ("slow", "pit") or fixed[i]:
             break
         if kinds[i] == "slow":
             kinds[i] = "in"

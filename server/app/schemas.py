@@ -80,6 +80,11 @@ class LapOut(Orm):
     time_s: float
     clean: bool
     file_id: int
+    pick: str | None = None  # the lap's type as set by hand (out, build, push or in), else the app reads it
+
+
+class LapTypeIn(BaseModel):
+    type: str | None  # out, build, push or in; null gives the lap back to the app
 
 
 class LoggerFileOut(Orm):

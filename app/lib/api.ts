@@ -55,7 +55,9 @@ async function ask(path: string, init: RequestInit): Promise<Response> {
 
 export type SessionKind = 'test' | 'practice' | 'qualifying' | 'race';
 
-export type Lap = { number: number; time_s: number; clean: boolean; file_id: number };
+// pick: the lap's type as set by hand (components/LapType.tsx); null: the app reads it
+export type LapPick = 'out' | 'build' | 'push' | 'in';
+export type Lap = { number: number; time_s: number; clean: boolean; file_id: number; pick?: LapPick | null };
 
 export type LoggerFile = {
   id: number;
@@ -235,6 +237,10 @@ export const api = {
   sessions: () => request<Session[]>('/sessions'),
   session: (id: number) => request<SessionDetail>(`/sessions/${id}`),
   analysis: (id: number) => request<Analysis>(`/sessions/${id}/analysis`),
+  // a lap's type set by hand, or (null) given back to the app: every page then reads the lap as set
+  setLapType: (id: number, lap: number, type: LapPick | null, fileId?: number) =>
+    request<SessionDetail>(`/sessions/${id}/laps/${lap}/type${fileId != null ? `?file_id=${fileId}` : ''}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type }) }),
   compare: (id: number, lap: number, reference?: number) =>
     request<LapCompare>(`/sessions/${id}/compare?lap=${lap}${reference != null ? `&reference_lap=${reference}` : ''}`),
   uploadFile: (id: number, file: PickedFile) => {
