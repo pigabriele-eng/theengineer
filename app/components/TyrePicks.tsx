@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator } from 'react-native';
 
 import { ErrorLine, FormActions, MainButton, Note, Said } from '@/components/Controls';
+import { DriverPick, useDriverPick } from '@/components/DriverPick';
 import { DriverTag } from '@/components/DriverTag';
 import { Choice } from '@/components/Picks';
 import { Label, TextLink } from '@/components/Programme';
@@ -28,14 +29,15 @@ const tagOf = (driver: string | null) => (driver ? { text: codeOf(driver)!, kind
   : { text: 'Driver?', kind: 'none' as const, name: null });
 
 /** One stint: its driver and name (left out under a run's own row: `bare`), the four levels (the one tapped saved at
- * once) and, under them, the guess and why or "Confirmed". */
-export function TyreRowView({ row, onPick, saving, error, last, bare }: {
+ * once) and, under them, the guess and why or "Confirmed". `drivers`: "Driver?" opens the run's driver list. */
+export function TyreRowView({ row, onPick, saving, error, last, bare, drivers }: {
   row: TyreRow;
   onPick: (level: TyreLevel) => void;
   saving: boolean;
   error: string | null;
   last?: boolean;
   bare?: boolean;
+  drivers?: DriverPick;
 }) {
   const styles = useStyles();
   const c = useTheme();
@@ -44,10 +46,12 @@ export function TyreRowView({ row, onPick, saving, error, last, bare }: {
     <View style={last ? styles.rowLast : styles.row}>
       {bare ? null : (
         <View style={styles.rowHead}>
-          <DriverTag tag={tagOf(row.driver)} run={row.name} />
+          <DriverTag tag={tagOf(drivers ? drivers.name(row.id, row.driver) : row.driver)} run={row.name}
+            onPress={drivers ? () => drivers.toggle(row.id) : undefined} />
           <Text style={styles.rowName} numberOfLines={2}>{row.name}</Text>
         </View>
       )}
+      {!bare && drivers?.panel({ id: row.id, name: row.name, driver: row.driver })}
       <View style={styles.levels}>
         {TYRE_LEVELS.map((k) => (
           <Choice key={k} label={TYRE_LABEL[k]} on={row.level === k} disabled={saving} onPress={() => onPick(k)}
@@ -158,13 +162,7 @@ export function UploadTyres({ runIds, refresh }: { runIds: number[]; refresh?: u
           + 'the guesses stay.' : 'Tap another level to change a stint’s tyres.'}
       </Note>
       {shown.map((g) => (
-        <View key={g.id} style={styles.group}>
-          {shown.length > 1 && g.name ? <Label style={styles.event}>{g.name}</Label> : null}
-          {g.rows.map((r, i) => (
-            <TyreRowView key={r.id} row={r} last={i === g.rows.length - 1} saving={busy || state.saving.has(r.id)}
-              error={state.errors[r.id] ?? null} onPick={(k) => state.pick(r, k)} />
-          ))}
-        </View>
+        <EventRows key={g.id} group={g} named={shown.length > 1} busy={busy} state={state} />
       ))}
       {said ? <Said text={said.text} error={said.error} /> : null}
       {left > 0 ? (
@@ -174,6 +172,26 @@ export function UploadTyres({ runIds, refresh }: { runIds: number[]; refresh?: u
           <TextLink label="Skip" onPress={() => setSkipped(true)} />
         </FormActions>
       ) : !said ? <Note>Every stint’s tyres are confirmed.</Note> : null}
+    </View>
+  );
+}
+
+/** One event's stints, their "Driver?" a tap to set (the event's drivers offered first). */
+function EventRows({ group, named, busy, state }: {
+  group: Group;
+  named: boolean;
+  busy: boolean;
+  state: ReturnType<typeof useTyreRows>;
+}) {
+  const styles = useStyles();
+  const drivers = useDriverPick(group.id);
+  return (
+    <View style={styles.group}>
+      {named && group.name ? <Label style={styles.event}>{group.name}</Label> : null}
+      {group.rows.map((r, i) => (
+        <TyreRowView key={r.id} row={r} last={i === group.rows.length - 1} saving={busy || state.saving.has(r.id)}
+          error={state.errors[r.id] ?? null} onPick={(k) => state.pick(r, k)} drivers={drivers} />
+      ))}
     </View>
   );
 }
