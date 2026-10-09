@@ -8,8 +8,8 @@ from __future__ import annotations
 import numpy as np
 
 from app.analysis.align import track_line
-from app.analysis.laps import (CornerSpec, SessionData, corner_metrics, corner_sections, lap_length, lap_trace,
-                               make_sections)
+from app.analysis.laps import (CornerSpec, SessionData, corner_metrics, corner_sections, fit_official, lap_length,
+                               lap_trace, make_sections)
 
 STEP_M = 5  # one path point every 5 m: smooth at any phone or report size, about 900 points at Hockenheim
 SMOOTH_M = 11  # moving average over the GPS path, metres: takes out GPS jitter, keeps the tightest corner's shape
@@ -61,6 +61,7 @@ def track_map(data: SessionData, corners: list[CornerSpec] | None = None, ref_nu
         raise NoGpsError("This log has no GPS position, so the track can't be drawn")
     trace = lap_trace(data, ref, length)  # the analysis' own reference trace, one point per metre
     x, y = _closed_path(line.x, line.y)
+    corners = fit_official(trace, corners)  # where this log's lap puts them
     sections, numbering = make_sections(trace, corners)
     labelled, _ = corner_sections(trace, corners)
     apex_of = {c.code: c.apex for c in labelled}

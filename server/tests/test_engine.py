@@ -12,6 +12,7 @@ from app.analysis.laps import analyze, compare_laps, detect_corners, lap_trace, 
 from app.analysis.scan import channel_scan
 from app.debrief.check import read_claim
 from app.importers.motec import read_ld
+from app.known_tracks import KNOWN
 from tests.synthetic import TRACK_M, simulate, write_ld
 
 
@@ -381,3 +382,19 @@ def test_session_page_endpoints_number_corners_from_the_track(client):
     assert analysis["numbering"] == "detected" and [c["code"] for c in analysis["corners"]] == ["C1", "C2"]
     cmp = client.get(f"/sessions/{unknown['id']}/compare", params={"lap": 3}).json()
     assert cmp["numbering"] == "detected" and [c["code"] for c in cmp["corners"]] == ["C1", "C2"]
+
+
+def test_official_corners_follow_a_log_measured_from_another_line():
+    # Red Bull Ring's slow points as a car laps it, the log's lap line up to 250 m from the finish line the official
+    # positions are measured from: every number still lands on its own corner, with no C-numbers in between
+    n, d = 4300, np.arange(4300)
+    slow = [(330, 140), (1265, 160), (2085, 130), (2610, 60), (2920, 70), (3670, 110), (3870, 90)]
+    corners = KNOWN["Red Bull Ring"]["corners"]
+    for offset in (0, 120, 200, -100, -250):
+        v = np.full(n, 230.0)
+        for m, drop in slow:
+            gap = np.abs(d - (m + offset) % n)
+            v -= drop * np.exp(-(np.minimum(gap, n - gap) / 45.0) ** 2)
+        secs, numbering = make_sections({"speed": v}, corners)
+        assert numbering == "official"
+        assert [s.code for s in secs] == [f"T{i}" for i in range(1, 11)], offset

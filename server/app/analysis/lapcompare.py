@@ -19,7 +19,8 @@ from app.analysis.align import aligned_trace, track_line
 from app.analysis.channels import BRAKE, EXIT, MID, PHASES, POWER, TRAIL, math_channels
 from app.analysis.insights import LapRecord, _dt, section_metrics
 from app.analysis.lappack import NotCovered, PackedRun
-from app.analysis.laps import CornerSpec, Lap, Section, SessionData, corner_sections, lap_length, make_sections
+from app.analysis.laps import (CornerSpec, Lap, Section, SessionData, corner_sections, fit_official, lap_length,
+                               make_sections)
 from app.analysis.lapsim import SimLap
 from app.analysis.limits import car_limits
 from app.analysis.track_shape import on_line, track_shape
@@ -149,6 +150,7 @@ def _summarise(laps: list[Traced], corners: list[CornerSpec] | None, step: float
     traces = [x.trace for x in laps]
     limits = car_limits(traces, *on_line(track_shape(traces), n))
     no_sim = SimLap(np.zeros(n), np.zeros(n), 0.0, np.zeros(n, int))  # section_metrics' theoretical time: unused
+    corners = fit_official(ref.trace, corners)  # where this log's lap puts them
     sections, numbering = make_sections(ref.trace, corners)
     marks, _ = corner_sections(ref.trace, corners)
     at = {c[0]: c[1] for c in corners or [] if c[1] is not None}

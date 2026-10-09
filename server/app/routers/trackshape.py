@@ -19,7 +19,7 @@ from app import heavy, models, page_cache
 from app.analysis.align import aligned_trace, track_line
 from app.analysis.channels import math_channels
 from app.analysis.insights import LIMIT_LAPS_WITHIN, MIN_LIMIT_LAPS
-from app.analysis.laps import corner_sections, lap_length, lap_trace, load_session, make_sections
+from app.analysis.laps import corner_sections, fit_official, lap_length, lap_trace, load_session, make_sections
 from app.analysis.track_shape import LOG_ROLES, TRACE_ROLES, track_shape
 from app.db import get_db
 from app.routers.sessions import _channel_map, _get, _line, _track_for, official_corners, read_file
@@ -154,7 +154,7 @@ def _work_out(db: Session, uses: list[_Use]) -> dict | str:
             length = round(lap_length(data, ref))
             line = track_line(data, ref, length)
             trace = lap_trace(data, ref, length)  # numbered exactly as the map numbers its sections
-            corners = official_corners(track)
+            corners = fit_official(trace, official_corners(track))  # where this log's lap puts them
             sections, numbering = make_sections(trace, corners)
             labelled, _ = corner_sections(trace, corners)
             del trace

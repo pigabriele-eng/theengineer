@@ -403,6 +403,51 @@ def _label(codes: list[str]) -> str:
     return f"{codes[0]}-{codes[-1]}"
 
 
+FIT_SHIFT_M = 300  # how far the log's lap line may sit from the line the official positions are measured from
+FIT_SCALES = np.linspace(0.97, 1.03, 13)  # the logged lap against the official length
+FIT_GAIN_M = 40  # with as many numbered slow points, moved only when they come this much nearer, on average
+
+
+def fit_official(ref: dict[str, np.ndarray], corners: list[CornerSpec] | None,
+                 found: list[Corner] | None = None) -> list[CornerSpec] | None:
+    """The official corners moved onto this log's lap, when the log measures the lap from somewhere else.
+
+    A logger's lap line (a beacon, a GPS marker) need not sit on the finish line the positions are measured from,
+    and a surveyed centre line is not the line the car drives, so a slow point can end up more than
+    GROUP_WITHIN_M from its number and the corners get the wrong numbers. The positions are shifted (and
+    stretched by a few per cent) to give the most slow points a number of their own, then nearest; they are left
+    as they are unless that numbers more slow points, or brings them FIT_GAIN_M nearer on average.
+    """
+    known = [c for c in corners or [] if c[1] is not None]
+    if not known:
+        return corners
+    n = len(ref["speed"])
+    found = detect_corners(ref) if found is None else found
+    if not found:
+        return corners
+    apex = np.array([c.apex for c in found], float)
+    at = np.array([float(c[1]) for c in known])
+
+    shifts = np.arange(-FIT_SHIFT_M, FIT_SHIFT_M + 1, 5, dtype=float)
+    moved = np.concatenate([[at], (at[None, None, :] * FIT_SCALES[:, None, None]
+                                   + shifts[None, :, None]).reshape(-1, len(at))])  # [fit, corner]; first as given
+    moved = np.mod(moved, n)
+    gap = np.abs(apex[None, :, None] - moved[:, None, :])
+    gap = np.minimum(gap, n - gap)  # [fit, slow point, corner]
+    nearest = gap.argmin(axis=2)
+    dist = gap.min(axis=2)
+    near = dist <= GROUP_WITHIN_M
+    # each number names one slow point: two slow points nearest the same number leave one of them unnumbered
+    hits = np.array([len(set(nearest[k][near[k]])) for k in range(len(moved))])
+    cost = np.minimum(dist, 2 * GROUP_WITHIN_M).sum(axis=1)
+    cost[1:] += np.tile(np.abs(shifts), len(FIT_SCALES)) * 0.1
+    k = int(np.lexsort((cost, -hits))[0])
+    if k == 0 or (hits[k] == hits[0] and cost[0] - cost[k] < FIT_GAIN_M * len(apex)):
+        return corners
+    scale, shift = float(FIT_SCALES[(k - 1) // len(shifts)]), float(shifts[(k - 1) % len(shifts)])
+    return [(c[0], None if c[1] is None else float(np.mod(c[1] * scale + shift, n)), *c[2:]) for c in corners]
+
+
 def make_sections(ref: dict[str, np.ndarray], corners: list[CornerSpec] | None = None
                   ) -> tuple[list[Section], str]:
     """Split the lap at the fast points between corners.
@@ -420,6 +465,7 @@ def make_sections(ref: dict[str, np.ndarray], corners: list[CornerSpec] | None =
     if not corners:
         secs = [Section(f"C{i + 1}", c.start, c.end, c.apex) for i, c in enumerate(found)]
         return secs, "detected"
+    corners = fit_official(ref, corners, found)
     official = sorted(((c[0], int(c[1])) for c in corners if c[1] is not None and 0 <= c[1] < n), key=lambda c: c[1])
     sector = {c[0]: c[2] for c in corners if len(c) > 2 and c[2]}
     secs: list[Section] = []
@@ -504,6 +550,7 @@ def corner_sections(ref: dict[str, np.ndarray], corners: list[CornerSpec] | None
     "T8/T9", a whole sector such as "T2-T5"); a flat kink is placed at its official position. Without them,
     the slowest points are numbered C1, C2... The second value says which: "official" or "detected".
     """
+    corners = fit_official(ref, corners)
     sections, numbering = make_sections(ref, corners)
     at = {c[0]: int(c[1]) for c in corners or [] if c[1] is not None}
     out = []
