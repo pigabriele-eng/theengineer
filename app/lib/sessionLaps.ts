@@ -29,9 +29,9 @@ export type SessionLap = {
 };
 
 export const isClean = (l: Pick<SessionLap, 'clean'>) => l.clean !== false;
-/** "out-lap", "in-lap"; null for a clean lap. */
+/** "out-lap", "in-lap"; a lap set by hand says so even when clean; null for a plain clean lap. */
 export const kindWords = (l: Pick<SessionLap, 'clean' | 'kind'>) =>
-  (isClean(l) ? null : KIND_WORDS[l.kind ?? 'slow']);
+  (l.kind ? KIND_WORDS[l.kind] : isClean(l) ? null : KIND_WORDS.slow);
 
 /** One stint (run) of the session, its clean laps in order. */
 export type SessionRun = {

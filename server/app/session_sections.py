@@ -58,7 +58,7 @@ from app.analysis.laps import SessionData, load_session
 from app.db import get_db
 from app.routers.lapcompare import _track, _tracks_by_name
 from app.routers.sessions import _channel_map, official_corners
-from app.timing import read_file, track_line
+from app.timing import lap_picks, read_file, track_line
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -86,15 +86,19 @@ def _timed(s: models.RunSession) -> bool:
     return any(l.clean for l in _laps(s))
 
 
-def lap_kinds(laps: list[models.Lap]) -> dict[int, str | None]:
+def lap_kinds(laps: list[models.Lap], picks: dict[int, str] | None = None) -> dict[int, str | None]:
     """What each lap of a run (in order) is when it isn't clean: its first lap the out-lap, the others before its
     first clean lap build laps, its last lap after its last clean one the in-lap, any other a slow lap. None for a
-    clean lap."""
+    clean lap. A lap set by hand (picks, timing.lap_picks: lap number -> out, build, push or in) is what it was set
+    to: a push lap None, a build lap "build" (and clean, as the pick makes it)."""
     clean = [i for i, l in enumerate(laps) if l.clean]
     first, last = (clean[0], clean[-1]) if clean else (len(laps), -1)
     out: dict[int, str | None] = {}
     for i, l in enumerate(laps):
-        if l.clean:
+        pick = (picks or {}).get(l.number)
+        if pick is not None:
+            out[l.number] = None if pick == "push" else pick
+        elif l.clean:
             out[l.number] = None
         elif i == 0:
             out[l.number] = "out"
@@ -217,7 +221,7 @@ def base(event_id: int, part: run_parts.Part, by_id: dict[int, models.RunSession
     runs, left_out = [], 0
     for lab, laps in timed:
         s = by_id[lab.id]
-        kinds = lap_kinds(laps)
+        kinds = lap_kinds(laps, lap_picks(s, _main_file(s)))
         kept = [l for l in laps if l.clean or (quickest is not None and l.time_s >= quickest)]
         if not any(l.clean for l in kept):
             kept = []

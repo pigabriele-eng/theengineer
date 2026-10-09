@@ -107,6 +107,7 @@ test('out-laps and in-laps: their quicker corners count, they are never on the t
   assert.equal(kindWords(q.laps[2]), null);
   assert.equal(kindWords({ clean: false }), 'slow lap'); // not clean, not said what
   assert.equal(kindWords({}), null); // an answer from before: clean
+  assert.equal(kindWords({ clean: true, kind: 'build' }), 'build lap'); // set by hand, still timed
   // a quick part lap that isn't clean is never a stint's lap on the traces at first
   const r = run(2, [{ number: 1, time: 99.0, clean: false, kind: 'in', sections: null }, lap(2, 100.4)]);
   assert.deepEqual(defaultPicks([q, r]), [{ session_id: 1, lap: 3, slot: 0 }, { session_id: 2, lap: 2, slot: 1 }]);

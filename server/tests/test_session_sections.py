@@ -213,6 +213,10 @@ def test_lap_kinds():
     assert ss.lap_kinds(r) == {1: None, 2: "slow", 3: None, 4: "slow", 5: "in"}
     assert ss.lap_kinds([lap(1, False), lap(2, False)]) == {1: "out", 2: "build"}
     assert ss.lap_kinds([]) == {}
+    # set by hand: as set (a build lap set by hand is clean, as the pick makes it)
+    picked = [lap(1, False), lap(2, True), lap(3, True), lap(4, False), lap(5, True)]
+    assert ss.lap_kinds(picked, {2: "build", 4: "push", 5: "in"}) == {1: "out", 2: "build", 3: None, 4: None,
+                                                                       5: "in"}
 
 
 def test_the_clean_laps_first_then_each_runs_others():
@@ -245,6 +249,14 @@ def test_every_lap_driven_out_and_in_laps_too(client, monkeypatch):
     # the in-lap: quicker than the fastest lap through T1, before it backs off for the pit lane
     assert times[5][0] < times[3][0] and times[5][1] > times[3][1]
     assert all(times[n][k] > times[3][k] for n in (1, 2) for k in (0, 1))
+
+    # a lap set by hand is what it was set to, here and on every page (the in-lap called a push lap: clean)
+    r = client.put(f"/sessions/{q}/laps/5/type", json={"type": "push"})
+    assert r.status_code == 200, r.text
+    picked = client.get(url).json()
+    assert [(l["number"], l["clean"], l["kind"]) for l in picked["runs"][0]["laps"]][4] == (5, True, None)
+    assert ss.wait_idle(120)
+    client.put(f"/sessions/{q}/laps/5/type", json={"type": None})
 
     # a lap quicker than the fastest that isn't clean is only part of a lap: left out
     with app_db.SessionLocal() as db:
