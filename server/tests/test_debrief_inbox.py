@@ -169,3 +169,44 @@ def test_transcribe_again_in_mixed_languages(client, settle, monkeypatch):
     again = client.post(f"/debriefs/{did}/process", params={"language": "multi"})
     assert again.status_code == 202 and again.json()["language"] == "multi"
     settle()
+
+
+def test_edited_transcript_is_sorted_again(client, settle, monkeypatch):
+    import json
+
+    from app.debrief.pipeline import from_text
+
+    _no_keys(monkeypatch)
+    fp1 = _run(client, "FP1", "09/10/2026", "10:00:00", 1800)
+    live = [{"start": 2.0, "end": 5.0, "text": "big under stair today"}]
+    r = client.post(f"/sessions/{fp1}/debriefs/audio", files={"audio": ("d.webm", b"x")},
+                    data={"live_transcript": json.dumps(live)})
+    settle()
+    did = r.json()["id"]
+    assert client.get(f"/debriefs/{did}").json()["points"] == []
+
+    fixed = "S0: Big understeer in turn five\nRears overheating at the end"
+    r = client.put(f"/debriefs/{did}/transcript", json={"transcript": fixed})
+    assert r.status_code == 202, r.text
+    settle()
+    d = client.get(f"/debriefs/{did}").json()
+    assert d["status"] == "ready" and d["transcript"] == fixed
+    got = [(p["section"], p["corner_code"], p["audio_start_s"]) for p in d["points"]]
+    assert got == [("balance", "T5", 2.0), ("tyres", None, 2.0)]
+    assert client.put(f"/debriefs/{did}/transcript", json={"transcript": "  "}).status_code == 422
+
+    tr = from_text("S1: one\ntwo\n\nS0: three", [{"start": 1, "end": 2}])
+    assert [(s.speaker, s.text, s.start) for s in tr.segments] == [("S1", "one", 1.0), ("S1", "two", 1.0),
+                                                                    ("S0", "three", 1.0)]
+
+
+def test_delete_a_debrief(client, settle, monkeypatch):
+    _no_keys(monkeypatch)
+    fp2 = _run(client, "FP2", "09/10/2026", "14:00:00", 1800)
+    r = client.post("/debriefs/audio", files={"audio": ("d.m4a", b"x")}, data={"recorded_at": "2026-10-09T14:36:10"})
+    settle()
+    did = r.json()["debrief"]["id"]
+    assert client.delete(f"/debriefs/{did}").json() == {"deleted": did}
+    assert client.get(f"/debriefs/{did}").status_code == 404
+    assert client.get(f"/sessions/{fp2}/debriefs").json() == []
+    assert client.get("/debriefs/waiting").json() == []

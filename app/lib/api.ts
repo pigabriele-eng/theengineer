@@ -287,6 +287,11 @@ export const api = {
   debrief: (id: number) => request<Debrief>(`/debriefs/${id}`),
   debriefCorners: (id: number) =>
     request<{ corners: Record<string, DebriefCorner> }>(`/debriefs/${id}/corners`),
+  deleteDebrief: (id: number) => request<{ deleted: number }>(`/debriefs/${id}`, { method: 'DELETE' }),
+  // the transcript corrected by hand: saved, and the points sorted again from it
+  saveTranscript: (id: number, transcript: string) =>
+    request<Debrief>(`/debriefs/${id}/transcript`, { method: 'PUT', body: JSON.stringify({ transcript }),
+      headers: { 'Content-Type': 'application/json' } }),
   processDebrief: (id: number, language?: DebriefLanguage) =>
     request<Debrief>(`/debriefs/${id}/process${language ? `?language=${language}` : ''}`, { method: 'POST' }),
   // An audio player can't send headers, so when signed in the token goes in the query string.

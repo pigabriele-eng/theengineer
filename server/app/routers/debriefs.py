@@ -175,6 +175,28 @@ def delete_waiting_recording(recording_id: int, db: Session = Depends(get_db)):
     return {"deleted": recording_id}
 
 
+@router.delete("/debriefs/{debrief_id}")
+def delete_debrief(debrief_id: int, db: Session = Depends(get_db)):
+    """A debrief the user doesn't want: its points, its recording and the words the phone wrote down go too."""
+    d = _get(db, debrief_id)
+    if d.status == models.DebriefStatus.processing:
+        raise HTTPException(409, "This debrief is being processed: delete it when it's done")
+    key = d.audio_path
+    for rec in db.scalars(select(models.DebriefRecording).where(models.DebriefRecording.debrief_id == d.id)):
+        db.delete(rec)
+    if key:
+        for live in db.scalars(select(models.LiveTranscript).where(models.LiveTranscript.audio_path == key)):
+            db.delete(live)
+    db.delete(d)
+    db.commit()
+    if key:
+        try:
+            storage.delete(key)
+        except Exception:  # a file left behind is harmless
+            pass
+    return {"deleted": debrief_id}
+
+
 @router.post("/debriefs/{debrief_id}/run", response_model=schemas.DebriefOut)
 def set_debrief_run(debrief_id: int, body: RunPick, db: Session = Depends(get_db)):
     """Confirms the run a debrief joined by time (the same run), or moves the debrief to another one. Either way it
@@ -202,6 +224,25 @@ def list_debriefs(session_id: int, db: Session = Depends(get_db)):
 @router.get("/debriefs/{debrief_id}", response_model=schemas.DebriefOut)
 def get_debrief(debrief_id: int, db: Session = Depends(get_db)):
     return schemas.DebriefOut.of(_get(db, debrief_id))
+
+
+class TranscriptIn(BaseModel):
+    transcript: str
+
+
+@router.put("/debriefs/{debrief_id}/transcript", response_model=schemas.DebriefOut, status_code=202)
+def edit_transcript(debrief_id: int, body: TranscriptIn, background: BackgroundTasks, db: Session = Depends(get_db)):
+    """The transcript corrected by hand: saved, and its points sorted again from it (not from the recording)."""
+    d = _get(db, debrief_id)
+    if d.status == models.DebriefStatus.processing:
+        raise HTTPException(409, "This debrief is being processed: try again when it's done")
+    if not body.transcript.strip():
+        raise HTTPException(422, "The transcript is empty")
+    d.transcript = body.transcript.strip()
+    d.status, d.error = models.DebriefStatus.queued, None
+    db.commit()
+    background.add_task(process_debrief, d.id, True)
+    return schemas.DebriefOut.of(d)
 
 
 @router.post("/debriefs/{debrief_id}/process", response_model=schemas.DebriefOut, status_code=202)

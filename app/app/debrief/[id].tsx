@@ -1,7 +1,7 @@
 import { useAudioPlayer } from 'expo-audio';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet } from 'react-native';
+import { ActivityIndicator, StyleSheet, TextInput, TextStyle } from 'react-native';
 
 import { FigRow, Notice, PageHead, useText } from '@/components/Picks';
 import { useBackTo } from '@/components/Back';
@@ -53,6 +53,10 @@ export default function DebriefReport() {
   const [d, setD] = useState<Debrief | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showTranscript, setShowTranscript] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [sure, setSure] = useState(false); // asked whether to delete the debrief
   const [corners, setCorners] = useState<Record<string, DebriefCorner>>({});
   const [check, setCheck] = useState<DebriefCheck | null>(null);
   const [checkError, setCheckError] = useState<string | null>(null);
@@ -154,6 +158,31 @@ export default function DebriefReport() {
     }
   };
 
+  const saveTranscript = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      setD(await api.saveTranscript(debriefId, draft));
+      setEditing(false);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    setError(null);
+    try {
+      await api.deleteDebrief(debriefId);
+      if (router.canGoBack()) router.back();
+      else router.replace('/debrief');
+    } catch (e) {
+      setError((e as Error).message);
+      setSure(false);
+    }
+  };
+
   const playFrom = async (s: number) => {
     await player.seekTo(s);
     player.play();
@@ -242,15 +271,48 @@ export default function DebriefReport() {
       {d?.transcript ? (
         <Section no={++no} title="Transcript">
           <TextLink label={showTranscript ? 'Hide transcript' : 'Show transcript'} onPress={() => setShowTranscript((s) => !s)} />
-          {showTranscript && <Text style={StyleSheet.flatten([t.note, styles.transcript])}>{named(d.transcript, d.speakers)}</Text>}
+          {showTranscript && !editing && (
+            <>
+              <Text style={StyleSheet.flatten([t.body, styles.transcript])}>{named(d.transcript, d.speakers)}</Text>
+              <TextLink label="Edit transcript" onPress={() => {
+                setDraft(d.transcript ?? '');
+                setEditing(true);
+              }} disabled={pending} />
+            </>
+          )}
+          {showTranscript && editing && (
+            <View style={styles.editor}>
+              <Text style={t.note}>Correct the words, one line per phrase. Saving sorts the points again from your text.</Text>
+              <TextInput value={draft} onChangeText={setDraft} multiline accessibilityLabel="Transcript"
+                style={styles.input} />
+              <View style={styles.headLinks}>
+                <TextLink label="Save and sort again" onPress={saveTranscript} disabled={!draft.trim() || saving} />
+                <TextLink label="Cancel" onPress={() => setEditing(false)} disabled={saving} />
+              </View>
+            </View>
+          )}
         </Section>
       ) : null}
 
       {d?.status === 'ready' && hasAudio && (
         <View style={styles.redo}>
-          <Text style={t.body}>Words wrong? Run the recording through speech to text again, listening for Italian,
+          <Text style={t.body}>Words wrong? Edit the transcript above, or run the recording through speech to text again (that replaces your edits), listening for Italian,
             English and German.</Text>
           <TextLink label="Transcribe again" onPress={() => retry('multi')} />
+        </View>
+      )}
+
+      {d && (
+        <View style={styles.redo}>
+          {sure ? (
+            <View style={styles.headLinks}>
+              <Text style={t.body}>Delete this debrief and its recording? This can&apos;t be undone.</Text>
+              <TextLink label="Delete" red onPress={remove} />
+              <TextLink label="Keep it" onPress={() => setSure(false)} />
+            </View>
+          ) : (
+            <TextLink label="Delete debrief" onPress={() => setSure(true)} disabled={pending} />
+          )}
         </View>
       )}
 
@@ -452,6 +514,9 @@ function PointCheck({ c }: { c: CheckedPoint }) {
 }
 
 const useStyles = themed((c) => ({
+  editor: { marginTop: 14, gap: 12, maxWidth: 760 },
+  input: { borderWidth: 1, borderColor: c.rule, padding: 12, minHeight: 220, fontSize: 16, lineHeight: 24,
+    fontFamily: Fonts.body, color: c.text, backgroundColor: c.background, textAlignVertical: 'top' } as TextStyle,
   redo: { marginTop: 28, gap: 10, maxWidth: 760 },
   headLinks: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 20, rowGap: 8, marginTop: 6 },
   loading: { alignSelf: 'flex-start', marginTop: 24 },
