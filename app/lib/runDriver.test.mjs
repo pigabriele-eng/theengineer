@@ -22,7 +22,9 @@ test('a driver set by a person is shown by name, whatever the style says', () =>
 
 test('a driver the app set from the driving style is marked as such', () => {
   const st = driverState(run({ driver_id: 1 }), guess({ driver_id: 1, auto: { source: 'fingerprint', match: 0.9 } }), garage);
-  assert.deepEqual(st, { kind: 'auto', name: 'Ann Driver' });
+  assert.deepEqual(st, { kind: 'auto', name: 'Ann Driver', how: 'by style' });
+  const q = driverState(run({ driver_id: 1 }), guess({ driver_id: 1, auto: { source: 'quali', match: null } }), garage);
+  assert.equal(q.how, 'by qualifying order'); // Q1 PIA, Q2 SYL: not the style
 });
 
 test('no driver: the style guess, Probably when not sure, with the driver to confirm', () => {
