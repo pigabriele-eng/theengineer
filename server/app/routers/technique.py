@@ -212,7 +212,7 @@ def mark_build_laps(laps: list[dict], kinds: dict[int, str],
             best[x["session_id"]] = min(best.get(x["session_id"], np.inf), x["time"])
     for x in laps:
         b = best.get(x["session_id"])
-        pick = picks.get(x["session_id"], {}).get(x["number"])
+        pick = picks.get(x["session_id"], {}).get(x.get("number"))
         x["pick"] = pick
         x["build"] = pick == "build" or (pick != "push" and b is not None and x["time"] >= b * (1 + BUILD_SHARE))
 
