@@ -86,6 +86,8 @@ def test_recording_is_kept_until_keys_exist_then_processed(client, monkeypatch):
 
     monkeypatch.setattr(transcribe_mod, "transcribe", fake_transcribe)
     monkeypatch.setattr(structure_mod, "structure", fake_structure)
+    monkeypatch.setenv("DEEPGRAM_API_KEY", "test")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test")  # with no key the free keyword sorting runs (keywords.py)
     assert client.post(f"/debriefs/{d['id']}/process").status_code == 202
 
     d = client.get(f"/debriefs/{d['id']}").json()

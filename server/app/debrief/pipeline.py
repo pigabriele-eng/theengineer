@@ -1,8 +1,17 @@
-"""Process a recorded debrief: transcribe, structure, and save the points against the session."""
+"""Process a recorded debrief: transcribe, structure, and save the points against the session.
+
+Speech to text is Deepgram when DEEPGRAM_API_KEY is set, else what the phone wrote down while recording
+(LiveTranscript, free). Structuring is Claude when ANTHROPIC_API_KEY is set, else keyword sorting (keywords.py, free).
+"""
 from __future__ import annotations
+
+import os
+
+from sqlalchemy import select
 
 from app import db as dbmod
 from app import models, storage
+from app.debrief import keywords as keywords_mod
 from app.debrief import structure as structure_mod
 from app.debrief import transcribe as transcribe_mod
 
@@ -37,12 +46,14 @@ def process_debrief(debrief_id: int) -> None:
         s = d.session
         ctx = context_for(s, d.mode)
         try:
-            names = [n for _, n in ctx.corners if n]
-            tr = transcribe_mod.transcribe(storage.local_path(d.audio_path), d.language, key_terms=names)
+            tr = _transcript(db, d, ctx)
             d.segments = [seg.__dict__ for seg in tr.segments]
             d.transcript = tr.text
             db.commit()
-            result = structure_mod.structure(tr, ctx)
+            if os.environ.get("ANTHROPIC_API_KEY"):
+                result = structure_mod.structure(tr, ctx)
+            else:
+                result = keywords_mod.structure(tr, ctx)
         except Exception as e:  # keep the audio and say why, so it can be processed again later
             d.status, d.error = models.DebriefStatus.failed, str(e)
             db.commit()
@@ -65,6 +76,18 @@ def process_debrief(debrief_id: int) -> None:
         db.commit()
     finally:
         db.close()
+
+
+def _transcript(db, d: models.Debrief, ctx: structure_mod.Context) -> transcribe_mod.Transcript:
+    """Deepgram's transcript when its key is set, else the phone's own (no speakers told apart)."""
+    if not os.environ.get("DEEPGRAM_API_KEY"):
+        live = db.scalar(select(models.LiveTranscript).where(models.LiveTranscript.audio_path == d.audio_path))
+        if live is not None and live.segments:
+            return transcribe_mod.Transcript([
+                transcribe_mod.Segment("S0", float(x.get("start") or 0), float(x.get("end") or 0), x["text"].strip())
+                for x in live.segments if (x.get("text") or "").strip()])
+    names = [n for _, n in ctx.corners if n]
+    return transcribe_mod.transcribe(storage.local_path(d.audio_path), d.language, key_terms=names)
 
 
 def _fit(label: str | None, n: int = 16) -> str | None:

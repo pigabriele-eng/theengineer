@@ -206,6 +206,16 @@ class DebriefRecording(Base):
     debrief: Mapped[Debrief | None] = relationship()
 
 
+class LiveTranscript(Base):
+    """What the phone's own speech recognition wrote down while a debrief was recorded (free, no speaker labels):
+    the transcript used when the server has no speech to text key (debrief/pipeline.py). Keyed by the recording's
+    storage key, which its DebriefRecording and its Debrief share."""
+    __tablename__ = "live_transcripts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    audio_path: Mapped[str] = mapped_column(String(512), unique=True)
+    segments: Mapped[list] = mapped_column(JSON)  # [{"start", "end", "text"}], seconds into the recording
+
+
 class TyreMinimum(Base):
     """A P-Book minimum tyre pressure for one series, tyre and axle: cold, hot or both (gauge bar)."""
     __tablename__ = "tyre_minimums"
