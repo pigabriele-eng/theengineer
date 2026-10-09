@@ -218,3 +218,25 @@ def test_the_storage_line_says_files_are_being_moved(tmp_path, monkeypatch):
     assert storage.usage()["moving"] == {"done": 3, "total": 40}
     both.moving = None
     assert "moving" not in storage.usage()
+
+
+def test_files_come_from_supabase_while_b2_refuses_downloads(tmp_path):
+    """Gabriele, 2026-10-09: "Backblaze 75% daily bandwith reached?" Past the free daily cap B2 refuses downloads
+    (403 download_cap_exceeded); the copies kept in Supabase answer meanwhile."""
+    old_fake, new_fake = FakeSupabaseStorage(), FakeB2()
+    old = old_fake.storage(tmp_path / "cache")
+    kept = old.save(b"\x40 an older log", ".ld")
+    both = TwoStorages(new_fake.storage(tmp_path / "cache"), old)
+    assert both.copy_over()["copied"] == 1
+    only_b2 = both.save(b"\x40 a new log", ".ld")
+    shutil.rmtree(tmp_path / "cache")
+
+    def capped(request):
+        if request.method == "GET" and request.url.path.endswith(".gz"):
+            return httpx.Response(403, content=b"<Error><Code>download_cap_exceeded</Code></Error>")
+        return new_fake.handler(request)
+
+    both.new.client = httpx.Client(transport=httpx.MockTransport(capped))
+    assert both.local_path(kept).read_bytes() == b"\x40 an older log"
+    with pytest.raises(storage.StorageError, match="download_cap_exceeded"):
+        both.local_path(only_b2)  # no other copy: the reason is passed on

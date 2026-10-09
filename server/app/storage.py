@@ -523,12 +523,21 @@ class TwoStorages:
         return self.current.save_file(path, suffix)
 
     def local_path(self, key: str) -> Path:
-        if self.new is not None:
+        """From `new`; from `old` when `new` hasn't the file, or can't give it now (Backblaze's free daily download
+        cap reached, Gabriele 2026-10-09: "Backblaze 75% daily bandwith reached")."""
+        if self.new is None:
+            return self.old.local_path(key)
+        try:
+            return self.new.local_path(key)
+        except FileNotFoundError:
+            return self.old.local_path(key)
+        except (StorageError, httpx.HTTPError) as e:
             try:
-                return self.new.local_path(key)
+                path = self.old.local_path(key)
             except FileNotFoundError:
-                pass
-        return self.old.local_path(key)
+                raise e from None
+            logging.getLogger(__name__).warning("Read %s from %s: %s", key, self.old.service, e)
+            return path
 
     def delete(self, key: str) -> None:
         if self.new is not None:
