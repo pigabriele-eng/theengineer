@@ -3,7 +3,7 @@
 // session and the event. Every lap is compared only with laps on the same tyres (PUT .../tyres sets a run's).
 // The server works it out in the background for every clean lap of an event (or of a session in no event).
 import type { RunTyres as RunTyresLevel, TyreLevel } from '@/lib/tyreLevels';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, LapPick } from '@/lib/api';
 
 export type TechniqueStatus = 'ready' | 'queued' | 'running' | 'failed' | 'empty';
 
@@ -92,6 +92,7 @@ export type LapRow = {
   top_code: string | null;
   in_lap: boolean;
   build?: boolean; // a qualifying lap building up to the push (or cooling down): left out of the repeats
+  pick?: LapPick | null; // the lap's type as set by hand
 };
 
 export type Habit = {

@@ -14,6 +14,7 @@ import { Text, View } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
 import { ZOOM_HINT, ZoomGroup } from '@/components/Zoom';
 import { formatLap, prefetch } from '@/lib/api';
+import { LAP_TYPE, LapTypeMenu, useLapType } from '@/components/LapType';
 import { poll } from '@/lib/poll';
 import {
   BestSource,
@@ -167,6 +168,11 @@ export default function TechniqueScreen() {
   }, [eventId, nonce, evRound]);
 
   const check = answer?.lap ?? null;
+  // the shown lap's type set by hand (components/LapType.tsx): the check is worked out again with it
+  const lapType = useLapType(sessionId, undefined, () => setNonce((k) => k + 1));
+  const shownRow = answer?.laps.find((l) => l.number === check?.number) ?? null;
+  const shownPick = shownRow?.pick ?? null;
+  const shownType = shownPick ? LAP_TYPE[shownPick] : shownRow?.build ? 'Build lap' : 'Push lap';
   useEffect(() => setSelected(check?.obvious.length ? 1 : null), [check?.key]);
 
   const pickLap = (n: number) => {
@@ -319,7 +325,19 @@ export default function TechniqueScreen() {
                 ? ' In qualifying, a lap 2% or more slower than the run’s quickest is a build lap: it is marked and left out of the mistakes that repeat.'
                 : ''}
               {answer.best_lap != null ? ' The quickest lap’s time is in purple.' : ''}
+              {' A lap read wrong (an out-lap, in-lap or build lap) gets its type set by hand here, or on the run’s lap chart for the laps not listed.'}
             </Text>
+            {check && (
+              <View style={styles.typeLine}>
+                <Text style={t.small}>{`Lap ${check.number}: ${shownType.toLowerCase()}${shownPick ? ', as you set it' : ''}`}</Text>
+                <TextLink small label="Change lap type"
+                  onPress={() => lapType.toggle(check.number)} />
+              </View>
+            )}
+            {check && lapType.open === check.number && (
+              <LapTypeMenu lap={check.number} now={shownType.toLowerCase().replace(/^/, 'a ')} picked={shownPick}
+                state={lapType} />
+            )}
           </View>
         )}
         {answer?.lap_note && <Text style={t.note}>{answer.lap_note}</Text>}
@@ -745,6 +763,7 @@ const useStyles = themed((c) => ({
   left: { alignSelf: 'flex-start' },
   pickers: { gap: 18, marginTop: 10 },
   lapBlock: { gap: 8 },
+  typeLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 12 },
   lapHead: { flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 1, borderColor: c.rule,
     paddingBottom: 5 },
   laps: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 14, rowGap: 10 },

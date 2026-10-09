@@ -98,8 +98,9 @@ def set_lap_type(session_id: int, number: int, body: schemas.LapTypeIn, file_id:
                  db: Session = Depends(get_db)):
     """Set a lap's type by hand when the app reads it wrong (Gabriele, 2026-10-09): out, build, push or in; null gives
     it back to the app. Kept on the log by when the lap started (laps.apply_picks), so it wins when the log is timed
-    again, and every page reads the lap as set: a push or build lap is clean, an out- or in-lap is not. The lap of
-    the session's main log, or of ?file_id=."""
+    again, and every page reads the lap as set: a push or build lap is clean, an out- or in-lap is not. Given back,
+    the lap is as the app read it before it was set (no log read). The lap of the session's main log, or of
+    ?file_id=."""
     if body.type is not None and body.type not in LAP_PICKS:
         raise HTTPException(422, f"type: one of {', '.join(LAP_PICKS)}, or null")
     with heavy.lock:  # the log's meta is read again and written under the lock (timing writes it too)
@@ -111,19 +112,17 @@ def set_lap_type(session_id: int, number: int, body: schemas.LapTypeIn, file_id:
         if lap is None:
             raise HTTPException(404, f"No lap {number} in this log")
         db.refresh(f)
-        picks = {k: v for k, v in (f.meta.get("lap_picks") or {}).items()
-                 if abs(float(k) - lap.start_s) > PICK_MATCH_S}  # the lap's own pick, set again
+        near = lambda k: abs(float(k) - lap.start_s) <= PICK_MATCH_S  # noqa: E731 - the lap's own entries
+        picks = {k: v for k, v in (f.meta.get("lap_picks") or {}).items() if not near(k)}
+        # the app's own reading of each lap set by hand, to give it back without reading the log again
+        was = {k: v for k, v in (f.meta.get("lap_picks_was") or {}).items() if not near(k)}
+        own = next((v for k, v in (f.meta.get("lap_picks_was") or {}).items() if near(k)), lap.clean)
+        key = f"{lap.start_s:.2f}"
         if body.type is not None:
-            picks[f"{lap.start_s:.2f}"] = body.type
-        meta = {k: v for k, v in f.meta.items() if k != "lap_picks"}
-        f.meta = {**meta, "lap_picks": picks} if picks else meta
-        if body.type is not None:
-            lap.clean = body.type in ("push", "build")
-        else:  # back to the app's own reading: the log timed again
-            ld = read_file(f)
-            track = _track_for(db, s, ld)
-            store_laps(db, s, f, time_laps(ld, f.meta.get("beacons"), track_line(track)), track)
-            del ld
+            picks[key], was[key] = body.type, own
+        meta = {k: v for k, v in f.meta.items() if k not in ("lap_picks", "lap_picks_was")}
+        f.meta = {**meta, "lap_picks": picks, "lap_picks_was": was} if picks else meta
+        lap.clean = body.type in ("push", "build") if body.type is not None else bool(own)
         db.commit()
     _prebuild(db, s)
     db.refresh(s)
