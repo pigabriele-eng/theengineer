@@ -3,7 +3,6 @@ import {
   requestRecordingPermissionsAsync,
   setAudioModeAsync,
   useAudioRecorder,
-  useAudioRecorderState,
 } from 'expo-audio';
 import * as DocumentPicker from 'expo-document-picker';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
@@ -23,9 +22,11 @@ import {
   Session,
   WaitingRecording,
 } from '@/lib/api';
+import { a11yState } from '@/lib/a11yState';
 import { goToData } from '@/lib/openCurrent';
 import { fileRecordedAt, localTime, recordedLabel } from '@/lib/debriefTime';
 import { LiveSegment, speechLang, speechSupported, startLiveSpeech } from '@/lib/liveSpeech';
+import { extFor, silentWav, STOP_WAIT_MS, WebRecorder } from '@/lib/webRecorder';
 import { face, Fonts, inkOn, themed, useTheme } from '@/constants/Theme';
 
 const MODES: [DebriefMode, string][] = [
@@ -48,6 +49,10 @@ const offered = (sessions: Session[], picked: number | null) => {
   const own = newest.some((s) => s.id === picked) ? null : sessions.find((s) => s.id === picked);
   return own ? [own, ...newest] : newest;
 };
+
+// idle: nothing recorded; paused: a part recorded, more can follow (one debrief in several parts); stopping: the
+// recording is being finished and sent
+type Phase = 'idle' | 'recording' | 'paused' | 'stopping';
 
 const clock = (ms: number) => {
   const s = Math.floor(ms / 1000);
@@ -78,12 +83,19 @@ export default function DebriefScreen() {
   const [saved, setSaved] = useState<string | null>(null);
   const [waiting, setWaiting] = useState<WaitingRecording[]>([]);
   const [startedAt, setStartedAt] = useState<string | null>(null);
+  const [phase, setPhase] = useState<Phase>('idle');
+  const [ms, setMs] = useState(0);
+  const [parts, setParts] = useState(0);
+  const [sure, setSure] = useState(false); // asked whether to delete the recording
+  // the phone app records with expo-audio; the browser with lib/webRecorder.ts, whose stop can't hang
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const rec = useAudioRecorderState(recorder, 250);
+  const web = useRef<WebRecorder | null>(null);
+  const native = useRef<{ ran: number; since: number | null }>({ ran: 0, since: null });
   // what the browser writes down while recording (web only): sent with the recording, used when the server has no
   // speech to text of its own
   const canHear = Platform.OS === 'web' && speechSupported();
   const live = useRef<{ stop(): LiveSegment[] } | null>(null);
+  const before = useRef<LiveSegment[]>([]); // the words of the parts recorded before this one
   const [heard, setHeard] = useState<{ finals: LiveSegment[]; interim: string }>({ finals: [], interim: '' });
   useEffect(() => () => {
     try {
@@ -91,6 +103,7 @@ export default function DebriefScreen() {
     } catch {
       // nothing to stop
     }
+    web.current?.discard(); // leaving the page lets go of the microphone
   }, []);
 
   useFocusEffect(
@@ -126,35 +139,172 @@ export default function DebriefScreen() {
     }
   };
 
-  const start = async () => {
-    setStatus(null);
-    const perm = await requestRecordingPermissionsAsync();
-    if (!perm.granted) {
-      setStatus('Microphone access is needed to record a debrief.');
-      return;
-    }
-    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, shouldPlayInBackground: true });
-    await recorder.prepareToRecordAsync();
-    setStartedAt(localTime(new Date()));
-    recorder.record();
-    setHeard({ finals: [], interim: '' });
-    if (canHear) {
-      try {
-        live.current = startLiveSpeech(speechLang(language, navigator.language), Date.now(),
-          (finals, interim) => setHeard({ finals, interim }));
-      } catch {
-        live.current = null;
-      }
+  const elapsed = () => web.current?.ms
+    ?? native.current.ran + (native.current.since != null ? Date.now() - native.current.since : 0);
+  useEffect(() => {
+    if (phase !== 'recording') return;
+    const tick = setInterval(() => setMs(elapsed()), 250);
+    return () => clearInterval(tick);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
+  // the browser writes the words down part by part, each stamped from the start of the whole recording
+  const listen = () => {
+    if (!canHear) return;
+    try {
+      live.current = startLiveSpeech(speechLang(language, navigator.language), Date.now() - elapsed(),
+        (finals, interim) => setHeard({ finals: [...before.current, ...finals], interim }));
+    } catch {
+      live.current = null;
     }
   };
-
-  const stopHearing = (): LiveSegment[] => {
+  const quiet = () => {
     try {
-      return live.current?.stop() ?? [];
+      before.current = [...before.current, ...(live.current?.stop() ?? [])];
     } catch {
-      return [];
+      // no words from this part
     } finally {
       live.current = null;
+    }
+    setHeard({ finals: before.current, interim: '' });
+  };
+
+  const start = async () => {
+    if (phase !== 'idle') return;
+    setStatus(null);
+    setSaved(null);
+    setSure(false);
+    before.current = [];
+    setHeard({ finals: [], interim: '' });
+    if (Platform.OS === 'web') {
+      let r: WebRecorder;
+      try {
+        r = await WebRecorder.open();
+      } catch {
+        setStatus('Microphone access is needed to record a debrief.');
+        return;
+      }
+      r.onEnded = () => {
+        quiet();
+        setMs(r.ms);
+        setPhase('paused');
+        setStatus('The phone stopped the recording. Send what was recorded, or delete it.');
+      };
+      web.current = r;
+      r.start();
+    } else {
+      const perm = await requestRecordingPermissionsAsync();
+      if (!perm.granted) {
+        setStatus('Microphone access is needed to record a debrief.');
+        return;
+      }
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true, shouldPlayInBackground: true });
+      await recorder.prepareToRecordAsync();
+      recorder.record();
+      native.current = { ran: 0, since: Date.now() };
+    }
+    setStartedAt(localTime(new Date()));
+    setMs(0);
+    setParts(1);
+    setPhase('recording');
+    listen();
+  };
+
+  /** Pauses: the part is kept, and Carry on records the next part of the same debrief. */
+  const pause = () => {
+    if (phase !== 'recording') return;
+    quiet();
+    if (web.current) {
+      web.current.pause();
+    } else {
+      recorder.pause();
+      native.current = { ran: elapsed(), since: null };
+    }
+    setMs(elapsed());
+    setPhase('paused');
+  };
+
+  const carryOn = () => {
+    if (phase !== 'paused') return;
+    setSure(false);
+    if (web.current) {
+      if (!web.current.resume()) {
+        setStatus('The phone stopped the recording, so it can\'t carry on. Send what was recorded, or delete it.');
+        return;
+      }
+    } else {
+      recorder.record();
+      native.current = { ...native.current, since: Date.now() };
+    }
+    setStatus(null);
+    setParts((n) => n + 1);
+    setPhase('recording');
+    listen();
+  };
+
+  const reset = () => {
+    web.current = null;
+    native.current = { ran: 0, since: null };
+    before.current = [];
+    setHeard({ finals: [], interim: '' });
+    setMs(0);
+    setParts(0);
+    setSure(false);
+    setPhase('idle');
+  };
+
+  /** Throws the recording away: nothing is sent. */
+  const discard = () => {
+    quiet();
+    if (web.current) {
+      web.current.discard();
+    } else {
+      Promise.race([recorder.stop(), new Promise((r) => setTimeout(r, STOP_WAIT_MS))])
+        .then(() => setAudioModeAsync({ allowsRecording: false }))
+        .catch(() => {});
+    }
+    reset();
+    setStatus(null);
+    setSaved('Recording deleted. Nothing was sent.');
+  };
+
+  /** Stops and sends: answers at once ("Sending…"), and never waits more than a few seconds on the phone. */
+  const stopAndSend = async () => {
+    if (phase !== 'recording' && phase !== 'paused') return;
+    setPhase('stopping');
+    setSure(false);
+    quiet();
+    const said = before.current;
+    const at = startedAt ?? localTime(new Date());
+    try {
+      let audio: { uri: string; name: string; file?: Blob };
+      if (web.current) {
+        const blob = await web.current.finish();
+        if (blob.size > 0) {
+          audio = { uri: '', name: `debrief${extFor(blob.type)}`, file: blob };
+        } else if (said.length) {
+          // the phone gave no sound but wrote the words down: those still make the debrief
+          audio = { uri: '', name: 'debrief.wav', file: new Blob([silentWav() as BlobPart], { type: 'audio/wav' }) };
+        } else {
+          reset();
+          setStatus('Nothing was recorded: the phone gave no sound. Check the microphone and record again.');
+          return;
+        }
+      } else {
+        await Promise.race([recorder.stop(), new Promise((r) => setTimeout(r, STOP_WAIT_MS))]);
+        await setAudioModeAsync({ allowsRecording: false });
+        if (!recorder.uri) {
+          reset();
+          setStatus('The recording could not be saved.');
+          return;
+        }
+        audio = { uri: recorder.uri, name: 'debrief.m4a' };
+      }
+      reset();
+      await send(audio, at, said);
+    } catch (e) {
+      reset();
+      setStatus((e as Error).message);
     }
   };
 
@@ -172,24 +322,6 @@ export default function DebriefScreen() {
     // start reads the current choices; it only runs once, on arrival
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [go]);
-
-  const stop = async () => {
-    const said = stopHearing();
-    setHeard((h) => ({ ...h, interim: '' }));
-    await recorder.stop();
-    await setAudioModeAsync({ allowsRecording: false });
-    const uri = recorder.uri;
-    if (!uri) {
-      setStatus('The recording could not be saved.');
-      return;
-    }
-    if (Platform.OS === 'web') {
-      const blob = await (await fetch(uri)).blob();
-      await send({ uri, name: 'debrief.webm', file: blob }, startedAt ?? localTime(new Date()), said);
-    } else {
-      await send({ uri, name: 'debrief.m4a' }, startedAt ?? localTime(new Date()), said);
-    }
-  };
 
   const pick = async () => {
     // WhatsApp voice notes (.opus) come typed as application/ogg or as plain bytes on some phones, so those are offered
@@ -212,13 +344,40 @@ export default function DebriefScreen() {
   const typedFor = byTime ? sessions[0]?.id ?? null : sessionId;
   const runName = (s: Session) => s.name ?? `Session ${s.id}`;
 
-  const liveBlock = Platform.OS === 'web' && rec.isRecording && (canHear ? (
+  const recording = phase === 'recording';
+  const held = phase === 'paused';
+  const sending = phase === 'stopping' || busy;
+  const active = phase !== 'idle';
+  const partsLine = parts > 1 ? `, ${parts} parts` : '';
+
+  // under the record button while a recording is going: pause it (more parts follow), send it, or delete it
+  const controls = active && !sending && (sure ? (
+    <View style={styles.sure}>
+      <Text style={t.body}>Delete this recording? Nothing is sent.</Text>
+      <TextLink label="Delete" red onPress={discard} />
+      <TextLink label="Keep it" onPress={() => setSure(false)} />
+    </View>
+  ) : (
+    <View style={styles.controls}>
+      {held && <MainAction label={`Send debrief  ${clock(ms)}${partsLine}`} onPress={stopAndSend} />}
+      <View style={styles.quickLinks}>
+        {recording && <TextLink label="Pause" onPress={pause} />}
+        <TextLink label="Delete" onPress={() => {
+          pause();
+          setSure(true);
+        }} />
+      </View>
+    </View>
+  ));
+
+  const liveBlock = Platform.OS === 'web' && (recording || held) && (canHear ? (
           <View style={styles.live} accessibilityLiveRegion="polite" aria-live="polite">
             <Label small>Writing down what you say</Label>
             <Text style={styles.liveText}>
               {heard.finals.map((f) => f.text).join(' ')}
               {heard.interim ? <Text style={styles.liveInterim}>{`${heard.finals.length ? ' ' : ''}${heard.interim}`}</Text> : null}
-              {!heard.finals.length && !heard.interim ? <Text style={styles.liveInterim}>Listening…</Text> : null}
+              {!heard.finals.length && !heard.interim
+                ? <Text style={styles.liveInterim}>{held ? 'Paused. Nothing written down yet.' : 'Listening…'}</Text> : null}
             </Text>
           </View>
         ) : (
@@ -230,23 +389,28 @@ export default function DebriefScreen() {
   // On a phone, opened as the app's first page or from the record key: one big red button, and a way to the data
   // (Gabriele, 2026-10-09). The choices keep their defaults (the last run by time, one driver) until More options.
   if (!wide && asked == null && !full) {
-    const recording = rec.isRecording;
+    const keyLabel = sending ? 'Sending…' : recording ? `Stop and send  ${clock(ms)}`
+      : held ? `Carry on recording  ${clock(ms)}` : 'Record debrief';
     return (
       <Page keyboardShouldPersistTaps="handled">
         <View style={styles.quick}>
-          <Pressable accessibilityRole="button" accessibilityLabel={recording ? 'Stop and send' : 'Record a debrief'}
-            disabled={busy} onPress={recording ? stop : start}
-            style={StyleSheet.flatten([styles.bigKey, recording && styles.bigKeyOn, busy && styles.dim])}>
+          <Pressable accessibilityRole="button"
+            accessibilityLabel={recording ? 'Stop and send' : held ? 'Carry on recording' : 'Record a debrief'}
+            {...a11yState({ disabled: sending, busy: sending })}
+            disabled={sending} onPress={recording ? stopAndSend : held ? carryOn : start}
+            style={StyleSheet.flatten([styles.bigKey, (recording || sending) && styles.bigKeyOn])}>
             {recording ? <View style={styles.bigStop} /> : null}
-            <Text style={StyleSheet.flatten([styles.bigLabel, { color: inkOn(recording ? theme.text : theme.mark) }])}>
-              {busy ? 'Sending…' : recording ? `Stop and send  ${clock(rec.durationMillis)}` : 'Record debrief'}
+            {sending ? <ActivityIndicator size="large" color={inkOn(theme.text)} /> : null}
+            <Text style={StyleSheet.flatten([styles.bigLabel,
+              { color: inkOn(recording || sending ? theme.text : theme.mark) }])}>
+              {keyLabel}
             </Text>
           </Pressable>
-          {busy && <ActivityIndicator color={theme.text} />}
+          {controls}
           {liveBlock}
           {saved && <Text style={t.note}>{saved}</Text>}
           {status && <Text style={t.error}>{status}</Text>}
-          {!recording && (
+          {!active && (
             <Text style={t.note}>
               {`Goes with the run that ended just before. ${MODES.find(([k]) => k === mode)?.[1]}, ${
                 LANGUAGES.find(([k]) => k === language)?.[1]}.`}
@@ -254,8 +418,8 @@ export default function DebriefScreen() {
             </Text>
           )}
           <View style={styles.quickLinks}>
-            <TextLink label="Go to data" onPress={goToData} arrow disabled={recording} />
-            <TextLink label="More options" onPress={() => setFull(true)} disabled={recording} />
+            <TextLink label="Go to data" onPress={goToData} arrow disabled={active} />
+            <TextLink label="More options" onPress={() => setFull(true)} disabled={active} />
           </View>
         </View>
       </Page>
@@ -285,23 +449,27 @@ export default function DebriefScreen() {
         <View style={wide ? styles.recordWide : styles.record}>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={rec.isRecording ? 'Stop and send' : 'Start recording'}
-            disabled={off}
-            onPress={rec.isRecording ? stop : start}
-            style={StyleSheet.flatten([styles.button, off && styles.dim])}>
-            <View style={rec.isRecording ? styles.stopIcon : styles.recIcon} />
+            accessibilityLabel={recording ? 'Stop and send' : held ? 'Carry on recording' : 'Start recording'}
+            {...a11yState({ disabled: off || sending, busy: sending })}
+            disabled={off || sending}
+            onPress={recording ? stopAndSend : held ? carryOn : start}
+            style={StyleSheet.flatten([styles.button, (off || sending) && styles.dim])}>
+            <View style={recording ? styles.stopIcon : styles.recIcon} />
           </Pressable>
           <View style={styles.recordWords}>
-            <Fig label={rec.isRecording ? 'Recording' : 'Length'} value={clock(rec.durationMillis)} size={wide ? 88 : 64} />
+            <Fig label={recording ? 'Recording' : held ? 'Paused' : 'Length'} value={clock(ms)} size={wide ? 88 : 64} />
             <Text style={t.italic}>
-              {busy ? 'Sending…' : rec.isRecording ? 'Recording. Tap the square to stop and send.' : 'Tap the red square to record the debrief.'}
+              {sending ? 'Sending…' : recording ? 'Recording. Tap the square to stop and send.'
+                : held ? `Paused${partsLine}. Tap the red square to carry on, or send it.`
+                : 'Tap the red square to record the debrief.'}
             </Text>
-            {busy && <ActivityIndicator style={styles.left} color={theme.text} />}
+            {sending && <ActivityIndicator style={styles.left} color={theme.text} />}
           </View>
         </View>
+        {controls && <View style={styles.gapTop}>{controls}</View>}
         {liveBlock}
         <View style={styles.links}>
-          <TextLink label="Upload a recording instead" onPress={pick} disabled={busy || rec.isRecording} />
+          <TextLink label="Upload a recording instead" onPress={pick} disabled={sending || active} />
         </View>
         {saved && <Text style={StyleSheet.flatten([t.note, styles.gapTop])}>{saved}</Text>}
         {status && <Text style={StyleSheet.flatten([t.error, styles.gapTop])}>{status}</Text>}
@@ -484,6 +652,7 @@ const useStyles = themed((c) => ({
   bigKeyOn: { backgroundColor: c.text },
   bigStop: { width: 56, height: 56, backgroundColor: c.mark },
   bigLabel: { fontFamily: Fonts.display, fontSize: 40, lineHeight: 46, textTransform: 'uppercase', textAlign: 'center' },
+  controls: { gap: 16, alignItems: 'flex-start' },
   quickLinks: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 28, rowGap: 12 },
   points: { borderTopWidth: 1, borderColor: c.rule },
   point: { gap: 3, paddingVertical: 10, borderBottomWidth: 1, borderColor: c.separator },
