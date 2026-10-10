@@ -52,7 +52,7 @@ export default function CalendarScreen() {
     <Page>
       <Stack.Screen options={{ title: 'Racing calendar' }} />
       <PageTitle kicker="Tools" title="Racing calendar"
-        dek="Keep your tests and race weekends in Google Calendar and they show up on the Sessions tab as planned events: under Upcoming before they start, under Current from the day before. Logs you upload from that track on those days go straight into the event." />
+        dek="Keep your tests and race weekends in Google Calendar and they show up on Weekend as planned events: under Upcoming before they start, under Current from the day before. Logs you upload from that track on those days go straight into the event." />
       {error && <View style={{ marginTop: 18 }}><ErrorLine>Can’t reach the server: {error}</ErrorLine></View>}
       {!state && !error && <ActivityIndicator style={{ alignSelf: 'flex-start', marginTop: 24 }} />}
       {state && (!feed || replacing) && (

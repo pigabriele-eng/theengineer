@@ -159,7 +159,7 @@ export default function GarageScreen() {
         </>
       )}
       <Colophon left="The Engineer · Garage" links={[
-        { label: 'Sessions', href: '/' },
+        { label: 'Weekend', href: '/' },
         { label: 'Seasons', href: '/seasons' },
         { label: 'Tools', href: '/tools' },
       ]} />

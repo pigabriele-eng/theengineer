@@ -50,6 +50,7 @@ const NAMES: Record<string, string> = {
   '/compare': 'Compare laps',
   '/garage': 'the garage',
   '/seasons': 'Seasons',
+  '/manual': 'the manual',
 };
 
 /** What a screen reader calls the page at `path`, when it can say: null for one it can't name from its path. */

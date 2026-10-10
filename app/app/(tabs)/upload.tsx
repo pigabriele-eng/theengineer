@@ -16,7 +16,7 @@ export default function UploadScreen() {
         <ImportLogs big onProgress={() => {}} />
       </View>
       <Colophon left="The Engineer · Upload" links={[
-        { label: 'Sessions', href: '/' },
+        { label: 'Weekend', href: '/' },
         { label: 'Seasons', href: '/seasons' },
         { label: 'Racing calendar', href: '/tools/calendar' },
       ]} />

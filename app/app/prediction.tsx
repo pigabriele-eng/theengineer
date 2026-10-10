@@ -47,7 +47,7 @@ export default function PredictionScreen() {
     return (
       <Page>
         <Text style={StyleSheet.flatten([styles.title, styles.head])} accessibilityRole="header">Prediction</Text>
-        <Text style={styles.dek}>Open the prediction from an event on the Sessions page.</Text>
+        <Text style={styles.dek}>Open the prediction from an event on Weekend.</Text>
       </Page>
     );
   }

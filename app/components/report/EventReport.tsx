@@ -288,7 +288,7 @@ export default function EventReport({
   });
 
   if (!scope) {
-    const none = <Text style={styles.note}>Open a report from an event on the Sessions page, or from a session.</Text>;
+    const none = <Text style={styles.note}>Open a report from an event on Weekend, or from a run.</Text>;
     return embedded ? none : <Page>{none}</Page>;
   }
   const isPart = isPartScope(scope);
