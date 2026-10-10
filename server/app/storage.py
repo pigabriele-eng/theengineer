@@ -448,6 +448,13 @@ class S3Storage(RemoteStorage):
                 return
 
 
+def _capped(e: Exception) -> bool:
+    """Backblaze refuses downloads past its free daily cap: 403 "download bandwidth or transaction (Class B) cap
+    exceeded" (code AccessDenied) or download_cap_exceeded."""
+    text = str(e).lower()
+    return "(403)" in text and "cap" in text
+
+
 class TwoStorages:
     """New files go to `new` (Backblaze B2); files stored before the move are copied across in the background
     (copy_over, Gabriele 2026-10-08: "can we transfer everything on backblaze?") and read from `old` (Supabase) until
@@ -547,6 +554,10 @@ class TwoStorages:
             try:
                 path = self.old.local_path(key)
             except FileNotFoundError:
+                if _capped(e):  # Gabriele, 2026-10-10, the Racing line page: the raw 403 XML said nothing useful
+                    raise StorageError(
+                        "Backblaze's free daily download limit is used up and this log has no spare copy in Supabase, "
+                        "so it opens again after the limit resets at 00:00 UTC (02:00 in Germany)") from e
                 raise e from None
             logging.getLogger(__name__).warning("Read %s from %s: %s", key, self.old.service, e)
             return path
