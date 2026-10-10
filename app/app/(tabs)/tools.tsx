@@ -12,6 +12,17 @@ type Tool = { href: Href; title: string; blurb: string };
 
 const GROUPS: { name: string; dek: string; tools: Tool[] }[] = [
   {
+    name: 'Help',
+    dek: 'How the app works, function by function.',
+    tools: [
+      {
+        href: '/manual',
+        title: 'Manual',
+        blurb: 'Every function in plain words and the taps that reach it, part by part. Type a word to find one. Also at the top of every page.',
+      },
+    ],
+  },
+  {
     name: 'Tyres',
     dek: 'What to set cold, what the temperatures across the tread say, and where the grip is.',
     tools: [
@@ -79,6 +90,11 @@ const GROUPS: { name: string; dek: string; tools: Tool[] }[] = [
         href: '/compare',
         title: 'Compare laps',
         blurb: 'Any two to six laps from any sessions at one track, on one line: where the time is and why.',
+      },
+      {
+        href: '/racing-line',
+        title: 'Racing line, 3D',
+        blurb: 'Up to four laps driven again in 3D from the GPS and the steering: where each brakes, turns in and meets the apex, and where the load is. Pick a run, or open it from a weekend under the laps you picked.',
       },
       {
         href: '/drivers/compare',

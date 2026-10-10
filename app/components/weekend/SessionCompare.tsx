@@ -34,6 +34,7 @@ import {
 import { LATEST, queryOf, SessionChoice, SessionPick } from '@/lib/sessionPick';
 import { TYRE_LABEL } from '@/lib/tyreLevels';
 import { tyreTag } from '@/lib/tyreTag';
+import { racingLineParams } from '@/lib/racingLineMath';
 import { flipKey, onGraph } from '@/lib/theoretical';
 import { sessionCompareSections } from '@/lib/weekendRuns';
 import { a11yState } from '@/lib/a11yState';
@@ -141,6 +142,7 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
   // the picked laps on one line, made last (useLoadLast) and again a moment after the last tap
   const laps = picks.map((p) => ({ session_id: p.session_id, lap: p.lap }));
   const key = encodePicks(laps);
+  const line = racingLineParams(laps); // the same laps driven in 3D, the first four
   const go = useLoadLast(traces, laps.length >= 2);
   const [data, setData] = useState<CompareResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -265,6 +267,7 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
           {laps.length >= 2 && (
             <TextLink href={{ pathname: '/compare', params: { laps: key } }} label="Open on the Compare page" arrow />
           )}
+          {line && <TextLink href={{ pathname: '/racing-line', params: line }} label="Racing line, 3D" arrow />}
         </View>
       </Section>
       <Section no={no + 1} title="Best in each corner"
