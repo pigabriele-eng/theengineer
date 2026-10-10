@@ -883,7 +883,7 @@ const useStyles = themed((c) => ({
   nameLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 10, rowGap: 0 },
   nameWho: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1, minWidth: 0 },
   // Rename: the name's 23 px line with room to a 44 px target above and below; the run's details start under that room
-  namePress: { flexDirection: 'row', alignItems: 'baseline', gap: 6, flexShrink: 1, ...tapRoom(11) },
+  namePress: { flexDirection: 'row', alignItems: 'baseline', gap: 6, flexShrink: 1, minWidth: TAP, ...tapRoom(11) },
   runName: { fontFamily: Type.label.fontFamily, fontSize: 17, letterSpacing: 0.3, color: c.text, flexShrink: 1 },
   pencil: { fontFamily: Fonts.label, fontSize: 13, color: c.textMuted },
   runSub: { fontFamily: face('label', 400), fontSize: 13, lineHeight: 17, color: c.textSecondary, marginTop: 8 },

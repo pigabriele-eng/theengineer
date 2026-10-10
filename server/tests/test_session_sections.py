@@ -99,11 +99,12 @@ def test_latest_session_sections(client, monkeypatch):
     monkeypatch.setattr(ss, "CHUNK", 2)  # several comparisons, each with the fastest lap
     first = client.get(f"/events/{event['id']}/latest-session/sections").json()
     assert first["status"] == "working" and first["session"] == {"code": "R1", "title": "R1"}
-    # the laps are listed at once, by stint in the order they ran, clean laps only
+    # the laps are listed at once, by stint in the order they ran, the lap off the pace too
     assert [(r["id"], r["driver"], [l["number"] for l in r["laps"]]) for r in first["runs"]] == [
-        (s1, "Anna Berg", [1, 2, 4, 5]), (s2, "Bo Lind", [1, 2, 3])]
+        (s1, "Anna Berg", [1, 2, 3, 4, 5]), (s2, "Bo Lind", [1, 2, 3])]
     assert all(l["sections"] is None for r in first["runs"] for l in r["laps"])
-    assert first["left_out"] == 1  # the lap off the pace
+    assert [(l["clean"], l["kind"]) for l in first["runs"][0]["laps"]][2] == (False, "slow")
+    assert first["left_out"] == 0
     assert first["fastest"]["session_id"] == s1 and first["fastest"]["lap"] == 1
     assert ss.wait_idle(120)
     res = client.get(f"/events/{event['id']}/latest-session/sections").json()
@@ -117,8 +118,9 @@ def test_latest_session_sections(client, monkeypatch):
     for n in (1, 2, 3):
         lap = times[(s2, n)]
         assert lap[0] - fast[0] <= -0.02 and lap[1] > fast[1]
-    # the same laps of the stint the fastest lap is in: slower everywhere, by their pace
-    assert all(times[(s1, n)][k] >= fast[k] for n in (2, 4, 5) for k in (0, 1))
+    # the same laps of the stint the fastest lap is in: slower everywhere, by their pace, the lap off it most
+    assert all(times[(s1, n)][k] >= fast[k] for n in (2, 3, 4, 5) for k in (0, 1))
+    assert all(times[(s1, 3)][k] > times[(s1, 2)][k] for k in (0, 1))
     # the section times are the lap comparison's own
     cmp = client.post("/compare/laps", json={"laps": [{"session_id": s1, "lap": 1}, {"session_id": s2, "lap": 2}]})
     assert [s["times"] for s in cmp.json()["sections"]] == [[fast[0], times[(s2, 2)][0]], [fast[1], times[(s2, 2)][1]]]
@@ -191,3 +193,97 @@ def test_another_session_and_stints_mixed_in(client, monkeypatch):
 
     assert client.get(url, params={"part": "FP9"}).status_code == 404
     assert client.get(url, params={"add": "3,x"}).status_code == 422
+
+
+def _quali(d, pace):
+    """A qualifying run's laps: as the synthetic lap, but the in-lap (pace 0.51) pushes through T1 quicker than any
+    other lap, then backs off for the pit lane."""
+    if pace == 0.51:
+        return np.where(d < 500, synthetic._SPEED_AT(d, 1.012), synthetic._SPEED_AT(d, 0.7))
+    return synthetic._SPEED_AT(d, pace)  # (speed_at is this function while the run is driven)
+
+
+def test_lap_kinds():
+    lap = lambda n, clean: models.Lap(number=n, clean=clean)  # noqa: E731
+    # Gabriele's qualifying run: an out-lap, a slow build lap, the pushes, a push that turns into the in-lap
+    q = [lap(1, False), lap(2, False), lap(3, True), lap(4, True), lap(5, False)]
+    assert ss.lap_kinds(q) == {1: "out", 2: "build", 3: None, 4: None, 5: "in"}
+    # a slow lap among the clean ones, and a cool-down lap before the in-lap
+    r = [lap(1, True), lap(2, False), lap(3, True), lap(4, False), lap(5, False)]
+    assert ss.lap_kinds(r) == {1: None, 2: "slow", 3: None, 4: "slow", 5: "in"}
+    assert ss.lap_kinds([lap(1, False), lap(2, False)]) == {1: "out", 2: "build"}
+    assert ss.lap_kinds([]) == {}
+    # set by hand: as set (a build lap set by hand is clean, as the pick makes it)
+    picked = [lap(1, False), lap(2, True), lap(3, True), lap(4, False), lap(5, True)]
+    assert ss.lap_kinds(picked, {2: "build", 4: "push", 5: "in"}) == {1: "out", 2: "build", 3: None, 4: None,
+                                                                       5: "in"}
+
+
+def test_the_clean_laps_first_then_each_runs_others():
+    answer = {"fastest": {"session_id": 1, "lap": 3}, "runs": [
+        {"id": 1, "laps": [{"number": n, "clean": n in (3, 4)} for n in (1, 2, 3, 4, 5)]},
+        {"id": 2, "laps": [{"number": n, "clean": n == 2} for n in (1, 2, 3)]}]}
+    assert ss.plan_chunks(answer) == [[(1, 3), (1, 4), (2, 2)], [(1, 3), (1, 1), (1, 2), (1, 5)],
+                                      [(1, 3), (2, 1), (2, 3)]]
+    # by section code: one a comparison doesn't have goes without
+    res = {"sections": [{"code": "T1", "times": [9.1, 9.3]}, {"code": "T3", "times": [5.0, 5.2]}]}
+    assert ss.by_code(["T1", "T2", "T3"], res, 1) == [9.3, None, 5.2]
+
+
+def test_every_lap_driven_out_and_in_laps_too(client, monkeypatch):
+    track = client.post("/tracks", json={"name": "Test ring", "corners": CORNERS}).json()
+    event = client.post("/events", json={"name": "Round 8", "track_id": track["id"]}).json()
+    q = _run(client, event, "Q1")
+    _upload(client, q, (0.85, 0.94, 1.0, 0.995, 0.51), monkeypatch, _quali)
+    url = f"/events/{event['id']}/latest-session/sections"
+    first = client.get(url).json()
+    laps = first["runs"][0]["laps"]
+    assert [(l["number"], l["clean"], l["kind"]) for l in laps] == [
+        (1, False, "out"), (2, False, "build"), (3, True, None), (4, True, None), (5, False, "in")]
+    assert first["fastest"]["lap"] == 3 and first["left_out"] == 0
+    assert ss.wait_idle(120)
+    res = client.get(url).json()
+    assert res["status"] == "ready" and res["note"] is None
+    times = {l["number"]: l["sections"] for l in res["runs"][0]["laps"]}
+    assert all(t is not None and None not in t and len(t) == 2 for t in times.values())
+    # the in-lap: quicker than the fastest lap through T1, before it backs off for the pit lane
+    assert times[5][0] < times[3][0] and times[5][1] > times[3][1]
+    assert all(times[n][k] > times[3][k] for n in (1, 2) for k in (0, 1))
+
+    # a lap set by hand is what it was set to, here and on every page (the in-lap called a push lap: clean)
+    r = client.put(f"/sessions/{q}/laps/5/type", json={"type": "push"})
+    assert r.status_code == 200, r.text
+    picked = client.get(url).json()
+    assert [(l["number"], l["clean"], l["kind"]) for l in picked["runs"][0]["laps"]][4] == (5, True, None)
+    assert ss.wait_idle(120)
+    client.put(f"/sessions/{q}/laps/5/type", json={"type": None})
+
+    # a lap quicker than the fastest that isn't clean is only part of a lap: left out
+    with app_db.SessionLocal() as db:
+        part = db.scalar(select(models.Lap).where(models.Lap.session_id == q, models.Lap.number == 2))
+        part.time_s = 20.0
+        db.commit()
+    again = client.get(url).json()
+    assert [l["number"] for l in again["runs"][0]["laps"]] == [1, 3, 4, 5] and again["left_out"] == 1
+    assert ss.wait_idle(120)
+
+
+def test_a_lap_the_comparison_cant_place_goes_alone(client, monkeypatch):
+    track = client.post("/tracks", json={"name": "Test ring", "corners": CORNERS}).json()
+    event = client.post("/events", json={"name": "Round 9", "track_id": track["id"]}).json()
+    run = _run(client, event, "FP1")
+    _upload(client, run, (1.0, 0.99, 0.985, 0.98))
+    real = ss.compare_picks
+
+    def picky(picks, *a, **k):
+        if any(p.number == 3 for p in picks):
+            raise ValueError("can't place lap 3")
+        return real(picks, *a, **k)
+
+    monkeypatch.setattr(ss, "compare_picks", picky)
+    client.get(f"/events/{event['id']}/latest-session/sections")
+    assert ss.wait_idle(120)
+    res = client.get(f"/events/{event['id']}/latest-session/sections").json()
+    times = {l["number"]: l["sections"] for l in res["runs"][0]["laps"]}
+    assert times[3] is None and all(times[n] is not None for n in (1, 2, 4))
+    assert res["note"].startswith("Some laps couldn't be placed")
