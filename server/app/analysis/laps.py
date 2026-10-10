@@ -62,6 +62,7 @@ MASTER_HZ = 100
 CLEAN_LAP_MARGIN = 1.05  # a clean lap is within 5 % of the session's best
 PIT_SPEED_KMH = 70  # below this for PIT_SECONDS in one lap means pit lane or a slow lap, not a clean lap
 PIT_SECONDS = 8
+FULL_LAP_SHARE = 0.9  # a lap driving less than this share of the median lap's distance is cut short, not a lap
 TIMING_LINE_WIDTH_M = 40  # how far either side of the start/finish point a GPS crossing still counts
 # Line crossings closer together than a real lap can be are one pass of the line: a double pulse of the dash's
 # marker, a GPS position wobbling across the line while the car stands near it. No circuit's lap is this short.
@@ -70,7 +71,8 @@ MIN_LAP_M = 500.0  # ... or with less than this driven between them (by the spee
 MOVING_KMH = 20.0  # slower than this at a line crossing, the car was standing (or pushed), not crossing the line
 # Raise when the laps a log gives change (how line crossings are found or split into laps): every stored log is
 # then timed again once, in the background (timing.py).
-TIMING_VERSION = 2  # 2: crossings closer than MIN_LAP_S / MIN_LAP_M are one crossing
+TIMING_VERSION = 3  # 2: crossings closer than MIN_LAP_S / MIN_LAP_M are one crossing; 3: a cut-short lap (under
+# FULL_LAP_SHARE of the median lap's distance) never sets the best a clean lap is judged by, nor is clean
 
 
 @dataclass
@@ -91,6 +93,14 @@ class Lap:
     end: float
     time: float
     clean: bool = False
+    pick: str | None = None  # the driver's own reading of the lap, one of LAP_PICKS (apply_picks)
+
+
+# what a lap can be set to by hand (Gabriele, 2026-10-09: "add the ability to manually change the nature of the lap
+# in case the app gets it wrong"): an out-lap, a build lap (qualifying's slow lap before the push), a push lap or an
+# in-lap
+LAP_PICKS = ("out", "build", "push", "in")
+PICK_MATCH_S = 3.0  # a pick follows its lap when the laps are timed again: the lap starting within this many seconds
 
 
 @dataclass
@@ -299,14 +309,43 @@ def split_laps(ld: LdFile, beacons: list[float] | None = None,
                 time = logged
         laps.append(Lap(number=i + 1, start=a, end=b, time=round(time, 3)))
     if laps:
-        best = min(l.time for l in laps)
-        for l in laps:
-            l.clean = l.time <= best * CLEAN_LAP_MARGIN and not _has_slow_section(speed, l)
+        # a lap that drove much less than the others (cut short at the pits, a crossing missed or doubled) is no
+        # lap to judge the rest by: were it the quickest, every real lap would be too slow to be clean
+        far = [_driven(speed, l) for l in laps]
+        known = [d for d in far if d is not None]
+        full = float(np.median(known)) * FULL_LAP_SHARE if known else 0.0
+        whole = [l for l, d in zip(laps, far, strict=True) if d is None or d >= full]
+        best = min(l.time for l in whole or laps)
+        for l, d in zip(laps, far, strict=True):
+            l.clean = (l.time <= best * CLEAN_LAP_MARGIN and not _has_slow_section(speed, l)
+                       and (d is None or d >= full))
         clean = [l.time for l in laps if l.clean]
         if clean and min(clean) > best:  # the fastest "lap" was not a real lap; judge against the best clean one
             for l in laps:
                 l.clean = l.clean and l.time <= min(clean) * CLEAN_LAP_MARGIN
+    apply_picks(laps, getattr(ld, "lap_picks", None))
     return laps, source
+
+
+def apply_picks(laps: list[Lap], picks: dict[str, str] | None) -> None:
+    """The laps set by hand (LoggerFile.meta "lap_picks": seconds into the log the lap started -> one of LAP_PICKS)
+    win over the app's reading: a push or build lap is clean, an out- or in-lap is not. Found by when the lap
+    started, so a pick stays on its lap when the laps are timed again and numbered differently."""
+    for start, pick in (picks or {}).items():
+        if pick not in LAP_PICKS or not laps:
+            continue
+        lap = min(laps, key=lambda l: abs(l.start - float(start)))
+        if abs(lap.start - float(start)) <= PICK_MATCH_S:
+            lap.pick = pick
+            lap.clean = pick in ("push", "build")
+
+
+def _driven(speed: tuple[np.ndarray, np.ndarray, int] | None, lap: Lap) -> float | None:
+    """Metres driven in the lap, by the speed channel."""
+    if speed is None:
+        return None
+    t, v, freq = speed
+    return float(np.sum(v[(t >= lap.start) & (t < lap.end)]) / 3.6 / freq)
 
 
 def _has_slow_section(speed: tuple[np.ndarray, np.ndarray, int] | None, lap: Lap) -> bool:

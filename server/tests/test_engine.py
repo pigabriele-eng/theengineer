@@ -415,3 +415,31 @@ def test_a_stored_track_with_superseded_corners_gets_the_current_ones(client):
     assert [(c["code"], c["apex_m"]) for c in t["Red Bull Ring"]["corners"]] == \
         [(c, m) for c, m, _ in KNOWN["Red Bull Ring"]["corners"]]
     assert [(c["code"], c["apex_m"]) for c in t["Spielberg"]["corners"]] == [("T1", 400)]
+
+
+def test_a_cut_short_lap_never_makes_the_real_laps_unclean():
+    from app.analysis.laps import Lap, split_laps
+    import app.analysis.laps as L
+    # four 100 s laps at 160 km/h and a 60 s lap that drove a third of the distance (cut short at the pits)
+    starts = np.array([0.0, 100.0, 200.0, 260.0, 360.0, 460.0])
+    t = np.arange(0, 460, 0.01)
+    v = np.where((t >= 200) & (t < 260), 90.0, 160.0)
+
+    class Ch:
+        def __init__(self, x): self.x = x
+        def times(self): return t
+        def values(self): return self.x
+        freq = 100
+        count = len(t)
+
+    class Ld:
+        def channel(self, *names): return Ch(v) if any(n in L.DEFAULT_CHANNEL_MAP["speed"] for n in names) else None
+
+    orig = L.lap_starts
+    L.lap_starts = lambda *a, **k: (starts, "gps")
+    try:
+        laps, _ = split_laps(Ld())
+    finally:
+        L.lap_starts = orig
+    assert [l.clean for l in laps] == [True, True, False, True, True]
+    assert all(isinstance(l, Lap) for l in laps)

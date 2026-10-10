@@ -3,7 +3,7 @@
 // session and the event. Every lap is compared only with laps on the same tyres (PUT .../tyres sets a run's).
 // The server works it out in the background for every clean lap of an event (or of a session in no event).
 import type { RunTyres as RunTyresLevel, TyreLevel } from '@/lib/tyreLevels';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, LapPick } from '@/lib/api';
 
 export type TechniqueStatus = 'ready' | 'queued' | 'running' | 'failed' | 'empty';
 
@@ -44,7 +44,7 @@ export type Tyres = TyreLevel; // a lap's own tyres here are new or not ('new' |
  * a race Fresh, for sure); with how many of the event's clean laps it is compared with. */
 export type RunTyres = RunTyresLevel;
 
-export type InputRole = 'speed' | 'throttle' | 'brake' | 'steer' | 'gear' | 'rpm';
+export type InputRole = 'speed' | 'throttle' | 'brake' | 'steer' | 'gear' | 'rpm' | 'rear_slip' | 'tc_on';
 /** The driver's inputs at the speed trace's points (every step_m metres): throttle %, brake pressure, steering,
  * gear and revs as the log's channels for those roles have them; null (or missing, from an older check) where the log
  * has no such channel. */
@@ -91,6 +91,8 @@ export type LapRow = {
   top: string | null;
   top_code: string | null;
   in_lap: boolean;
+  build?: boolean; // a qualifying lap building up to the push (or cooling down): left out of the repeats
+  pick?: LapPick | null; // the lap's type as set by hand
 };
 
 export type Habit = {

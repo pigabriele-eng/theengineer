@@ -20,10 +20,9 @@ import queue
 import threading
 import time
 from collections import OrderedDict
-
-import numpy as np
 from typing import Literal
 
+import numpy as np
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -49,11 +48,12 @@ from app.analysis.technique import (
 from app.db import SessionLocal, get_db
 from app.routers import reports
 from app.routers.sessions import official_corners
+from app.timing import lap_picks
 
 router = APIRouter(prefix="/technique")
 log = logging.getLogger(__name__)
 
-TECHNIQUE_VERSION = 19  # raise when the check changes, so every kept one is worked out again
+TECHNIQUE_VERSION = 21  # raise when the check changes, so every kept one is worked out again
 # 5: perfect driving on a lap's own line at limits never below that lap's own (local_limits.on_own_line)
 # 6: the driver's inputs and perfect driving's phases with each lap's speed trace
 # 7: the obvious mistakes (exit lifts, power stepped on, soft straight-line braking); the theoretical lap never quicker
@@ -195,11 +195,34 @@ def _detail(row: models.TechniqueCache, member: str) -> dict | None:
     return out
 
 
+BUILD_SHARE = 0.02  # a qualifying lap this much slower than the run's quickest: a build (or cool-down) lap
+
+
+def mark_build_laps(laps: list[dict], kinds: dict[int, str],
+                    picks: dict[int, dict[int, str]] | None = None) -> None:
+    """In qualifying, the laps that build up to the push (Gabriele, 2026-10-09: "one slow build lap, first push"), or
+    cool down after it: clean laps BUILD_SHARE or more slower than the run's quickest. They stay on the page, marked,
+    but say nothing of how the driver pushes, so the mistakes that repeat and their measured costs leave them out.
+    A lap set by hand (session -> lap number -> its type, timing.lap_picks) is a build lap or a push lap as set, in
+    any run."""
+    picks = picks or {}
+    best: dict[int, float] = {}
+    for x in laps:
+        if kinds.get(x["session_id"]) == "qualifying":
+            best[x["session_id"]] = min(best.get(x["session_id"], np.inf), x["time"])
+    for x in laps:
+        b = best.get(x["session_id"])
+        pick = picks.get(x["session_id"], {}).get(x.get("number"))
+        x["pick"] = pick
+        x["build"] = pick == "build" or (pick != "push" and b is not None and x["time"] >= b * (1 + BUILD_SHARE))
+
+
 def _lap_row(x: dict) -> dict:
     ob = x["obvious"]
     return {"number": x["number"], "time": x["time"], "tyres": x.get("tyres"), "mistakes_s": x["mistakes_s"],
             "without_mistakes": x["without_mistakes"], "count": len(ob), "top": ob[0]["title"] if ob else None,
-            "top_code": ob[0]["code"] if ob else None, "in_lap": x.get("pit_from_m") is not None}
+            "top_code": ob[0]["code"] if ob else None, "in_lap": x.get("pit_from_m") is not None,
+            "build": bool(x.get("build")), "pick": x.get("pick")}
 
 
 def _fastest(row: models.TechniqueCache, res: dict, x: dict) -> dict | None:
@@ -536,19 +559,27 @@ def run_job(scope: str) -> None:
         db.commit()
 
 
+# inputs worked out from a logger channel of another role: the one named for them
+INPUT_FROM = {"rear_slip": "wheel_rl", "tc_on": "tc"}
+
+
 def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tuple[dict, bytes]:
     """Every clean lap checked: their summaries and habits (kept in the database) and every lap's full check (a
     compressed file with one member per lap, so one lap is read without the rest)."""
     corners = official_corners(plan.track)
     sessions = []
     channels: dict[str, str] = {}  # role -> the logger channel the inputs come from
+    kinds: dict[int, str] = {}  # session -> qualifying, race or practice
     for item in reports._used(plan):
+        kind = item.session.kind
+        kinds[item.session.id] = run_tyres.kind_of(getattr(kind, "value", kind) or "", item.session.name)
         cs = reports._load(db, item, plan.track)
         if cs is not None and cs.n_laps:
             sessions.append((item.session.id, cs))
             for r in INPUT_ROLES:
-                if r in cs.traces and r in cs.sources:
-                    channels.setdefault(r, cs.sources[r])
+                src = cs.sources.get(INPUT_FROM.get(r, r))
+                if r in cs.traces and src:
+                    channels.setdefault(r, src)
     if not sessions:
         raise TechniqueError("No clean laps to check")
     sessions, left_out = reports._quickest(sessions)
@@ -622,8 +653,10 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
                                                                                   prep.sections, shifts))
         blobs[member] = np.frombuffer(json.dumps(details[member]).encode(), np.uint8)
     del details
+    mark_build_laps(laps, kinds, {i.session.id: lap_picks(i.session, i.file) for i in reports._used(plan)})
+    pushed = [(x, p) for x, p in zip(laps, passes, strict=True) if not x.get("build")]
     by_session: dict[int, list[list[dict]]] = {}
-    for x in laps:  # the mistakes that repeat: the obvious ones
+    for x, _ in pushed:  # the mistakes that repeat: the obvious ones, on the laps driven flat out
         by_session.setdefault(x["session_id"], []).append(x["obvious"])
     result = {
         "format": RESULT_FORMAT,
@@ -642,14 +675,12 @@ def compute(db: Session, plan: reports.Plan, row: models.TechniqueCache) -> tupl
         # the driver's inputs sent with every lap's trace: the logger channel each comes from and its unit
         "inputs": {r: {"channel": channels.get(r), "unit": extras.units.get(r)} for r in INPUT_ROLES},
         "laps": laps,
-        "habits": {"event": habits([x["obvious"] for x in laps]),
+        "habits": {"event": habits([x["obvious"] for x, _ in pushed]),
                    "sessions": {str(sid): habits(m) for sid, m in by_session.items()}},
         "laps_left_out": left_out,
         # what each obvious mistake really cost on these laps, per driver, pooled with the track's other events
         "track": plan.track.name if plan.track else None,
-        "mistake_stats": mistake_stats([(x["driver"], p.times, x["obvious"]) for x, p in zip(laps, passes,
-                                                                                             strict=True)],
-                                       prep.sections),
+        "mistake_stats": mistake_stats([(x["driver"], p.times, x["obvious"]) for x, p in pushed], prep.sections),
     }
     del prep, extras, passes
     buf = io.BytesIO()
