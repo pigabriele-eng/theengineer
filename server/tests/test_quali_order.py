@@ -74,11 +74,12 @@ def _adac(client, names=("Gabriele Piana", "Tom Sylt"), series="adac-gt4-germany
     return ev["id"], drivers
 
 
-def test_q_and_race_runs_get_their_drivers_from_the_order(client):
+def test_q_and_race_runs_get_their_drivers_from_the_order(client, settle):
     from app import driver_prints
     from app.db import SessionLocal
 
     ev, (pia, syl) = _adac(client)
+    settle()  # the background pass the season starts (app/seasons.py) is done before the runs: else it may set some
     names = ["FP1 stint 1", "Q1", "Q2", "Q3", "R1 stint 1", "R1 stint 2", "R2 stint 1", "R2 stint 2", "R3 stint 1"]
     ids = {n: client.post("/sessions", json={"event_id": ev, "name": n}).json()["id"] for n in names}
     with SessionLocal() as db:
