@@ -130,6 +130,41 @@ export function bestInEachCorner(answer: LatestSession, min = MIN_GAIN_S): Corne
   });
 }
 
+/** One stint's corners (Gabriele, 2026-10-10, Hockenheim R1: "in stint 1 it shows a theoretical that is 0,6 faster
+ * than the fastest lap but in the 'best in each corner' it does not show me which lap of stint 1 was better than
+ * fastest lap"): its fastest clean lap, its quickest clean lap in each section and what it gained there on that lap
+ * (that lap itself where none was `min` quicker), and `gap`, what its sections together gain on it. Made as its stint
+ * theoretical is (server/app/analysis/lapcompare.py theoreticals: the stint's clean laps against its quickest), so
+ * `gap` is that theoretical's gap. */
+export type StintCorners = { run: SessionRun; best: SessionLap; laps: number; rows: CornerBest[]; gap: number };
+
+/** A stint's own best in each corner against its own fastest lap (StintCorners); null while the section times aren't
+ * known, or when none of its clean laps could be placed on the line. */
+export function stintCorners(answer: LatestSession, runId: number, min = MIN_GAIN_S): StintCorners | null {
+  const run = answer.runs.find((r) => r.id === runId);
+  const sections = answer.sections;
+  if (!run || !sections) return null;
+  const clean = run.laps.filter((l) => isClean(l) && l.sections?.length === sections.length);
+  if (clean.length === 0) return null;
+  const best = clean.reduce((b, l) => (l.time < b.time ? l : b));
+  let gap = 0;
+  const rows = sections.map((s, k) => {
+    let row: CornerBest = { code: s.code, run, lap: best, gain: 0, fastest: true };
+    let quickest = 0;
+    const f = best.sections![k];
+    for (const lap of clean) {
+      const t = lap.sections![k];
+      if (t == null || f == null) continue;
+      quickest = Math.min(quickest, t - f);
+      const gain = round(t - f);
+      if (gain <= -min + 1e-9 && gain < row.gain) row = { code: s.code, run, lap, gain, fastest: false };
+    }
+    gap -= quickest;
+    return row;
+  });
+  return { run, best, laps: clean.length, rows, gap: round(gap) };
+}
+
 /** The laps on the traces at first: the fastest clean lap of each stint, in the order they ran; with more stints than
  * a comparison takes, the quickest stints'. */
 export function defaultPicks(runs: SessionRun[], max = MAX_PICKS): LapPick[] {
