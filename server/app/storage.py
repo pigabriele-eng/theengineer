@@ -41,7 +41,9 @@ import httpx
 COMPRESSED_SUFFIXES = (".ld", ".ldx", ".csv", ".txt")  # logs compress well; audio is compressed already
 LOG_SUFFIXES = COMPRESSED_SUFFIXES  # uploaded logs (stopped first when storage is nearly full)
 COMPRESS_LEVEL = 4  # close to the smallest size for a fraction of the time of level 9
-CACHE_LIMIT_BYTES = 2 * 1024**3  # downloaded copies kept on the server's disk
+# downloaded copies kept on the server's disk (STORAGE_CACHE_GB): on a disk of its own (STORAGE_DIR on a mounted disk)
+# they outlive restarts, so each log is downloaded once
+CACHE_LIMIT_BYTES = int(float(os.environ.get("STORAGE_CACHE_GB") or 2) * 1024**3)
 CHUNK_BYTES = 1024**2
 LIMIT_MB_DEFAULT = 1024  # Supabase's free plan
 LOG_RESERVE_BYTES = 50 * 1024**2  # kept free of logs: the reports and lap packs made from them need room too

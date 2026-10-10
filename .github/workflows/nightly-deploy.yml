@@ -1,0 +1,40 @@
+name: Nightly deploy
+
+# Render deploys the `live` branch, not main, so merged changes go live once a night instead of after every merge.
+# Each deploy restarts the server, which then reads the logs it needs again from file storage; with many merges a
+# day that used up Backblaze's free daily downloads (Gabriele, 2026-10-10: "backblaze bandwith again filled").
+# The run just after midnight UTC comes right after Backblaze's daily count resets. "Run workflow" on this page
+# (Actions -> Nightly deploy) sends main live at once, for a fix that can't wait.
+
+on:
+  schedule:
+    - cron: "30 0 * * *"
+  workflow_dispatch:
+  push:  # once, when this file first lands: `live` then exists before Render is switched to it
+    branches: [main]
+    paths: [.github/workflows/nightly-deploy.yml]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly-deploy
+  cancel-in-progress: false
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Move live to main
+        run: |
+          if git ls-remote --exit-code --heads origin live >/dev/null && \
+             [ "$(git rev-parse origin/live)" = "$(git rev-parse HEAD)" ]; then
+            echo "live is already at main: nothing to deploy"
+          else
+            git push origin HEAD:refs/heads/live --force
+          fi
