@@ -20,6 +20,7 @@ from app.routers import prep_guide
 from app.routers import stint as stint_tool
 from app.routers import stint_compare
 from app.routers import track_grip, trackshape
+from app.routers import racing_line
 from app.routers import report_drivers
 from app.routers import driver_style, habits
 from app.routers import event_debriefs
@@ -75,6 +76,7 @@ for r in (catalog.router, sessions.router, imports.router, debriefs.router, insi
     app.include_router(r, dependencies=signed_in)
 app.include_router(trackmap.router, dependencies=signed_in)
 app.include_router(trackshape.router, dependencies=signed_in)
+app.include_router(racing_line.router, dependencies=signed_in)
 app.include_router(report_grip.router, dependencies=signed_in)
 app.include_router(report_balance.router, dependencies=signed_in)
 app.include_router(setups.router, dependencies=signed_in)
