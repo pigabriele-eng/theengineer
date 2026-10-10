@@ -4,7 +4,7 @@ import { test } from 'node:test';
 
 import {
   addPick, bestFlags, bestInEachCorner, defaultPicks, dropPick, fastestSections, flagWords, flipPick, gapWords, kindWords,
-  lapKey, MAX_PICKS,
+  lapKey, MAX_PICKS, stintCorners,
 } from './sessionLaps.ts';
 
 const lap = (number, time, sections = null) => ({ number, time, sections });
@@ -57,6 +57,31 @@ test('the best lap in each corner, real laps only; the fastest lap where none wa
   assert.deepEqual(bestInEachCorner({ ...answer, sections: null }), []);
 });
 
+test('a stint’s own best in each corner, against its own fastest lap, as its stint theoretical is made', () => {
+  // stint 1's lap 4 was 0.12 s quicker than its fastest lap in T1, but stint 2's lap 1 holds the session's best there:
+  // only the stint's own corners show it
+  assert.equal(bestInEachCorner(answer).some((b) => b.run.id === 1 && b.lap.number === 4), false);
+  const one = stintCorners(answer, 1);
+  assert.equal(one.best.number, 3);
+  assert.equal(one.laps, 3);
+  assert.deepEqual(one.rows.map((b) => [b.code, b.lap.number, b.gain, b.fastest]), [
+    ['T1', 4, -0.12, false],
+    ['T2-T5', 3, 0, true],
+    ['T6', 2, -0.1, false],
+    ['T8/T9', 3, 0, true],
+  ]);
+  assert.equal(one.gap, 0.22); // its stint theoretical: 100.0 - 0.22
+  // stint 2: one clean lap placed on the line (its lap 2 has no section times): nothing to gain on it
+  const two = stintCorners(answer, 2);
+  assert.deepEqual([two.best.number, two.laps, two.gap, two.rows.every((b) => b.fastest)], [1, 1, 0, true]);
+  // the gap counts every corner, the rows only gains of 0.02 s or more
+  const small = { ...answer, runs: [run(1, [lap(1, 100.0, [25, 25, 25, 25]), lap(2, 100.1, [24.99, 25.2, 25, 24.9])])] };
+  assert.deepEqual(stintCorners(small, 1).rows.map((b) => b.lap.number), [1, 1, 1, 2]);
+  assert.equal(stintCorners(small, 1).gap, 0.11);
+  assert.equal(stintCorners({ ...answer, sections: null }, 1), null); // not worked out yet
+  assert.equal(stintCorners(answer, 9), null);
+});
+
 test('on the traces at first: the fastest lap of each stint, the quickest stints when there are more than six', () => {
   assert.deepEqual(defaultPicks(answer.runs), [{ session_id: 1, lap: 3, slot: 0 }, { session_id: 2, lap: 1, slot: 1 }]);
   const stints = Array.from({ length: 8 }, (_, i) => run(i + 1, [lap(1, 101 - (i % 4) * 0.1 + i * 0.001), lap(2, 102)]));
@@ -102,6 +127,8 @@ test('out-laps and in-laps: their quicker corners count, they are never on the t
   assert.deepEqual(bestInEachCorner(qa).map((b) => [b.code, b.lap.number, b.gain]),
     [['T1', 5, -0.15], ['T2-T5', 3, 0], ['T6', 3, 0], ['T8/T9', 3, 0]]);
   assert.deepEqual(bestFlags(qa).get('1:5'), [{ code: 'T1', gain: -0.15 }]);
+  // a stint's own corners come from its clean laps only, as its stint theoretical: the in-lap's T1 isn't one
+  assert.deepEqual(stintCorners(qa, 1).rows.map((b) => b.lap.number), [3, 3, 3, 3]);
   assert.equal(kindWords(q.laps[4]), 'in-lap');
   assert.equal(kindWords(q.laps[1]), 'build lap');
   assert.equal(kindWords(q.laps[2]), null);
