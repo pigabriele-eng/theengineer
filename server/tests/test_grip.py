@@ -5,7 +5,8 @@ import json
 import numpy as np
 import pytest
 
-from app.analysis.grip import ROLES, GripStudy, _runs_of, partial, tc_words
+from app.analysis.grip import (ROLES, TRY_OVERRIDE, GripStudy, _override_headline, _override_vs_tc, _runs_of,
+                               _vs_words, partial, tc_words)
 from app.analysis.laps import load_session
 from app.importers.motec import read_ld
 from tests.synthetic import simulate, write_ld
@@ -146,6 +147,116 @@ def test_traction_control_from_one_lap():
     assert four["tc"]["lost_per_lap_s"] is not None and four["tc"]["vs_rear_temp"] is not None
 
 
+def _bmw(channels: dict, lap_times: list[float], status, override_button: bool = True, kerb: bool = False) -> dict:
+    """The BMW M4 GT4's TC status (NTCStatus, 10 Hz: 10 + the dash level, 0 while TC is off) from status(lap, metres
+    into the lap), with the TC flag cleared where TC is off, the EVO's override button (BSTW TC) and a kerb strike
+    just before the TC zone (G Force Vert)."""
+    hz = 100
+    v = channels["vCar"][2]
+    t = np.arange(len(v)) / hz
+    starts = np.r_[0.0, np.cumsum(lap_times)]
+    lap = np.clip(np.searchsorted(starts, t, side="right") - 1, 0, len(lap_times) - 1)
+    dist = np.cumsum(v / 3.6 / hz)
+    within = dist - np.interp(starts[lap], t, dist)
+    st = np.array(status(lap, within), float)
+    out = dict(channels)
+    f, unit, tc = out["BInterventionCauseTC"]
+    out["BInterventionCauseTC"] = (f, unit, np.where(st == 0, 0.0, tc))
+    st10 = st[::10]
+    out["NTCStatus"] = (10, "", st10)
+    if override_button:  # pressed where TC goes off
+        out["BSTW TC"] = (10, "", np.r_[0.0, (st10[1:] == 0) & (st10[:-1] != 0)].astype(float))
+    if kerb:
+        out["G Force Vert"] = (hz, "G", np.where((lap >= 1) & (within >= TC_FROM_M - 10) & (within < TC_FROM_M + 2),
+                                                 1.8, 1.0))
+    return out
+
+
+def test_tc_level_is_the_dash_number_and_override_passes_are_left_out():
+    """Gabriele, 2026-10-09: on the M4 GT4 (EVO and not) a higher TC number cuts in earlier and more; the EVO's TC
+    override switches TC off for about 10 s. The level comes from NTCStatus, not the thumb wheel, and a pass with TC
+    off isn't read as one with little TC."""
+    channels, lap_times = simulate(PACES)
+    channels = with_tc(channels, lap_times)
+    channels["NSTWThumbSlip"] = (10, "", np.full(len(channels["vCar"][2]) // 10, 7.0))  # the wheel: not the level
+    off_lap = 4
+
+    def status(lap, m):
+        level = np.where(lap <= 5, 13, 14)  # dash 3, then 4
+        return np.where((lap == off_lap) & (m >= TC_FROM_M - 80) & (m < TC_FROM_M + 200), 0, level)
+
+    ld = read_ld(write_ld(_bmw(channels, lap_times, status)))
+    study = GripStudy()
+    study.add("Run 1", load_session(ld), ld)
+    r = study.report()
+    tc = r["tc"]
+    assert tc["switch"]["channel"] == "NTCStatus" and tc["switch"]["positions"] == [3, 4]
+    assert r["channels"]["tc_switch"] == "NTCStatus"
+    zone = next(z for z in tc["zones"] if z["start_m"] < 760 < z["end_m"])
+    assert zone["passes_tc_off"] == 1 and zone["passes"] == len(PACES) - 1
+    vs = zone["override_vs_tc"]  # the lap with the override on through here, against the laps with TC
+    assert vs["passes_override"] == 1 and vs["passes_tc"] == len(PACES) - 1 and not vs["clear"]
+    assert f"1 lap with the override on through here against {len(PACES) - 1} with TC: " in zone["note"]
+    assert "not clear yet: it takes two laps of each." in zone["note"]
+    assert zone["advice"] == "Not clear yet whether the override pays here: more laps of each tell."
+    row = next(x for x in r["laps"] if x["lap"] == off_lap)
+    assert row["tc_off_s"] > 2 and row["tc_s"] is not None
+    assert all(x["tc_off_s"] == 0 for x in r["laps"] if x["lap"] != off_lap)
+    assert any("TC was off for part of 1 of" in n and "the TC override" in n for n in tc["notes"])
+    assert not zone["override"]  # no kerb triggers it, and the override was used here
+
+
+def test_where_to_try_tc_override():
+    """Gabriele, 2026-10-09: "suggest areas where tc was never overridden but tc is triggered by curb riding", on the
+    EVO only."""
+    channels, lap_times = simulate([0.97])
+    channels = with_tc(channels, lap_times, base_m=30.0)
+    evo = _bmw(channels, lap_times, lambda lap, m: np.full(len(lap), 12), kerb=True)
+    for logs, expected in ((evo, True), ({k: v for k, v in evo.items() if k != "BSTW TC"}, False)):
+        r = _study(logs)
+        zone = next(z for z in r["tc"]["zones"] if z["start_m"] < 730 < z["end_m"])
+        assert zone["kerb_g"] >= 0.5 and zone["verdict"] == "unknown" and zone["override_vs_tc"] is None
+        assert zone["override"] is expected  # the earlier car has no override button
+        assert (zone["advice"] == TRY_OVERRIDE) is expected
+        heads = [h for h in r["headlines"] if h["key"] == "tc_override"]
+        assert bool(heads) is expected
+    assert heads == [] and expected is False
+    (head,) = [h for h in _study(evo)["headlines"] if h["key"] == "tc_override"]
+    assert head["value"] == zone["where"] and head["action"] == f"Try it just before the kerb at {zone['where']}."
+
+
+def _study(logs: dict) -> dict:
+    ld = read_ld(write_ld(logs))
+    study = GripStudy()
+    study.add("Run 1", load_session(ld), ld)
+    return study.report()
+
+
+def test_override_against_tc_at_the_same_entry_speed():
+    """Gabriele, 2026-10-09: "use the laps where tc was sometimes overridden to calculate laptime difference on
+    average. This should help inform if override is worth it"."""
+    tc = [{"v_in": 100 + i, "t_run": 5.0 - 0.02 * i + 0.01 * (i % 2)} for i in range(6)]
+    off = [{"v_in": 100.5 + i, "t_run": 4.9 - 0.02 * (i + 0.5) + 0.01 * (i % 2)} for i in range(5)]
+    vs = _override_vs_tc(tc, off)
+    assert vs["passes_override"] == 5 and vs["passes_tc"] == 6 and vs["clear"]
+    assert vs["diff_s"] == pytest.approx(-0.1, abs=0.01) and vs["within_s"] < 0.05
+    note, advice = _vs_words(vs)
+    assert note.startswith("5 laps with the override on through here against 6 with TC: 0.10 s quicker with the "
+                           "override to the next braking point, at the same entry speed.")
+    assert advice == "Press TC override here every lap: it was about 0.10 s quicker to the next braking point."
+    slower = _override_vs_tc(off, tc)
+    assert slower["clear"] and slower["diff_s"] > 0
+    assert _vs_words(slower)[1].startswith("Keep TC on here: the override was about 0.10 s slower")
+    one = _override_vs_tc(tc, off[:1])
+    assert not one["clear"] and one["within_s"] is None
+    assert _override_vs_tc(tc, []) is None and _override_vs_tc([], off) is None
+    head = _override_headline([{"where": "T7 exit", "override": False, "override_vs_tc": vs},
+                               {"where": "T3", "override": True, "override_vs_tc": None},
+                               {"where": "T9", "override": False, "override_vs_tc": slower}])
+    assert head["value"] == "≈ 0.10 s a lap"
+    assert head["action"] == "Press it every lap at T7 exit. Keep TC on at T9. Try it just before the kerb at T3."
+
+
 def test_logs_without_tc_say_so():
     channels, _ = simulate(PACES)
     ld = read_ld(write_ld(channels))
@@ -225,6 +336,52 @@ def test_grip_endpoint(client, run):
     assert client.get(f"/report/grip?session={ids[0]}&event={ev['id']}").status_code == 422
     assert client.get("/report/grip?session=999").status_code == 404
     assert client.get("/report/grip?event=999").status_code == 404
+
+
+def test_a_report_of_the_earlier_version_shows_while_the_new_one_is_made(client, monkeypatch):
+    """A new version of the report (TC level and override, 2026-10-09) doesn't read every log on the restart after it:
+    the start-up pass leaves the reports kept by the version before, and one opened shows its earlier answer, marked
+    updating, while the prebuild works out the new one."""
+    import zlib
+
+    from sqlalchemy import select
+
+    import app.routers.report_grip as rg
+    from app import db as app_db
+    from app import models, page_cache, prebuild, run_labels
+    from app.page_cache import PageCache
+
+    channels, lap_times = simulate([0.97, 0.98, 0.975])
+    s = client.post("/sessions", json={"name": "Old"}).json()
+    assert client.post(f"/sessions/{s['id']}/files",
+                       files={"file": ("run.ld", write_ld(with_tc(channels, lap_times)))}).status_code == 201
+    scope = f"session:{s['id']}|grip"
+    assert client.get(f"/report/grip?session={s['id']}").status_code == 200
+    with app_db.SessionLocal() as db:  # kept as version 1 kept it: with its part for fewer than 8 clean laps
+        run = db.get(models.RunSession, s["id"])
+        label = run_labels.labels_for(db, [run])[run.id]
+        old = page_cache.digest(["grip", page_cache.VERSIONS["grip"] - 1, page_cache.sessions_part(db, [run]),
+                                 page_cache.track_part(run.event.track if run.event else None),
+                                 *run_labels.renamed([label]), "tc from one lap"])
+        row = db.scalar(select(PageCache).where(PageCache.scope == scope))
+        row.signature, row.body = old, zlib.compress(json.dumps({"available": False, "notes": ["v1"]}).encode())
+        db.commit()
+    rg._cache.clear()
+    reads, queued = [], []
+    real_read = rg._read
+    monkeypatch.setattr(rg, "_read", lambda db, s: reads.append(s.id) or real_read(db, s))
+    monkeypatch.setattr(prebuild, "enabled", lambda: True)
+    monkeypatch.setattr(prebuild, "refresh", queued.extend)
+
+    prebuild.RUN["grip"]("session", s["id"])  # the start-up pass: left as it is
+    shown = client.get(f"/report/grip?session={s['id']}").json()
+    assert shown == {"available": False, "notes": ["v1"], "updating": True} and not reads
+    assert queued == [("grip now", ("session", s["id"]))]
+    prebuild.RUN["grip now"]("session", s["id"])  # what the page asked for: the new one
+    assert reads == [s["id"]]
+    new = client.get(f"/report/grip?session={s['id']}").json()
+    assert new["available"] and "updating" not in new and new["tc"]["available"]
+    assert reads == [s["id"]] and queued == [("grip now", ("session", s["id"]))]
 
 
 def test_unreadable_log_is_left_out(client, run, monkeypatch):

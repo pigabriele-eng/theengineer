@@ -206,6 +206,17 @@ class DebriefRecording(Base):
     debrief: Mapped[Debrief | None] = relationship()
 
 
+class DebriefRun(Base):
+    """A run a debrief talks about, as the user set them (debrief/covers.py works them out when there are none): a
+    debrief at the end of a session covers its stints. group: the setup the car ran (0, 1, ...), so a change between
+    stints is checked against the data before and after it apart."""
+    __tablename__ = "debrief_runs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    debrief_id: Mapped[int] = mapped_column(ForeignKey("debriefs.id", ondelete="CASCADE"), index=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("run_sessions.id", ondelete="CASCADE"), index=True)
+    group: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class LiveTranscript(Base):
     """What the phone's own speech recognition wrote down while a debrief was recorded (free, no speaker labels):
     the transcript used when the server has no speech to text key (debrief/pipeline.py). Keyed by the recording's

@@ -18,14 +18,16 @@ export type LapsScope = { event: number } | { session: number } | { sessions: nu
 
 const QUICK = 1.01; // within 1 % of the quickest flying lap
 
-/** The quick laps of an event, a session or some sessions, from the stint analysis of their main logs. */
+/** The quick laps of an event, a session or some sessions, from the stint analysis of their main logs; and those
+ * logs, with how many stints they have with laps to compare (the report's stint comparison). */
 export function useQuickLaps(scope: LapsScope | null) {
   const key = !scope ? '' : 'event' in scope ? `e${scope.event}` : 'session' in scope ? `s${scope.session}`
     : `r${scope.sessions.join(',')}`;
-  const [state, setState] = useState<{ laps: StintLap[] | null; error: string | null }>({ laps: null, error: null });
+  const [state, setState] = useState<{ laps: StintLap[] | null; error: string | null; files: number[];
+    stints: number }>({ laps: null, error: null, files: [], stints: 0 });
   useEffect(() => {
     let live = true;
-    setState({ laps: null, error: null });
+    setState({ laps: null, error: null, files: [], stints: 0 });
     if (!scope) return;
     (async () => {
       const events = await fetchStintLogs();
@@ -33,14 +35,15 @@ export function useQuickLaps(scope: LapsScope | null) {
         : 'session' in scope ? e.sessions.filter((s) => s.id === scope.session)
           : e.sessions.filter((s) => scope.sessions.includes(s.id))));
       const files = sessions.flatMap((s) => s.files.filter((f) => f.main && f.laps > 0).map((f) => f.id));
-      if (files.length === 0) return [];
+      if (files.length === 0) return { laps: [], files, stints: 0 };
       const view = await fetchStintView(files);
       const flying = view.stints.flatMap((s) => s.laps).filter((l) => l.kind === 'flying' && l.tag == null);
       const best = Math.min(...flying.map((l) => l.time));
-      return flying.filter((l) => l.time <= best * QUICK);
+      return { laps: flying.filter((l) => l.time <= best * QUICK), files: view.file_ids,
+        stints: view.stints.filter((s) => s.fitted_laps >= 2).length };
     })().then(
-      (laps) => live && setState({ laps, error: null }),
-      (e) => live && setState({ laps: null, error: (e as Error).message }),
+      (r) => live && setState({ ...r, error: null }),
+      (e) => live && setState({ laps: null, error: (e as Error).message, files: [], stints: 0 }),
     );
     return () => {
       live = false;

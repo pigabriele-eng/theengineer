@@ -14,6 +14,7 @@ import {
 import { Bars, LineChart, LineSeries, useChartColors } from '@/components/ReportCharts';
 import { Balance } from '@/components/report/Balance';
 import DriversCompare, { hasTwoDrivers } from '@/components/report/DriversCompare';
+import StintCompareView from '@/components/StintCompare';
 import { GripReport } from '@/components/report/GripReport';
 import LapFilter from '@/components/report/LapFilter';
 import { GripBalance, LapsScope, TyreCorners, useQuickLaps } from '@/components/report/QuickLaps';
@@ -425,6 +426,11 @@ export default function EventReport({
         dek: 'How the car is balanced: understeer or oversteer on entry, mid-corner and exit, section by section.',
         body: 'event' in runScope ? <Balance event={runScope.event} bare />
           : <Balance session={runScope.session} bare /> });
+    }
+    if (quick.stints >= 2) { // the report's runs have two stints or more to put side by side
+      sections.push({ title: 'Compare stints',
+        dek: 'Did a setup change work? The stint before it against the stint after it, like with like.',
+        body: <StintCompareView files={quick.files} bare /> });
     }
   }
   if (report) {

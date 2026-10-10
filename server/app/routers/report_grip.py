@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import heavy, models, page_cache, run_labels
+from app import heavy, models, page_cache, prebuild, run_labels
 from app.analysis import grip
 from app.analysis.grip import GripStudy
 from app.analysis.laps import SessionData, load_session
@@ -18,7 +18,7 @@ from app.routers.sessions import _channel_map, _get, _line, _track_for, official
 router = APIRouter(prefix="/report")
 
 CACHE_SIZE = 8
-FEW_LAPS = 8  # the laps TC needed to say what it costs before it took 4 (analysis/grip.TC_FIT_LAPS)
+FEW_LAPS = 8  # version 1 kept the reports of fewer clean laps than this with a part of their own (TC from one lap)
 _cache: OrderedDict[tuple, tuple[tuple, bytes]] = OrderedDict()  # its JSON text, as sent
 _cache_lock = threading.Lock()
 
@@ -38,6 +38,12 @@ def _clean_best(s: models.RunSession) -> float | None:
 
 @router.get("/grip")
 def grip_report(session: int | None = None, event: int | None = None, db: Session = Depends(get_db)):
+    """Grip use and traction control for one session (?session=<id>) or every session of an event (?event=<id>):
+    see grip_text."""
+    return page_cache.RawJSON(grip_text(db, session, event, earlier="show"))
+
+
+def grip_text(db: Session, session: int | None = None, event: int | None = None, earlier: str = "build") -> bytes:
     """Grip use and traction control for one session (?session=<id>) or every session of an event (?event=<id>).
 
     The car's grip limit (98th percentile of combined g in each direction and speed band), the g-g diagram with
@@ -46,6 +52,11 @@ def grip_report(session: int | None = None, event: int | None = None, db: Sessio
     the rear tyre temperature. The logs are read one at a time, so an event needs no more memory than one log, and
     a long event works from its quickest laps only (analysis/quickest.py): quickest_laps then says how many of how
     many clean laps.
+
+    earlier: what to do with an answer kept by the page's version before this one (the TC level on the dash and the
+    EVO's TC override, 2026-10-09, changed every report): "show" sends it, marked updating, while the prebuild works
+    out the new one, which the page asks for again; "keep" leaves it (the prebuild's start-up pass: a restart reads
+    only the logs of the reports opened, not every log); "build" works the new one out now.
     """
     if (session is None) == (event is None):
         raise HTTPException(422, "Give either ?session=<id> or ?event=<id>")
@@ -71,23 +82,29 @@ def grip_report(session: int | None = None, event: int | None = None, db: Sessio
         hit = _cache.get(key)
         if hit is not None and hit[0] == fp:
             _cache.move_to_end(key)
-            return page_cache.RawJSON(hit[1])
+            return hit[1]
     # kept in the database too (app/page_cache.py); else built under heavy.lock, one log-reading job at a time (each
     # holds a whole log in memory while it reads it): a request that waited on the lock may find it built meanwhile
-    # TC from one lap (2026-10-09) changed only the reports of fewer than 8 clean laps: those are worked out again,
-    # while the rest keep their kept answer, which reads the same, so a restart doesn't read every log again
-    few = ["tc from one lap"] if sum(l.clean for s in sessions for l in s.laps) < FEW_LAPS else []
-    result = page_cache.cached(
-        db, f"{key[0]}:{key[1]}|grip",
-        lambda: page_cache.signature("grip", page_cache.sessions_part(db, sessions), page_cache.track_part(track),
-                                     *run_labels.renamed(labels[s.id] for s in sessions), *few),
-        lambda: _build(db, sessions, track, names), raw=True)
+    scope = f"{key[0]}:{key[1]}|grip"
+    parts = lambda: [page_cache.sessions_part(db, sessions), page_cache.track_part(track),  # noqa: E731
+                     *run_labels.renamed(labels[s.id] for s in sessions)]
+    if earlier != "build" and not page_cache.fresh(db, scope, page_cache.signature("grip", *parts())):
+        few = ["tc from one lap"] if sum(l.clean for s in sessions for l in s.laps) < FEW_LAPS else []
+        old = page_cache.lookup(db, scope, page_cache.earlier_signature("grip", *parts(), *few), raw=True)
+        if old is not None and old[0] == 200:
+            if earlier == "keep":
+                return old[1]
+            if prebuild.enabled():
+                prebuild.refresh([("grip now", key)])
+                return page_cache.with_fields(old[1], updating=True)
+    result = page_cache.cached(db, scope, lambda: page_cache.signature("grip", *parts()),
+                               lambda: _build(db, sessions, track, names), raw=True)
     with _cache_lock:
         _cache[key] = (fp, result)
         _cache.move_to_end(key)
         while len(_cache) > CACHE_SIZE:
             _cache.popitem(last=False)
-    return page_cache.RawJSON(result)
+    return result
 
 
 def _build(db: Session, sessions: list[models.RunSession], track: models.Track | None,

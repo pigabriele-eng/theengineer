@@ -1,17 +1,18 @@
 import { useAudioPlayer } from 'expo-audio';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet } from 'react-native';
+import { ActivityIndicator, StyleSheet, TextInput, TextStyle } from 'react-native';
 
 import { FigRow, Notice, PageHead, useText } from '@/components/Picks';
 import { useBackTo } from '@/components/Back';
+import DebriefCovers from '@/components/DebriefCovers';
 import DebriefRun from '@/components/DebriefRun';
 import PrintButton from '@/components/PrintButton';
 import ShareText from '@/components/ShareText';
 import { Colophon, Fig, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { useEventFolder, useSessionEvent } from '@/components/SessionSwitcher';
 import { Text, View } from '@/components/Themed';
-import { api, Debrief, DebriefCorner, DebriefPoint, SECTIONS } from '@/lib/api';
+import { api, Debrief, DebriefCorner, DebriefLanguage, DebriefPoint, SECTIONS } from '@/lib/api';
 import {
   CAUSE_LABEL,
   CheckedPoint,
@@ -19,11 +20,13 @@ import {
   fetchDebriefCheck,
   placeOf,
   saidOf,
+  SetupGroup,
   Verdict,
 } from '@/lib/debriefCheck';
 import { debriefText, DebriefHeader } from '@/lib/debriefText';
 import { driversApi } from '@/lib/drivers';
 import { poll } from '@/lib/poll';
+import { editable, readable } from '@/lib/transcriptText';
 import { face, Fonts, inkOn, Palette, themed, Type, useTheme } from '@/constants/Theme';
 
 // Status colours (good, warning, critical) mark the verdict next to its icon and label, never on their own.
@@ -53,9 +56,14 @@ export default function DebriefReport() {
   const [d, setD] = useState<Debrief | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showTranscript, setShowTranscript] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [sure, setSure] = useState(false); // asked whether to delete the debrief
   const [corners, setCorners] = useState<Record<string, DebriefCorner>>({});
   const [check, setCheck] = useState<DebriefCheck | null>(null);
   const [checkError, setCheckError] = useState<string | null>(null);
+  const [checkRound, setCheckRound] = useState(0); // read again when the stints it covers change
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const player = useAudioPlayer(audioUrl);
 
@@ -120,9 +128,12 @@ export default function DebriefReport() {
   // against the data. One after the other: each reads the whole log, and the server is small.
   const ready = d?.status === 'ready';
   const hasPoints = !!d?.points.length;
+  const runId = d?.session_id;
   useEffect(() => {
     if (!ready) return;
     let live = true;
+    setCheck(null);
+    setCheckError(null);
     (async () => {
       try {
         const r = await api.debriefCorners(debriefId);
@@ -141,16 +152,41 @@ export default function DebriefReport() {
     return () => {
       live = false;
     };
-  }, [ready, hasPoints, debriefId]);
+  }, [ready, hasPoints, debriefId, runId, checkRound]);
 
   const checked = new Map((check?.points ?? []).map((c) => [c.id, c]));
 
-  const retry = async () => {
+  const retry = async (language?: DebriefLanguage) => {
     setError(null);
     try {
-      setD(await api.processDebrief(debriefId));
+      setD(await api.processDebrief(debriefId, language));
     } catch (e) {
       setError((e as Error).message);
+    }
+  };
+
+  const saveTranscript = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      setD(await api.saveTranscript(debriefId, draft));
+      setEditing(false);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    setError(null);
+    try {
+      await api.deleteDebrief(debriefId);
+      if (router.canGoBack()) router.back();
+      else router.replace('/debrief');
+    } catch (e) {
+      setError((e as Error).message);
+      setSure(false);
     }
   };
 
@@ -186,6 +222,7 @@ export default function DebriefReport() {
       {error && <Text style={StyleSheet.flatten([t.error, styles.gapTop])}>{error}</Text>}
 
       {d && <DebriefRun d={d} changed={setD} />}
+      {d && <DebriefCovers d={d} changed={() => setCheckRound((n) => n + 1)} />}
 
       {pending && (
         <Notice busy style={styles.notice}>
@@ -198,7 +235,7 @@ export default function DebriefReport() {
       {d?.status === 'failed' && (
         <Notice style={styles.notice}>
           <Text style={t.body}>The recording is saved, but it couldn&apos;t be processed: {d.error}</Text>
-          <TextLink label="Try again" onPress={retry} red />
+          <TextLink label="Try again" onPress={() => retry()} red />
         </Notice>
       )}
 
@@ -227,7 +264,7 @@ export default function DebriefReport() {
                       </View>
                     )}
                     {p.corner_code && corners[p.corner_code] && <CornerLine c={corners[p.corner_code]} />}
-                    {checked.get(p.id) && <PointCheck c={checked.get(p.id)!} />}
+                    {checked.get(p.id) && <PointCheck c={checked.get(p.id)!} groups={check?.groups} />}
                   </View>
                 ))}
               </View>
@@ -242,21 +279,61 @@ export default function DebriefReport() {
       {d?.transcript ? (
         <Section no={++no} title="Transcript">
           <TextLink label={showTranscript ? 'Hide transcript' : 'Show transcript'} onPress={() => setShowTranscript((s) => !s)} />
-          {showTranscript && <Text style={StyleSheet.flatten([t.note, styles.transcript])}>{named(d.transcript, d.speakers)}</Text>}
+          {showTranscript && !editing && (
+            <>
+              <View style={styles.transcript}>
+                {readable(d.transcript, d.speakers).map((p, i) => (
+                  <Text key={i} style={t.body}>
+                    {p.who ? <Text style={t.strong}>{`${p.who}: `}</Text> : null}
+                    {p.text}
+                  </Text>
+                ))}
+              </View>
+              <TextLink label="Edit transcript" onPress={() => {
+                setDraft(editable(d.transcript ?? ''));
+                setEditing(true);
+              }} disabled={pending} />
+            </>
+          )}
+          {showTranscript && editing && (
+            <View style={styles.editor}>
+              <Text style={t.note}>Correct the words, one line per phrase. Saving sorts the points again from your text.</Text>
+              <TextInput value={draft} onChangeText={setDraft} multiline accessibilityLabel="Transcript"
+                style={styles.input} />
+              <View style={styles.headLinks}>
+                <TextLink label="Save and sort again" onPress={saveTranscript} disabled={!draft.trim() || saving} />
+                <TextLink label="Cancel" onPress={() => setEditing(false)} disabled={saving} />
+              </View>
+            </View>
+          )}
         </Section>
       ) : null}
+
+      {d?.status === 'ready' && hasAudio && (
+        <View style={styles.redo}>
+          <Text style={t.body}>Words wrong? Edit the transcript above, or run the recording through speech to text again (that replaces your edits), listening for Italian,
+            English and German.</Text>
+          <TextLink label="Transcribe again" onPress={() => retry('multi')} />
+        </View>
+      )}
+
+      {d && (
+        <View style={styles.redo}>
+          {sure ? (
+            <View style={styles.headLinks}>
+              <Text style={t.body}>Delete this debrief and its recording? This can&apos;t be undone.</Text>
+              <TextLink label="Delete" red onPress={remove} />
+              <TextLink label="Keep it" onPress={() => setSure(false)} />
+            </View>
+          ) : (
+            <TextLink label="Delete debrief" onPress={() => setSure(true)} disabled={pending} />
+          )}
+        </View>
+      )}
 
       <Colophon left="Debrief report" right={d ? day(d.created_at) : undefined} />
     </Page>
   );
-}
-
-// Transcript lines start with a speaker label ("S1: ..."); show who that is once it's known.
-function named(transcript: string, speakers: Debrief['speakers']) {
-  return transcript.replace(/^(S\d+):/gm, (label, key: string) => {
-    const sp = speakers?.[key];
-    return sp ? `${sp.name ?? sp.role}:` : label;
-  });
 }
 
 // What the logger recorded at the corner: the reference lap, and the best lap through it if different.
@@ -312,9 +389,13 @@ function CheckSummary({ no, check, error }: { no: number; check: DebriefCheck | 
   const styles = useStyles();
   const t = useText();
   const wide = useWide();
+  const last = check?.groups?.[check.groups.length - 1];
   const dek = check && !check.error
     ? `Balance against the car's normal balance (as in the report), braking and traction against its other corners, ` +
-      `over the session's ${check.laps ?? 0} clean laps.`
+      (last
+        ? `over the ${check.laps ?? 0} clean laps on the last setup (${last.runs.join(', ')}). Each point also says ` +
+          `what the data showed on the setup before.`
+        : `over the session's ${check.laps ?? 0} clean laps.`)
     : undefined;
   if (error || check?.error) {
     return (
@@ -343,6 +424,16 @@ function CheckSummary({ no, check, error }: { no: number; check: DebriefCheck | 
         <Kpi n={counts.disagrees} label="Don't match" verdict="not seen" size={wide ? 72 : 48} />
         <Kpi n={counts.unclear} label="Can't tell" verdict="cannot check" size={wide ? 72 : 48} />
       </FigRow>
+      {check.groups && (
+        <View style={styles.groups}>
+          {check.groups.map((g) => (
+            <Text key={g.label} style={t.body}>
+              <Text style={t.strong}>{g.label}: </Text>
+              {`${g.runs.join(', ')} · ${g.error ? 'no clean laps' : `${g.laps} clean laps`}`}
+            </Text>
+          ))}
+        </View>
+      )}
       {(disagree.length > 0 || unmentioned.length > 0) && (
         <View style={wide ? styles.twoCols : styles.oneCol}>
           {disagree.length > 0 && (
@@ -429,14 +520,24 @@ function Explained({ p }: { p: CheckedPoint }) {
 }
 
 // Under each point: whether the data backs it, in one line, and on request what that likely means.
-function PointCheck({ c }: { c: CheckedPoint }) {
+function PointCheck({ c, groups }: { c: CheckedPoint; groups?: SetupGroup[] }) {
   const styles = useStyles();
+  const t = useText();
   const [open, setOpen] = useState(false);
   const more = !!(c.meaning || c.suggestion);
+  const before = groups && c.by_group ? c.by_group.slice(0, -1) : [];
   return (
     <View style={styles.check}>
       <Badge verdict={c.verdict} />
-      <Text style={styles.data}>{c.line}</Text>
+      <Text style={styles.data}>{groups ? `${groups[groups.length - 1].label}: ${c.line}` : c.line}</Text>
+      {before.map((b, i) =>
+        b ? (
+          <Text key={i} style={t.note}>
+            <Text style={t.strong}>{`${groups![i].label} (${groups![i].runs.join(', ')}): ${VERDICT[b.verdict].label}. `}</Text>
+            {b.line}
+          </Text>
+        ) : null,
+      )}
       {more && <TextLink label={open ? 'Hide' : 'What it means'} onPress={() => setOpen((o) => !o)} small />}
       {open && <Explained p={c} />}
     </View>
@@ -444,6 +545,10 @@ function PointCheck({ c }: { c: CheckedPoint }) {
 }
 
 const useStyles = themed((c) => ({
+  editor: { marginTop: 14, gap: 12, maxWidth: 760 },
+  input: { borderWidth: 1, borderColor: c.rule, padding: 12, minHeight: 220, fontSize: 16, lineHeight: 24,
+    fontFamily: Fonts.body, color: c.text, backgroundColor: c.background, textAlignVertical: 'top' } as TextStyle,
+  redo: { marginTop: 28, gap: 10, maxWidth: 760 },
   headLinks: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 20, rowGap: 8, marginTop: 6 },
   loading: { alignSelf: 'flex-start', marginTop: 24 },
   gapTop: { marginTop: 18 },
@@ -456,7 +561,8 @@ const useStyles = themed((c) => ({
   code: { fontFamily: Fonts.display, fontSize: 18, lineHeight: 21, textTransform: 'uppercase', color: c.text },
   data: { ...Type.number, fontSize: 13, lineHeight: 19, color: c.textSecondary },
   dataLabel: { ...Type.label, fontSize: 11, color: c.text },
-  transcript: { marginTop: 14, maxWidth: 760 },
+  groups: { marginTop: 20, gap: 6 },
+  transcript: { marginTop: 14, maxWidth: 760, gap: 12 },
   twoCols: { flexDirection: 'row', gap: 40, marginTop: 30, alignItems: 'flex-start' },
   oneCol: { gap: 28, marginTop: 26 },
   col: { flex: 1, minWidth: 0 },
