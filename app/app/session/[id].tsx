@@ -408,6 +408,9 @@ export default function SessionScreen() {
             <TextLink href={{ pathname: '/technique', params: eventId != null ? { session: sessionId, event: eventId } : { session: sessionId } }}
               label="Technique check" />
           )}
+          {hasClean && (
+            <TextLink href={{ pathname: '/racing-line', params: { session: sessionId } }} label="Racing line, 3D" />
+          )}
           {hasClean && <TextLink href={{ pathname: '/quali', params: { session: sessionId } }} label="Quali prep" />}
           {session.laps.length > 0 && (
             <TextLink href={{ pathname: '/tools/stint', params: { session: sessionId } }} label="Stint analysis" />
