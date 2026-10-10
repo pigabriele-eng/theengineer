@@ -373,10 +373,37 @@ def with_mistakes(pair: dict, laps: TechniqueLaps) -> dict:
     return {**pair, "corners": corners}
 
 
-def _out(db: Session, answer: dict) -> dict:
-    """The answer as it goes out: the technique check's mistakes at the corners, and whether it is still working."""
+def _out(db: Session, answer: dict, sessions: list[models.RunSession]) -> dict:
+    """The answer as it goes out: the technique check's mistakes at the corners, whether it is still working, and each
+    lap's type to pick by hand (_lap_types)."""
     status, laps = technique_laps(db, answer["event_id"])
-    return {**answer, "suggestions": [with_mistakes(p, laps) for p in answer["suggestions"]], "technique": status}
+    return {**answer, "suggestions": [with_mistakes(p, laps) for p in answer["suggestions"]], "technique": status,
+            "sessions": _lap_types(answer["sessions"], sessions)}
+
+
+def _lap_types(listed: list[dict], sessions: list[models.RunSession]) -> list[dict]:
+    """Each lap of the runs to pick from with its type: "pick", the one set by hand (out, build, push or in;
+    timing.lap_picks), and "kind", what it is when it isn't clean (out, build, in or slow; session_sections.lap_kinds).
+    Read from the stored laps as the answer goes out, so a kept answer needs no working out again."""
+    from app.session_sections import lap_kinds  # here: it imports the routers, which import this
+    from app.timing import lap_picks
+
+    by_id = {s.id: s for s in sessions}
+    out = []
+    for part in listed:
+        runs = []
+        for r in part["runs"]:
+            s = by_id.get(r["id"])
+            f = _main_file(s) if s is not None else None
+            if f is None:
+                runs.append(r)
+                continue
+            picks = lap_picks(s, f)
+            kinds = lap_kinds(sorted((l for l in s.laps if l.file_id == f.id), key=lambda l: l.number), picks)
+            runs.append({**r, "laps": [{**l, "pick": picks.get(l["number"]), "kind": kinds.get(l["number"])}
+                                       for l in r["laps"]]})
+        out.append({**part, "runs": runs})
+    return out
 
 
 # ---------- the answer ----------
@@ -434,13 +461,13 @@ def suggestions(event_id: int, db: Session = Depends(get_db)):
     scope = _scope(event_id)
     hit = page_cache.lookup(db, scope, sig)
     if hit is not None and hit[0] == 200:
-        return _out(db, hit[1])
+        return _out(db, hit[1], sessions)
     runs, listed = _runs(db, sessions)
     pairs, notes = suggest(runs)
     if not pairs:
         out = _answer(event_id, "ready", [], notes, listed)
         page_cache.store(db, scope, sig, out)
-        return _out(db, out)
+        return _out(db, out, sessions)
     with _lock:
         job = _working.get(scope)
         if job is None or not job["thread"].is_alive():
@@ -450,7 +477,7 @@ def suggestions(event_id: int, db: Session = Depends(get_db)):
             job = _working[scope] = {"sig": sig, "pairs": progress, "thread": thread}
             thread.start()
         known = job["pairs"] if job["sig"] == sig else pairs
-    return _out(db, _answer(event_id, "working", list(known), notes, listed))
+    return _out(db, _answer(event_id, "working", list(known), notes, listed), sessions)
 
 
 def wait_idle(timeout: float = 120) -> bool:

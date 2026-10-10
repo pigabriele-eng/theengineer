@@ -1,7 +1,7 @@
 // Client for the laps to compare first on a race weekend (GET /events/{id}/compare/suggestions,
 // server/app/compare_suggest.py): pairs of real laps, like with like on tyres, each with the corners where most of the
 // gap is, and the event's sessions with every lap of their runs, to pick laps by hand.
-import { apiFetch } from '@/lib/api';
+import { apiFetch, LapPick } from '@/lib/api';
 import { TYRE_LABEL, TyreLevel } from '@/lib/tyreLevels';
 
 export type Tyres = 'new' | 'used';
@@ -41,7 +41,13 @@ export type Suggestion = {
   stint_laps?: number;
 };
 
-export type PickLap = { number: number; time: number; clean: boolean };
+export type PickLap = {
+  number: number;
+  time: number;
+  clean: boolean;
+  pick?: LapPick | null; // its type set by hand (components/LapType.tsx): it wins
+  kind?: 'out' | 'build' | 'in' | 'slow' | null; // what it is when it isn't clean (null: clean)
+};
 export type PickRun = {
   id: number;
   name: string;

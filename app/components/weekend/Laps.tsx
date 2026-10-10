@@ -8,7 +8,8 @@
 // times, the traces); 06 the weekend's laps to pick by hand, each run with its tyres a tap to change
 // (components/TyreTag.tsx). A run's "Driver?" there and on the laps compared is a tap to set (components/DriverPick.tsx);
 // its Rename and Delete in sight open the name's editor and the confirm under it, as on the run rows
-// (components/RunActions.tsx).
+// (components/RunActions.tsx). Under each lap its type in a word, a tap to set it by hand when the app read it wrong
+// (components/LapType.tsx, as on the session page's lap chart).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, LayoutChangeEvent, Pressable, StyleSheet } from 'react-native';
 
@@ -20,12 +21,15 @@ import { DriverPick, useDriverPick } from '@/components/DriverPick';
 import { DriverTag } from '@/components/DriverTag';
 import { SubFoldHead } from '@/components/Fold';
 import { Choice } from '@/components/Picks';
+import { LapTypeMenu, lapTypeWords, useLapType } from '@/components/LapType';
 import { Fig, Section, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { TyreChoices, TyreTag, TyreTags, useTyreTags } from '@/components/TyreTag';
 import { CompareResult, compareLaps, encodePicks, formatLap, MAX_LAPS, MIN_LAPS, signedSeconds } from '@/lib/compare';
 import { codeOf } from '@/lib/driverTag';
-import { fetchSuggestions, PickRun, PickSession, SuggestedLap, Suggestion, Suggestions } from '@/lib/lapSuggestions';
+import {
+  fetchSuggestions, PickLap as RunLap, PickRun, PickSession, SuggestedLap, Suggestion, Suggestions,
+} from '@/lib/lapSuggestions';
 import {
   cornerWords, lapWords, mistakeNotes, mistakeWords, suggestionSpeech, suggestionTitle, toggleLap, tyreWords,
 } from '@/lib/lapsFirst';
@@ -47,12 +51,12 @@ const tag = (driver: string | null) => (driver ? { text: codeOf(driver)!, kind: 
 /** The Laps tab. `onShow(y)`: scroll the page to y within the tab (the comparison, once a suggestion is tapped).
  * `version`: the page's reads of the event's runs (their tyres are read again with them). `onRunDeleted`: a run
  * deleted from its laps (the page reads the event again and says so); `onRunRenamed`: one renamed there. */
-export default function WeekendLaps({ eventId, onShow, version, onRunDeleted, onRunRenamed }: {
+export default function WeekendLaps({ eventId, onShow, version, onRunDeleted, onRunChanged }: {
   eventId: number;
   onShow?: (y: number) => void;
   version?: number;
   onRunDeleted?: (d: RunsDeleted) => void;
-  onRunRenamed?: () => void;
+  onRunChanged?: () => void; // a run renamed or a lap's type set
 }) {
   const styles = useStyles();
   const tyreTags = useTyreTags(eventId, version);
@@ -72,10 +76,11 @@ export default function WeekendLaps({ eventId, onShow, version, onRunDeleted, on
     setDeletes((n) => n + 1);
     onRunDeleted?.(d);
   };
-  // a run renamed: the suggestions are asked again (a run's name says its session)
-  const runRenamed = () => {
+  // a run renamed or a lap's type set: the suggestions are asked again (a run's name says its session, a lap's type
+  // whether it is clean)
+  const runChanged = () => {
     setDeletes((n) => n + 1);
-    onRunRenamed?.();
+    onRunChanged?.();
   };
 
   // the suggestions, asked again while the server works out their corners or the technique check the mistakes at them
@@ -173,7 +178,7 @@ export default function WeekendLaps({ eventId, onShow, version, onRunDeleted, on
 
       <PickYourOwn sessions={answer?.sessions ?? null} picks={own} onPicks={setOwn} tags={tyreTags}
         drivers={drivers} onCompare={() => show({ kind: 'own', laps: own })} onDeleted={runDeleted}
-        onRenamed={runRenamed} />
+        onChanged={runChanged} />
     </>
   );
 }
@@ -344,7 +349,7 @@ function Comparison({ laps, picked, data, error, waiting, answer, onTraces, driv
 
 // ---------- laps picked by hand ----------
 
-function PickYourOwn({ sessions, picks, onPicks, onCompare, tags, drivers, onDeleted, onRenamed }: {
+function PickYourOwn({ sessions, picks, onPicks, onCompare, tags, drivers, onDeleted, onChanged }: {
   sessions: PickSession[] | null;
   picks: LapPick[];
   onPicks: (p: LapPick[]) => void;
@@ -352,7 +357,7 @@ function PickYourOwn({ sessions, picks, onPicks, onCompare, tags, drivers, onDel
   tags: TyreTags;
   drivers: DriverPick;
   onDeleted: (d: RunsDeleted) => void;
-  onRenamed: () => void;
+  onChanged: () => void;
 }) {
   const styles = useStyles();
   // the latest session open, the others folded
@@ -381,7 +386,7 @@ function PickYourOwn({ sessions, picks, onPicks, onCompare, tags, drivers, onDel
               what={`the laps of ${p.title}`} />
             {opened.has(p.code) && p.runs.map((r) => (
               <RunLaps key={r.id} run={r} picks={picks} tags={tags} drivers={drivers} onDeleted={onDeleted}
-                onRenamed={onRenamed}
+                onChanged={onChanged}
                 onToggle={(lap) => onPicks(toggleLap(picks, { session_id: r.id, lap }, MAX_LAPS))} />
             ))}
           </View>
@@ -404,21 +409,42 @@ function PickYourOwn({ sessions, picks, onPicks, onCompare, tags, drivers, onDel
   );
 }
 
-function RunLaps({ run, picks, onToggle, tags, drivers, onDeleted, onRenamed }: {
+// a lap's type in a word under it: set by hand, else what it is when it isn't clean
+const TYPE_WORD: Record<string, string> = { out: 'Out', build: 'Build', push: 'Push', in: 'In', slow: 'Slow' };
+const typeWord = (l: RunLap) => (l.pick ? TYPE_WORD[l.pick] : l.kind ? TYPE_WORD[l.kind] : l.clean ? 'Clean' : 'Not clean');
+// how the app reads it, for the menu's words (components/LapType.tsx lapTypeWords)
+const status = (l: RunLap, best: number | null) => (l.kind ?? (!l.clean ? 'other' : l.number === best ? 'fastest' : 'clean'));
+
+function RunLaps({ run, picks, onToggle, tags, drivers, onDeleted, onChanged }: {
   run: PickRun;
   picks: LapPick[];
   onToggle: (lap: number) => void;
   tags: TyreTags;
   drivers: DriverPick;
   onDeleted: (d: RunsDeleted) => void;
-  onRenamed: () => void;
+  onChanged: () => void;
 }) {
   const styles = useStyles();
   const theme = useTheme();
   const [renaming, setRenaming] = useState(false);
   // its Rename and Delete here: the driver and the tyres have their own taps on the line
   const actions = useRunActions({ onDriver: () => drivers.toggle(run.id), onRename: () => setRenaming(true) });
-  const clean = run.laps.filter((l) => l.clean);
+  // a lap's type set by hand: shown at once as the server set it, until the laps come again with it (clean or not,
+  // and the suggestions made from them)
+  const [typed, setTyped] = useState<{ of: RunLap[]; lap: RunLap } | null>(null);
+  const laps = typed?.of === run.laps ? run.laps.map((l) => (l.number === typed.lap.number ? typed.lap : l)) : run.laps;
+  const lapType = useLapType(run.id, undefined, (s) => {
+    // the lap set (the menu's, as this run was drawn), from the run as the server hands it back
+    const got = typing && s.laps.filter((l) => l.number === typing.number)
+      .sort((a, b) => Math.abs(a.time_s - typing.time) - Math.abs(b.time_s - typing.time))[0];
+    if (typing && got) {
+      const pick = got.pick ?? null;
+      setTyped({ of: run.laps, lap: { ...typing, clean: got.clean, pick, kind: pick === 'push' ? null : pick ?? undefined } });
+    }
+    onChanged();
+  });
+  const typing = laps.find((l) => l.number === lapType.open) ?? null;
+  const clean = laps.filter((l) => l.clean);
   const best = clean.length ? clean.reduce((a, b) => (b.time < a.time ? b : a)).number : null;
   const full = picks.length >= MAX_LAPS;
   return (
@@ -436,7 +462,7 @@ function RunLaps({ run, picks, onToggle, tags, drivers, onDeleted, onRenamed }: 
           <RunNameEditor id={run.id} name={run.name} kind={run.kind} onCancel={() => setRenaming(false)}
             save={(id, body) => eventsApi.updateSession(id, body)} onSaved={() => {
               setRenaming(false);
-              onRenamed();
+              onChanged();
             }} />
         </View>
       )}
@@ -444,17 +470,31 @@ function RunLaps({ run, picks, onToggle, tags, drivers, onDeleted, onRenamed }: 
       <TyreChoices tags={tags} id={run.id} name={run.name} />
       {drivers.panel({ id: run.id, name: run.name, driver_id: run.driver_id, driver: run.driver }, styles.lapPicker)}
       <View style={styles.lapChoices}>
-        {run.laps.map((l) => {
+        {laps.map((l) => {
           const on = picks.some((p) => p.session_id === run.id && p.lap === l.number);
+          const open = lapType.open === l.number;
           return (
-            <Choice key={l.number} label={`L${l.number}`} detail={formatLap(l.time)} on={on} dim={!l.clean}
-              disabled={full && !on} onPress={() => onToggle(l.number)}
-              fill={l.number === best ? theme.timing.best : undefined}
-              ink={l.number === best ? theme.timing.onBest : undefined}
-              accessibilityLabel={`${run.name} lap ${l.number}, ${formatLap(l.time)}${l.number === best ? ', the run’s best' : ''}${l.clean ? '' : ', not clean'}${on ? ', ticked' : ''}`} />
+            <View key={l.number} style={styles.lapCell}>
+              <Choice label={`L${l.number}`} detail={formatLap(l.time)} on={on} dim={!l.clean}
+                disabled={full && !on} onPress={() => onToggle(l.number)}
+                fill={l.number === best ? theme.timing.best : undefined}
+                ink={l.number === best ? theme.timing.onBest : undefined}
+                accessibilityLabel={`${run.name} lap ${l.number}, ${formatLap(l.time)}${l.number === best ? ', the run’s best' : ''}${l.clean ? '' : ', not clean'}${on ? ', ticked' : ''}`} />
+              <Pressable onPress={() => lapType.toggle(l.number)} accessibilityRole="button"
+                accessibilityLabel={`${run.name} lap ${l.number}: ${lapTypeWords(l.pick, status(l, best))}${l.pick ? ', set by you' : ''}. Change its type`}
+                {...a11yState({ expanded: open })} style={styles.lapType}>
+                <Text style={StyleSheet.flatten([styles.lapTypeText, open && styles.lapTypeOpen])}>
+                  {l.pick ? `${typeWord(l)} •` : typeWord(l)}
+                </Text>
+              </Pressable>
+            </View>
           );
         })}
       </View>
+      {typing && (
+        <LapTypeMenu key={typing.number} lap={typing.number} now={lapTypeWords(typing.pick, status(typing, best))}
+          picked={typing.pick ?? null} state={lapType} focus />
+      )}
     </View>
   );
 }
@@ -499,7 +539,11 @@ const useStyles = themed((c) => ({
   pickRunName: { fontFamily: Type.label.fontFamily, fontSize: 17, letterSpacing: 0.3, color: c.text, flexShrink: 1 },
   pickRunTyres: { fontFamily: face('label', 400), fontSize: 16, color: c.textSecondary },
   pickRunDelete: { marginLeft: 'auto', alignSelf: 'center' },
-  lapChoices: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: 10 },
+  lapChoices: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', columnGap: 14, rowGap: 4 },
+  lapCell: { alignItems: 'flex-start' }, // a lap to tick, its type under it
+  lapType: { minHeight: TAP, minWidth: TAP, justifyContent: 'center' },
+  lapTypeText: { ...Type.link, fontSize: 13, color: c.textSecondary, textDecorationLine: 'underline' },
+  lapTypeOpen: { color: c.text },
   pickBar: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 22, rowGap: 12, marginTop: 18,
     borderTopWidth: 3, borderColor: c.rule, paddingTop: 12 },
   pickCount: { ...Type.label, fontSize: 16, color: c.text },
