@@ -14,7 +14,7 @@ import {
 import { RenameEvent } from '@/components/RenameEvent';
 import { DriverTag } from '@/components/DriverTag';
 import { RunDriverLine } from '@/components/RunDriverLine';
-import { closesRows, RunPanel, SwipeRow, useRunActions } from '@/components/RunActions';
+import { closesRows, RunLinks, RunPanel, SwipeRow, useRunActions } from '@/components/RunActions';
 import { filledNote, localPick, RunNameEditor, RunPicker, useEventDrivers, useGarage } from '@/components/RunChips';
 import { deletedLine } from '@/components/DeleteRuns';
 import { Said } from '@/components/Controls';
@@ -596,8 +596,9 @@ function Feature({ f, detail, garage, onGarage, onChanged }: {
 
 /** One run: its line opens it (number, name, time, laps, best lap and the gap to the event's best); under it, outside
  * the link, its driver line (with its tyres) under its name, then (children) its driver list or its tyres' four
- * levels when open, the row's width. Delete at the end of its driver line asks first under the row; swiped left it
- * shows Delete too, and held a menu of Delete, Change driver, Rename and Tyres (components/RunActions.tsx). */
+ * levels when open, the row's width. Rename and Delete at the end of its driver line open the name's editor and the
+ * confirm under the row; swiped left it shows Delete too, and held a menu of Delete, Change driver, Rename and Tyres
+ * (components/RunActions.tsx). */
 function RunRow({ s, no, best, maxGap, tag, driver, onDriver, onTyres, onChanged, onDeleted, children }: {
   s: FolderSession;
   no: number;
@@ -655,13 +656,9 @@ function RunRow({ s, no, best, maxGap, tag, driver, onDriver, onTyres, onChanged
         </Link>
         <View style={styles.runMore}>
           <View style={styles.runMoreDriver}>{driver}</View>
-          {/* Delete in sight on every row (Gabriele, 2026-10-08: "still no way to quickly delete runs in the home
-              page"): the same confirm as the swipe and the hold, under the row */}
-          <Pressable onPress={() => run.act('delete')} disabled={renaming} accessibilityRole="button"
-            accessibilityLabel={`Delete ${s.name}`} accessibilityHint="Asks first, under the run"
-            {...a11yState({ expanded: run.shown === 'delete' })} style={styles.runDelete}>
-            <Text style={styles.runDeleteText}>Delete</Text>
-          </Pressable>
+          {/* Rename and Delete in sight on every row (Gabriele, 2026-10-08: "still no way to quickly delete runs in
+              the home page"; 10-09: "give option to rename runs"): the name's editor and the confirm under the row */}
+          <RunLinks run={run} name={s.name} renaming={renaming} />
         </View>
       </SwipeRow>
       {renaming && (
@@ -768,8 +765,6 @@ const useStyles = themed((c) => ({
   runMore: { marginLeft: RUN_NO_W + 10, flexDirection: 'row', alignItems: 'center', gap: 8 },
   runMoreDriver: { flex: 1, minWidth: 0 },
   // the row's Delete: a 44 px target, quiet until wanted (the confirm under the row is where it turns red)
-  runDelete: { minHeight: TAP, minWidth: TAP, justifyContent: 'center', alignItems: 'flex-end', paddingLeft: 6 },
-  runDeleteText: { ...Type.link, fontSize: 13, color: c.textSecondary, textDecorationLine: 'underline' },
   runPicker: { marginTop: 10 },
   deleted: { marginBottom: 14, maxWidth: 640 },
   runSaid: { fontFamily: Fonts.body, fontSize: 14, lineHeight: 19, color: c.textSecondary, borderLeftWidth: 3,
