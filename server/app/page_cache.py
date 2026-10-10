@@ -31,11 +31,12 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app import heavy, models
 from app.db import Base
+from app.timing import picks_part
 
 log = logging.getLogger(__name__)
 
 # Raise a page's version when what it answers changes, so every kept answer of that page is worked out again.
-VERSIONS = {"insights": 1, "analysis": 1, "compare": 1, "stint": 1, "map": 1, "shape": 1, "tyreprep": 1, "grip": 2,
+VERSIONS = {"insights": 1, "analysis": 1, "compare": 1, "stint": 2, "map": 1, "shape": 1, "tyreprep": 1, "grip": 2,
             "balance": 2, "tyreruns": 1}
 KEPT_ERRORS = (404, 422)  # answers that say what a log can't give (no lap, no GPS): the same log gives the same answer
 
@@ -66,7 +67,7 @@ def log_part(s: models.RunSession, f: models.LoggerFile | None) -> list:
         return [s.id, None]
     laps = sorted((l.number, l.start_s, l.time_s, l.clean) for l in s.laps if l.file_id == f.id)
     return [s.id, s.name, s.driver.name if s.driver else None, f.id, f.path, f.meta.get("beacons"), laps,
-            s.car.channel_map if s.car else None]
+            s.car.channel_map if s.car else None, *picks_part(f)]
 
 
 def track_part(track: models.Track | None) -> list:

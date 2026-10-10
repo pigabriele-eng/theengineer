@@ -38,7 +38,7 @@ from app.analysis.insights import RunInput
 from app.analysis.laps import MASTER_HZ, CornerSpec, Lap, SessionData, Section, lap_length, make_sections
 from app.vehicle.tyre_fit import NotEnoughData
 
-VERSION = "stint-3"  # bump when what reduce_run keeps changes, so cached reductions are made again
+VERSION = "stint-4"  # bump when what reduce_run keeps changes, so cached reductions are made again
 STOP_KMH = 5.0  # slower than this is standing still
 STOP_S = 5.0  # standing still this long is a stop in the pits, and ends the stint
 SUSTAINED_S = 1.0  # sustained lateral g is the best average over this long
@@ -120,19 +120,23 @@ def split_stints(laps: list[Lap], stops: list[tuple[float, float]]) -> list[list
 def lap_kinds(stint: list[Lap], stops: list[tuple[float, float]]) -> list[str]:
     """pit (the stop is in it), out, in, slow (not a clean lap) or flying.
 
-    The laps that are not clean at the start of a stint are its out-laps (tyres and brakes coming in), those at
-    its end its in-laps.
+    A lap that isn't clean is the out-lap when it starts the stint or follows the stop, the in-lap when it ends the
+    stint or comes before the stop, else a slow lap, never an in-lap (Gabriele, 2026-10-09, qualifying at Hockenheim:
+    "the app reads them all as IN laps or OUT laps"). A lap set by hand (Lap.pick) is what it was set to: a push lap
+    flying, a build lap slow.
     """
-    kinds = ["pit" if any(l.start <= a < l.end for a, _ in stops) else "flying" if l.clean else "slow"
+    picked = {"out": "out", "in": "in", "push": "flying", "build": "slow"}
+    kinds = [picked[l.pick] if getattr(l, "pick", None) in picked
+             else "pit" if any(l.start <= a < l.end for a, _ in stops) else "flying" if l.clean else "slow"
              for l in stint]
-    for i, k in enumerate(kinds):
-        if k != "slow":
-            break
-        kinds[i] = "out"
-    for i in reversed(range(len(kinds))):
-        if kinds[i] not in ("slow", "pit"):
-            break
-        if kinds[i] == "slow":
+    fixed = [getattr(l, "pick", None) in picked for l in stint]
+    n = len(kinds)
+    for i in range(n):
+        if kinds[i] != "slow" or fixed[i]:
+            continue
+        if i == 0 or kinds[i - 1] == "pit":  # the lap out of the pits
+            kinds[i] = "out"
+        elif i == n - 1 or kinds[i + 1] == "pit":  # the lap into them
             kinds[i] = "in"
     return kinds
 
