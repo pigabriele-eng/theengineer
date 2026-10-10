@@ -18,11 +18,14 @@ def test_a_pick_wins_and_finds_its_lap_by_when_it_started():
 
 
 def test_the_stint_reads_picked_laps_as_set():
-    # the app's own: slow laps at the start are out-laps, at the end in-laps
-    assert lap_kinds(laps(False, False, True, True, False), []) == ["out", "out", "flying", "flying", "in"]
+    # the app's own: the first lap not clean is the out-lap, the last the in-lap, any between them slow
+    assert lap_kinds(laps(False, False, True, True, False), []) == ["out", "slow", "flying", "flying", "in"]
+    # his Q1 at Hockenheim, 2026-10-09: build, push 1, an aborted push 2, push 3 into the pit, after the stop
+    assert lap_kinds(laps(False, True, False, False, False), []) == ["out", "flying", "slow", "slow", "in"]
+    # ...as the stint view sees it, with the stop in lap 5: lap 4 is the lap into the pits
+    assert lap_kinds(laps(False, True, False, False, False), [(450.0, 550.0)]) == ["out", "flying", "slow", "in", "pit"]
     xs = laps(False, False, True, True, False)
     apply_picks(xs, {"100": "build", "200": "in"})
-    # the build lap stays a slow lap (not an out-lap) and the out-lap before it stays out
     assert lap_kinds(xs, []) == ["out", "slow", "in", "flying", "in"]
 
 

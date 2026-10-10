@@ -36,7 +36,7 @@ from app.timing import picks_part
 log = logging.getLogger(__name__)
 
 # Raise a page's version when what it answers changes, so every kept answer of that page is worked out again.
-VERSIONS = {"insights": 1, "analysis": 1, "compare": 1, "stint": 1, "map": 1, "shape": 1, "tyreprep": 1, "grip": 1,
+VERSIONS = {"insights": 1, "analysis": 1, "compare": 1, "stint": 2, "map": 1, "shape": 1, "tyreprep": 1, "grip": 1,
             "balance": 2, "tyreruns": 1}
 KEPT_ERRORS = (404, 422)  # answers that say what a log can't give (no lap, no GPS): the same log gives the same answer
 
