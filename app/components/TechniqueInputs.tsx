@@ -45,6 +45,8 @@ const CHANNELS: { role: InputRole; title: string; unit: string; digits: number; 
   { role: 'steer', title: 'Steering', unit: 'deg', digits: 1, missing: 'steering angle' },
   { role: 'gear', title: 'Gear', unit: '', digits: 0, missing: 'gear' },
   { role: 'rpm', title: 'Revs', unit: 'rpm', digits: 0, missing: 'engine revs' },
+  { role: 'rear_slip', title: 'Rear wheelspin', unit: '%', digits: 1, missing: 'wheel speed' },
+  { role: 'tc_on', title: 'Traction control', unit: '', digits: 0, missing: 'traction control' },
 ];
 const MODEL_DASH = '6,4';
 const PAD = { ...TRACE_PAD_X, top: 4, bottom: 4 };
@@ -62,6 +64,8 @@ type Geometry = {
   px: (m: number) => number;
   indexAt: (sx: number) => number; // the whole lap's point under a pixel
 };
+
+const STEPPED: InputRole[] = ['gear', 'tc_on']; // states, drawn in steps on a short chart
 
 export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, model, modelLabel, marks, phases,
   channels, bands, selected, onSelect, corners, from, to, cursor, onCursor, tall }: Props) {
@@ -107,7 +111,7 @@ export function TechniqueInputs({ stepM, points, inputs, fastest, fastestLabel, 
   const fastestMissing = fastest ? have.filter((ch) => ch.role !== 'speed' && !fastest[ch.role]) : [];
   const phaseColors = MODEL_PHASES.map((p) => phaseColor(theme, p)); // the driving phases' colours, as everywhere
   const unitOf = (ch: (typeof CHANNELS)[number]) => channels?.[ch.role]?.unit ?? ch.unit;
-  const height = (role: InputRole) => (role === 'gear' ? (tall ? 84 : 64) : tall ? 112 : 84);
+  const height = (role: InputRole) => (STEPPED.includes(role) ? (tall ? 84 : 64) : tall ? 112 : 84);
   const over = (role: InputRole) => {
     const v = model?.[role];
     return v && v.length === points ? v : null;
@@ -240,6 +244,7 @@ function Channel({ geo, title, unit, digits, role, values, under, over, bands, s
     let a = Math.min(...seen), b = Math.max(...seen);
     if (!seen.length) [a, b] = [0, 1];
     if (role === 'gear') return [a - 0.5, b + 0.5, a === b ? [a] : [a, b]];
+    if (role === 'tc_on') return [-0.15, 1.15, [0, 1]];
     if (role === 'throttle') return [0, Math.max(100, b), [0, 50, 100]];
     if (role === 'brake') a = 0;
     const span = b - a || 1;
@@ -257,8 +262,8 @@ function Channel({ geo, title, unit, digits, role, values, under, over, bands, s
           continue;
         }
         const x = px(i * stepM).toFixed(1), y = py(vals[i]).toFixed(1);
-        // gear changes in steps; the rest are drawn point to point
-        d += !pen ? `M${x},${y}` : role === 'gear' ? `H${x}V${y}` : `L${x},${y}`;
+        // gear and TC change in steps; the rest are drawn point to point
+        d += !pen ? `M${x},${y}` : STEPPED.includes(role) ? `H${x}V${y}` : `L${x},${y}`;
         pen = true;
       }
       return d;
@@ -267,7 +272,8 @@ function Channel({ geo, title, unit, digits, role, values, under, over, bands, s
     // px and py follow from width, the view, the range and the scale
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [values, under, over, i0, i1, width, geo.view[0], geo.view[1], lo, hi, height, role, stepM]);
-  const fmt = (v: number | undefined) => (v == null || !Number.isFinite(v) ? '–' : v.toFixed(digits));
+  const fmt = (v: number | undefined) => (v == null || !Number.isFinite(v) ? '–'
+    : role === 'tc_on' ? (v > 0.5 ? 'cutting' : 'off') : v.toFixed(digits));
   const ticksX: { label: string; x: number }[] = [];
   for (const k of [...corners].sort((a, z) => a.at_m - z.at_m)) {
     if (k.at_m < geo.view[0] || k.at_m > geo.view[1]) continue;
@@ -333,7 +339,7 @@ function Channel({ geo, title, unit, digits, role, values, under, over, bands, s
           {ticks.map((t) => (
             <SvgText key={`t${t}`} x={PAD.left - 6} y={py(t) + 4} fontSize={12} fill={c.axis} textAnchor="end"
               fontFamily={SANS}>
-              {String(Math.round(t))}
+              {role === 'tc_on' ? (t ? 'on' : 'off') : String(Math.round(t))}
             </SvgText>
           ))}
           <G clipPath={geo.zoomed ? `url(#${clip})` : undefined}>

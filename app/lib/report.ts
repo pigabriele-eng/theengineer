@@ -93,6 +93,13 @@ export type Report = {
   };
   summary: string;
   gains: Gain[];
+  // the "combined theoretical" (the quickest pass of each corner, from any of these laps) told as technique: what it
+  // does against a typical pass in each corner and what that is worth, biggest first
+  combined_theoretical?: {
+    time: number;
+    typical: number;
+    corners: { code: string; run: string; lap: number; time: number; worth_s: number; advice: string[] }[];
+  };
   where_total: Record<string, number>;
   sections: SectionReport[];
   trace: {

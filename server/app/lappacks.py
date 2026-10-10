@@ -30,9 +30,10 @@ from app import heavy, models, storage
 from app.analysis import compact, lappack
 from app.analysis.channels import math_channels
 from app.analysis.compare import ROLES as COMPARE_ROLES
-from app.analysis.laps import TIMING_VERSION, load_session
+from app.analysis.laps import load_session
 from app.routers import reports
 from app.routers.sessions import _channel_map, _line, read_file
+from app.timing import picks_part
 
 log = logging.getLogger(__name__)
 
@@ -53,8 +54,10 @@ def main_file(s: models.RunSession) -> models.LoggerFile | None:
 def signature(s: models.RunSession, f: models.LoggerFile, track: models.Track | None) -> str:
     """What a session's pack is made from: its log, how it is read and timed, and its laps as stored."""
     laps = [(l.number, l.time_s, l.start_s, l.clean) for l in s.laps if l.file_id == f.id]
-    payload = [lappack.FORMAT, TIMING_VERSION, s.id, f.id, f.path, f.meta.get("beacons"), _channel_map(s),
-               track.timing_line if track else None, laps]
+    # 2: the lap timing's version these signatures were first made with, kept so a new version (which changes only
+    # some logs' laps, and the laps are in here) doesn't make every pack again from its log
+    payload = [lappack.FORMAT, 2, s.id, f.id, f.path, f.meta.get("beacons"), _channel_map(s),
+               track.timing_line if track else None, laps, *picks_part(f)]
     return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:40]
 
 

@@ -335,3 +335,20 @@ def test_a_log_storage_failed_to_hand_over_is_tried_again_next_time(client, monk
     client.post(f"/reports/events/{event['id']}/refresh")
     body = _wait(client, f"/reports/events/{event['id']}")
     assert body["status"] == "ready" and body["report"]["runs_analysed"] == 1
+
+
+def test_the_combined_theoretical_is_told_corner_by_corner(reduced):
+    """Gabriele, 2026-10-09: the combined theoretical's technique in plain words, corner by corner: what the quickest
+    pass of each corner does against a typical pass, and what that is worth, biggest first."""
+    prep, extras = compact.prepare_compact([(1, reduced[0]), (2, reduced[1])], SECTORED)
+    rep = build_report(prep, extras, SECTORED)
+    ct = rep["combined_theoretical"]
+    assert ct["time"] == rep["headline"]["ideal"] and ct["typical"] == rep["headline"]["typical"]
+    by = {s["code"]: s for s in rep["sections"]}
+    worth = [c["worth_s"] for c in ct["corners"]]
+    assert worth == sorted(worth, reverse=True) and all(w >= 0.02 for w in worth)
+    for c in ct["corners"]:
+        sec = by[c["code"]]
+        assert abs(c["worth_s"] - (sec["times"]["typical"] - sec["times"]["best"])) < 0.002
+        assert c["time"] == sec["times"]["best"] and 1 <= len(c["advice"]) <= 3
+        assert all(isinstance(a, str) and a for a in c["advice"])

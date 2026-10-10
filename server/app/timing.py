@@ -33,7 +33,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app import db as app_db  # SessionLocal is looked up when used: the tests swap the database
 from app import heavy, models, storage
-from app.analysis.laps import TIMING_VERSION, LapTiming, TimingLine, time_laps
+from app.analysis.laps import TIMING_VERSION, Lap, LapTiming, TimingLine, apply_picks, time_laps
 from app.importers.csvlog import read_log
 from app.importers.motec import LdFile
 from app.importers.window import window
@@ -58,7 +58,26 @@ def read_file(f: models.LoggerFile) -> LdFile:
     of the stored log (meta "window"), from 0 at the part's start."""
     ld = read_log(storage.local_path(f.path))
     w = (f.meta or {}).get("window")
-    return window(ld, w[0], w[1]) if w else ld
+    ld = window(ld, w[0], w[1]) if w else ld
+    ld.lap_picks = (f.meta or {}).get("lap_picks")  # the laps set by hand win over the timing (laps.apply_picks)
+    return ld
+
+
+def picks_part(f: models.LoggerFile | None) -> list:
+    """For a signature: the laps set by hand, sorted; nothing at all when there are none, so the signatures made
+    before laps could be set by hand still hold."""
+    picks = (f.meta or {}).get("lap_picks") if f is not None else None
+    return [sorted(picks.items())] if picks else []
+
+
+def lap_picks(s: models.RunSession, f: models.LoggerFile | None) -> dict[int, str]:
+    """Lap number -> the lap's type as set by hand, for the log's laps as stored."""
+    picks = (f.meta or {}).get("lap_picks") if f is not None else None
+    if not picks:
+        return {}
+    timed = [Lap(l.number, l.start_s, l.start_s + l.time_s, l.time_s) for l in s.laps if l.file_id == f.id]
+    apply_picks(timed, picks)
+    return {l.number: l.pick for l in timed if l.pick}
 
 
 def track_line(track: models.Track | None) -> TimingLine | None:
@@ -229,10 +248,18 @@ def check_track(track_id: int | None) -> None:
 def _up_to_date(f: models.LoggerFile, track: models.Track | None) -> bool:
     """Timed by this version of the lap timing, and by the dash's own marker or from the track's line as it is
     now."""
-    if f.meta.get("timing_version") != TIMING_VERSION:
+    version = f.meta.get("timing_version")
+    if version != TIMING_VERSION and not (version == 2 and _has_a_clean_lap(f)):
         return False
     line = track.timing_line if track is not None else None
     return f.meta.get("lap_source") == "marker" or same_line(f.meta.get("timed_line"), line)
+
+
+def _has_a_clean_lap(f: models.LoggerFile) -> bool:
+    """Version 3 only changes which laps are clean when a cut-short lap was the quickest, which left a log with no
+    clean lap: a version 2 log with one (or too few laps to say) is timed as version 3 would, and isn't read again."""
+    laps = [l for l in f.session.laps if l.file_id == f.id]
+    return len(laps) < 3 or any(l.clean for l in laps)
 
 
 def files_at(db: Session, track: models.Track | None) -> list[models.LoggerFile]:

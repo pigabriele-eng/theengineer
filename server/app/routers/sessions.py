@@ -10,13 +10,14 @@ from sqlalchemy.orm import Session
 
 from app import garage, heavy, models, page_cache, schemas, storage
 from app.analysis.emptyrun import NoLaps, judge
-from app.analysis.laps import CornerSpec, LapTiming, SessionData, analyze, compare_laps, load_session, time_laps
+from app.analysis.laps import (LAP_PICKS, PICK_MATCH_S, CornerSpec, LapTiming, SessionData, analyze, compare_laps,
+                               load_session, time_laps)
 from app.db import get_db
 from app.importers.csvlog import CsvLog, read_csv_log
 from app.importers.motec import LdFile, LdFormatError, read_ld, read_ldx_beacons
 from app.importers.window import beacons_in
 from app.known_tracks import fill_corners
-from app.timing import read_file, store_laps, track_line
+from app.timing import lap_picks, read_file, store_laps, track_line
 
 _line = track_line  # the track's start/finish line for lap timing (other routers import it by this name)
 
@@ -41,6 +42,9 @@ SESSION_COLUMNS = ("id", "created_at", *schemas.SessionIn.model_fields)  # Sessi
 def _with_best(s: models.RunSession) -> dict:
     clean = [l.time_s for l in s.laps if l.clean]
     out = schemas.SessionDetail.model_validate(s).model_dump()
+    picks = {f.id: lap_picks(s, f) for f in s.files if f.meta.get("lap_picks")}
+    for lap in out["laps"]:
+        lap["pick"] = picks.get(lap["file_id"], {}).get(lap["number"])
     out["best_lap_s"] = min(clean) if clean else None
     out["event_name"] = s.event.name if s.event else None
     out["track_name"] = track_name(s)
@@ -87,6 +91,42 @@ def list_sessions(db: Session = Depends(get_db)):
 @router.get("/{session_id}", response_model=schemas.SessionDetail)
 def get_session(session_id: int, db: Session = Depends(get_db)):
     return _with_best(_get(db, session_id))
+
+
+@router.put("/{session_id}/laps/{number}/type", response_model=schemas.SessionDetail)
+def set_lap_type(session_id: int, number: int, body: schemas.LapTypeIn, file_id: int | None = None,
+                 db: Session = Depends(get_db)):
+    """Set a lap's type by hand when the app reads it wrong (Gabriele, 2026-10-09): out, build, push or in; null gives
+    it back to the app. Kept on the log by when the lap started (laps.apply_picks), so it wins when the log is timed
+    again, and every page reads the lap as set: a push or build lap is clean, an out- or in-lap is not. Given back,
+    the lap is as the app read it before it was set (no log read). The lap of the session's main log, or of
+    ?file_id=."""
+    if body.type is not None and body.type not in LAP_PICKS:
+        raise HTTPException(422, f"type: one of {', '.join(LAP_PICKS)}, or null")
+    with heavy.lock:  # the log's meta is read again and written under the lock (timing writes it too)
+        s = _get(db, session_id)
+        f = next((x for x in s.files if x.id == file_id), None) if file_id is not None else page_cache.main_file(s)
+        if f is None:
+            raise HTTPException(404, "No such log in this session")
+        lap = next((l for l in s.laps if l.file_id == f.id and l.number == number), None)
+        if lap is None:
+            raise HTTPException(404, f"No lap {number} in this log")
+        db.refresh(f)
+        near = lambda k: abs(float(k) - lap.start_s) <= PICK_MATCH_S  # noqa: E731 - the lap's own entries
+        picks = {k: v for k, v in (f.meta.get("lap_picks") or {}).items() if not near(k)}
+        # the app's own reading of each lap set by hand, to give it back without reading the log again
+        was = {k: v for k, v in (f.meta.get("lap_picks_was") or {}).items() if not near(k)}
+        own = next((v for k, v in (f.meta.get("lap_picks_was") or {}).items() if near(k)), lap.clean)
+        key = f"{lap.start_s:.2f}"
+        if body.type is not None:
+            picks[key], was[key] = body.type, own
+        meta = {k: v for k, v in f.meta.items() if k not in ("lap_picks", "lap_picks_was")}
+        f.meta = {**meta, "lap_picks": picks, "lap_picks_was": was} if picks else meta
+        lap.clean = body.type in ("push", "build") if body.type is not None else bool(own)
+        db.commit()
+    _prebuild(db, s)
+    db.refresh(s)
+    return _with_best(s)
 
 
 @router.post("/{session_id}/files", response_model=schemas.SessionDetail, status_code=201)

@@ -100,7 +100,7 @@ def test_the_trace_carries_the_drivers_inputs_and_perfect_drivings_phases(env, k
     n = len(t["driven"])
     assert n == N // t["step_m"] + 1
     ins = t["inputs"]
-    assert set(ins) == {"throttle", "brake", "steer", "gear", "rpm"}
+    assert set(ins) == {"throttle", "brake", "steer", "gear", "rpm", "rear_slip", "tc_on"}
     assert ins["rpm"] is None  # this log has no revs
     for role in ("throttle", "brake", "steer", "gear"):
         # every channel at the speed trace's own points: the same metres, so they line up with it point for point
@@ -234,6 +234,7 @@ def test_a_lap_that_ends_in_the_pit_lane(env, k, lim):
     assert out["pit_from_m"] is not None and 850 <= out["pit_from_m"] <= 940
     assert out["budget"]["pit_lane"] > 1
     assert all(x["end_m"] <= out["pit_from_m"] for x in out["mistakes"])
+    assert all(x["start_m"] < out["pit_from_m"] for x in out["obvious"])  # the pit-lane lift is no mistake
 
 
 def test_mistakes_that_repeat():
@@ -301,10 +302,10 @@ def test_technique_check_api(client):
     tr = lap_["trace"]
     assert "perfect" not in tr and "realistic" not in tr and set(tr["model"]) <= {"best"}
     assert len(tr["driven"]) == body["length_m"] // tr["step_m"] + 1
-    # the driver's inputs at the same points; the synthetic log has no gear channel
+    # the driver's inputs at the same points; the synthetic log has no gear, wheel speed or TC channel
     ins = tr["inputs"]
     assert {r: v is not None for r, v in ins.items()} == {"throttle": True, "brake": True, "steer": True, "gear": False,
-                                                       "rpm": False}
+                                                       "rpm": False, "rear_slip": False, "tc_on": False}
     assert all(len(ins[r]) == len(tr["driven"]) for r in ("throttle", "brake", "steer"))
     overlay = tr["model"]["best"]
     assert len(overlay["speed"]) == len(tr["driven"]) and len(overlay["sources"]) == len(body["sections"])
@@ -476,3 +477,27 @@ def test_a_check_kept_in_an_older_shape_is_worked_out_again_not_read(client):
     body = _wait(client, f"/technique/sessions/{s['id']}")
     assert body["status"] == "ready" and body["lap"]["without_mistakes"] <= body["lap"]["time"]
     assert client.get(f"/technique/events/{event['id']}").json()["sessions"][0]["best"]["without_mistakes"]
+
+
+def test_wheelspin_and_traction_control_on_the_way_out_are_read():
+    from app.analysis.technique import _traction, _traction_words
+    n = 200
+    tr = {"t": np.arange(n) * 0.02, "tc_on": np.zeros(n), "rear_slip": np.full(n, 2.0)}
+    tr["tc_on"][100:115] = 1.0  # 15 m at 50 m/s: 0.3 s of TC
+    tr["rear_slip"][104] = 9.0
+    x = _traction(tr, 80, 150)
+    assert x["tc_s"] == pytest.approx(0.3) and x["tc_from"] == 100 and x["spin_pct"] == 9.0 and x["spin_at"] == 104
+    words = _traction_words(x)
+    assert "traction control cut the power for 0.30 s from 100 m" in words and "spun up to 9%" in words
+    # none of either: nothing to say; a log without the channels: nothing measured
+    assert _traction_words(_traction({**tr, "tc_on": np.zeros(n), "rear_slip": np.full(n, 2.0)}, 80, 150)) == ""
+    bare = _traction({"t": tr["t"]}, 80, 150)
+    assert bare == {"tc_s": None, "tc_from": None, "spin_pct": None, "spin_at": None} and _traction_words(bare) == ""
+
+
+def test_qualifying_build_laps_are_marked_and_left_out_of_habits():
+    from app.routers.technique import mark_build_laps
+    laps = [{"session_id": 1, "time": 106.0}, {"session_id": 1, "time": 103.1}, {"session_id": 1, "time": 103.4},
+            {"session_id": 2, "time": 110.0}, {"session_id": 2, "time": 104.0}]
+    mark_build_laps(laps, {1: "qualifying", 2: "practice"})
+    assert [x["build"] for x in laps] == [True, False, False, False, False]  # practice laps are never build laps
