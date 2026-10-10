@@ -320,7 +320,7 @@ export default function EventScreen() {
   // (components/weekend/Laps.tsx). A suggestion tapped scrolls down to its comparison.
   const lapsTab = laps && eventId != null && (
     <View onLayout={(e) => (lapsY.current = e.nativeEvent.layout.y)}>
-      <WeekendLaps eventId={eventId} version={version} onRunDeleted={runDeleted} onRunRenamed={load}
+      <WeekendLaps eventId={eventId} version={version} onRunDeleted={runDeleted} onRunChanged={load}
         onShow={(y) => scroll.current?.scrollTo({ y: Math.max(topH.current + lapsY.current + y - 12, 0), animated: true })} />
     </View>
   );

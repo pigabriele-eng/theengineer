@@ -154,6 +154,9 @@ def test_suggestions_endpoint(client):
     assert [s["code"] for s in res["sessions"]] == ["Q1", "R1"]
     assert [len(r["laps"]) for r in res["sessions"][0]["runs"]] == [2, 1]
     assert res["sessions"][0]["runs"][0]["tyres"] == "new" and res["sessions"][1]["runs"][0]["tyres"] == "used"
+    # each lap with its type: none set by hand, and what it is when it isn't clean (None for a clean lap)
+    assert all(l["pick"] is None and (l["kind"] is None) == l["clean"]
+               for p in res["sessions"] for r in p["runs"] for l in r["laps"])
 
     # kept: answered again without working anything out, and the comparison it suggests opens at once
     assert client.get(f"/events/{event['id']}/compare/suggestions").json() == res
@@ -190,3 +193,10 @@ def test_suggestions_endpoint(client):
     assert cs.wait_idle(120)
     again = client.get(f"/events/{event['id']}/compare/suggestions").json()
     assert all(p["kind"] != "teammates" or p["tyres"] == "new" for p in again["suggestions"])
+    # a lap's type set by hand comes with its lap at once
+    lap = again["sessions"][1]["runs"][0]["laps"][0]
+    rid = again["sessions"][1]["runs"][0]["id"]
+    assert client.put(f"/sessions/{rid}/laps/{lap['number']}/type", json={"type": "in"}).status_code == 200
+    typed = client.get(f"/events/{event['id']}/compare/suggestions").json()["sessions"][1]["runs"][0]["laps"][0]
+    assert typed["pick"] == "in" and typed["kind"] == "in"
+    assert cs.wait_idle(120)
