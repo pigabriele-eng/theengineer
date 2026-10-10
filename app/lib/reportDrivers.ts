@@ -6,6 +6,9 @@
 // biggest gap first, what was matched, the balance per phase, grip use per driver, and the laps offered for the traces
 // (real laps, never a summed one). Pure, so `npm test` checks it (reportDrivers.test.mjs); the requests are in
 // lib/reportDriversApi.ts and the section is components/report/DriversCompare.tsx.
+// "All" tyres (Gabriele, 2026-10-09: "add a possibility to compare drivers even with different tyre mileage"): every
+// driver's laps on every level together, a choice next to the levels; the lap times are put on one tyre age and fuel
+// load as on one level, and the words say which tyres each driver's laps were on.
 import type { TyreLevel } from './tyreLevels';
 
 export type Side = 'a' | 'b';
@@ -14,11 +17,24 @@ export const SIDES: Side[] = ['a', 'b'];
 /** A real lap: its run, its number and its time. */
 export type DriverLap = { session_id: number; lap: number; time: number };
 
-/** One driver on one tyre level: their runs there and every clean lap of them, quickest first. */
-export type DriverOnLevel = { name: string; code: string; runs: number[]; laps: DriverLap[] };
+/** One driver on one tyre level: their runs there and every clean lap of them, quickest first. On "All" tyres, also
+ * the levels they drove on. */
+export type DriverOnLevel = { name: string; code: string; runs: number[]; laps: DriverLap[]; tyres?: TyreLevel[] };
 
-/** One tyre level of the report and who drove on it, the most laps first. */
-export type LevelDrivers = { tyres: TyreLevel; drivers: DriverOnLevel[] };
+/** Every tyre level at once: the drivers' laps whatever tyres they were on. */
+export const ALL = 'all';
+export type LevelKey = TyreLevel | typeof ALL;
+
+/** One tyre level of the report (or all of them) and who drove on it, the most laps first. */
+export type LevelDrivers = { tyres: LevelKey; drivers: DriverOnLevel[] };
+
+/** "All" for every level, else the level's own label. */
+export const levelLabel = (k: LevelKey) => (k === ALL ? 'All' : TYRE_WORDS[k]);
+/** "all tyres", "fresh tyres", "very used tyres". */
+export const tyreWords = (k: LevelKey) => `${k === ALL ? 'all' : TYRE_WORDS[k].toLowerCase()} tyres`;
+// as lib/tyreLevels.ts TYRE_LEVELS and TYRE_LABEL (only its types are read here, so the tests run this file alone)
+const TYRE_ORDER: TyreLevel[] = ['new', 'fresh', 'used', 'worn'];
+const TYRE_WORDS: Record<TyreLevel, string> = { new: 'New', fresh: 'Fresh', used: 'Used', worn: 'Very used' };
 
 /** What the report says of one tyre level (lib/report.ts Report): its runs, and its clean laps by run name. */
 export type LevelReport = {
@@ -68,6 +84,52 @@ export function levelDrivers(levels: LevelReport[], driverOf: (sessionId: number
   return out;
 }
 
+/** Every level at once, for "All": each driver's runs and laps on every level together (laps quickest first), with
+ * the levels they drove on. null when it would add nothing: under two drivers, or one level only. */
+export function allLevels(levels: LevelDrivers[]): LevelDrivers | null {
+  const driven = levels.filter((l) => l.tyres !== ALL && l.drivers.length > 0);
+  if (driven.length < 2) return null;
+  const by = new Map<string, DriverOnLevel>();
+  for (const l of driven) {
+    for (const d of l.drivers) {
+      const m = by.get(d.name) ?? { name: d.name, code: d.code, runs: [], laps: [], tyres: [] };
+      for (const id of d.runs) if (!m.runs.includes(id)) m.runs.push(id);
+      m.laps.push(...d.laps);
+      if (!m.tyres!.includes(l.tyres as TyreLevel)) m.tyres!.push(l.tyres as TyreLevel);
+      by.set(d.name, m);
+    }
+  }
+  const drivers = [...by.values()];
+  if (drivers.length < 2) return null;
+  for (const d of drivers) {
+    d.runs.sort((x, y) => x - y);
+    d.laps.sort((x, y) => x.time - y.time || x.session_id - y.session_id || x.lap - y.lap);
+    d.tyres!.sort((x, y) => TYRE_ORDER.indexOf(x) - TYRE_ORDER.indexOf(y));
+  }
+  drivers.sort((x, y) => y.laps.length - x.laps.length || x.name.localeCompare(y.name));
+  return { tyres: ALL, drivers };
+}
+
+/** The tyre level of each run of the report. */
+export function levelOfRun(levels: LevelDrivers[]): Map<number, TyreLevel> {
+  const out = new Map<number, TyreLevel>();
+  for (const l of levels) {
+    if (l.tyres === ALL) continue;
+    for (const d of l.drivers) for (const id of d.runs) if (!out.has(id)) out.set(id, l.tyres);
+  }
+  return out;
+}
+
+/** The tyre levels of each side's runs, in the levels' order (new first). */
+export function sideTyres(runs: Record<Side, number[]>, levelOf: Map<number, TyreLevel>): Record<Side, TyreLevel[]> {
+  const out = {} as Record<Side, TyreLevel[]>;
+  for (const side of SIDES) {
+    const mine = new Set(runs[side].map((id) => levelOf.get(id)).filter((t): t is TyreLevel => t != null));
+    out[side] = TYRE_ORDER.filter((t) => mine.has(t));
+  }
+  return out;
+}
+
 /** Every driver of the report's runs, on any level. */
 export const allDrivers = (levels: LevelDrivers[]) => [...new Set(levels.flatMap((l) => l.drivers.map((d) => d.name)))];
 
@@ -76,21 +138,27 @@ const shared = (l: LevelDrivers) => (l.drivers.length >= 2 ? Math.min(l.drivers[
 
 export type LevelPick = {
   both: LevelDrivers[]; // the levels where at least two drivers drove, in the report's order
-  level: LevelDrivers | null; // the level compared: the one picked, else where the two drivers have the most laps
-  // the report's own tyre tab is on a level where only one driver drove: who, and on which level
-  only: { tyres: TyreLevel; driver: DriverOnLevel } | null;
+  all: LevelDrivers | null; // every level at once (allLevels), when it adds something
+  // the level compared: the one picked, else where the two drivers have the most laps, else all of them (no level
+  // has two drivers)
+  level: LevelDrivers | null;
+  // the report's own tyre tab is on a level where only one driver drove: who, and on which level (not said on "All")
+  only: { tyres: LevelKey; driver: DriverOnLevel } | null;
 };
 
-/** The level to compare on: the one picked when two drivers drove there, else the one where the two drivers with the
- * most laps have the most laps both (the highest of the fewer of their two counts; the earlier level on a tie). */
-export function pickLevel(levels: LevelDrivers[], picked: TyreLevel | null, shown: TyreLevel | null): LevelPick {
-  const both = levels.filter((l) => l.drivers.length >= 2);
-  const level = both.find((l) => l.tyres === picked)
-    ?? both.reduce<LevelDrivers | null>((best, l) => (best == null || shared(l) > shared(best) ? l : best), null);
+/** The level to compare on: the one picked when two drivers drove there ("All" when it adds something), else the one
+ * where the two drivers with the most laps have the most laps both (the highest of the fewer of their two counts; the
+ * earlier level on a tie), else all of them: same tyres stay the first choice. */
+export function pickLevel(levels: LevelDrivers[], picked: LevelKey | null, shown: TyreLevel | null): LevelPick {
+  const both = levels.filter((l) => l.tyres !== ALL && l.drivers.length >= 2);
+  const all = allLevels(levels);
+  const level = (picked === ALL ? all : both.find((l) => l.tyres === picked))
+    ?? both.reduce<LevelDrivers | null>((best, l) => (best == null || shared(l) > shared(best) ? l : best), null)
+    ?? all;
   const here = levels.find((l) => l.tyres === shown);
-  const only = here && here.drivers.length === 1 && both.length > 0 ? { tyres: here.tyres, driver: here.drivers[0] }
-    : null;
-  return { both, level, only };
+  const only = here && here.drivers.length === 1 && level && level.tyres !== ALL
+    ? { tyres: here.tyres, driver: here.drivers[0] } : null;
+  return { both, all, level, only };
 }
 
 /** The two drivers compared on a level: the two with the most laps, or the two picked when both drove there. */
@@ -335,11 +403,22 @@ export type Matched = {
 
 const list = (v: string[]) => (v.length < 2 ? v.join('') : `${v.slice(0, -1).join(', ')} and ${v.at(-1)}`);
 
-export function matchedLines(m: Matched, tyres: string, laps: Record<Side, number>, names: Record<Side, string>):
-  string[] {
+/** `mix`: on "All" tyres, the levels each side's laps were on (sideTyres): said, and when they differ, what that
+ * means for the numbers. */
+export function matchedLines(m: Matched, tyres: string, laps: Record<Side, number>, names: Record<Side, string>,
+  mix: Record<Side, TyreLevel[]> | null = null): string[] {
   const where = m.same_sessions ? ` in ${list(m.parts)}, where both drove` : '';
-  const out = [`Like with like: ${tyres.toLowerCase()} tyres, clean laps${where} (${laps.a} of ${names.a}'s, ` +
+  const what = mix ? 'All tyres' : `Like with like: ${tyres.toLowerCase()} tyres`;
+  const out = [`${what}, clean laps${where} (${laps.a} of ${names.a}'s, ` +
     `${laps.b} of ${names.b}'s); each corner's passes ranked against the laps either side in the same stint.`];
+  if (mix) {
+    const on = (side: Side) => list(mix[side].map((t) => TYRE_WORDS[t].toLowerCase()));
+    const same = mix.a.join() === mix.b.join();
+    out.push(same ? `Both on ${on('a')} tyres.`
+      : `Not like with like on tyres: ${names.a}'s laps on ${on('a')} tyres, ${names.b}'s on ${on('b')}. The lap ` +
+        'times are put on one tyre age and fuel load where each set\'s age is known; the corners are as driven, so ' +
+        'newer tyres can show as more grip.');
+  }
   if (!m.same_sessions) {
     out.push(`${names.a}'s laps are from ${list(m.by_side.a)}, ${names.b}'s from ${list(m.by_side.b)}: the track ` +
       'can differ.');
