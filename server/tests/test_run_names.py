@@ -170,3 +170,67 @@ def test_a_race_has_two_stints_one_per_driver():
     a, b, c = (models.RunSession(id=i, laps=laps(n)) for i, n in ((1, 6), (2, 9), (3, 15)))
     assert run_names._stints("R1", [a, b, c]) == [1, 1, 2]
     assert run_names._stints("R1", [models.RunSession(id=1), models.RunSession(id=2)]) == [1, 1]
+
+
+def test_a_name_of_two_qualifyings_is_one_of_them():
+    # Hockenheim 2026 (Gabriele, 2026-10-09: "Hockenheim Q3 was imported somehow as Q23, which is wrong"): Q2 and Q3
+    # back to back on the Sunday morning, downloaded together into one folder
+    assert [run_names._pair(t) for t in ("Q23", "07_Q23", "Q2_Q3", "Q2+Q3", "q2 & 3", "Q1-2")] == \
+        [("Q2", "Q3")] * 5 + [("Q1", "Q2")]
+    assert [run_names._pair(t) for t in ("Q2", "05_Q2", "Q 004", "Q1 2026", "Q32", "R23", "FP2")] == [()] * 7
+    assert run_names._hint("07_Q23") == ("qualifying", None)
+    run = _run("Q23", "Session 3", "Hockenheim/Q23")
+    assert run_names.hint(run, None) == ("qualifying", None) and run_names.pair(run, None) == ("Q2", "Q3")
+    # the folder's name is the upload's: the run may be renamed; a name typed by hand may not
+    assert run_names.looks_given(run, None) and run_names.looks_given(_run("Q23 (2)", "Session 3", "Q23"), None)
+    assert not run_names.looks_given(_run("My Q run", "Session 3", "Q23"), None)
+
+
+def _in_folder(ids, folder):
+    from app.db import SessionLocal
+
+    with SessionLocal() as db:
+        for i in ids:
+            for f in db.get(models.RunSession, i).files:
+                f.meta = {**f.meta, "folder": folder}
+        db.commit()
+
+
+def _name(ev, rnd):
+    from app.db import SessionLocal
+
+    with SessionLocal() as db:
+        out = run_names.name_runs(db, ev, rnd)
+        names = {r.id: (r.name, r.kind) for r in db.scalars(
+            run_names.select(models.RunSession).where(models.RunSession.event_id == ev))}
+    return out, names
+
+
+def test_runs_in_a_folder_of_two_qualifyings_take_one_each(client):
+    rnd = _round(("Q1", "2026-09-19T11:15:00"), ("Q2", "2026-09-20T09:00:00"), ("Q3", "2026-09-20T09:30:00"))
+    client.post("/tracks", json={"name": "Test Track"})
+    ev = client.post("/events/folders", json={"name": "Hockenheim"}).json()["id"]
+    # both logs saved by one download after Q3: their times overlap, so the time can't tell them apart
+    q2, q3 = (_session(client, ev, n, (0.97, 0.98), "20/09/2026", "10:05:00") for n in ("Q23", "Q23 (2)"))
+    _in_folder([q2, q3], "Hockenheim/Q23")
+    out, names = _name(ev, rnd)
+    assert out["questions"] == [] and names[q2] == ("Q2", "qualifying") and names[q3] == ("Q3", "qualifying")
+    # named again later (a new upload): the same
+    assert _name(ev, rnd)[1] == names
+
+
+def test_one_run_in_a_folder_of_two_qualifyings(client):
+    rnd = _round(("Q1", "2026-09-19T11:15:00"), ("Q2", "2026-09-20T09:00:00"), ("Q3", "2026-09-20T09:30:00"))
+    client.post("/tracks", json={"name": "Test Track"})
+    ev = client.post("/events/folders", json={"name": "Hockenheim"}).json()["id"]
+    # downloaded hours later: the logger's time says only that it was one of them
+    q3 = _session(client, ev, "Q23", (0.97, 0.98), "20/09/2026", "14:30:00")
+    _in_folder([q3], "Q23")
+    # alone: asked between the two, in the order they ran; its name stays until the tap
+    out, names = _name(ev, rnd)
+    assert [(q["session_id"], [o["code"] for o in q["options"]]) for q in out["questions"]] == [(q3, ["Q2", "Q3"])]
+    assert names[q3][0] == "Q23"
+    # with Q2's own log in the event (its folder says Q2), it is Q3
+    q2 = _session(client, ev, "05_Q2", (0.97, 0.98), "20/09/2026", "09:05:00")
+    out, names = _name(ev, rnd)
+    assert out["questions"] == [] and names[q2][0] == "Q2" and names[q3][0] == "Q3"
