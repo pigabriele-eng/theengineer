@@ -1,5 +1,5 @@
 // Client for the debrief check (GET /debriefs/{id}/check): each debrief point against the session's data.
-import { apiFetch } from '@/lib/api';
+import { apiFetch, DebriefCovers } from '@/lib/api';
 
 // Balance points are read as the report's balance section reads them (degrees from the car's normal understeer),
 // braking and traction against the car's other corners.
@@ -28,7 +28,11 @@ export type CheckedPoint = {
   cause?: 'car' | 'technique' | null; // what a match or mismatch most likely comes from
   meaning?: string;
   suggestion?: string;
+  // a debrief covering stints run on two or more setups: the verdict on each, in the order of `groups`
+  by_group?: ({ verdict: Verdict; agreement: Agreement; line: string } | null)[];
 };
+
+export type SetupGroup = { label: string; runs: string[]; laps: number; error?: string | null };
 
 export type DataTrait = {
   section: string;
@@ -47,6 +51,8 @@ export type DebriefCheck = {
   unmentioned?: DataTrait[]; // the clearest balance traits in the data that no point mentions
   points: CheckedPoint[];
   error?: string;
+  covers?: DebriefCovers;
+  groups?: SetupGroup[]; // when the setup changed between the stints covered; the verdicts above are the last one's
 };
 
 export async function fetchDebriefCheck(id: number): Promise<DebriefCheck> {

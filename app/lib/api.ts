@@ -133,6 +133,14 @@ export type DebriefPoint = DebriefPointIn & {
   audio_start_s: number | null;
 };
 
+/** The runs one debrief talks about: a debrief at the end of FP1 covers its stints. group: the setup the car ran
+ * (0, 1, ...); a change between stints is checked against the data apart. */
+export type DebriefCovers = {
+  runs: { session_id: number; name: string; group: number }[];
+  set_by_user: boolean;
+  choices?: { session_id: number; name: string }[]; // the event's runs it could cover
+};
+
 export type Debrief = {
   id: number;
   session_id: number;
@@ -293,7 +301,18 @@ export const api = {
   debrief: (id: number) => request<Debrief>(`/debriefs/${id}`),
   debriefCorners: (id: number) =>
     request<{ corners: Record<string, DebriefCorner> }>(`/debriefs/${id}/corners`),
-  processDebrief: (id: number) => request<Debrief>(`/debriefs/${id}/process`, { method: 'POST' }),
+  // the stints a debrief covers and where the setup changed between them (server/app/debrief/covers.py)
+  debriefRuns: (id: number) => request<DebriefCovers>(`/debriefs/${id}/runs`),
+  setDebriefRuns: (id: number, runs: { session_id: number; group: number }[]) =>
+    request<DebriefCovers>(`/debriefs/${id}/runs`, { method: 'PUT', body: JSON.stringify(runs),
+      headers: { 'Content-Type': 'application/json' } }),
+  deleteDebrief: (id: number) => request<{ deleted: number }>(`/debriefs/${id}`, { method: 'DELETE' }),
+  // the transcript corrected by hand: saved, and the points sorted again from it
+  saveTranscript: (id: number, transcript: string) =>
+    request<Debrief>(`/debriefs/${id}/transcript`, { method: 'PUT', body: JSON.stringify({ transcript }),
+      headers: { 'Content-Type': 'application/json' } }),
+  processDebrief: (id: number, language?: DebriefLanguage) =>
+    request<Debrief>(`/debriefs/${id}/process${language ? `?language=${language}` : ''}`, { method: 'POST' }),
   // An audio player can't send headers, so when signed in the token goes in the query string.
   debriefAudioUrl: async (id: number) => {
     const token = await accessToken();

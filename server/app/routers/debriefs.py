@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app import models, schemas, storage
 from app.db import get_db
 from app.analysis.laps import analyze
-from app.debrief import inbox
+from app.debrief import covers, inbox
 from app.debrief.corners import corner_data
 from app.debrief.pipeline import process_debrief
 from app.debrief.transcribe import LANGUAGES
@@ -175,12 +175,37 @@ def delete_waiting_recording(recording_id: int, db: Session = Depends(get_db)):
     return {"deleted": recording_id}
 
 
+@router.delete("/debriefs/{debrief_id}")
+def delete_debrief(debrief_id: int, db: Session = Depends(get_db)):
+    """A debrief the user doesn't want: its points, its recording and the words the phone wrote down go too."""
+    d = _get(db, debrief_id)
+    if d.status == models.DebriefStatus.processing:
+        raise HTTPException(409, "This debrief is being processed: delete it when it's done")
+    key = d.audio_path
+    for rec in db.scalars(select(models.DebriefRecording).where(models.DebriefRecording.debrief_id == d.id)):
+        db.delete(rec)
+    _clear_runs(db, d)
+    if key:
+        for live in db.scalars(select(models.LiveTranscript).where(models.LiveTranscript.audio_path == key)):
+            db.delete(live)
+    db.delete(d)
+    db.commit()
+    if key:
+        try:
+            storage.delete(key)
+        except Exception:  # a file left behind is harmless
+            pass
+    return {"deleted": debrief_id}
+
+
 @router.post("/debriefs/{debrief_id}/run", response_model=schemas.DebriefOut)
 def set_debrief_run(debrief_id: int, body: RunPick, db: Session = Depends(get_db)):
     """Confirms the run a debrief joined by time (the same run), or moves the debrief to another one. Either way it
     stays there: a later upload no longer moves it."""
     d = _get(db, debrief_id)
     s = get_session(db, body.session_id)
+    if d.session_id != s.id:
+        _clear_runs(db, d)  # the runs it covered were the old run's
     rec = d.recording
     if rec is None:  # recorded or typed for a picked run: a plain move
         if d.session_id != s.id:
@@ -194,6 +219,51 @@ def set_debrief_run(debrief_id: int, body: RunPick, db: Session = Depends(get_db
     return schemas.DebriefOut.of(d)
 
 
+def _clear_runs(db: Session, d: models.Debrief) -> None:
+    for x in db.scalars(select(models.DebriefRun).where(models.DebriefRun.debrief_id == d.id)):
+        db.delete(x)
+
+
+class CoveredRun(BaseModel):
+    session_id: int
+    group: int = 0  # runs with the same number ran the same setup
+
+
+@router.get("/debriefs/{debrief_id}/runs")
+def debrief_runs(debrief_id: int, db: Session = Depends(get_db)):
+    """The runs the debrief covers, split by setup (debrief/covers.py), and the other runs of its event it could
+    cover."""
+    d = _get(db, debrief_id)
+    out = covers.describe(db, d)
+    s = d.session
+    pool = [s] if s.event_id is None else db.scalars(
+        select(models.RunSession).where(models.RunSession.event_id == s.event_id)).all()
+    out["choices"] = [{"session_id": r.id, "name": r.name or f"Session {r.id}"}
+                      for r in sorted(pool, key=lambda r: (covers.end_of(r) is None, covers.end_of(r) or 0, r.id))]
+    return out
+
+
+@router.put("/debriefs/{debrief_id}/runs")
+def set_debrief_runs(debrief_id: int, body: list[CoveredRun], db: Session = Depends(get_db)):
+    """Sets the runs the debrief covers and where the setup changed; an empty list goes back to the worked-out
+    runs. The debrief's own run is always covered."""
+    d = _get(db, debrief_id)
+    picked = {x.session_id: x.group for x in body}
+    if picked:
+        if len(picked) > covers.MOST:
+            raise HTTPException(422, f"A debrief can cover up to {covers.MOST} runs")
+        picked.setdefault(d.session_id, max(picked.values()))
+        for sid in picked:
+            r = get_session(db, sid)
+            if sid != d.session_id and r.event_id != d.session.event_id:
+                raise HTTPException(422, "Pick runs from the debrief's own event")
+    _clear_runs(db, d)
+    for sid, group in picked.items():
+        db.add(models.DebriefRun(debrief_id=d.id, session_id=sid, group=group))
+    db.commit()
+    return covers.describe(db, d)
+
+
 @router.get("/sessions/{session_id}/debriefs", response_model=list[schemas.DebriefOut])
 def list_debriefs(session_id: int, db: Session = Depends(get_db)):
     return [schemas.DebriefOut.of(d) for d in get_session(db, session_id).debriefs]
@@ -204,13 +274,39 @@ def get_debrief(debrief_id: int, db: Session = Depends(get_db)):
     return schemas.DebriefOut.of(_get(db, debrief_id))
 
 
-@router.post("/debriefs/{debrief_id}/process", response_model=schemas.DebriefOut, status_code=202)
-def reprocess_debrief(debrief_id: int, background: BackgroundTasks, db: Session = Depends(get_db)):
+class TranscriptIn(BaseModel):
+    transcript: str
+
+
+@router.put("/debriefs/{debrief_id}/transcript", response_model=schemas.DebriefOut, status_code=202)
+def edit_transcript(debrief_id: int, body: TranscriptIn, background: BackgroundTasks, db: Session = Depends(get_db)):
+    """The transcript corrected by hand: saved, and its points sorted again from it (not from the recording)."""
     d = _get(db, debrief_id)
+    if d.status == models.DebriefStatus.processing:
+        raise HTTPException(409, "This debrief is being processed: try again when it's done")
+    if not body.transcript.strip():
+        raise HTTPException(422, "The transcript is empty")
+    d.transcript = body.transcript.strip()
+    d.status, d.error = models.DebriefStatus.queued, None
+    db.commit()
+    background.add_task(process_debrief, d.id, True)
+    return schemas.DebriefOut.of(d)
+
+
+@router.post("/debriefs/{debrief_id}/process", response_model=schemas.DebriefOut, status_code=202)
+def reprocess_debrief(debrief_id: int, background: BackgroundTasks, language: str | None = None,
+                      db: Session = Depends(get_db)):
+    """Runs the recording through speech to text and sorting again; ?language= redoes it in another language (an
+    older debrief sent as English that was spoken in Italian or mixed)."""
+    d = _get(db, debrief_id)
+    if language is not None and language not in LANGUAGES:
+        raise HTTPException(422, f"Language must be one of {', '.join(LANGUAGES)}")
     if d.audio_path is None:
         raise HTTPException(409, "This debrief has no recording")
     if d.status == models.DebriefStatus.processing:
         raise HTTPException(409, "This debrief is already being processed")
+    if language is not None:
+        d.language = language
     d.status, d.error = models.DebriefStatus.queued, None
     db.commit()
     background.add_task(process_debrief, d.id)

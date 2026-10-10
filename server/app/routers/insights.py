@@ -16,6 +16,7 @@ from app.analysis.insights import LazyRun, RunInput, analyze_lazily, analyze_run
 from app.analysis.laps import load_session
 from app.db import get_db
 from app.debrief.check import check_debrief
+from app.debrief.covers import covers
 from app.vehicle.presets import preset_detail
 from app.heavy import one_at_a_time
 from app.routers.balance import preset_for
@@ -193,11 +194,30 @@ def debrief_check(debrief_id: int, db: Session = Depends(get_db)):
     d = db.get(models.Debrief, debrief_id)
     if d is None:
         raise HTTPException(404, "Debrief not found")
-    runs, track = _runs(db, [d.session_id])
+    covered, set_by_user = covers(db, d)
+    groups: dict[int, list] = {}
+    for r, g in covered:
+        groups.setdefault(g, []).append(r)
+    runs, track = _runs(db, [r.id for r, _ in covered])
+    by_id = dict(zip([r.id for r, _ in covered], runs, strict=True))
     corners = {c.id: c.code for c in track.corners} if track else {}
     points = [{"id": p.id, "text": p.text, "corner_code": p.corner_code or corners.get(p.corner_id),
                "phase": p.phase.value if p.phase else None} for p in d.points]
     s = _get(db, d.session_id)
     preset = preset_for([s.car] if s.car else [])  # the car's steering ratio and wheelbase, as the report reads them
     geo = car_geometry(preset_detail(preset) if preset else None)
-    return check_debrief(points, runs, official_corners(track), drop_channels=True, geo=geo)
+    # one check per setup: a point said about the whole session gets a verdict for each, the last setup's first
+    results = [(g, rs, check_debrief(points, [by_id[r.id] for r in rs], official_corners(track),
+                                     drop_channels=True, geo=geo)) for g, rs in sorted(groups.items())]
+    out = next((res for _, _, res in reversed(results) if not res.get("error")), results[-1][2])
+    out["covers"] = {"runs": [{"session_id": r.id, "name": r.name or f"Session {r.id}", "group": g}
+                              for r, g in covered], "set_by_user": set_by_user}
+    if len(results) > 1:
+        out["groups"] = [{"label": f"Setup {i + 1}", "runs": [r.name or f"Session {r.id}" for r in rs],
+                          "laps": res.get("laps", 0), "summary": res.get("summary", {}), "error": res.get("error")}
+                         for i, (_, rs, res) in enumerate(results)]
+        for p in out.get("points", []):
+            p["by_group"] = [next(({"verdict": q["verdict"], "agreement": q["agreement"], "line": q.get("line")}
+                                   for q in res.get("points", []) if q.get("id") == p.get("id")), None)
+                             for _, _, res in results]
+    return out

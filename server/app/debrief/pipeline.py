@@ -6,6 +6,7 @@ Speech to text is Deepgram when DEEPGRAM_API_KEY is set, else what the phone wro
 from __future__ import annotations
 
 import os
+import re
 
 from sqlalchemy import select
 
@@ -35,20 +36,25 @@ def _match_corner(said: str | None, corners: list[models.Corner]) -> models.Corn
     return next((c for c in corners if c.code.lower() == key or (c.name and c.name.lower() == key)), None)
 
 
-def process_debrief(debrief_id: int) -> None:
+def process_debrief(debrief_id: int, edited: bool = False) -> None:
+    """Transcribes the recording and sorts what was said into points. edited: the transcript was corrected by hand
+    (PUT /debriefs/{id}/transcript), so it is sorted again as it stands, without going back to the recording."""
     db = dbmod.SessionLocal()
     try:
         d = db.get(models.Debrief, debrief_id)
-        if d is None or d.audio_path is None:
+        if d is None or (d.audio_path is None and not edited):
             return
         d.status, d.error = models.DebriefStatus.processing, None
         db.commit()
         s = d.session
         ctx = context_for(s, d.mode)
         try:
-            tr = _transcript(db, d, ctx)
+            if edited:
+                tr = from_text(d.transcript or "", d.segments or [])
+            else:
+                tr = _transcript(db, d, ctx)
+                d.transcript = tr.text
             d.segments = [seg.__dict__ for seg in tr.segments]
-            d.transcript = tr.text
             db.commit()
             if os.environ.get("ANTHROPIC_API_KEY"):
                 result = structure_mod.structure(tr, ctx)
@@ -76,6 +82,26 @@ def process_debrief(debrief_id: int) -> None:
         db.commit()
     finally:
         db.close()
+
+
+SPEAKER_LINE = re.compile(r"^\s*(S\d+)\s*:\s*(.*)$")
+
+
+def from_text(text: str, old: list[dict]) -> transcribe_mod.Transcript:
+    """A transcript corrected by hand, back into segments: one per line, "S1: ..." names the speaker (a line without
+    one keeps the speaker before it). Line n keeps the times of the n-th segment it was written from, so the points
+    still play from about where they were said."""
+    segs: list[transcribe_mod.Segment] = []
+    speaker = "S0"
+    for line in (x for x in text.splitlines() if x.strip()):
+        m = SPEAKER_LINE.match(line)
+        speaker, said = (m.group(1), m.group(2)) if m else (speaker, line)
+        if not said.strip():
+            continue
+        was = old[len(segs)] if len(segs) < len(old) else (old[-1] if old else {})
+        start = float(was.get("start") or 0)
+        segs.append(transcribe_mod.Segment(speaker, start, float(was.get("end") or start), said.strip()))
+    return transcribe_mod.Transcript(segs)
 
 
 def _transcript(db, d: models.Debrief, ctx: structure_mod.Context) -> transcribe_mod.Transcript:
