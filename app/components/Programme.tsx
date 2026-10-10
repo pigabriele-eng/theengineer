@@ -24,7 +24,6 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { Text, View } from '@/components/Themed';
 import { Fonts, Focus, Photo, Space, TAP, tapRoom, themed, Type, useTheme, WIDE } from '@/constants/Theme';
 import { BackLink, noteVisit } from '@/components/Back';
-import { parentOf } from '@/lib/backTo';
 import { useKnownMode } from '@/lib/eventModes';
 import { noPrint, printFill, printHead } from '@/lib/print';
 import { a11yState } from '@/lib/a11yState';
@@ -62,8 +61,9 @@ const NAV: { key: NavKey; label: string; href: Href }[] = [
 ];
 
 /** Which part of the app a page belongs to: its masthead link is underlined. An event's page is a coaching day's
- * when `coaching` says so (the event's mode, lib/eventModes.ts). */
-export function navOf(pathname: string, coaching = false): NavKey {
+ * when `coaching` says so (the event's mode, lib/eventModes.ts). The manual belongs to none. */
+export function navOf(pathname: string, coaching = false): NavKey | null {
+  if (pathname.startsWith('/manual')) return null;
   if (pathname.startsWith('/coaching') || (coaching && pathname.startsWith('/event/'))) return 'coaching';
   if (pathname.startsWith('/drivers')) return 'drivers';
   if (pathname === '/setup') return 'setup';
@@ -72,13 +72,11 @@ export function navOf(pathname: string, coaching = false): NavKey {
   return 'weekend';
 }
 
-// Under this width (a small phone), the date makes way for Back: Back, the nameplate and the date need about 345 px of
-// window, gutters included, so under 360 they would crowd one row.
-const DATE_WITH_BACK = 360;
 
 /** The paper masthead at the top of every page: Back (on every page but the race weekends, components/Back.tsx), the
- * nameplate and today's date, the parts of the app as text links (the one you are in underlined in red), then a thick
- * and a thin rule. On a phone the links take a row of their own under the nameplate. */
+ * nameplate and today's date, the parts of the app as text links (the one you are in underlined in red) and the
+ * Manual (app/manual.tsx), then a thick and a thin rule. On a phone the links take a row of their own under the
+ * nameplate, and the Manual the date's place beside it. */
 export function Masthead() {
   const styles = useStyles();
   const { width } = useWindowDimensions();
@@ -87,8 +85,18 @@ export function Masthead() {
   const path = usePathname();
   // the trail Back reads: every page shown, in order
   noteVisit(path);
-  const back = parentOf(path) != null;
-  const date = wide || !back || width >= DATE_WITH_BACK ? <Text style={styles.issue}>{today()}</Text> : null;
+  // on a phone the manual takes the date's place: one tap from every page (Gabriele, 2026-10-10: "Can you add a
+  // 'user manual' with all functions explained and where to find them? Add it in the app")
+  const date = wide ? <Text style={styles.issue}>{today()}</Text> : null;
+  const manual = (
+    <Link href="/manual" asChild>
+      <Pressable accessibilityRole="link" accessibilityLabel="Manual: every function and where to find it"
+        {...a11yState({ selected: path.startsWith('/manual') }, 'link')} hitSlop={6}
+        style={StyleSheet.flatten([styles.navItem, path.startsWith('/manual') && styles.navOn])}>
+        <Text style={StyleSheet.flatten([wide ? styles.navText : styles.navTextPhone, styles.manualText])}>Manual</Text>
+      </Pressable>
+    </Link>
+  );
   const event = /^\/event\/(\d+)/.exec(path);
   const on = navOf(path, useKnownMode(event ? Number(event[1]) : null) === 'coaching');
   const nav = (
@@ -120,7 +128,10 @@ export function Masthead() {
             </Link>
             {date}
           </View>
-          {nav}
+          <View style={styles.navSide}>
+            {nav}
+            {manual}
+          </View>
         </View>
       ) : (
         <>
@@ -134,7 +145,7 @@ export function Masthead() {
                 </Pressable>
               </Link>
             </View>
-            {date}
+            {manual}
           </View>
           {nav}
         </>
@@ -510,8 +521,12 @@ const useStyles = themed((c) => ({
   home: tapRoom(6),
   homePhone: tapRoom(6),
   nav: { flexDirection: 'row', gap: 28 },
-  navPhone: { flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderColor: c.rule, paddingTop: 8,
-    paddingBottom: 6 },
+  navSide: { flexDirection: 'row', alignItems: 'flex-end', gap: 28, borderLeftWidth: 0 },
+  manualText: { color: c.textSecondary },
+  // on the smallest phones (320 px) the six links wrap rather than run off the side; the row gap clears a link's tap
+  // room above its word (navItem)
+  navPhone: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 20,
+    borderTopWidth: 1, borderColor: c.rule, paddingTop: 8, paddingBottom: 6 },
   // a full tap target: the room is above the word, the red underline stays under it
   navItem: { paddingBottom: 4, borderBottomWidth: 4, borderColor: 'transparent', paddingTop: 19, marginTop: -19, minWidth: TAP },
   navOn: { borderColor: c.mark },

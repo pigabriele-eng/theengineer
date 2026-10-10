@@ -307,7 +307,7 @@ export default function CompareScreen() {
           <View style={styles.list} {...noPrint}>
             {!groups && !error && <ActivityIndicator color={theme.text} style={styles.left} />}
             {groups && groups.length === 0 && (
-              <Text style={t.note}>No session has timed laps yet. Upload logs on the Sessions page first.</Text>
+              <Text style={t.note}>No session has timed laps yet. Upload logs on the Upload page first.</Text>
             )}
             {groups && groups.length > 0 && (
               <Text style={t.note}>

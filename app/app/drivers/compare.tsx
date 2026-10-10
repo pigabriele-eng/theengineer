@@ -155,7 +155,7 @@ export default function CompareDriversScreen() {
       {groups == null && !error && <ActivityIndicator color={theme.text} style={styles.loading} />}
       {groups != null && groups.length === 0 && (
         <Text style={StyleSheet.flatten([t.note, styles.loading])}>
-          No sessions with clean laps yet. Upload logs on the Sessions page first.
+          No sessions with clean laps yet. Upload logs on the Upload page first.
         </Text>
       )}
 

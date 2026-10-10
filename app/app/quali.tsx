@@ -33,7 +33,7 @@ export default function QualiScreen() {
     return (
       <Page>
         <Text style={StyleSheet.flatten([styles.title, styles.head])} accessibilityRole="header">Quali prep</Text>
-        <Text style={styles.dek}>Open quali prep from an event on the Sessions page, or from a session.</Text>
+        <Text style={styles.dek}>Open quali prep from an event on Weekend, or from a run.</Text>
       </Page>
     );
   }
