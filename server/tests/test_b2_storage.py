@@ -238,8 +238,19 @@ def test_files_come_from_supabase_while_b2_refuses_downloads(tmp_path):
 
     both.new.client = httpx.Client(transport=httpx.MockTransport(capped))
     assert both.local_path(kept).read_bytes() == b"\x40 an older log"
-    with pytest.raises(storage.StorageError, match="download_cap_exceeded"):
-        both.local_path(only_b2)  # no other copy: the reason is passed on
+    with pytest.raises(storage.StorageError, match=r"daily download limit is used up.*00:00 UTC"):
+        both.local_path(only_b2)  # no other copy: the reason is passed on, in plain words
+
+    def capped_class_b(request):  # how B2 words it on the live site, 2026-10-10
+        if request.method == "GET" and request.url.path.endswith(".gz"):
+            return httpx.Response(403, content=b"<Error><Code>AccessDenied</Code><Message>Cannot download file, "
+                                  b"download bandwidth or transaction (Class B) cap exceeded.</Message></Error>")
+        return new_fake.handler(request)
+
+    both.new.client = httpx.Client(transport=httpx.MockTransport(capped_class_b))
+    assert both.local_path(kept).read_bytes() == b"\x40 an older log"
+    with pytest.raises(storage.StorageError, match="daily download limit is used up"):
+        both.local_path(only_b2)
 
 
 def test_new_files_keep_a_spare_copy_in_supabase_while_it_has_room(tmp_path, monkeypatch):
