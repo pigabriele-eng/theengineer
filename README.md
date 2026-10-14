@@ -10,6 +10,7 @@ Concept: https://claude.ai/code/artifact/90becf93-0498-4a90-b39b-036fb85adf76
 | --- | --- |
 | `server/` | Python API (FastAPI): shared data model, native MoTeC `.ld` import, lap splitting, corner detection and corner metrics |
 | `app/` | One Expo (React Native) codebase that runs as the iPhone app and as the web app |
+| `desktop/` | The app on a computer, offline: the web app's pages and the server in one program, data in one local folder ([desktop/README.md](desktop/README.md)) |
 
 ## Run it locally
 

@@ -1,0 +1,71 @@
+{
+  "name": "theengineer-desktop",
+  "productName": "The Engineer",
+  "version": "1.0.0",
+  "description": "The Engineer on a computer, offline: the app, the analysis and the data in one folder",
+  "repository": "github:pigabriele-eng/theengineer",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --publish never"
+  },
+  "build": {
+    "appId": "com.theengineer.desktop",
+    "productName": "The Engineer",
+    "artifactName": "The-Engineer-${version}-${os}-${arch}.${ext}",
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../app/dist",
+        "to": "web"
+      },
+      {
+        "from": "build/pyi/theengineer-server",
+        "to": "server"
+      }
+    ],
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.sports",
+      "icon": "../app/assets/images/icon.png",
+      "identity": "-",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "The Engineer records your debriefs so they can be turned into a report."
+      }
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "../app/assets/images/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "icon": "../app/assets/images/icon.png",
+      "category": "Utility"
+    }
+  },
+  "devDependencies": {
+    "electron": "44.7.2",
+    "electron-builder": "26.15.3"
+  }
+}

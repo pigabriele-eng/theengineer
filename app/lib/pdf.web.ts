@@ -9,8 +9,11 @@
 // canvas and only so much canvas memory in all, so each picture stays well under that and is freed once its pages are
 // cut out. Pages break between lines, charts and photos, as the printed page does, and go into an A4 PDF
 // (lib/pdfFile.ts) named like the printed one. lib/pdf.ts is the same module on iOS and Android, where nothing prints.
+// In the desktop app (lib/desktop.ts) the button saves the page, laid out on paper the same way, as a PDF in the
+// folder that syncs to the phone: the computer's own printing makes it, with real text in it.
 import { useSyncExternalStore } from 'react';
 
+import { desktop } from '@/lib/desktop';
 import { A4_PT, PdfPicture, pdfOfPictures } from '@/lib/pdfFile';
 import { endPaper, onIos, PAPER_MARGIN_MM, paperPage } from '@/lib/print';
 
@@ -21,15 +24,20 @@ const standalone = typeof navigator !== 'undefined'
   && ((navigator as Navigator & { standalone?: boolean }).standalone === true
     || (onIos && typeof matchMedia === 'function' && matchMedia('(display-mode: standalone)').matches));
 
-/** True where the Print button makes the PDF itself: the app opened from an iPhone's or iPad's home screen. */
-export const pdfInstead = standalone;
+/** True where the Print button makes the PDF itself: the app opened from an iPhone's or iPad's home screen, and the
+ * desktop app. */
+export const pdfInstead = standalone || desktop != null;
+
+/** True in the desktop app: the button saves the PDF into the phone's folder. */
+export const pdfForPhone = desktop != null;
 
 /** The PDF the Print button is making, for the note it shows (`owner`: the button that was tapped). */
 export type PdfState =
   | { step: 'idle' }
   | { step: 'making'; owner: string }
   | { step: 'ready'; owner: string; file: File } // made; the share sheet wants a tap of its own
-  | { step: 'failed'; owner: string; message: string };
+  | { step: 'failed'; owner: string; message: string }
+  | { step: 'saved'; owner: string; path: string; name: string }; // the desktop app: in the phone's folder
 
 const IDLE: PdfState = { step: 'idle' };
 let state: PdfState = IDLE;
@@ -61,6 +69,10 @@ export function makePdf(name: string, owner: string) {
   void (async () => {
     try {
       await drawn(); // the note first
+      if (desktop) {
+        await saveForPhone(desktop, name, owner);
+        return;
+      }
       const file = await makeFile(name);
       await handOn(file, owner, false);
     } catch (e) {
@@ -69,6 +81,25 @@ export function makePdf(name: string, owner: string) {
       set({ step: 'failed', owner, message: words ?? 'Something went wrong while drawing the page.' });
     }
   })();
+}
+
+// The desktop app: the page on paper (Light, the controls left out, every box in full), saved by the computer's own
+// printing into the phone's folder
+async function saveForPhone(app: NonNullable<typeof desktop>, name: string, owner: string) {
+  if (!paperPage(name)) throw plain('The page is being printed already.');
+  try {
+    await drawn(); // drawn Light, and the charts with it
+    await drawn();
+    const saved = await app.savePdf(name);
+    set('canceled' in saved ? IDLE : { step: 'saved', owner, path: saved.path, name: saved.name });
+  } finally {
+    endPaper();
+  }
+}
+
+/** The note's Show in folder button (the desktop app): the saved PDF in the computer's file browser. */
+export function showSavedPdf() {
+  if (state.step === 'saved') void desktop?.showFile(state.path);
 }
 
 /** The note's Share button: the share sheet, in a tap of its own. */
