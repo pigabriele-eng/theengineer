@@ -47,7 +47,7 @@ jobs:
           pyinstaller --noconfirm --clean --onedir --name theengineer-server \
             --distpath ../desktop/build/pyi --workpath ../desktop/build/pyi-work --specpath ../desktop/build \
             --paths . --collect-submodules app --collect-submodules uvicorn \
-            --add-data "app/results/certs${{ runner.os == 'Windows' && ';' || ':' }}app/results/certs" \
+            --add-data "$(pwd -W 2>/dev/null || pwd)/app/results/certs${{ runner.os == 'Windows' && ';' || ':' }}app/results/certs" \
             ../desktop/server_main.py
 
       - name: the server starts and answers
