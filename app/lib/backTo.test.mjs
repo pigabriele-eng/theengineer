@@ -41,7 +41,7 @@ test('compare and the top-level pages go up to the race weekends, even with an e
 
 test('a tool, the garage and seasons go up to Tools; a driver page to Drivers', () => {
   for (const p of ['/tools/pressures', '/tools/stint', '/tools/calendar', '/garage', '/seasons']) {
-    assert.deepEqual(parentOf(p, { id: 7 }), { path: '/tools', name: 'Tools' }, p);
+    assert.deepEqual(parentOf(p, { id: 7 }), { path: '/tools', name: 'Settings' }, p);
   }
   for (const p of ['/drivers/tag', '/drivers/compare', '/drivers/fingerprints', '/drivers/habits']) {
     assert.deepEqual(parentOf(p), { path: '/drivers', name: 'Drivers' }, p);
@@ -93,7 +93,7 @@ test('a fresh load has no history: Back goes up, whatever the navigator keeps un
   assert.deepEqual(backFrom([], '/session/12', { id: 3 }, true), { to: 'parent', place: { path: '/event/3', name: 'the event' } });
   // the trail says there was a page before, but the navigator can't go back to it
   assert.deepEqual(backFrom(['/', '/tools/pressures'], '/tools/pressures', null, false),
-    { to: 'parent', place: { path: '/tools', name: 'Tools' } });
+    { to: 'parent', place: { path: '/tools', name: 'Settings' } });
 });
 
 test("the screen reader's words", () => {
