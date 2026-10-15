@@ -50,6 +50,8 @@ Sign-in is off unless `EXPO_PUBLIC_SUPABASE_URL` is set. With it (and `EXPO_PUBL
 
 Supabase holds the database, the uploaded files and the logins; Render runs the API server and serves the web app. Both have free plans. [`render.yaml`](render.yaml) describes both Render services as a Blueprint.
 
+Both services deploy the `live` branch, which [`nightly-deploy.yml`](.github/workflows/nightly-deploy.yml) moves to `main` once a night (00:30 UTC), so merges go live together with one restart a day. For a fix that can't wait: GitHub → Actions → *Nightly deploy* → *Run workflow*.
+
 1. **Supabase**: create a project in a European region (Render runs the API in Frankfurt). In Authentication, turn off *Allow new users to sign up*, then add each person under Authentication → Users → *Add user*. Supabase checks the logins; the server only accepts a valid Supabase token on every request (except `/health`).
 2. **Render**: New → Blueprint, pick this repository, and fill in the values below when asked. `EXPO_PUBLIC_API_URL` is the API's own address, so if you don't know it yet, finish once, copy it from the `theengineer-api` page, set it on `theengineer-web` and deploy that again.
 3. **Supabase again**: Authentication → URL Configuration → *Site URL*: the web app's address (for example `https://theengineer-web.onrender.com`), so emails such as password resets link to it.
@@ -64,6 +66,7 @@ API server (`theengineer-api`):
 | `SUPABASE_SERVICE_ROLE_KEY` | Private key for file storage; server only, never in the app | Project Settings → **API Keys**: a secret key (`sb_secret_...`), or the legacy `service_role` key |
 | `STORAGE_BUCKET` | Storage bucket for logs and recordings (set to `logs`); created private on first start | – |
 | `S3_ENDPOINT`, `S3_BUCKET`, `S3_KEY_ID`, `S3_SECRET_KEY` | Optional: store new logs in Backblaze B2 (free 10 GB) instead of Supabase Storage (1 GB). Files stored earlier stay in Supabase and are still read from there. If B2 can't be reached on start, the server logs why and keeps using Supabase | Backblaze → **Buckets** (a private bucket; its *Endpoint* is `s3.<region>.backblazeb2.com`) and **Application Keys** (a key for that bucket: *keyID* and *applicationKey*) |
+| `STORAGE_DIR`, `STORAGE_CACHE_GB` | Optional: with a Render disk mounted (say at `/var/data`), set `STORAGE_DIR` to it so downloaded logs outlive restarts, and `STORAGE_CACHE_GB` to how much of it they may fill (default 2) | – |
 | `STORAGE_LIMIT_MB` | Optional: how much the storage holds (default 1024 on Supabase, 9500 on B2; 0 for no limit). Logs stop being stored 50 MB short of it | – |
 | `ALLOWED_EMAILS` | Optional, comma-separated: only these accounts get in | – |
 | `ANTHROPIC_API_KEY`, `DEEPGRAM_API_KEY` | Voice debriefs, as above | console.anthropic.com, console.deepgram.com |
