@@ -101,6 +101,35 @@ def test_grip_falls_with_the_fade(result):
     assert any("still coming in" in n for n in stint["words"]["car"])
 
 
+def test_balance_lap_by_lap_in_each_corner(result):
+    stint = result["stints"][0]
+    by = stint["balance_laps"]
+    assert by["laps"] == [r["lap"] for r in stint["laps"] if r["in_fit"]]
+    rows = {s["code"]: s for s in stint["sections"]}
+    early, late = stint["groups"]["early"], stint["groups"]["late"]
+    seen = 0
+    for c in by["corners"]:
+        assert rows[c["code"]]["corner"]
+        for name in ("entry", "mid", "exit"):
+            if name not in c or name not in rows[c["code"]]:
+                continue
+            v = c[name]["values"]
+            assert len(v) == len(by["laps"])
+            # the early and late laps' medians are the shift per corner the stint view gives already
+            e = np.median([x for lap, x in zip(by["laps"], v, strict=True) if lap in early and x is not None])
+            la = np.median([x for lap, x in zip(by["laps"], v, strict=True) if lap in late and x is not None])
+            assert e == pytest.approx(rows[c["code"]][name]["early"], abs=0.011)
+            assert la == pytest.approx(rows[c["code"]][name]["late"], abs=0.011)
+            t = c[name]["trend"]
+            assert t["laps"] == len([x for x in v if x is not None]) and t["clear"] == (abs(t["per_lap"]) > t["within"])
+            seen += 1
+    assert seen >= 2
+
+
+def test_no_balance_lap_by_lap_without_steering():
+    assert assemble([_fake_log()])["stints"][0]["balance_laps"] is None
+
+
 def test_tags_leave_laps_out(stint_run):
     ld = read_ld(write_ld(stint_run[0]))
     log = reduce_run(RunInput("stints", load_session(ld), ld=ld))

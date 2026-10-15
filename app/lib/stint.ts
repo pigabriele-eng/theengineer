@@ -114,8 +114,18 @@ export type Stint = {
   laps: StintLap[];
   groups: { early: number[]; late: number[] } | null;
   sections: SectionRow[];
+  // per corner, the balance in each phase on every lap in the trend (`laps`), and its trend through the stint; null
+  // without a balance; missing from a view kept before it was added
+  balance_laps?: BalanceLaps | null;
   fade: FadeRow[];
   words: Words;
+};
+
+export type CornerTrend = { per_lap: number; within: number; change: number; clear: boolean; laps: number };
+
+export type BalanceLaps = {
+  laps: number[];
+  corners: ({ code: string } & Partial<Record<BalancePhase, { values: (number | null)[]; trend: CornerTrend | null }>>)[];
 };
 
 export type StintView = {
