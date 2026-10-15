@@ -14,7 +14,6 @@ import { median, tyreStep, TyreMeasure } from '@/components/report/QuickLaps';
 import { RunHeader } from '@/components/RunChips';
 import PrintButton from '@/components/PrintButton';
 import { SessionSwitcher, useEventFolder } from '@/components/SessionSwitcher';
-import { SetupCard } from '@/components/SetupCard';
 import { Text, View } from '@/components/Themed';
 import { TrackMap } from '@/components/TrackMap';
 import { UntimedNote } from '@/components/UntimedNote';
@@ -342,33 +341,7 @@ export default function SessionScreen() {
     sections.push({ title: 'Lap against lap', dek: 'Any two laps of the run, trace on trace.',
       body: <LapCompare key={`${session.id}-${analysis.file_id}`} sessionId={session.id} analysis={analysis} laps={session.laps} bare /> });
   }
-  sections.push({ title: debriefs.length ? 'The car & debriefs' : 'The car',
-    dek: debriefs.length ? 'Its setup sheet for this run, and what the driver said.' : 'Its setup sheet for this run.',
-    body: (
-      <View style={styles.stack}>
-        <SetupCard sessionId={sessionId} bare />
-        {debriefs.length > 0 && (
-          <View>
-            <Text style={styles.subhead}>Debriefs</Text>
-            {debriefs.map((d) => (
-              <Link key={d.id} href={{ pathname: '/debrief/[id]', params: { id: d.id } }} asChild>
-                <Pressable style={styles.debrief} accessibilityRole="link">
-                  <Text style={styles.debriefTitle}>
-                    {new Date(d.created_at).toLocaleString()} · {d.mode === 'group' ? 'group' : 'driver'}
-                  </Text>
-                  <Text style={styles.debriefText} numberOfLines={2}>
-                    {d.status === 'ready' ? d.summary || `${d.points.length} points`
-                      : d.status === 'failed' ? 'Not processed yet' : 'Processing…'}
-                  </Text>
-                </Pressable>
-              </Link>
-            ))}
-          </View>
-        )}
-        {/* recording opens on this run (Debrief left the masthead: it is recorded from the run and the weekend page) */}
-        <TextLink href={{ pathname: '/debrief', params: { session: sessionId } }} label="Record a debrief for this run" arrow />
-      </View>
-    ) });
+  // the setup sheet and the debriefs are hidden while the app is kept to the weekends' analysis (Gabriele, 2026-10-15)
 
   // the ticked laps on the lap comparison, in the order ticked; one ticked lap against the run's fastest
   const fastestLap = laps.find((l) => l.status === 'fastest')?.number ?? null;
@@ -400,23 +373,13 @@ export default function SessionScreen() {
           </View>
         )}
         <View style={styles.actions} {...noPrint}>
-          {hasClean && (
-            <TextLink href={{ pathname: '/report', params: { session: sessionId } }} label="Report: how to go faster" red arrow />
-          )}
-          {hasClean && (
-            // with its event, so the check asks for the event's parts at once
-            <TextLink href={{ pathname: '/technique', params: eventId != null ? { session: sessionId, event: eventId } : { session: sessionId } }}
-              label="Technique check" />
+          {/* the run's analysis is on its weekend's page (Gabriele, 2026-10-15: Driving performance, Stint analysis
+              and Quali analysis; "Remove everything else for the moment") */}
+          {eventId != null && (
+            <TextLink href={{ pathname: '/event/[id]', params: { id: eventId } }} label="Its weekend: driving, stint, quali" red arrow />
           )}
           {hasClean && (
             <TextLink href={{ pathname: '/racing-line', params: { session: sessionId } }} label="Racing line, 3D" />
-          )}
-          {hasClean && <TextLink href={{ pathname: '/quali', params: { session: sessionId } }} label="Quali prep" />}
-          {session.laps.length > 0 && (
-            <TextLink href={{ pathname: '/tools/stint', params: { session: sessionId } }} label="Stint analysis" />
-          )}
-          {session.best_lap_s != null && (
-            <TextLink href={{ pathname: '/compare', params: { session: sessionId } }} label="Compare" />
           )}
           <View style={styles.upload}>
             <TextLink onPress={upload} disabled={busy} label={busy ? 'Uploading…' : 'Upload a logger file'} />
@@ -1017,9 +980,6 @@ const useStyles = themed((c) => ({
   code: { fontFamily: Fonts.display, fontSize: 17, lineHeight: 20 },
 
   // debriefs
-  debrief: { paddingVertical: 9, borderBottomWidth: 1, borderColor: c.separator, gap: 2 },
-  debriefTitle: { fontFamily: face700(), fontSize: 15, letterSpacing: 0.3, color: c.text },
-  debriefText: { fontFamily: Fonts.body, fontSize: 15, lineHeight: 21, color: c.textSecondary },
 }));
 
 function face700() {

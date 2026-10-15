@@ -195,12 +195,11 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
   const lineOf = useTheoreticalLines(colorOfSession);
   const extra = current && data ? onGraph(theo.answer, on, data.traces.distance).map((g) => ({ ...g, ...lineOf(g) })) : [];
 
-  // four sections once the event has a timed run, else one, as the page numbers them (lib/weekendRuns.ts)
-  const four = sessionCompareSections(folder) === 4;
   const mixedIn = answer?.added?.length ?? 0;
-  const title = answer?.session
-    ? `${answer.session.title}${mixedIn ? ` + ${mixedIn} ${mixedIn === 1 ? 'stint' : 'stints'}` : ''}: every lap`
-    : 'Latest session: every lap';
+  const session = answer?.session
+    ? `${answer.session.title}${mixedIn ? ` + ${mixedIn} ${mixedIn === 1 ? 'stint' : 'stints'}` : ''}`
+    : 'Latest session';
+  const title = `${session}: theoretical laps`;
   const tyreText = (id: number) => tyreTag(tags.rowOf(id), TYRE_LABEL)?.text ?? 'Tyres not set';
   const picker = menu && menu.sessions.length > 0 ? (
     <SessionPicker sessions={menu.sessions} latest={menu.latest} pick={pick} onPick={setPick} tyres={tyreText} />
@@ -208,15 +207,8 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
   if (!answer || answer.status === 'empty' || answer.runs.length === 0) {
     const body = failed ? <ErrorLine>{`Can’t read ${asked.part ?? 'the latest session'}: ${failed}`}</ErrorLine>
       : !answer ? <ActivityIndicator style={styles.left} />
-        : <Note>No timed run yet: every lap of the latest session shows here once its log is uploaded.</Note>;
-    return (
-      <>
-        <Section no={no} title={title}>{picker}{body}</Section>
-        {four && <Section no={no + 1} title="Best in each corner">{body}</Section>}
-        {four && <Section no={no + 2} title="Where the time is">{body}</Section>}
-        {four && <Section no={no + 3} title="Traces">{body}</Section>}
-      </>
-    );
+        : <Note>No timed run yet: the latest session’s theoretical laps, racing line and every lap show here once its log is uploaded.</Note>;
+    return <Section no={no} title={title}>{picker}{body}</Section>;
   }
 
   const fast = fastestSections(answer);
@@ -243,18 +235,31 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
   return (
     <>
       <Section no={no} title={title}
-        dek={`Every lap of the session, stint by stint, out-laps and in-laps included, against its fastest lap.${leftOut} A flag marks a lap with the session’s best time in a corner, and what it gained there on the fastest lap; tap a lap to put it on the traces or take it off.`}>
+        dek="Each stint’s theoretical lap, from its own clean laps, and the combined theoretical from every stint: which lap of which driver holds each corner, and what it gains there. They are not real laps.">
         {picker}
         {fastest && fastRun && (
           <Text style={StyleSheet.flatten([t.body, styles.summary])}>
             <Text style={t.strong}>{`Fastest: ${formatLap(fastest.time)}`}</Text>
             {`, lap ${fastest.lap} of ${fastRun.name} (${fastRun.driver ?? 'driver not set'}).`}
-            {!working && fast ? ` ${flagged === 0 ? 'It is also the quickest lap in every corner.'
-              : `${flagged} other ${flagged === 1 ? 'lap holds' : 'laps hold'} the session’s best in a corner.`}` : ''}
           </Text>
         )}
         {working && finding}
         {answer.note && <Note style={styles.noteGap}>{answer.note}</Note>}
+        {/* THEORETICAL MAP */}
+      </Section>
+      <Section no={no + 1} title="Racing line, 3D"
+        dek="The laps on the traces driven again in 3D, with the theoreticals as ghost cars. Tap a corner above to jump there.">
+        {/* RACING LINE */}
+        {line && <TextLink href={{ pathname: '/racing-line', params: line }} label="Racing line, 3D" arrow />}
+      </Section>
+      <Section no={no + 2} title="Every lap"
+        dek={`Every lap of the session, stint by stint, out-laps and in-laps included, against its fastest lap.${leftOut} A flag marks a lap with the session’s best time in a corner, and what it gained there on the fastest lap; tap a lap to put it on the traces or take it off.`}>
+        {!working && fast && (
+          <Text style={StyleSheet.flatten([t.body, styles.summary])}>
+            {flagged === 0 ? 'The fastest lap is also the quickest lap in every corner.'
+              : `${flagged} ${flagged === 1 ? 'lap other than the fastest holds' : 'laps other than the fastest hold'} the session’s best in a corner.`}
+          </Text>
+        )}
         <View style={styles.list}>
           {answer.runs.map((r) => (
             <View key={r.id} style={styles.stint}>
@@ -273,52 +278,24 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
         {full === 'laps' && <Text style={styles.full} accessibilityLiveRegion="polite">{FULL}</Text>}
         <View style={styles.links}>
           <Text style={t.note}>{`${picks.length} of ${MAX_PICKS} laps on the traces`}</Text>
-          {laps.length >= 2 && (
-            <TextLink href={{ pathname: '/compare', params: { laps: key } }} label="Open on the Compare page" arrow />
-          )}
-          {line && <TextLink href={{ pathname: '/racing-line', params: line }} label="Racing line, 3D" arrow />}
         </View>
-      </Section>
-      <Section no={no + 1} title="Best in each corner"
-        dek={stints
-          ? `The quickest lap in each corner and what it gained there (${MIN_GAIN_S.toFixed(2)} s or more): in the whole session on its fastest lap, or in one stint on that stint’s fastest lap, the laps its stint theoretical is made of. Tap a lap to put it on the traces, again to take it off.`
-          : `The session’s quickest lap in each section and what it gained on the fastest lap (${MIN_GAIN_S.toFixed(2)} s or more); tap one to put it on the traces, again to take it off.`}>
-        {working ? finding : !fast ? <Note>{answer.note ?? 'Two clean laps are needed to compare the corners.'}</Note> : (
-          <>
-            {stints && (
-              <Tabs value={stintId} onChange={(run) => setCornersOf({ key: sessionKey, run })} style={styles.cornerTabs}
-                items={[{ key: null, label: 'Whole session', sub: 'Every stint' },
-                  ...answer.runs.map((r) => ({ key: r.id, label: r.name, sub: codeOf(r.driver) ?? 'No driver' }))]} />
-            )}
-            {stintId == null ? (
-              <BestInEachCorner rows={bestInEachCorner(answer)} colorOf={colorOf} onPress={(_, ref) => flipCorner(ref)} />
-            ) : stint ? (
-              <>
-                <StintSummary stint={stint} />
-                <BestInEachCorner rows={stint.rows} colorOf={colorOf} onPress={(_, ref) => flipCorner(ref)}
-                  against="the stint’s fastest lap" />
-              </>
-            ) : <Note>None of this stint’s clean laps could be placed on the line, so its corners can’t be compared.</Note>}
-          </>
-        )}
-        {full === 'corners' && <Text style={styles.full} accessibilityLiveRegion="polite">{FULL}</Text>}
       </Section>
       <Box ref={traces}>
         {current && data ? (
           <>
-            <WhereTheTimeIs no={no + 2} data={data} colors={colors} focus={focus} onFocus={setFocus} onShow={show} />
+            <WhereTheTimeIs no={no + 3} data={data} colors={colors} focus={focus} onFocus={setFocus} onShow={show} />
             <TheoreticalLaps answer={theo.answer} error={theo.error} waiting={false} on={on} onFlip={flipTheo}
               colorOfSession={colorOfSession} />
             <OnTraces picks={picks} runs={answer.runs} colorOf={colorOf} onRemove={remove} extra={extra}
               onRemoveExtra={flipTheo} />
-            <CompareTraces no={no + 3} data={data} colors={colors} zoom={zoom} onZoom={setZoom}
+            <CompareTraces no={no + 4} data={data} colors={colors} zoom={zoom} onZoom={setZoom}
               cursor={cursor} onCursor={setCursor} extra={extra} />
           </>
         ) : (
           <>
-            <Section no={no + 2} title="Where the time is">{waiting}</Section>
+            <Section no={no + 3} title="Where the time is">{waiting}</Section>
             <OnTraces picks={picks} runs={answer.runs} colorOf={colorOf} onRemove={remove} />
-            <Section no={no + 3} title="Traces">{waiting}</Section>
+            <Section no={no + 4} title="Traces">{waiting}</Section>
           </>
         )}
       </Box>

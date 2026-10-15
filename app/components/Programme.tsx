@@ -24,7 +24,6 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { Text, View } from '@/components/Themed';
 import { Fonts, Focus, Photo, Space, TAP, tapRoom, themed, Type, useTheme, WIDE } from '@/constants/Theme';
 import { BackLink, noteVisit } from '@/components/Back';
-import { useKnownMode } from '@/lib/eventModes';
 import { noPrint, printFill, printHead } from '@/lib/print';
 import { a11yState } from '@/lib/a11yState';
 
@@ -47,26 +46,24 @@ const today = () => {
   return `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
 };
 
-// The app's activities (Gabriele, 2026-10-07): race weekends, coaching days, the drivers (fingerprints and habits),
-// then uploading and the tools. Seasons sit on the Weekend list and under Tools; a debrief is recorded from the
-// weekend page and from each run. Setup (2026-10-08) is a tool of its own, away from the reports.
-type NavKey = 'weekend' | 'coaching' | 'drivers' | 'setup' | 'upload' | 'tools';
+// The app's parts (Gabriele, 2026-10-15: "i want to simplify the app somewhat ... Remove everything else for the
+// moment"): the race weekends (each with Driving performance, Stint analysis and Quali analysis), uploading, and the
+// settings (the manual, the cars and seasons, appearance). Coaching, Drivers, Setup and Debrief are hidden: their pages
+// still open from an old link.
+type NavKey = 'weekend' | 'upload' | 'tools';
 const NAV: { key: NavKey; label: string; href: Href }[] = [
   { key: 'weekend', label: 'Weekend', href: '/' },
-  { key: 'coaching', label: 'Coaching', href: '/coaching' },
-  { key: 'drivers', label: 'Drivers', href: '/drivers' },
-  { key: 'setup', label: 'Setup', href: '/setup' },
   { key: 'upload', label: 'Upload', href: '/upload' },
-  { key: 'tools', label: 'Tools', href: '/tools' },
+  { key: 'tools', label: 'Settings', href: '/tools' },
 ];
 
-/** Which part of the app a page belongs to: its masthead link is underlined. An event's page is a coaching day's
- * when `coaching` says so (the event's mode, lib/eventModes.ts). The manual belongs to none. */
-export function navOf(pathname: string, coaching = false): NavKey | null {
-  if (pathname.startsWith('/manual')) return null;
-  if (pathname.startsWith('/coaching') || (coaching && pathname.startsWith('/event/'))) return 'coaching';
-  if (pathname.startsWith('/drivers')) return 'drivers';
-  if (pathname === '/setup') return 'setup';
+// the hidden parts' pages: no masthead link is theirs
+const HIDDEN = ['/coaching', '/drivers', '/setup', '/debrief'];
+
+/** Which part of the app a page belongs to: its masthead link is underlined. The manual and the hidden parts belong to
+ * none. */
+export function navOf(pathname: string): NavKey | null {
+  if (pathname.startsWith('/manual') || HIDDEN.some((h) => pathname.startsWith(h))) return null;
   if (pathname.startsWith('/upload')) return 'upload';
   if (pathname.startsWith('/tools') || pathname.startsWith('/garage') || pathname.startsWith('/seasons')) return 'tools';
   return 'weekend';
@@ -97,8 +94,7 @@ export function Masthead() {
       </Pressable>
     </Link>
   );
-  const event = /^\/event\/(\d+)/.exec(path);
-  const on = navOf(path, useKnownMode(event ? Number(event[1]) : null) === 'coaching');
+  const on = navOf(path);
   const nav = (
     <View style={wide ? styles.nav : styles.navPhone} accessibilityRole="tablist">
       {NAV.map((n) => (

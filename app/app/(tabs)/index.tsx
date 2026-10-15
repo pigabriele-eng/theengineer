@@ -4,10 +4,9 @@ import { ActivityIndicator, Pressable, StyleSheet, useWindowDimensions } from 'r
 
 import { DeletedNotice, DeleteEventAction } from '@/components/DeleteEvent';
 import { useDriverGuess } from '@/components/DriverGuess';
-import { CalendarLine, FilterBar, PlanForm, plannedLine, RemovePlanned } from '@/components/EventFilter';
+import { FilterBar, PlanForm, plannedLine, RemovePlanned } from '@/components/EventFilter';
 import { CountryTag } from '@/components/Flag';
 import { FoldHead, SubFoldHead } from '@/components/Fold';
-import { PrepButton, usePrepAvailability } from '@/components/PrepButton';
 import {
   Colophon, Fig, Label, Page, SpecLine, Swatch, TextLink, useWide,
 } from '@/components/Programme';
@@ -40,7 +39,6 @@ import { launchEvent } from '@/lib/openCurrent';
 import { weekendsOf } from '@/lib/weekendOpen';
 import { DriverTag as Tag, driverTag } from '@/lib/driverTag';
 import { driverState } from '@/lib/runDriver';
-import { PrepAvailability } from '@/lib/prep';
 import { fetchFinishes, Finishes } from '@/lib/finishes';
 import { fetchReport, Report } from '@/lib/report';
 import { a11yState } from '@/lib/a11yState';
@@ -74,7 +72,6 @@ export default function SessionsScreen() {
   const read = useRef<Record<string, number>>({}); // the load each open event's runs were last read at
   const router = useRouter();
   const navigation = useNavigation();
-  const prep = usePrepAvailability(); // events whose track has past data: the Prep report button
   const { garage, reload: reloadGarage } = useGarage(); // the drivers a run's driver list offers
 
   const loadNo = useRef(0); // the latest load: an older one's answers, coming in late, are dropped
@@ -211,20 +208,11 @@ export default function SessionsScreen() {
               in each event and under Tools (Gabriele, 2026-10-07: that row "is normally event specific") */}
           <TextLink onPress={() => setMaking(true)} label="+ New event" small />
           <TextLink href="/seasons" label="Seasons" arrow small />
-          {calendar && !calendar.feed && <TextLink href="/tools/calendar" label="Racing calendar" arrow small />}
           {/* the questions about which season an upload belongs to, when the app isn't sure (its own top margin
               taken back, to sit on the line) */}
           {folders && (
             <View style={styles.seasons}>
               <SeasonMatchCount onChanged={load} />
-            </View>
-          )}
-          {calendar?.feed && (
-            <View style={wide ? styles.sync : styles.syncPhone}>
-              <CalendarLine calendar={calendar} onSynced={(c) => {
-                setCalendar(c);
-                load();
-              }} />
             </View>
           )}
         </View>
@@ -248,7 +236,7 @@ export default function SessionsScreen() {
             <EventFold key={f.key} f={f} open={isOpen(eventKey(f))} onToggle={() => toggle(eventKey(f))}
               country={countryOfEvent(f)} finishes={f.id != null ? finishesLine(finishes?.events[String(f.id)]) : null}
               detail={details[f.key]} plan={f.id != null ? plans.get(f.id) : undefined}
-              prep={f.id != null ? prep[String(f.id)] : undefined} onChanged={load} onRenamed={renamed(f.key)}
+              onChanged={load} onRenamed={renamed(f.key)}
               garage={garage} onGarage={reloadGarage} />
           ))}
         </YearFold>
@@ -256,7 +244,6 @@ export default function SessionsScreen() {
       <Colophon left="The Engineer · Weekend" links={[
         { label: 'Seasons', href: '/seasons' },
         { label: 'Garage', href: '/garage' },
-        { label: 'Racing calendar', href: '/tools/calendar' },
       ]} />
     </Page>
   );
@@ -329,7 +316,7 @@ function shortDates(start: string | null, end: string | null) {
 /** An event: one line (its days, name, round, track, runs and best lap, or what is planned) that folds and opens with
  * a tap; open, its runs and links (an event with data) and its actions: Rename, Delete (Remove when planned) and the
  * Prep report. Renaming takes the line's place. */
-function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged, country, finishes, garage, onGarage }: {
+function EventFold({ f, open, onToggle, detail, plan, onRenamed, onChanged, country, finishes, garage, onGarage }: {
   f: FolderSummary;
   country: Country | null; // its flag and three letters before its name
   finishes: string | null; // our race finishes: "R1 P5 · R2 P3"
@@ -337,7 +324,6 @@ function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged
   onToggle: () => void;
   detail?: Detail;
   plan?: Plan;
-  prep: PrepAvailability[string] | undefined; // past data at its track: the Prep report button
   onRenamed: (name: string) => void;
   onChanged: () => void;
   garage: Garage | null;
@@ -401,7 +387,6 @@ function EventFold({ f, open, onToggle, detail, plan, prep, onRenamed, onChanged
             <TextLink onPress={() => setRenaming(true)} label="Rename" small />
             {planned ? <RemovePlanned f={f} plan={plan} onRemoved={onChanged} />
               : <DeleteEventAction id={id} name={f.name} onDeleted={onChanged} />}
-            <PrepButton eventId={id} info={prep} compact />
           </View>
         </View>
       )}
@@ -695,8 +680,6 @@ const useStyles = themed((c) => ({
   seasons: { marginTop: -18 },
   toolsLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 22, paddingTop: 12 },
   toolsLinePhone: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 18, rowGap: 12, paddingTop: 12 },
-  sync: { marginLeft: 'auto' },
-  syncPhone: { width: '100%' },
   plan: { marginTop: 16, gap: 8, borderTopWidth: 3, borderColor: c.rule, paddingTop: 10, maxWidth: 640 },
   error: { color: c.error, marginTop: 16 },
   loading: { marginTop: 24, alignSelf: 'flex-start' },

@@ -10,6 +10,9 @@ import { Fonts, themed, Type } from '@/constants/Theme';
 
 type Tool = { href: Href; title: string; blurb: string };
 
+// What is left of the bench while the app is kept to the weekends' analysis (Gabriele, 2026-10-15: "Remove
+// everything else for the moment"): the manual, and where the cars, drivers and seasons are kept (they name the runs
+// and say who drove them). The tools themselves still open from an old link.
 const GROUPS: { name: string; dek: string; tools: Tool[] }[] = [
   {
     name: 'Help',
@@ -23,42 +26,8 @@ const GROUPS: { name: string; dek: string; tools: Tool[] }[] = [
     ],
   },
   {
-    name: 'Tyres',
-    dek: 'What to set cold, what the temperatures across the tread say, and where the grip is.',
-    tools: [
-      {
-        href: '/tools/pressures',
-        title: 'Pressure calculator',
-        blurb: 'Cold pressures for a hot target, corrected for ambient and track temperature. Flags anything below the minimums.',
-      },
-      {
-        href: '/tools/tyre-temps',
-        title: 'Tyre temperatures',
-        blurb: 'Pyrometer inside, middle and outside readings or IR logs, turned into camber and pressure suggestions.',
-      },
-      {
-        href: '/tools/tyre-fit',
-        title: 'Tyre fit',
-        blurb:
-          'Tyre curve per axle from one log, or built up from every log of the car: where grip peaks, and which ' +
-          'TPMS temperature and hot pressure give the most.',
-      },
-    ],
-  },
-  {
-    name: 'Setup',
-    dek: 'A sheet per run, and what each change did.',
-    tools: [
-      {
-        href: '/tools/setup',
-        title: 'Setup',
-        blurb: 'A setup sheet per run for the M4 GT4 EVO, copied from the last run. What changed against lap time and balance, and setup changes to try from the debrief and the data.',
-      },
-    ],
-  },
-  {
-    name: 'Car',
-    dek: 'The cars, who drives them, and how they behave on their springs.',
+    name: 'Cars and seasons',
+    dek: 'Who drives which car, and the season each weekend belongs to: they name the runs and say who drove them.',
     tools: [
       {
         href: '/garage',
@@ -66,91 +35,23 @@ const GROUPS: { name: string; dek: string; tools: Tool[] }[] = [
         blurb: 'Car numbers, vehicles and teams, who drives which car, the logger in each car (runs from a linked logger get their car by themselves), and your tyres with their P-Book pressures.',
       },
       {
-        href: '/tools/vehicle',
-        title: 'Vehicle model',
-        blurb: 'Weight transfer, roll stiffness split and ride frequencies from springs, bars and motion ratios. Try a change and see the balance shift.',
-      },
-    ],
-  },
-  {
-    name: 'Drivers and laps',
-    dek: 'Every driver and every lap, across events.',
-    tools: [
-      {
-        href: '/drivers/fingerprints',
-        title: 'Driver fingerprints',
-        blurb: 'Each driver’s driving style from their laps, which traits go with faster laps, and who drove a run nobody tagged.',
-      },
-      {
-        href: '/drivers/habits',
-        title: 'Driver habits',
-        blurb: 'Each driver’s recurring mistakes over every event, getting better or worse, and two drivers side by side.',
-      },
-      {
-        href: '/compare',
-        title: 'Compare laps',
-        blurb: 'Any two to six laps from any sessions at one track, on one line: where the time is and why.',
-      },
-      {
-        href: '/racing-line',
-        title: 'Racing line, 3D',
-        blurb: 'Up to four laps driven again in 3D from the GPS and the steering: where each brakes, turns in and meets the apex, and where the load is. Pick a run, or open it from a weekend under the laps you picked.',
-      },
-      {
-        href: '/drivers/compare',
-        title: 'Compare drivers',
-        blurb: 'Two drivers over many runs at one track: who gains where, and the technique behind it.',
-      },
-      {
-        href: '/drivers/tag',
-        title: 'Tag drivers',
-        blurb: 'Say who drove each run, event by event.',
-      },
-    ],
-  },
-  {
-    name: 'Events',
-    dek: 'The season, the weekends to come, and the debriefs after each run.',
-    tools: [
-      {
-        href: '/debrief',
-        title: 'Debrief',
-        blurb: 'Record what the driver says after a run, for any run. It comes back transcribed, as points by corner and phase checked against the data. Each weekend page lists its runs’ debriefs.',
-      },
-      {
-        href: '/tools/calendar',
-        title: 'Racing calendar',
-        blurb: 'Bring in your tests and race weekends from Google Calendar as planned events, and pick which ones.',
-      },
-      {
         href: '/seasons',
         title: 'Seasons',
         blurb:
           'Make a season for the year: series, our car number and entry (tyre, car, team, drivers 1 to 4). Its ' +
-          'rounds come in as planned events, with dates and entry lists from the series’ site when it has them.',
-      },
-    ],
-  },
-  {
-    name: 'Logger data',
-    dek: 'A stint read from the logger’s own export.',
-    tools: [
-      {
-        href: '/tools/stint',
-        title: 'Stint analysis',
-        blurb: 'Balance through each corner phase, grip lap by lap and degradation over a stint. Works with MoTeC, AiM and Cosworth CSV exports.',
+          'rounds come in as planned events, and the official timetable names each run (FP1, Q1, R1 stint 2).',
       },
     ],
   },
 ];
 
-/** The Tools page: the engineering tools in numbered sections, one ruled line each (its name, what it does, the way
- * in), then the appearance and the account. */
+/** The Settings page (/tools): the manual and the cars and seasons in numbered sections, one ruled line each (its
+ * name, what it does, the way in), then the appearance and the account. */
 export default function ToolsScreen() {
   return (
     <Page>
-      <Opening title="Tools"
-        dek="The engineer’s bench: tyre pressures and temperatures, the tyre model, the setup sheet and the vehicle model, and where the cars, seasons and calendar are kept." />
+      <Opening title="Settings"
+        dek="The manual, where the cars, drivers and seasons are kept, and how the app looks." />
       {GROUPS.map((g, i) => (
         <Section key={g.name} no={i + 1} title={g.name} dek={g.dek}>
           <View>
@@ -160,7 +61,7 @@ export default function ToolsScreen() {
       ))}
       <AppearancePicker no={GROUPS.length + 1} />
       {authEnabled && <Account no={GROUPS.length + 2} />}
-      <Colophon left="The Engineer · Tools" links={[
+      <Colophon left="The Engineer · Settings" links={[
         { label: 'Weekend', href: '/' },
         { label: 'Garage', href: '/garage' },
         { label: 'Seasons', href: '/seasons' },
