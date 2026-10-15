@@ -4,7 +4,8 @@
 // out-laps, build laps and in-laps included and said (Gabriele, 2026-10-09: "indicate if there are faster sectors in
 // all driven laps, including outlaps and inlaps"), each with its driver, its run's tyres (a tap on the stint's tag changes them, components/TyreTag.tsx), its time and
 // its gap to the session's fastest lap. A lap holding the session's best time in a corner is flagged in words with
-// those corners and what it gained there on the fastest lap, biggest gain first. Then the quickest lap in each corner, then where the time is and the traces
+// those corners and what it gained there on the fastest lap, biggest gain first. Then the quickest lap in each corner,
+// the session's or one stint's against that stint's fastest lap (the laps its stint theoretical is made of), then where the time is and the traces
 // of the laps picked: each stint's fastest lap at first, any lap with a tap. Real laps, plus the two theoretical laps
 // Gabriele asked for by name (components/TheoreticalLaps.tsx), added to the graph only with a tap. Sections `no` to `no + 3`; only `no` before the event has a timed run (lib/weekendRuns.ts
 // duringSections).
@@ -14,7 +15,7 @@ import { ActivityIndicator, Pressable, View as Box, StyleSheet } from 'react-nat
 import { BestInEachCorner } from '@/components/BestInEachCorner';
 import { CompareTraces, LineKey, useLapColors, WhereTheTimeIs } from '@/components/CompareViews';
 import { ErrorLine, Note } from '@/components/Controls';
-import { TickBox, useText } from '@/components/Picks';
+import { Tabs, TickBox, useText } from '@/components/Picks';
 import { Label, Section, TextLink } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { TheoreticalLaps, useTheoreticalLines, useTheoreticals } from '@/components/TheoreticalLaps';
@@ -29,7 +30,8 @@ import { poll } from '@/lib/poll';
 import { fetchLatestSession, PickedSession, sessionOf } from '@/lib/sessionCompare';
 import {
   bestFlags, bestInEachCorner, defaultPicks, dropPick, fastestSections, flagWords, flipPick, gapWords,
-  isClean, isFastest, kindWords, lapKey, LapPick, LapRef, MAX_PICKS, MIN_GAIN_S, SessionLap, SessionRun,
+  isClean, isFastest, kindWords, lapKey, LapPick, LapRef, MAX_PICKS, MIN_GAIN_S, SessionLap, SessionRun, stintCorners,
+  StintCorners,
 } from '@/lib/sessionLaps';
 import { LATEST, queryOf, SessionChoice, SessionPick } from '@/lib/sessionPick';
 import { TYRE_LABEL } from '@/lib/tyreLevels';
@@ -115,6 +117,10 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
   const [own, setOwn] = useState<{ key: string; picks: LapPick[] } | null>(null);
   const picks = own?.key === sessionKey ? own.picks : auto;
   const [full, setFull] = useState<'laps' | 'corners' | null>(null);
+  // whose best in each corner: the whole session's (null) or one stint's, against its own fastest lap (Gabriele,
+  // 2026-10-10: stint 1's theoretical was "0,6 faster than the fastest lap" but Best in each corner didn't show which of
+  // its laps); for this session's laps only
+  const [cornersOf, setCornersOf] = useState<{ key: string; run: number | null }>({ key: '', run: null });
   const flip = (l: LapRef) => {
     const r = flipPick(picks, l);
     setFull(r.full ? 'laps' : null);
@@ -224,6 +230,9 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
   );
   const flags = bestFlags(answer);
   const flagged = flags.size;
+  const stintId = cornersOf.key === sessionKey && answer.runs.some((r) => r.id === cornersOf.run) ? cornersOf.run : null;
+  const stint = stintId == null ? null : stintCorners(answer, stintId);
+  const stints = answer.runs.length >= 2;
   const leftOut = answer.left_out === 0 ? '' : ` ${answer.left_out} part ${answer.left_out === 1 ? 'lap' : 'laps'}`
     + ' (a crossing of the line in the pit lane) left out.';
   const waiting = error ? <ErrorLine>{`Can’t compare the laps: ${error}`}</ErrorLine>
@@ -268,9 +277,26 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
         </View>
       </Section>
       <Section no={no + 1} title="Best in each corner"
-        dek={`The session’s quickest lap in each section and what it gained on the fastest lap (${MIN_GAIN_S.toFixed(2)} s or more); tap one to put it on the traces, again to take it off.`}>
+        dek={stints
+          ? `The quickest lap in each corner and what it gained there (${MIN_GAIN_S.toFixed(2)} s or more): in the whole session on its fastest lap, or in one stint on that stint’s fastest lap, the laps its stint theoretical is made of. Tap a lap to put it on the traces, again to take it off.`
+          : `The session’s quickest lap in each section and what it gained on the fastest lap (${MIN_GAIN_S.toFixed(2)} s or more); tap one to put it on the traces, again to take it off.`}>
         {working ? finding : !fast ? <Note>{answer.note ?? 'Two clean laps are needed to compare the corners.'}</Note> : (
-          <BestInEachCorner rows={bestInEachCorner(answer)} colorOf={colorOf} onPress={(_, ref) => flipCorner(ref)} />
+          <>
+            {stints && (
+              <Tabs value={stintId} onChange={(run) => setCornersOf({ key: sessionKey, run })} style={styles.cornerTabs}
+                items={[{ key: null, label: 'Whole session', sub: 'Every stint' },
+                  ...answer.runs.map((r) => ({ key: r.id, label: r.name, sub: codeOf(r.driver) ?? 'No driver' }))]} />
+            )}
+            {stintId == null ? (
+              <BestInEachCorner rows={bestInEachCorner(answer)} colorOf={colorOf} onPress={(_, ref) => flipCorner(ref)} />
+            ) : stint ? (
+              <>
+                <StintSummary stint={stint} />
+                <BestInEachCorner rows={stint.rows} colorOf={colorOf} onPress={(_, ref) => flipCorner(ref)}
+                  against="the stint’s fastest lap" />
+              </>
+            ) : <Note>None of this stint’s clean laps could be placed on the line, so its corners can’t be compared.</Note>}
+          </>
         )}
         {full === 'corners' && <Text style={styles.full} accessibilityLiveRegion="polite">{FULL}</Text>}
       </Section>
@@ -294,6 +320,21 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
         )}
       </Box>
     </>
+  );
+}
+
+/** Over one stint's corners: its fastest lap and its stint theoretical, what its laps below gain on that lap together. */
+function StintSummary({ stint }: { stint: StintCorners }) {
+  const styles = useStyles();
+  const t = useText();
+  const { run, best, laps, gap } = stint;
+  return (
+    <Text style={StyleSheet.flatten([t.body, styles.summary])} accessibilityLiveRegion="polite">
+      <Text style={t.strong}>{`Fastest lap of ${run.name}: L${best.number}, ${formatLap(best.time)}`}</Text>
+      {` (${run.driver ?? 'driver not set'}). `}
+      {gap < 0.005 ? 'It is also the stint’s quickest lap in every corner.'
+        : `Its stint theoretical, the quickest time in each corner from its ${laps} clean ${laps === 1 ? 'lap' : 'laps'}, is ${gap.toFixed(2)} s quicker (${formatLap(best.time - gap)}); below, the laps that make it.`}
+    </Text>
   );
 }
 
@@ -412,6 +453,7 @@ const useStyles = themed((c) => ({
   grow: { flex: 1, minWidth: 0 },
   working: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
   summary: { marginBottom: 14, maxWidth: 820 },
+  cornerTabs: { marginBottom: 14 },
   noteGap: { marginBottom: 12 },
   list: { borderTopWidth: 1, borderColor: c.rule, maxWidth: 820 },
   links: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 22, rowGap: 12, marginTop: 16 },
