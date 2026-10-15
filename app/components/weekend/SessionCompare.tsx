@@ -19,6 +19,7 @@ import { Tabs, TickBox, useText } from '@/components/Picks';
 import { Label, Section, TextLink } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { TheoreticalLaps, useTheoreticalLines, useTheoreticals } from '@/components/TheoreticalLaps';
+import { RacingLineView } from '@/components/racingline/RacingLineView';
 import { TyreChoices, TyreTag, TyreTags, useTyreTags } from '@/components/TyreTag';
 import { SessionPicker } from '@/components/weekend/SessionPicker';
 import { face, TAP, themed, Type } from '@/constants/Theme';
@@ -36,8 +37,7 @@ import {
 import { LATEST, queryOf, SessionChoice, SessionPick } from '@/lib/sessionPick';
 import { TYRE_LABEL } from '@/lib/tyreLevels';
 import { tyreTag } from '@/lib/tyreTag';
-import { racingLineParams } from '@/lib/racingLineMath';
-import { flipKey, onGraph } from '@/lib/theoretical';
+import { flipKey, onGraph, stitchSpecs } from '@/lib/theoretical';
 import { sessionCompareSections } from '@/lib/weekendRuns';
 import { a11yState } from '@/lib/a11yState';
 
@@ -148,7 +148,6 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
   // the picked laps on one line, made last (useLoadLast) and again a moment after the last tap
   const laps = picks.map((p) => ({ session_id: p.session_id, lap: p.lap }));
   const key = encodePicks(laps);
-  const line = racingLineParams(laps); // the same laps driven in 3D, the first four
   const go = useLoadLast(traces, laps.length >= 2);
   const [data, setData] = useState<CompareResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -185,6 +184,9 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
     && data.laps.every((l, i) => l.session_id === laps[i].session_id && l.lap === laps[i].lap);
   // the stint and combined theoretical laps, worked out after the comparison; on the graph only once added
   const theo = useTheoreticals(laps, current);
+  // the corner the 3D view jumps to: one tapped in the theoretical laps' corner map (this session's)
+  const [cornerOf, setCornerOf] = useState<{ key: string; code: string } | null>(null);
+  const cornerAt = cornerOf?.key === sessionKey ? cornerOf.code : null;
   const [theoOn, setTheoOn] = useState<{ key: string; on: string[] }>({ key: '', on: [] });
   const on = theoOn.key === sessionKey ? theoOn.on : [];
   const flipTheo = (k: string) => setTheoOn({ key: sessionKey, on: flipKey(on, k) });
@@ -249,8 +251,12 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
       </Section>
       <Section no={no + 1} title="Racing line, 3D"
         dek="The laps on the traces driven again in 3D, with the theoreticals as ghost cars. Tap a corner above to jump there.">
-        {/* RACING LINE */}
-        {line && <TextLink href={{ pathname: '/racing-line', params: line }} label="Racing line, 3D" arrow />}
+        {laps.length === 0 ? <Note>Put a lap on the traces: tap it in Every lap below.</Note>
+          : laps.length >= 2 && !theo.answer && !theo.error ? (
+            <View style={styles.working}><ActivityIndicator /><Note>Working out the theoretical laps…</Note></View>
+          ) : (
+            <RacingLineView laps={laps} corner={cornerAt ?? undefined} theoreticals={stitchSpecs(theo.answer)} />
+          )}
       </Section>
       <Section no={no + 2} title="Every lap"
         dek={`Every lap of the session, stint by stint, out-laps and in-laps included, against its fastest lap.${leftOut} A flag marks a lap with the session’s best time in a corner, and what it gained there on the fastest lap; tap a lap to put it on the traces or take it off.`}>
