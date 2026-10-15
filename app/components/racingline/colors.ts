@@ -5,9 +5,13 @@
 // The lap colours are the chart palette's slots that keep 3:1 or more against the tarmac and the paper in each scheme
 // (WCAG 1.4.11 for a line): blue, violet, green, orange. Light: #2a78d6, #4a3aa7, #008300, #b4441a on tarmac #E2DCCD;
 // Dark: #3987e5, #9085e9, #199e70, #d95926 on tarmac #2E2B26.
+import { useMemo } from 'react';
+
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
 import { byScheme, ramp } from '@/constants/Theme';
+import type { RacingLine } from '@/lib/racingLine';
+import { lineColors } from '@/lib/racingLineMath';
 
 export type ScenePalette = {
   background: string;
@@ -40,6 +44,14 @@ const SCENE = byScheme<Omit<ScenePalette, 'scheme' | 'load'>>((c) => ({
 /** Each lap's colour, in the order of the answer's laps. */
 export function useLapColors(): string[] {
   return LAPS[useColorScheme()];
+}
+
+/** Each of the answer's laps' colour, one per lap: the real laps in turn, a stint theoretical its stint's (as on the
+ * comparison's graph), the combined theoretical in ink (lib/racingLineMath.ts lineColors). */
+export function useLineColors(data: RacingLine | null): string[] {
+  const scheme = useColorScheme();
+  const ink = (scheme === 'dark' ? D : L).text;
+  return useMemo(() => (data ? lineColors(data.laps, LAPS[scheme], ink) : LAPS[scheme]), [data, scheme, ink]);
 }
 
 // The load scale: one hue family, going deeper (Light) or brighter (Dark) with more load, every step 3:1 or more on

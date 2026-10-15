@@ -1,6 +1,6 @@
 import { Link, Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Pressable, useWindowDimensions } from 'react-native';
 
 import { useBackTo } from '@/components/Back';
 import { ErrorLine, Note } from '@/components/Controls';
@@ -8,22 +8,18 @@ import { Choice, Notice, PageHead, useText } from '@/components/Picks';
 import { Colophon, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { CornerTable } from '@/components/racingline/CornerTable';
 import { Hud } from '@/components/racingline/Hud';
-import { Legend } from '@/components/racingline/Legend';
 import { LineDiffChart } from '@/components/racingline/LineDiffChart';
-import { PlaybackBar, usePlayback } from '@/components/racingline/Playback';
-import { Scene3D } from '@/components/racingline/Scene3D';
-import { useLapColors, useScenePalette } from '@/components/racingline/colors';
-import type { CameraMode } from '@/components/racingline/types';
+import { usePlayback } from '@/components/racingline/Playback';
+import { RacingLineStage, SIDE, useRacingLine } from '@/components/racingline/Stage';
+import { useLineColors } from '@/components/racingline/colors';
 import { SessionSwitcher, useEventFolder } from '@/components/SessionSwitcher';
 import { Text, View } from '@/components/Themed';
 import { api, formatLap, Lap, Session, SessionDetail } from '@/lib/api';
-import { fetchRacingLine, RacingLine } from '@/lib/racingLine';
 import {
-  encodeOthers, LapRef, MAX_RL_LAPS, parseLaps, parseOthers, placesAt,
+  encodeOthers, LapRef, MAX_RL_LAPS, parseLaps, parseOthers, parseTheoreticals, placesAt,
 } from '@/lib/racingLineMath';
-import { face, Fonts, inkOn, legibleFill, TAP, themed, Type, useTheme, WIDE } from '@/constants/Theme';
+import { face, Fonts, inkOn, legibleFill, TAP, themed, Type, useTheme } from '@/constants/Theme';
 
-const SIDE = 1000; // from this wide the numbers stand beside the 3D view
 type Picks = { laps: number[]; others: LapRef[] };
 
 /** The laps of a run's main log, one per number, in lap order. */
@@ -37,7 +33,8 @@ function lapsOf(s: SessionDetail | null): Lap[] {
  * driven again in 3D from the GPS and the steering, side by side on the tarmac they used, with where each brakes,
  * turns in, meets the apex and picks up the throttle, the car's attitude and where its load is; the numbers at the
  * playhead beside it, then each lap's line against the first's round the lap, and corner by corner what differs.
- * ?session=ID&laps=7,12&others=SID:N. */
+ * ?session=ID&laps=7,12&others=SID:N, and &theo=... the stint and combined theoretical laps driven beside them (the
+ * weekend page's racing line, components/racingline/RacingLineView.tsx, opens it so). */
 export default function RacingLineScreen() {
   const t = useText();
   const styles = useStyles();
@@ -45,31 +42,23 @@ export default function RacingLineScreen() {
   const wide = useWide();
   const router = useRouter();
   const { width, height } = useWindowDimensions();
-  const params = useLocalSearchParams<{ session?: string; laps?: string; others?: string }>();
+  const params = useLocalSearchParams<{ session?: string; laps?: string; others?: string; theo?: string }>();
   const sessionId = params.session ? Number(params.session) : null;
   const [picks, setPicks] = useState<Picks | null>(() => {
     const laps = parseLaps(params.laps), others = parseOthers(params.others);
     return laps.length || others.length ? { laps, others } : null; // none: the server picks the two quickest
   });
+  const theoreticals = useMemo(() => parseTheoreticals(params.theo), [params.theo]);
   const [session, setSession] = useState<SessionDetail | null>(null);
-  const [data, setData] = useState<RacingLine | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  // the bird view on a phone, where the tyres' loads read best; the chase camera on a computer
-  const [camera, setCamera] = useState<CameraMode>(() => (width < WIDE ? 'bird' : 'chase'));
-  const [trails, setTrails] = useState(true);
-  const [resetKey, setResetKey] = useState(0);
+  const [sessionError, setSessionError] = useState<string | null>(null);
   const [otherId, setOtherId] = useState<number | null>(null);
   const [other, setOther] = useState<SessionDetail | null>(null);
-  const colors = useLapColors();
-  const palette = useScenePalette();
-  const p = usePlayback(data);
 
   // the run: its laps to pick from and its event
   useEffect(() => {
     if (sessionId == null) return;
     let live = true;
-    api.session(sessionId).then((s) => live && setSession(s), (e) => live && setError((e as Error).message));
+    api.session(sessionId).then((s) => live && setSession(s), (e) => live && setSessionError((e as Error).message));
     return () => {
       live = false;
     };
@@ -79,28 +68,11 @@ export default function RacingLineScreen() {
   useBackTo(eventId != null ? { id: eventId, name: folder?.id === eventId ? folder.name : null } : null);
 
   // the line itself, asked for again a moment after the laps picked last changed
-  const pickKey = picks ? `${picks.laps.join(',')}|${encodeOthers(picks.others)}` : '';
-  useEffect(() => {
-    if (sessionId == null) return;
-    let live = true;
-    setLoading(true);
-    const timer = setTimeout(() => {
-      fetchRacingLine(sessionId, picks?.laps ?? [], picks?.others ?? []).then((d) => {
-        if (!live) return;
-        setData(d);
-        setError(null);
-        setLoading(false);
-      }, (e) => {
-        if (!live) return;
-        setError((e as Error).message);
-        setLoading(false);
-      });
-    }, picks ? 350 : 0);
-    return () => {
-      live = false;
-      clearTimeout(timer);
-    };
-  }, [sessionId, pickKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const line = useRacingLine(sessionId, picks?.laps ?? [], picks?.others ?? [], theoreticals, picks ? 350 : 0);
+  const { data, loading } = line;
+  const error = line.error ?? sessionError;
+  const colors = useLineColors(data);
+  const p = usePlayback(data);
 
   // a lap of another session of the event, to add
   useEffect(() => {
@@ -113,10 +85,13 @@ export default function RacingLineScreen() {
     };
   }, [otherId]);
 
-  // what is picked: as asked, else what the server picked
-  const shown: Picks = useMemo(() => picks ?? {
-    laps: data?.laps.filter((l) => l.session_id === sessionId).map((l) => l.number) ?? [],
-    others: data?.laps.filter((l) => l.session_id !== sessionId).map((l) => ({ session: l.session_id, lap: l.number })) ?? [],
+  // what is picked: as asked, else what the server picked (its real laps)
+  const shown: Picks = useMemo(() => {
+    const real = data?.laps.filter((l) => !l.theoretical) ?? [];
+    return picks ?? {
+      laps: real.filter((l) => l.session_id === sessionId).map((l) => l.number),
+      others: real.filter((l) => l.session_id !== sessionId).map((l) => ({ session: l.session_id!, lap: l.number })),
+    };
   }, [picks, data, sessionId]);
   const total = shown.laps.length + shown.others.length;
   const pick = (next: Picks) => {
@@ -134,9 +109,10 @@ export default function RacingLineScreen() {
     else if (!on && total < MAX_RL_LAPS) pick({ ...shown, others: [...shown.others, r] });
   };
   const colorOf = (sid: number, n: number) => {
-    const k = data?.laps.findIndex((l) => l.session_id === sid && l.number === n) ?? -1;
+    const k = data?.laps.findIndex((l) => !l.theoretical && l.session_id === sid && l.number === n) ?? -1;
     return k >= 0 ? colors[k % colors.length] : undefined;
   };
+  const theoNames = data?.laps.filter((l) => l.theoretical).map((l) => l.label) ?? [];
 
   if (sessionId == null) return <PickARun />;
 
@@ -148,9 +124,6 @@ export default function RacingLineScreen() {
   const otherLaps = lapsOf(other);
   const title = session?.name ?? data?.session_name ?? `Session ${sessionId}`;
   const dek = [title, session?.track_name].filter(Boolean).join(' · ');
-  const label = data
-    ? `3D view of ${data.laps.map((l) => l.label).join(', ')} on the track, at ${Math.round(p.m)} metres. The numbers beside it say the same.`
-    : '3D view';
   const lapChoice = (sid: number, l: Lap, on: boolean, onPress: () => void) => {
     const lapColor = on ? colorOf(sid, l.number) : undefined;
     const fill = lapColor ? legibleFill(lapColor) : undefined; // the time on it reads at 4.5:1
@@ -163,22 +136,12 @@ export default function RacingLineScreen() {
   };
 
   const stage = data && data.laps.length > 0 && (
-    <View style={side ? styles.stageSide : styles.stage}>
-      <View style={side ? styles.view : undefined}>
-        <Scene3D data={data} colors={colors} palette={palette} playhead={p.head} camera={camera} trails={trails} resetKey={resetKey}
-          height={sceneHeight} label={label} />
-        <PlaybackBar data={data} p={p} camera={camera} onCamera={setCamera} onResetView={() => setResetKey((k) => k + 1)}
-          trails={trails} onTrails={setTrails} />
-        {Platform.OS === 'web' && (
-          <Text style={t.small}>Drag on the view to turn it, scroll or pinch to zoom, double-tap to put it back.</Text>
-        )}
-        <Legend data={data} colors={colors} />
-      </View>
-      <View style={side ? styles.hudSide : styles.hud}>
+    <RacingLineStage data={data} p={p} colors={colors} height={sceneHeight} aside={(
+      <>
         <Label small>{`At ${Math.round(p.m).toLocaleString('en-GB')} m · ${p.sync === 'place' ? 'same place' : 'real time'}`}</Label>
         <Hud data={data} colors={colors} places={places} sync={p.sync} columns={!side && wide ? 2 : 1} />
-      </View>
-    </View>
+      </>
+    )} />
   );
 
   let no = 0;
@@ -210,6 +173,12 @@ export default function RacingLineScreen() {
           {data?.laps[0] ? `: ${data.laps[0].label}.` : '.'}
           {' A picked lap wears its line’s colour.'}
         </Text>
+        {theoNames.length > 0 && (
+          <View style={styles.laps}>
+            <Text style={t.note}>{`With the ${theoNames.join(' and the ')}, not real laps: each corner from the lap quickest there.`}</Text>
+            <TextLink small onPress={() => router.setParams({ theo: undefined })} label="Remove the theoretical laps" />
+          </View>
+        )}
         {shown.others.length > 0 && (
           <View style={styles.laps}>
             {shown.others.map((o) => {
@@ -243,6 +212,7 @@ export default function RacingLineScreen() {
           <Text style={t.error}>{`The racing line couldn’t be read: ${error}`}</Text>
         </Notice>
       )}
+      {data?.notes?.map((n) => <Note key={n}>{n}</Note>)}
       {!data && !error && <ActivityIndicator color={theme.text} style={styles.wait} />}
 
       {stage}
@@ -344,11 +314,6 @@ const useStyles = themed((c) => ({
   laps: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 14, rowGap: 8, alignItems: 'flex-end' },
   others: { gap: 6, paddingTop: 8 },
   wait: { alignSelf: 'flex-start', marginVertical: 20 },
-  stage: { gap: 14, paddingTop: 14 },
-  stageSide: { flexDirection: 'row', gap: 20, paddingTop: 14, alignItems: 'flex-start' },
-  view: { flex: 1, minWidth: 0, gap: 8 },
-  hud: { gap: 8 },
-  hudSide: { width: 340, gap: 8 },
   method: { gap: 10, maxWidth: 820 },
   note: { fontFamily: Fonts.body, fontSize: 16, color: c.textSecondary },
 }));

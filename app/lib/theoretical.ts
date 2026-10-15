@@ -4,6 +4,7 @@
 // fetchTheoretical) for the laps compared. Only these two, on the comparisons, always named so; every report's best
 // and typical laps stay real laps.
 import type { LapTrace, TraceRole } from './compare.ts';
+import type { TheoreticalSpec } from './racingLineMath.ts';
 
 export const STINT = 'stint theoretical';
 export const COMBINED = 'combined theoretical';
@@ -61,3 +62,17 @@ export function onGraph(answer: TheoreticalAnswer | null, keys: string[], distan
 /** A key added or taken off the graph. */
 export const flipKey = (keys: string[], key: string) =>
   (keys.includes(key) ? keys.filter((k) => k !== key) : [...keys, key]);
+
+/** The theoretical laps of this answer to drive in 3D beside the real laps (components/racingline/RacingLineView.tsx):
+ * each ready stint's and the combined one, or only those whose keys are given, with the real lap holding each
+ * section. */
+export function stitchSpecs(answer: TheoreticalAnswer | null, keys?: string[]): TheoreticalSpec[] {
+  if (!answer) return [];
+  const spec = (kind: TheoreticalSpec['kind'], from: [string, number][]): TheoreticalSpec => ({
+    kind, from: answer.sections.map((code, k) => ({ code, session_id: Number(from[k][0]), lap: from[k][1] })),
+  });
+  const out: { key: string; spec: TheoreticalSpec }[] = answer.stints.flatMap((s) => (s.ready
+    ? [{ key: stintKey(s.session_id), spec: spec('stint', s.from) }] : []));
+  if (answer.combined) out.push({ key: COMBINED_KEY, spec: spec('combined', answer.combined.from) });
+  return out.filter((o) => !keys || keys.includes(o.key)).map((o) => o.spec);
+}

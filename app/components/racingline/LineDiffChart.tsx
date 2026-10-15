@@ -12,7 +12,7 @@ import { LapKey } from '@/components/racingline/LapKey';
 import { ResetZoom, useZoomState, ZoomArea, ZOOM_HINT } from '@/components/Zoom';
 import { chartPlate, Fonts, themed, Type, useTheme } from '@/constants/Theme';
 import type { RacingLine } from '@/lib/racingLine';
-import { apexes, lateralWords, PATTERNS, placeCount } from '@/lib/racingLineMath';
+import { apexes, lateralWords, patternOf, placeCount } from '@/lib/racingLineMath';
 import { isZoomed, pixelOf, Range, shownRange, valueAt } from '@/lib/zoom';
 
 const PAD = { left: 56, right: 10, top: 10, bottom: 8 };
@@ -82,7 +82,7 @@ export function LineDiffChart({ data, colors, m, onSeek, height = 200 }: {
         <Text style={styles.at}>{`At ${Math.round(cursorM).toLocaleString('en-GB')} m${hover != null ? ' (pointer)' : ''}`}</Text>
         {data.laps.slice(1).map((l, k) => (
           <View key={l.key} style={styles.value}>
-            <LapKey k={k + 1} color={colors[(k + 1) % colors.length]} width={26} />
+            <LapKey k={k + 1} color={colors[(k + 1) % colors.length]} width={26} theory={l.theoretical} />
             <Text style={styles.valueText}>{`${l.label}: ${lateralWords(diffs[k][ci])}`}</Text>
           </View>
         ))}
@@ -126,10 +126,21 @@ export function LineDiffChart({ data, colors, m, onSeek, height = 200 }: {
               ))}
               <G clipPath={zoomed ? 'url(#rl-diff)' : undefined}>
                 <Line x1={PAD.left} x2={PAD.left + w} y1={y(0)} y2={y(0)} stroke={colors[0]} strokeWidth={2.5} />
-                {paths.map((d, k) => (
-                  <Path key={k} d={d} stroke={colors[(k + 1) % colors.length]} strokeWidth={2.5} fill="none"
-                    strokeDasharray={PATTERNS[(k + 1) % PATTERNS.length].svg} strokeLinejoin="round" />
-                ))}
+                {paths.map((d, k) => {
+                  const lap = data.laps[k + 1];
+                  const dash = patternOf(lap, k + 1).svg;
+                  const stroke = colors[(k + 1) % colors.length];
+                  // a theoretical lap hollow, never drawn like a real one
+                  return lap.theoretical ? (
+                    <G key={k}>
+                      <Path d={d} stroke={stroke} strokeWidth={5} fill="none" strokeDasharray={dash} strokeLinejoin="round" />
+                      <Path d={d} stroke={c.surface} strokeWidth={1.6} fill="none" strokeLinejoin="round" />
+                    </G>
+                  ) : (
+                    <Path key={k} d={d} stroke={stroke} strokeWidth={2.5} fill="none" strokeDasharray={dash}
+                      strokeLinejoin="round" />
+                  );
+                })}
               </G>
               {hover != null && x(hover) >= PAD.left && x(hover) <= PAD.left + w && (
                 <Line x1={x(hover)} x2={x(hover)} y1={PAD.top} y2={PAD.top + h} stroke={c.muted} strokeWidth={1}

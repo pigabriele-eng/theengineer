@@ -7,7 +7,7 @@ import { LapKey, MARKER_NAMES, MarkerKind, MarkerShape } from '@/components/raci
 import { LOAD_TICKS, loadColor, loadShare, useScenePalette } from '@/components/racingline/colors';
 import { Fonts, themed, useTheme } from '@/constants/Theme';
 import type { RacingLine } from '@/lib/racingLine';
-import { PATTERNS } from '@/lib/racingLineMath';
+import { patternOf } from '@/lib/racingLineMath';
 
 export function Legend({ data, colors }: { data: RacingLine; colors: string[] }) {
   const styles = useStyles();
@@ -18,8 +18,10 @@ export function Legend({ data, colors }: { data: RacingLine; colors: string[] })
       <View style={styles.row}>
         {data.laps.map((l, k) => (
           <View key={l.key} style={styles.item}>
-            <LapKey k={k} color={colors[k % colors.length]} />
-            <Text style={styles.text}>{`${l.label}, ${PATTERNS[k % PATTERNS.length].name}${k === 0 ? ', solid car' : ', ghost car'}`}</Text>
+            <LapKey k={k} color={colors[k % colors.length]} theory={l.theoretical} />
+            <Text style={styles.text}>{l.theoretical
+              ? `${l.label}: not a real lap, each corner from the lap that was quickest there; ${patternOf(l, k).name} line, wire car with its name over it`
+              : `${l.label}, ${patternOf(l, k).name}${k === 0 ? ', solid car' : ', ghost car'}`}</Text>
           </View>
         ))}
       </View>

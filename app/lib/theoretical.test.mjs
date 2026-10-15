@@ -30,3 +30,13 @@ test('where each section comes from, and adding and taking off', () => {
   assert.deepEqual(flipKey(['a'], 'b'), ['a', 'b']);
   assert.deepEqual(flipKey(['a', 'b'], 'a'), ['b']);
 });
+
+test('the theoretical laps to drive in 3D: each ready stint and the combined one, with the lap holding each section', async () => {
+  const { stitchSpecs } = await import('./theoretical.ts');
+  assert.deepEqual(stitchSpecs(answer), [
+    { kind: 'stint', from: [{ code: 'T1', session_id: 8, lap: 3 }, { code: 'T2', session_id: 8, lap: 4 }] },
+    { kind: 'combined', from: [{ code: 'T1', session_id: 8, lap: 3 }, { code: 'T2', session_id: 9, lap: 2 }] },
+  ]);
+  assert.deepEqual(stitchSpecs(answer, [COMBINED_KEY]).map((s) => s.kind), ['combined']);
+  assert.deepEqual(stitchSpecs(null), []);
+});
