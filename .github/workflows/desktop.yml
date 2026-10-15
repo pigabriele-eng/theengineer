@@ -1,6 +1,7 @@
 name: Desktop app
 
-# Builds the desktop app (desktop/): the Mac and Windows installers, each holding the web build of app/ and the
+# Builds the desktop app (desktop/): the Windows installer (Gabriele's computer; a Mac build can be added back to the
+# matrix), holding the web build of app/ and the
 # analysis server packed as one program (PyInstaller), so nothing else needs installing. On main (and when run by hand:
 # Actions → Desktop app → Run workflow) the installers go on the release "Desktop app (latest)", whose page is where
 # they are downloaded from. On a pull request that changes desktop/ they are kept with the run, to try.
@@ -25,7 +26,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: mac, os: macos-latest, target: --mac --arm64, files: "desktop/release/*.dmg" }
           - { name: windows, os: windows-latest, target: --win --x64, files: "desktop/release/*.exe" }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
@@ -101,7 +101,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          notes="The Engineer for your computer, built from $GITHUB_SHA. Mac: the .dmg. Windows: the .exe."
+          notes="The Engineer for your Windows computer, built from $GITHUB_REF_NAME at $GITHUB_SHA. Download the .exe below and open it."
           if gh release view desktop-latest > /dev/null 2>&1; then
             gh release edit desktop-latest --notes "$notes" --target "$GITHUB_SHA"
             gh release upload desktop-latest installers/* --clobber
