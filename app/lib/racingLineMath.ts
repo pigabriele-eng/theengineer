@@ -27,6 +27,21 @@ export function parseOthers(s: string | null | undefined): LapRef[] {
 
 export const encodeOthers = (refs: LapRef[]) => refs.map((r) => `${r.session}:${r.lap}`).join(',');
 
+/** The racing line page's address for laps picked elsewhere (the During and Laps tabs: "Racing line, 3D"), the first
+ * `max` of them: the first lap's session, its laps, the other sessions' laps as `others`; null with no lap. */
+export function racingLineParams(laps: { session_id: number; lap: number }[], max = MAX_RL_LAPS):
+  { session: string; laps: string; others?: string } | null {
+  const kept = laps.slice(0, max);
+  if (kept.length === 0) return null;
+  const session = kept[0].session_id;
+  const others = encodeOthers(kept.filter((l) => l.session_id !== session).map((l) => ({ session: l.session_id, lap: l.lap })));
+  return {
+    session: String(session),
+    laps: kept.filter((l) => l.session_id === session).map((l) => l.lap).join(','),
+    ...(others ? { others } : {}),
+  };
+}
+
 // ---------- along the lap ----------
 
 /** The value of a per-place array at a fractional index, straight between its two neighbours (kept to the ends). */

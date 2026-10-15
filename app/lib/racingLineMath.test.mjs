@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  advance, cornerJump, encodeOthers, indexAtTime, lateralWords, parseLaps, parseOthers, patternOn, placesAt, poseAt,
+  advance, cornerJump, encodeOthers, racingLineParams, indexAtTime, lateralWords, parseLaps, parseOthers, patternOn, placesAt, poseAt,
   sample, sampleAngle, sectionAt, slipWords, steerWords,
 } from './racingLineMath.ts';
 
@@ -83,4 +83,16 @@ test('the load centre moves toward the loaded tyres', async () => {
   assert.ok(Math.abs(braking.forward - 0.715) < 1e-9 && braking.left === 0);
   const right = loadCentre({ fl: 50, fr: 150, rl: 50, rr: 150 });
   assert.equal(centreWords(right), '0.41 m right');
+});
+
+test('the racing line for laps picked on the weekend page: the first session and its laps, the rest as others, four at most', () => {
+  assert.equal(racingLineParams([]), null);
+  assert.deepEqual(racingLineParams([{ session_id: 7, lap: 12 }]), { session: '7', laps: '12' });
+  assert.deepEqual(racingLineParams([{ session_id: 7, lap: 12 }, { session_id: 8, lap: 3 }, { session_id: 7, lap: 5 }]),
+    { session: '7', laps: '12,5', others: '8:3' });
+  const six = [1, 2, 3, 4, 5, 6].map((n) => ({ session_id: 9, lap: n }));
+  assert.deepEqual(racingLineParams(six), { session: '9', laps: '1,2,3,4' });
+  // what the page reads back
+  const p = racingLineParams([{ session_id: 7, lap: 12 }, { session_id: 8, lap: 3 }]);
+  assert.deepEqual([parseLaps(p.laps), parseOthers(p.others)], [[12], [{ session: 8, lap: 3 }]]);
 });

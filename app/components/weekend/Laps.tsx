@@ -26,6 +26,7 @@ import { Fig, Section, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { TyreChoices, TyreTag, TyreTags, useTyreTags } from '@/components/TyreTag';
 import { CompareResult, compareLaps, encodePicks, formatLap, MAX_LAPS, MIN_LAPS, signedSeconds } from '@/lib/compare';
+import { racingLineParams } from '@/lib/racingLineMath';
 import { codeOf } from '@/lib/driverTag';
 import {
   fetchSuggestions, PickLap as RunLap, PickRun, PickSession, SuggestedLap, Suggestion, Suggestions,
@@ -265,6 +266,7 @@ function Comparison({ laps, picked, data, error, waiting, answer, onTraces, driv
   const [zoom, setZoom] = useState<string | null>(null);
   const [cursor, setCursor] = useState<number | null>(null);
   const key = encodePicks(laps);
+  const line = racingLineParams(laps); // the same laps driven in 3D, the first four
   // a new comparison opens on the whole lap, on the lap that loses time (a suggestion's slower lap)
   useEffect(() => {
     setFocus(picked?.slower ?? 0);
@@ -328,6 +330,7 @@ function Comparison({ laps, picked, data, error, waiting, answer, onTraces, driv
         {data?.numbering === 'detected' && <Note style={styles.note}>{DETECTED_CORNERS_NOTE}</Note>}
         <View style={styles.links}>
           <TextLink href={{ pathname: '/compare', params: { laps: key } }} label="Open on the Compare page" arrow />
+          {line && <TextLink href={{ pathname: '/racing-line', params: line }} label="Racing line, 3D" arrow />}
         </View>
       </Section>
       {data ? (
@@ -370,6 +373,7 @@ function PickYourOwn({ sessions, picks, onPicks, onCompare, tags, drivers, onDel
     setOpen(next);
   };
   const key = encodePicks(picks);
+  const line = racingLineParams(picks);
   return (
     <Section no={6} title="Pick your own laps"
       dek={`Any ${MIN_LAPS} to ${MAX_LAPS} laps of the weekend, session by session: tick them, then Compare. Each run’s quickest lap is on purple; laps that aren’t clean are in grey.`}>
@@ -402,6 +406,7 @@ function PickYourOwn({ sessions, picks, onPicks, onCompare, tags, drivers, onDel
           {picks.length >= MIN_LAPS && (
             <TextLink href={{ pathname: '/compare', params: { laps: key } }} label="On the Compare page" arrow small />
           )}
+          {line && <TextLink href={{ pathname: '/racing-line', params: line }} label="Racing line, 3D" arrow small />}
           {picks.length > 0 && <TextLink label="Clear" small onPress={() => onPicks([])} />}
         </View>
       )}

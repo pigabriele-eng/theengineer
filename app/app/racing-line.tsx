@@ -1,8 +1,9 @@
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { Link, Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Platform, StyleSheet, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
 
 import { useBackTo } from '@/components/Back';
+import { ErrorLine, Note } from '@/components/Controls';
 import { Choice, Notice, PageHead, useText } from '@/components/Picks';
 import { Colophon, Label, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { CornerTable } from '@/components/racingline/CornerTable';
@@ -15,12 +16,12 @@ import { useLapColors, useScenePalette } from '@/components/racingline/colors';
 import type { CameraMode } from '@/components/racingline/types';
 import { SessionSwitcher, useEventFolder } from '@/components/SessionSwitcher';
 import { Text, View } from '@/components/Themed';
-import { api, formatLap, Lap, SessionDetail } from '@/lib/api';
+import { api, formatLap, Lap, Session, SessionDetail } from '@/lib/api';
 import { fetchRacingLine, RacingLine } from '@/lib/racingLine';
 import {
   encodeOthers, LapRef, MAX_RL_LAPS, parseLaps, parseOthers, placesAt,
 } from '@/lib/racingLineMath';
-import { Fonts, inkOn, legibleFill, themed, Type, useTheme, WIDE } from '@/constants/Theme';
+import { face, Fonts, inkOn, legibleFill, TAP, themed, Type, useTheme, WIDE } from '@/constants/Theme';
 
 const SIDE = 1000; // from this wide the numbers stand beside the 3D view
 type Picks = { laps: number[]; others: LapRef[] };
@@ -137,13 +138,7 @@ export default function RacingLineScreen() {
     return k >= 0 ? colors[k % colors.length] : undefined;
   };
 
-  if (sessionId == null) {
-    return (
-      <Page>
-        <PageHead title="Racing line" dek="Open the racing line from a session." />
-      </Page>
-    );
-  }
+  if (sessionId == null) return <PickARun />;
 
   const side = width >= SIDE;
   const places = data ? placesAt(data, p.m, p.sync) : [];
@@ -284,7 +279,64 @@ const METHOD = [
   'Slip, roll, pitch and the tyre loads are estimated from the car’s g; the server’s note at the top says how far the lines can be trusted.',
 ];
 
+const RECENT = 20; // the runs offered when the page is opened without one
+
+/** Opened without a run (Tools › Racing line, 3D): the latest runs with a lap, newest first; a tap opens one on its
+ * two quickest clean laps, to change there. */
+function PickARun() {
+  const styles = useStyles();
+  const t = useText();
+  const [runs, setRuns] = useState<Session[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    api.sessions().then((all) => live && setRuns(all.filter((s) => s.best_lap_s != null)
+      .sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, RECENT)),
+    (e) => live && setError((e as Error).message));
+    return () => {
+      live = false;
+    };
+  }, []);
+  return (
+    <Page>
+      <Stack.Screen options={{ title: 'Racing line' }} />
+      <PageHead title="Racing line"
+        dek="Pick a run: its two quickest laps open in 3D, and you can change them there. On a weekend, Racing line, 3D under the laps opens the laps you picked." />
+      {error ? <ErrorLine>{`Can’t read the runs: ${error}`}</ErrorLine>
+        : !runs ? <ActivityIndicator style={styles.waitRuns} />
+          : runs.length === 0 ? <Note>No run with a lap yet: upload a log first.</Note> : (
+            <View style={styles.runList}>
+              {runs.map((s) => {
+                const where = [s.event_name, s.track_name].filter(Boolean).join(' · ');
+                return (
+                  <Link key={s.id} href={{ pathname: '/racing-line', params: { session: String(s.id) } }} push asChild>
+                    <Pressable accessibilityRole="link" style={styles.runRow}
+                      accessibilityLabel={`Racing line of ${s.name ?? 'a run'}${where ? `, ${where}` : ''}, best lap ${formatLap(s.best_lap_s!)}`}>
+                      <View style={styles.runWho}>
+                        <Text style={styles.runName}>{s.name ?? 'Run'}</Text>
+                        {where ? <Text style={t.note}>{where}</Text> : null}
+                      </View>
+                      <Text style={styles.runBest}>{formatLap(s.best_lap_s!)}</Text>
+                      <Text style={styles.runGo}>Open →</Text>
+                    </Pressable>
+                  </Link>
+                );
+              })}
+            </View>
+          )}
+    </Page>
+  );
+}
+
 const useStyles = themed((c) => ({
+  waitRuns: { alignSelf: 'flex-start', marginTop: 16 },
+  runList: { marginTop: 18, borderTopWidth: 1, borderColor: c.rule, maxWidth: 820 },
+  runRow: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: TAP + 8, paddingVertical: 8,
+    borderBottomWidth: 1, borderColor: c.separator },
+  runWho: { flex: 1, minWidth: 0, gap: 2 },
+  runName: { fontFamily: face('body', 700), fontSize: 17, lineHeight: 22, color: c.text },
+  runBest: { ...Type.number, fontSize: 17, color: c.text },
+  runGo: { ...Type.link, fontSize: 13, color: c.text },
   accuracy: { gap: 6, paddingTop: 10, maxWidth: 820 },
   acc: { ...Type.label, fontSize: 13, color: c.textSecondary },
   pickers: { gap: 8, paddingTop: 16, paddingBottom: 12, borderBottomWidth: 1, borderColor: c.rule },
