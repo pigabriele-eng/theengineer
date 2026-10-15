@@ -8,7 +8,8 @@ reduce_session turns one log into a small summary, so an event is read one sessi
 - runs: the running between stops of LONG_STOP_S or more (the pit box or the garage). For every run with flying
   laps: the warm-up from leaving to the first flying lap (time, distance, brake dragging against the throttle,
   braking and hard stops on the straights, weaving), the tyres when leaving, at the line of every flying lap and
-  over each lap, the axle temperatures second by second, and what the stop after it did to the pressures;
+  over each lap, the axle temperatures second by second, each tyre's pressure and temperature every SERIES_S from
+  leaving (the Quali analysis draws them cold to hot) and what the stop after it did to the pressures;
 - every clean lap's time and median TPMS readings, for the tyre windows;
 - stints as stint.py splits them (stops of 5 s), with stint.py's trends and notes for the long ones.
 
@@ -64,6 +65,8 @@ HARD_STOP_BAR = 40.0
 EVENT_GAP_S = 1.0  # brake applications closer than this are one stop
 LEAVE_S = (30.0, 40.0)  # the tyres when leaving: the TPMS needs some rolling before it reports
 LINE_S = 3.0  # readings at the line: the median over this long either side of it
+SERIES_S = 5.0  # each tyre over a run: a reading this often from leaving ...
+SERIES_SPAN_S = 30.0  # ... the median of this long around it (a TPMS pressure jumps by a tenth of a bar or so)
 WARM_END_S = 5.0
 PRE_WARMED_ABOVE_AMBIENT_C = 25.0  # fronts this much above the ambient when leaving: still warm from earlier
 PRE_WARMED_C = 40.0  # ... or above this when the log has no ambient temperature
@@ -79,8 +82,8 @@ COOLED_BAR = 0.25  # this much lower: the tyres were changed or left to cool
 NEAR_SESSION_BEST_S = 0.5  # the build's best lap is at most this far off the session's best ...
 MAX_PEAK_LAP = 6  # ... on one of the first this many flying laps
 QUALI_LAPS_AFTER = 3  # a quali sim pits within this many laps of its best; more, and it became a long run
-# a session named like qualifying ("Q", "Q2", "03_Q", "Quali") or marked as one
-QUALI_NAME = re.compile(r"(?:^|[^a-z0-9])(q[1-3]?|qp|quali|qualy|qualif[a-z]*)(?:$|[^a-z0-9])", re.IGNORECASE)
+# a session named like qualifying ("Q", "Q2", "03_Q", "Quali", pre-qualifying "04_PQ") or marked as one
+QUALI_NAME = re.compile(r"(?:^|[^a-z0-9])(q[1-3]?|qp|pq|quali|qualy|qualif[a-z]*)(?:$|[^a-z0-9])", re.IGNORECASE)
 PUSH_GAP_S = 0.3  # near-best: within this much of the day's best lap
 PEAK_HOLD_S = 0.4  # the peak holds while laps stay this close to it
 
@@ -335,6 +338,29 @@ def _add(a: dict | None, b: dict) -> dict:
     return {k: (None if a[k] is None and b[k] is None else (a[k] or 0) + (b[k] or 0)) for k in b}
 
 
+def _tyre_series(ch: dict[str, np.ndarray], a: float, b: float) -> dict:
+    """Each tyre's TPMS pressure (bar) and temperature (°C) from a to b: a reading every SERIES_S, at the middle of
+    each stretch, the median of the run's readings within SERIES_SPAN_S around it; None while its sensor isn't
+    reporting. How the run took the tyres from cold to hot."""
+    n = len(ch["t"])
+    step, half = round(SERIES_S * HZ), round(SERIES_SPAN_S * HZ / 2)
+    i0, i1 = _idx(a, n), max(_idx(b, n), _idx(a, n) + 1)
+    at = np.minimum(np.arange(-(-(i1 - i0) // step)) * step + step // 2, i1 - i0 - 1)  # the last stretch may be short
+    out: dict = {"step_s": SERIES_S, "p": {}, "t": {}}
+    for kind, nd in (("p", 3), ("t", 1)):
+        for w in WHEELS:
+            v = ch.get(f"tyre_{kind}_{w.lower()}")
+            if v is None:
+                out[kind][w] = None
+                continue
+            win = sliding_window_view(np.pad(v[i0:i1], (half, half), constant_values=np.nan), 2 * half + 1)
+            with warnings.catch_warnings():  # a sensor asleep throughout a window: None there
+                warnings.simplefilter("ignore", RuntimeWarning)
+                med = np.nanmedian(win[at], axis=1)
+            out[kind][w] = [round(float(x), nd) if np.isfinite(x) else None for x in med]
+    return out
+
+
 def _axle_series(ch: dict[str, np.ndarray], a: float, b: float) -> dict | None:
     """Front and rear axle TPMS temperature once a second from a to b: the median of the LINE_S either side."""
     n = len(ch["t"])
@@ -426,11 +452,12 @@ def _runs(ch: dict[str, np.ndarray], laps: list[Lap], lap_m: float | None, ambie
             "number": number, "start_s": round(s0, 1), "end_s": round(s1, 1), "install": install, "warm": warm,
             "leave": leave, "leave_km": round(leave_km, 2), "warm_end": _tyres(ch, f0 - WARM_END_S, f0),
             "pre_warmed": None if front_leave is None else bool(front_leave > warm_above),
-            "laps": [{"n": l.number, "time": l.time, "clean": l.clean} for l in inside],
+            "laps": [{"n": l.number, "time": l.time, "clean": l.clean, "start_min": round((l.start - s0) / 60, 2)}
+                     for l in inside],
             "flying": [{"n": l.number, "time": l.time, "start_s": round(l.start, 2), "end_s": round(l.end, 2),
                         "line": _tyres(ch, l.start - LINE_S, l.start + LINE_S), "lap": _tyres(ch, l.start, l.end)}
                        for l in flying],
-            "axle_c": _axle_series(ch, s0, flying[-1].end),
+            "axle_c": _axle_series(ch, s0, flying[-1].end), "series": _tyre_series(ch, s0, s1),
             "stop_after_s": round(stop[1] - stop[0], 1) if stop else None, "bleed": bleed,
         })
         install = None
@@ -580,7 +607,7 @@ def _quali_runs(sessions: list[dict], day_best: dict[str, float]) -> list[dict]:
                 "hold": {"laps": 1 + len(held), "after": len(after), "last_lap": last["n"],
                          "minutes": round((last["end_s"] - peak["start_s"]) / 60, 1)},
                 "laps": run["laps"], "bleed": run["bleed"], "bleed_kind": _bleed_kind(run["bleed"]),
-                "axle_c": run["axle_c"],
+                "axle_c": run["axle_c"], "series": run.get("series"),
                 "points": [{"sim": label, "session_id": s["session_id"], "lap": f["n"], "flying": i + 1,
                             "time": f["time"], "gap": round(f["time"] - day_best[s["day"]], 2),
                             "front": _r(_axle(f["line"]["t"], "front"), 0),
