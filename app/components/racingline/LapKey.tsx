@@ -1,17 +1,24 @@
 // A lap's key: a short piece of its line, in its colour and its pattern (solid, dashed, dotted, dash-dot), so a lap is
-// told by more than its colour; and the marker shapes of the 3D view (brake a square, turn-in a triangle, apex a
-// circle, throttle a diamond) for the legend.
+// told by more than its colour; a theoretical lap's hollow (two thin rails, dashed or dotted), never a real lap's; and
+// the marker shapes of the 3D view (brake a square, turn-in a triangle, apex a circle, throttle a diamond) for the
+// legend.
 import Svg, { Circle, Line, Polygon, Rect } from 'react-native-svg';
 
-import { PATTERNS } from '@/lib/racingLineMath';
+import { patternOf } from '@/lib/racingLineMath';
 import { useTheme } from '@/constants/Theme';
 
-export function LapKey({ k, color, width = 34 }: { k: number; color: string; width?: number }) {
-  const p = PATTERNS[k % PATTERNS.length];
+export function LapKey({ k, color, width = 34, theory }: { k: number; color: string; width?: number;
+  theory?: 'stint' | 'combined' | null }) {
+  const p = patternOf({ theoretical: theory }, k);
   return (
     <Svg width={width} height={12} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-      <Line x1={1} x2={width - 1} y1={6} y2={6} stroke={color} strokeWidth={4} strokeDasharray={p.svg}
-        strokeLinecap="butt" />
+      {theory ? [2, 10].map((y) => (
+        <Line key={y} x1={1} x2={width - 1} y1={y} y2={y} stroke={color} strokeWidth={2} strokeDasharray={p.svg}
+          strokeLinecap="butt" />
+      )) : (
+        <Line x1={1} x2={width - 1} y1={6} y2={6} stroke={color} strokeWidth={4} strokeDasharray={p.svg}
+          strokeLinecap="butt" />
+      )}
     </Svg>
   );
 }

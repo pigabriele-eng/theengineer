@@ -1,7 +1,8 @@
 // The numbers beside the 3D view, one panel per lap, at the playhead: the lap's key and label, its speed and gear, the
 // throttle and the brake as bars with their numbers, the steering and the slip angle, how far its line is from the
 // first lap's ("0.8 m further left") and how far behind or ahead it is, and its four tyre loads in a 2 x 2 grid laid
-// out like the car (front on top). Text and bars, never colour alone; a screen reader reads every figure.
+// out like the car (front on top). A theoretical lap says which real lap it is driving there. Text and bars, never
+// colour alone; a screen reader reads every figure.
 import { StyleSheet } from 'react-native';
 
 import { Meter } from '@/components/Picks';
@@ -10,7 +11,9 @@ import { LapKey } from '@/components/racingline/LapKey';
 import { loadColor, loadShare, useScenePalette } from '@/components/racingline/colors';
 import { Fonts, themed, Type, useTheme } from '@/constants/Theme';
 import { RacingLine, Wheel } from '@/lib/racingLine';
-import { centreWords, lateralWords, loadCentre, sample, slipWords, steerWords, Sync } from '@/lib/racingLineMath';
+import {
+  centreWords, holderAt, lateralWords, loadCentre, sample, slipWords, steerWords, Sync,
+} from '@/lib/racingLineMath';
 
 const GRID: Wheel[][] = [['fl', 'fr'], ['rl', 'rr']];
 
@@ -48,9 +51,10 @@ export function Hud({ data, colors, places, sync, columns = 1 }: {
           <View key={lap.key} style={StyleSheet.flatten([styles.panel, { borderTopColor: color },
             columns > 1 && { width: `${100 / columns - 2}%` as const }])}>
             <View style={styles.head}>
-              <LapKey k={k} color={color} />
+              <LapKey k={k} color={color} theory={lap.theoretical} />
               <Text style={styles.name} numberOfLines={2}>{lap.label}</Text>
               <Text style={styles.small}>{k === 0 ? 'first: the others are compared with it' : `${gap}`}</Text>
+              {lap.theoretical && <Text style={styles.small}>{drivingWords(lap, data, f * data.step_m)}</Text>}
             </View>
             <View style={styles.figs}>
               <Text style={styles.big}>{Math.round(speed)}<Text style={styles.unit}> km/h</Text></Text>
@@ -88,6 +92,12 @@ export function Hud({ data, colors, places, sync, columns = 1 }: {
       })}
     </View>
   );
+}
+
+/** Which real lap a theoretical lap is driving at metre m: "Here (T3): 04_R1 lap 6, Rackl". */
+export function drivingWords(lap: RacingLine['laps'][number], data: RacingLine, m: number) {
+  const h = holderAt(lap, data.sections, m);
+  return h ? `Here (${h.code}): ${h.label}${h.driver ? `, ${h.driver}` : ''}` : 'Not a real lap';
 }
 
 function Bar({ label, value, color }: { label: string; value: number; color: string }) {

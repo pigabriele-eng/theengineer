@@ -18,10 +18,10 @@ def _hhmmss(sec: np.ndarray) -> np.ndarray:
 
 
 def circle_log(paces=(0.9, 1.0, 0.97, 0.99), shift=(0.0, 0.0), delay=0.1, wide: tuple[int, float] | None = None,
-               gps_clock=True) -> bytes:
+               gps_clock=True, wide_at: float = 450) -> bytes:
     """A log like the BMW's: GPS fixes 10 a second, each logged at 20 Hz, the GPS clock as hhmmss.s, reaching the
     logger `delay` s late, the whole picture moved by `shift` (m east, north); and lateral g and yaw rate of the
-    circle the car drives. wide: (lap, metres) runs that lap out wider by that much around 450 m into it."""
+    circle the car drives. wide: (lap, metres) runs that lap out wider by that much around wide_at m into it."""
     ch, _ = simulate(paces=paces)
     hz = ch["vCar"][0]
     v = ch["vCar"][2] / 3.6
@@ -34,7 +34,7 @@ def circle_log(paces=(0.9, 1.0, 0.97, 0.99), shift=(0.0, 0.0), delay=0.1, wide: 
     if wide is not None:
         lap, metres = wide
         k = np.floor(d / TRACK_M) == lap
-        radius = radius + metres * k * np.exp(-((d % TRACK_M - 450) / 60) ** 2)
+        radius = radius + metres * k * np.exp(-((d % TRACK_M - wide_at) / 60) ** 2)
     tf = np.arange(0, t[-1], 0.1)  # when each fix was taken
     df = np.interp(tf, t, d)
     rf = np.interp(tf, t, radius)
@@ -118,6 +118,48 @@ def test_a_wider_line_is_kept_and_another_sessions_drift_taken_out():
     assert out["accuracy"]["across_sessions_m"] is not None
 
 
+def test_a_theoretical_lap_drives_each_section_as_the_lap_holding_it():
+    a = source(circle_log())
+    b = source(circle_log(paces=(0.95, 0.98), shift=(3.0, -1.0), wide=(1, 1.5), wide_at=700), sid=2, name="Run 2")
+    m = track_map(a.data)
+    secs = m["sections"]
+    assert [s["code"] for s in secs] == ["C1", "C2"]
+    combined = rl.Stitch("combined", "combined theoretical", [("C1", a, 3), ("C2", b, 1)])
+    numbered = rl.Stitch("stint", "stint theoretical · Run", [("X1", a, 4), ("X2", a, 2)])  # numbered otherwise
+    odd = rl.Stitch("stint", "stint theoretical · Run 2", [("C1", b, 1)])
+    out = rl.build(a, [(a, 3), (b, 1)], secs, m["corners"], m["clockwise"], theoreticals=[combined, numbered, odd])
+    real3, real1, theo, stint = out["laps"]
+    assert [l["key"] for l in out["laps"]] == ["1:3", "2:1", "combined", "stint:1"]
+    assert real3.get("theoretical") is None and theo["theoretical"] == "combined" and stint["theoretical"] == "stint"
+    assert theo["label"] == "combined theoretical" and theo["session_id"] is None and stint["session_id"] == 1
+    assert [(f["code"], f["session_id"], f["lap"], f["label"]) for f in theo["from"]] == [
+        ("C1", 1, 3, "Run lap 3"), ("C2", 2, 1, "Run 2 lap 1")]
+    assert [f["lap"] for f in stint["from"]] == [4, 2]  # by order when the codes differ
+    assert out["notes"] == ["The stint theoretical · Run 2 isn't drawn: its corners aren't numbered as this line's."]
+
+    step = out["step_m"]
+    mm = np.arange(len(theo["t"])) * step
+    j = round(secs[1]["start_m"] / step)
+    c1, c2 = mm < secs[1]["start_m"] - 20, mm > secs[1]["start_m"] + 20
+    # each section's car is the holder's: its speed, its pedals and its line, the wider line of Run 2 lap 1 in C2
+    for key in ("speed", "throttle", "brake", "lateral"):
+        th = np.array(theo[key])
+        assert np.allclose(th[c1], np.array(real3[key])[c1], atol=0.02), key
+        assert np.allclose(th[c2], np.array(real1[key])[c2], atol=0.02), key
+    lat = np.array(theo["lateral"])
+    assert -1.7 < lat[np.abs(mm - 700) < 10].min() < -1.1
+    assert np.abs(np.diff(lat)).max() < 0.2  # eased across the join, never a step
+    # the clock runs on: C1 as lap 3 of Run drove it, then C2 as lap 1 of Run 2 did
+    t = np.array(theo["t"])
+    assert np.all(np.diff(t) >= 0) and t[0] == pytest.approx(0, abs=0.01)
+    t3, t1 = np.array(real3["t"]), np.array(real1["t"])
+    assert t[-1] == pytest.approx((t3[j] - t3[0]) + (t1[-1] - t1[j]), abs=0.01)
+    assert theo["time"] == pytest.approx(t[-1], abs=0.002)
+    assert [e["code"] for e in theo["events"]] == ["C1", "C2"]
+    assert len(theo["load"]["fl"]) == len(theo["yaw_deg"]) == len(t)
+    assert all(d["words"][0].isupper() for d in out["differences"])
+
+
 def test_racing_line_endpoint(client, settle):
     event = client.post("/events", json={"name": "Test day"}).json()
     s1 = client.post("/sessions", json={"event_id": event["id"], "name": "Run 1"}).json()
@@ -149,3 +191,32 @@ def test_racing_line_endpoint(client, settle):
                        ).status_code == 201
     settle()
     assert client.get(f"/sessions/{no_gps['id']}/racing-line").status_code == 422
+
+
+def test_theoretical_laps_on_the_endpoint(client, settle):
+    event = client.post("/events", json={"name": "Test day"}).json()
+    s1 = client.post("/sessions", json={"event_id": event["id"], "name": "Run 1"}).json()
+    s2 = client.post("/sessions", json={"event_id": event["id"], "name": "Run 2"}).json()
+    lone = client.post("/sessions", json={"name": "Elsewhere"}).json()
+    for s, log in ((s1, circle_log()), (s2, circle_log(paces=(0.95, 0.98), shift=(2.0, 0.0))), (lone, circle_log())):
+        assert client.post(f"/sessions/{s['id']}/files", files={"file": ("run.ld", log)}).status_code == 201
+    settle()
+    a, b, c = s1["id"], s2["id"], lone["id"]
+    url = f"/sessions/{a}/racing-line"
+
+    def ask(*theoretical: str, laps: str = "2"):
+        return client.get(url, params={"laps": laps, "others": f"{b}:1", "theoretical": list(theoretical)})
+
+    r = ask(f"stint:C1={a}.3,C2={a}.2", f"combined:C1={a}.3,C2={b}.2")
+    assert r.status_code == 200, r.text
+    laps = r.json()["laps"]
+    assert [l["key"] for l in laps] == [f"{a}:2", f"{b}:1", f"stint:{a}", "combined"]
+    assert [l["label"] for l in laps[2:]] == ["stint theoretical · Run 1", "combined theoretical"]
+    assert [(f["session_id"], f["lap"]) for f in laps[3]["from"]] == [(a, 3), (b, 2)]
+    assert ask().json()["laps"][-1]["key"] == f"{b}:1"  # none asked: the real laps only
+    assert ask(f"stint:C1={a}.3,C2={b}.2").status_code == 400  # a stint's laps are its own
+    assert ask(f"combined:C1={a}.3,C2={c}.2").status_code == 400  # another event's
+    assert ask(f"best:C1={a}.3,C2={a}.2").status_code == 400  # only the stint and combined theoreticals
+    assert ask(f"stint:C1={a}.3,C2={a}").status_code == 400
+    assert ask(*[f"stint:C1={a}.3,C2={a}.2"] * 4).status_code == 400
+    assert ask(f"stint:C1={a}.3,C2={a}.42").status_code == 404

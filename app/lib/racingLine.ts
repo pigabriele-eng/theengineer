@@ -2,9 +2,9 @@
 // track with its inputs, its attitude and its tyre loads, one value every `step_m` metres. The math the page and the
 // 3D view share (where each car is, the playhead, words for a difference) is in lib/racingLineMath.ts.
 import { apiFetch } from '@/lib/api';
-import { encodeOthers, LapRef } from '@/lib/racingLineMath';
+import { encodeOthers, encodeTheoretical, LapRef, TheoreticalSpec } from '@/lib/racingLineMath';
 
-export type { LapRef } from '@/lib/racingLineMath';
+export type { LapRef, TheoreticalSpec } from '@/lib/racingLineMath';
 
 export type Wheel = 'fl' | 'fr' | 'rl' | 'rr';
 export const WHEELS: Wheel[] = ['fl', 'fr', 'rl', 'rr'];
@@ -33,10 +33,15 @@ export type CornerEvents = {
   min_speed: number | null;
 };
 
+/** The real lap holding a section of a theoretical lap. */
+export type Holder = { code: string; session_id: number; lap: number; driver: string | null; label: string };
+
 export type RacingLap = {
-  key: string; // "sessionId:lap"
-  session_id: number;
+  key: string; // "sessionId:lap"; a theoretical lap's "stint:<session id>" or "combined"
+  session_id: number | null; // null: the combined theoretical
   session_name: string | null;
+  theoretical?: 'stint' | 'combined'; // not a real lap: stitched from `from`, after the real laps
+  from?: Holder[];
   number: number;
   time: number;
   driver: string | null;
@@ -76,19 +81,22 @@ export type RacingLine = {
   accuracy: { summary: string; within_session_m: number | null; across_sessions_m: number | null };
   laps: RacingLap[];
   differences: Difference[];
+  notes?: string[]; // a theoretical lap that couldn't be drawn, and why
 };
 
 /** The request for these laps of the session and of other sessions (no laps: the server picks the session's two
- * quickest clean laps). */
-export function racingLinePath(sessionId: number, laps: number[], others: LapRef[]) {
+ * quickest clean laps), and the theoretical laps to drive beside them. */
+export function racingLinePath(sessionId: number, laps: number[], others: LapRef[], theoreticals: TheoreticalSpec[] = []) {
   const q: string[] = [];
   if (laps.length) q.push(`laps=${laps.join(',')}`);
   if (others.length) q.push(`others=${encodeOthers(others)}`);
+  for (const t of theoreticals) q.push(`theoretical=${encodeURIComponent(encodeTheoretical(t))}`);
   return `/sessions/${sessionId}/racing-line${q.length ? `?${q.join('&')}` : ''}`;
 }
 
-export async function fetchRacingLine(sessionId: number, laps: number[], others: LapRef[]): Promise<RacingLine> {
-  const res = await apiFetch(racingLinePath(sessionId, laps, others));
+export async function fetchRacingLine(sessionId: number, laps: number[], others: LapRef[],
+  theoreticals: TheoreticalSpec[] = []): Promise<RacingLine> {
+  const res = await apiFetch(racingLinePath(sessionId, laps, others, theoreticals));
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     const detail = typeof body.detail === 'string' ? body.detail : null;
