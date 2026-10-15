@@ -11,16 +11,21 @@ from app.analysis.align import TrackLine, aligned_trace, project, track_line
 from app.analysis.channels import math_channels
 from app.analysis.compare import RunSource, compare_groups
 from app.analysis.insights import RunInput
-from app.analysis.lapcompare import KEEP, Pick, compare_picks, theoreticals
+from app.analysis.lapcompare import KEEP, MIN_TIP_S, Pick, compare_picks, theoreticals
 from app.analysis.laps import load_session
 from app.importers.motec import read_ld
+from tests import synthetic
 from tests.synthetic import simulate, write_ld
 
 CORNERS = [("T1", 300, None), ("T2", 700, None)]
 
 
-def _data(paces):
+def _data(paces, monkeypatch=None, speed=None):
+    if speed is not None:
+        monkeypatch.setattr(synthetic, "speed_at", speed)
     channels, _ = simulate(paces=paces)
+    if speed is not None:
+        monkeypatch.undo()
     hz, unit, v = channels["vCar"]
     channels["vCar"] = (hz, unit, np.round(v, 1))  # as a MoTeC log keeps it: in steps of 0.1 km/h
     data = load_session(read_ld(write_ld(channels)))
@@ -230,6 +235,13 @@ def test_stint_and_combined_theoreticals(runs):
         assert all(run == st["run"] for run, _ in st["from"])
         assert 0 <= st["gap_s"] and st["time"] == pytest.approx(min(times[st["run"]].values()) - st["gap_s"], abs=0.001)
         assert combined["time"] <= st["time"] + 0.001
+    for t in [*got["stints"], combined]:
+        # what each corner's lap gains there on the real lap the theoretical is told from: nothing where that lap holds
+        # it itself, and together the theoretical's gap
+        assert len(t["gains"]) == len(got["sections"]) and min(t["gains"]) >= 0
+        assert all(g == 0 for f, g in zip(t["from"], t["gains"], strict=True) if f == [t["best_run"], t["best_lap"]])
+        assert sum(t["gains"]) == pytest.approx(t["gap_s"], abs=0.002 * len(t["gains"]))
+        assert all(tip["gain_s"] >= MIN_TIP_S for tip in t["tips"])
     tr = got["traces"]
     assert tr["distance"] == whole["traces"]["distance"]
     assert all(len(x["t"]) == len(tr["distance"]) and x["t"][0] == 0 for x in [*tr["stints"], tr["combined"]])
@@ -243,6 +255,40 @@ def test_stint_and_combined_theoreticals(runs):
     one = theoreticals([every[0], every[-1]], {every[0].run: packed[every[0].run]}.get, CORNERS)
     assert [s["ready"] for s in one["stints"]] == [True, False]
     assert one["combined"] is None and one["traces"]["stints"][1] is None
+
+
+def _late_braker(d, pace):
+    """The synthetic lap, but slower through T1 (a deeper dip) and braking later for T2 (a narrower dip on the way
+    into it)."""
+    width = np.where(d < 700, 35.0, 45.0)
+    v = 150.0 - 110.0 * np.exp(-((d - 300) / 45.0) ** 2) - 80.0 * np.exp(-((d - 700) / width) ** 2)
+    return v * pace
+
+
+def test_what_the_theoretical_best_does_differently(monkeypatch):
+    """Gabriele, 2026-10-15: "technique suggestions or line suggestions in natural text based on the driven theoretical
+    best". A stint braking later for T2 holds T2 in the combined theoretical: its tip says so, against the fastest
+    lap, with what it is worth."""
+    runs = {"quick": _data((1.0, 0.99)), "late": _data((1.0, 0.995), monkeypatch, _late_braker)}
+    packed = {name: _packed(data) for name, data in runs.items()}
+    picks = [Pick(name, n, l.time, {"session": name}) for name, data in runs.items() for n, l in
+             ((l.number, l) for l in data.laps if l.clean)]
+    got = theoreticals(picks, packed.get, CORNERS)
+    combined = got["combined"]
+    assert (combined["best_run"], combined["best_lap"]) == ("quick", 1)
+    k = got["sections"].index("T2")
+    assert combined["from"][k] == ["late", 1] and combined["gains"][k] >= MIN_TIP_S
+    tips = combined["tips"]
+    assert [t["gain_s"] for t in tips] == sorted((t["gain_s"] for t in tips), reverse=True)  # the biggest first
+    tip = next(t for t in tips if t["code"] == "T2")
+    assert tip["from"] == ["late", 1] and tip["versus"] == ["quick", 1]
+    assert tip["gain_s"] == combined["gains"][k]
+    assert tip["phase"] == "braking" and 0 < tip["phase_s"] <= tip["gain_s"]  # most of it under braking
+    assert tip["does"][0].startswith("brakes ") and tip["does"][0].endswith(" m later"), tip
+    assert any(p.startswith("brakes ") and p.endswith("% harder") for p in tip["also"]), tip
+    assert all(isinstance(p, str) and p for p in tip["does"] + tip["also"])
+    # one stint's laps on one line: the same line, so no line difference is told
+    assert not any("apex" in p or "exit" in p or "comes in" in p for t in tips for p in t["does"] + t["also"])
 
 
 def _upload(client, session_id: int, paces) -> None:
@@ -389,6 +435,9 @@ def test_the_theoretical_laps_of_a_comparison(client):
     got = r.json()
     assert [s["session_id"] for s in got["stints"]] == ids and all(s["ready"] for s in got["stints"])
     assert got["combined"]["time"] <= min(s["time"] for s in got["stints"])
+    # each corner's gain and the tips, for the corner map (components/weekend/TheoreticalMap.tsx)
+    assert all(len(t["gains"]) == len(got["sections"]) and isinstance(t["tips"], list)
+               for t in [*got["stints"], got["combined"]])
     assert client.post("/compare/theoretical", json=picks).json() == got  # kept
     bad = client.post("/compare/theoretical", json={"laps": [{"session_id": ids[0], "lap": 99},
                                                              {"session_id": ids[1], "lap": 1}]})

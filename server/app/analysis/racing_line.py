@@ -553,6 +553,33 @@ def _section_time(tr: dict[str, np.ndarray], step: int, sec: dict) -> float:
     return float(tr["t"][b] - tr["t"][a])
 
 
+def corner_parts(a: dict, e: dict, least_m: float = MIN_LATERAL_M) -> list[str]:
+    """What lap e does differently from lap a in one corner (their corner_events), in plain words, in the order it
+    happens: the brake point, the turn-in, the apex, the exit, the throttle and the slowest speed."""
+    sign = 1 if e["turn"] == "left" else -1  # + lateral toward the inside
+    parts = []
+
+    def later(key: str, verb: str, least: float):
+        if a[key] is not None and e[key] is not None and least <= abs(e[key] - a[key]) <= MAX_SHIFT_M:
+            d = e[key] - a[key]
+            parts.append(f"{verb} {abs(d):.0f} m {'later' if d > 0 else 'earlier'}")
+
+    later("brake_m", "brakes", 3)
+    later("turn_in_m", "turns in", 3)
+    da = (e["apex_lateral"] - a["apex_lateral"]) * sign
+    if abs(da) >= least_m:
+        parts.append(f"is {abs(da):.1f} m {'nearer the inside' if da > 0 else 'wider'} at the apex")
+    if a["exit_lateral"] is not None and e["exit_lateral"] is not None:
+        dx = (a["exit_lateral"] - e["exit_lateral"]) * sign  # + = further out on the exit
+        if abs(dx) >= least_m:
+            parts.append(f"uses {abs(dx):.1f} m {'more' if dx > 0 else 'less'} of the exit")
+    later("throttle_m", "picks up the throttle", 5)
+    dv = e["min_speed"] - a["min_speed"]
+    if abs(dv) >= 1:
+        parts.append(f"carries {abs(dv):.0f} km/h {'more' if dv > 0 else 'less'} at the slowest point")
+    return parts
+
+
 def differences(first: dict, other: dict, sections: list[dict], step: int, name: str,
                 least_m: float = MIN_LATERAL_M) -> list[dict]:
     """What the other lap does differently from the first lap, corner by corner, in plain words."""
@@ -562,27 +589,7 @@ def differences(first: dict, other: dict, sections: list[dict], step: int, name:
         a = ev0.get(e["code"])
         if a is None:
             continue
-        sign = 1 if e["turn"] == "left" else -1  # + lateral toward the inside
-        parts = []
-
-        def later(key: str, verb: str, least: float, a: dict = a, e: dict = e, parts: list = parts):
-            if a[key] is not None and e[key] is not None and least <= abs(e[key] - a[key]) <= MAX_SHIFT_M:
-                d = e[key] - a[key]
-                parts.append(f"{verb} {abs(d):.0f} m {'later' if d > 0 else 'earlier'}")
-
-        later("brake_m", "brakes", 3)
-        later("turn_in_m", "turns in", 3)
-        da = (e["apex_lateral"] - a["apex_lateral"]) * sign
-        if abs(da) >= least_m:
-            parts.append(f"is {abs(da):.1f} m {'nearer the inside' if da > 0 else 'wider'} at the apex")
-        if a["exit_lateral"] is not None and e["exit_lateral"] is not None:
-            dx = (a["exit_lateral"] - e["exit_lateral"]) * sign  # + = further out on the exit
-            if abs(dx) >= least_m:
-                parts.append(f"uses {abs(dx):.1f} m {'more' if dx > 0 else 'less'} of the exit")
-        later("throttle_m", "picks up the throttle", 5)
-        dv = e["min_speed"] - a["min_speed"]
-        if abs(dv) >= 1:
-            parts.append(f"carries {abs(dv):.0f} km/h {'more' if dv > 0 else 'less'} at the slowest point")
+        parts = corner_parts(a, e, least_m)
         sec = next((s for s in sections if s["code"] == e["code"]), None)
         dt = (_section_time(other["_trace"], step, sec) - _section_time(first["_trace"], step, sec)) if sec else None
         if not parts:

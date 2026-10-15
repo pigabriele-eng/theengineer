@@ -15,7 +15,8 @@ from itertools import pairwise
 
 import numpy as np
 
-from app.analysis.align import aligned_trace, track_line
+from app.analysis import racing_line as rl
+from app.analysis.align import TrackLine, aligned_trace, track_line
 from app.analysis.channels import BRAKE, EXIT, MID, PHASES, POWER, TRAIL, math_channels
 from app.analysis.insights import LapRecord, _dt, section_metrics
 from app.analysis.lappack import NotCovered, PackedRun
@@ -348,6 +349,18 @@ def theoreticals(picks: list[Pick], packed: Callable[[str], PackedRun | None], c
         combined = _theoretical(np.vstack([t for _, t, _ in laps_of.values()]),
                                 np.concatenate([s for _, _, s in laps_of.values()]), keys)
 
+    # what the laps holding each theoretical's corners do differently from the real lap it is told from
+    told = [s for s in stints if s["ready"]] + ([combined] if combined else [])
+    wanted = [(t, k, tuple(f), (t["best_run"], t["best_lap"]), g) for t in told
+              for k, (f, g) in enumerate(zip(t["from"], t["gains"], strict=True))
+              if g >= MIN_TIP_S and tuple(f) != (t["best_run"], t["best_lap"])]
+    needed = {key for w in wanted for key in w[2:4]}
+    words = _CornerWords({key: runs[key[0]].trace(key[1], line, length, TIP_ROLES) for key in needed}, line,
+                         sections) if needed else None
+    for t in told:
+        t["tips"] = sorted((words.tip(k, holder, versus, g) for tt, k, holder, versus, g in wanted if tt is t),
+                           key=lambda tip: -tip["gain_s"])
+
     # the traces: each section from the lap holding it
     holders = {tuple(f) for s in stints if s["ready"] for f in s["from"]} | \
         ({tuple(f) for f in combined["from"]} if combined else set())
@@ -386,10 +399,145 @@ def theoreticals(picks: list[Pick], packed: Callable[[str], PackedRun | None], c
 
 def _theoretical(times: np.ndarray, stored: np.ndarray, keys: list[tuple[str, int]]) -> dict:
     """The quickest of these laps in each section (times: [lap, section]): its time, told as the quickest real lap
-    (stored) less what the sections gain on it on the line, and the (run, lap) holding each section."""
+    (stored) less what the sections gain on it on the line, the (run, lap) holding each section and what it gains
+    there on that real lap (0 where that lap holds it itself)."""
     best = int(stored.argmin())
     hold = times.argmin(axis=0)
     gain = max(0.0, float(times[best].sum() - times.min(axis=0).sum()))
     return {"time": round(float(stored[best]) - gain, 3), "gap_s": round(gain, 3),
             "best_run": keys[best][0], "best_lap": keys[best][1], "best_time": round(float(stored[best]), 3),
-            "laps": len(keys), "from": [list(keys[i]) for i in hold]}
+            "laps": len(keys), "from": [list(keys[i]) for i in hold],
+            "gains": [round(float(times[best, k] - times[i, k]), 3) for k, i in enumerate(hold)]}
+
+
+# ---------- what the driven theoretical best does differently ----------
+# Gabriele, 2026-10-15: "technique suggestions or line suggestions in natural text based on the driven theoretical
+# best". Each corner where a theoretical's lap holding it beats the real lap the theoretical is told from (its stint's
+# fastest lap; the fastest lap for the combined theoretical) by MIN_TIP_S or more, in the racing line page's words
+# (racing_line.corner_parts: brake point, turn-in, apex, exit, throttle pick-up, slowest speed) and what else differs
+# (entry, brake pressure, gear, full throttle, coasting), with where the time comes. From the lap packs: each lap's GPS
+# position across the comparison's line, the lap moved as a whole onto the line as the racing line does.
+
+MIN_TIP_S = 0.02
+TIP_ROLES = ("speed", "throttle", "brake", "steer", "gear", "phase", "braking", "coasting", "lat", "lon")
+GEARS = {1: "a gear", 2: "two gears", 3: "three gears"}
+LEAST_BRAKE = 8  # % of peak pressure (COSTS)
+LEAST_FULL_M = 5  # full throttle, as the throttle pick-up
+LEAST_COAST_S = 0.1
+LEAST_SPEED = 1  # km/h, as the slowest speed
+
+
+class _CornerWords:
+    """The laps holding theoretical corners and the laps they are measured against, on the comparison's line: where
+    each is across the line, and where each corner is judged (racing_line.corner_places), the same metres for every
+    lap."""
+
+    def __init__(self, traces: dict[tuple[str, int], dict[str, np.ndarray]], line: TrackLine | None,
+                 sections: list[Section]):
+        self.traces, self.sections = traces, sections
+        n = len(next(iter(traces.values()))["t"])
+        road = rl.Line(line.x, line.y) if line is not None else None
+        if road is not None:  # + turning left: the line's heading, turned each metre
+            heading = np.unwrap(np.arctan2(-road.nx, road.ny))
+            bend = rl._smooth(np.gradient(heading), 21)[np.arange(n) % line.length]
+        else:  # no GPS: the quickest lap's steering, whichever way it reads
+            first = traces[min(traces, key=lambda key: traces[key]["t"][-1])]
+            bend = first.get("steer", np.ones(n))
+        lines = {}
+        for key, tr in traces.items():
+            across = None
+            if road is not None and "lat" in tr and "lon" in tr:
+                x, y = line.xy(tr["lat"], tr["lon"])
+                m = np.arange(n) % line.length
+                raw = rl._smooth((x - line.x[m]) * road.nx[m] + (y - line.y[m]) * road.ny[m], 5)
+                lines[key] = rl.line_up(rl.LapLine(None, np.arange(n, dtype=float), {"lateral": raw}), road)
+                across = lines[key].trace["lateral"]
+            tr["lateral"] = across if across is not None else np.zeros(n)
+            if "steer" in tr:  # + toward the way the corner turns, as corner_events reads it
+                tr["steer"] = tr["steer"] * rl._turn_sign(tr["steer"], bend)
+        spread = rl.repeat_spread(list(lines.values()))
+        # a line difference is told only beyond the laps' own spread (GPS and driver together), as the racing line
+        self.least_m = max(spread if spread is not None else 0.6, rl.MIN_LATERAL_M) if lines else float("inf")
+        left, right = rl.used_width([tr["lateral"] for tr in traces.values()], 1)
+        ref = traces[min(traces, key=lambda key: traces[key]["t"][-1])]
+        # a corner taken flat out (no slowest point of its own) is judged around its official position
+        dicts = [{"code": s.code, "start_m": s.start, "end_m": s.end,
+                  "apex_m": s.apex if s.apex is not None else (s.at[0] if s.at else None)} for s in sections]
+        places = rl.corner_places({"speed": ref["speed"], "g_lat": bend}, dicts, left, right, 1)
+        brake_on = {}
+        for (run, _), tr in traces.items():
+            if "brake" in tr:
+                brake_on[run] = max(brake_on.get(run, 0.0), 0.04 * float(np.percentile(tr["brake"], 99.5)))
+        self.events = {key: {e["code"]: e for e in rl.corner_events(tr, 1, places, brake_on.get(key[0], 1.0))}
+                       for key, tr in traces.items()}
+
+    def tip(self, k: int, holder: tuple[str, int], versus: tuple[str, int], gain: float) -> dict:
+        """What the lap holding section k does differently from the lap it gains `gain` on there: `does` in the
+        racing line's words, `also` what else differs, and the phase where most of the time comes."""
+        s = self.sections[k]
+        a, e = self.traces[versus], self.traces[holder]
+        split = _phase_split(Traced(None, None, a), Traced(None, None, e), s.start, s.end)
+        p = int(split.argmax())
+        ea, ee = self.events[versus].get(s.code), self.events[holder].get(s.code)
+        if ea is not None and ee is not None:
+            does, also = rl.corner_parts(ea, ee, self.least_m), self._also(s, a, e, ea, ee)
+        else:
+            does, also = [], []
+        if s.apex is None:  # flat out, or nearly: the speeds through it
+            also += _flat_parts(s, a, e, slowest=not any("slowest point" in d for d in does))
+        return {"code": s.code, "from": list(holder), "versus": list(versus), "gain_s": round(gain, 3),
+                "phase": PHASE_NAMES[PHASES[p]], "phase_s": round(float(split[p]), 3), "does": does, "also": also}
+
+    def _also(self, s: Section, a: dict, e: dict, ea: dict, ee: dict) -> list[str]:
+        out = []
+        sign = 1 if ee["turn"] == "left" else -1  # + lateral toward the inside
+        at = ea["turn_in_m"]
+        if at is not None:  # where the quicker lap stands at the other's turn-in
+            d = (e["lateral"][at] - a["lateral"][at]) * sign
+            if abs(d) >= self.least_m:
+                out.append(f"comes in {abs(d):.1f} m {'tighter' if d > 0 else 'wider'}")
+        if "brake" in a and "brake" in e and (ea["brake_m"] is not None or ee["brake_m"] is not None):
+            pa = float(a["brake"][s.start:ea["apex_m"] + 1].max(initial=0))
+            pe = float(e["brake"][s.start:ee["apex_m"] + 1].max(initial=0))
+            d = 100 * (pe - pa) / pa if pa > 0 else 0.0
+            if abs(d) >= LEAST_BRAKE:
+                out.append(f"brakes {abs(d):.0f}% {'harder' if d > 0 else 'lighter'}")
+        if "gear" in a and "gear" in e:  # told as a step only: some cars log the gear with an offset
+            d = round(float(e["gear"][ee["apex_m"]])) - round(float(a["gear"][ea["apex_m"]]))
+            if d and abs(d) in GEARS:
+                out.append(f"is {GEARS[abs(d)]} {'higher' if d > 0 else 'lower'} at the slowest point")
+        fa, fe = _full_at(a, s, ea), _full_at(e, s, ee)
+        if fa is not None and fe is not None and LEAST_FULL_M <= abs(fe - fa) <= rl.MAX_SHIFT_M:
+            out.append(f"is flat out {abs(fe - fa):.0f} m {'later' if fe > fa else 'sooner'}")
+        d = _coasting(e, s) - _coasting(a, s)
+        if abs(d) >= LEAST_COAST_S:
+            out.append(f"coasts {abs(d):.1f} s {'longer' if d > 0 else 'less'}")
+        return out
+
+
+def _full_at(tr: dict, s: Section, ev: dict) -> int | None:
+    """Where the lap is flat out again after the corner's slowest point, within its section."""
+    if "throttle" not in tr:
+        return None
+    start = ev["throttle_m"] if ev["throttle_m"] is not None else ev["apex_m"]
+    full = np.flatnonzero(tr["throttle"][start:s.end + 1] > 95)
+    return start + int(full[0]) if len(full) else None
+
+
+def _coasting(tr: dict, s: Section) -> float:
+    if "coasting" not in tr:
+        return 0.0
+    return float((_dt(tr)[s.start:s.end] * (tr["coasting"][s.start:s.end] > 0.5)).sum())
+
+
+def _flat_parts(s: Section, a: dict, e: dict, slowest: bool = True) -> list[str]:
+    """A section without a real corner (taken flat out, or nearly): the speeds into it, at its slowest (unless told
+    already) and out of it."""
+    out = []
+    va, ve = a["speed"][s.start:s.end + 1], e["speed"][s.start:s.end + 1]
+    for d, words in ((ve[0] - va[0], "{:.0f} km/h {} into it"),
+                     (ve.min() - va.min() if slowest else 0.0, "{:.0f} km/h {} at its slowest"),
+                     (ve[-1] - va[-1], "{:.0f} km/h {} out of it")):
+        if abs(d) >= LEAST_SPEED:
+            out.append("is " + words.format(abs(d), "faster" if d > 0 else "slower"))
+    return out
