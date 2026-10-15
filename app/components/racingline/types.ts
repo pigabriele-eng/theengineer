@@ -11,7 +11,7 @@ export type CameraMode = 'chase' | 'above' | 'bird' | 'trackside';
 export type Playhead = MutableRefObject<{ m: number; sync: Sync }>;
 
 export type SceneProps = {
-  data: RacingLine;
+  data: RacingLine | null; // null: still on its way (three.js and the renderer are made meanwhile)
   colors: string[];
   palette: ScenePalette;
   playhead: Playhead;

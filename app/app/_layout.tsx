@@ -14,7 +14,6 @@ import { useEffect, useMemo } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 
 import { Masthead } from '@/components/Programme';
-import RecordKey from '@/components/RecordKey';
 import { useColorScheme } from '@/components/useColorScheme';
 import Colors from '@/constants/Colors';
 import { authEnabled, useAuthSession } from '@/lib/auth';
@@ -143,8 +142,6 @@ function RootLayoutNav({ signedIn }: { signedIn: boolean }) {
             <Stack.Screen name="sign-in" options={{ title: 'Sign in' }} />
           </Stack.Protected>
         </Stack>
-        {/* record a debrief from any page in one tap */}
-        {signedIn && <RecordKey />}
       </View>
     </ThemeProvider>
   );

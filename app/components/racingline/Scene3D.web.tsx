@@ -2,8 +2,10 @@
 // pattern of its own), its brake, turn-in, apex and throttle points as shapes, the corner numbers over the apexes, and
 // one car per lap (the first solid, the others see-through ghosts) placed where the lap was, turned to where the car
 // pointed, leaning and pitching as it did, each tyre coloured by its load with a column as tall as the load, and an
-// arrow where the car travelled when it slid (|slip| over 1 degree). Three cameras: behind the first car, above it,
-// and trackside at the corner it is in; a drag turns the view, the wheel or a pinch zooms, a double tap resets.
+// arrow where the car travelled when it slid (|slip| over 1 degree). A theoretical lap never looks like a real one:
+// its line is hollow (two thin rails, dashed or dotted), its markers and its car are wire frames, and its name stands
+// over its car in words. Four cameras: behind the first car, above it, straight down on it, and trackside at the
+// corner it is in; a drag turns the view, the wheel or a pinch zooms, a double tap resets.
 //
 // three.js is loaded with import() when the view is first drawn, so the rest of the app doesn't carry it.
 import { useEffect, useRef, useState } from 'react';
@@ -16,7 +18,7 @@ import type { CameraMode, SceneProps } from '@/components/racingline/types';
 import { Fonts, themed } from '@/constants/Theme';
 import { RacingLap, RacingLine, WHEELS } from '@/lib/racingLine';
 import {
-  indexOf, loadCentre, patternOn, placeCount, placesAt, poseAt, sample, sectionAt, TRACK_M, WHEELBASE_M,
+  indexOf, loadCentre, patternOf, patternOn, placeCount, placesAt, poseAt, sample, sectionAt, TRACK_M, WHEELBASE_M,
 } from '@/lib/racingLineMath';
 
 type Three = typeof ThreeNS;
@@ -24,6 +26,8 @@ type Three = typeof ThreeNS;
 const DEG = Math.PI / 180;
 const LINE_STEP = 0.5; // metres between the points of a lap's line
 const LINE_W = 0.34; // a lap's line, metres wide
+const RAIL_W = 0.11; // a theoretical lap's line: two rails this wide, their middles RAIL_GAP apart
+const RAIL_GAP = 0.42;
 // a GT4 car: 1.65 m between the tyres' middles, 2.86 m wheelbase (lib/racingLineMath.ts TRACK_M, WHEELBASE_M)
 const CAR = { length: 4.5, width: 1.95, wheelR: 0.34, track: TRACK_M / 2, front: -WHEELBASE_M / 2, rear: WHEELBASE_M / 2 };
 const TRAIL_STEP = 1; // metres between the points of a load trail
@@ -92,15 +96,24 @@ function tarmac(T: Three, d: RacingLine, pal: ScenePalette) {
 function lapLine(T: Three, d: RacingLine, lap: RacingLap, k: number, color: string) {
   const end = (placeCount(d) - 1) * d.step_m;
   const count = Math.floor(end / LINE_STEP) + 1;
-  const a: V[] = [], b: V[] = [];
   const lift = 0.05 + k * 0.012;
-  for (let s = 0; s < count; s++) {
-    const f = indexOf(d, s * LINE_STEP);
-    const lat = sample(lap.lateral, f);
-    a.push(roadPoint(d, f, lat + LINE_W / 2, lift));
-    b.push(roadPoint(d, f, lat - LINE_W / 2, lift));
+  const pattern = patternOf(lap, k);
+  const on = (s: number) => patternOn(pattern, s * LINE_STEP);
+  // a real lap: one strip; a theoretical lap: two thin rails, hollow between them
+  const edges = lap.theoretical ? [[RAIL_GAP / 2 + RAIL_W / 2, RAIL_GAP / 2 - RAIL_W / 2],
+    [-RAIL_GAP / 2 + RAIL_W / 2, -RAIL_GAP / 2 - RAIL_W / 2]] : [[LINE_W / 2, -LINE_W / 2]];
+  const group = new T.Group();
+  for (const [hi, lo] of edges) {
+    const a: V[] = [], b: V[] = [];
+    for (let s = 0; s < count; s++) {
+      const f = indexOf(d, s * LINE_STEP);
+      const lat = sample(lap.lateral, f);
+      a.push(roadPoint(d, f, lat + hi, lift));
+      b.push(roadPoint(d, f, lat + lo, lift));
+    }
+    group.add(new T.Mesh(strip(T, a, b, on), flat(T, color)));
   }
-  return new T.Mesh(strip(T, a, b, (s) => patternOn(k, s * LINE_STEP)), flat(T, color));
+  return group;
 }
 
 // Each tyre's load along the lap: four thin strips on the tarmac, each where that tyre ran (the car's line moved
@@ -110,6 +123,13 @@ function loadTrails(T: Three, d: RacingLine, lap: RacingLap, k: number, pal: Sce
   const end = (placeCount(d) - 1) * d.step_m;
   const count = Math.floor(end / TRAIL_STEP) + 1;
   const lift = 0.07 + k * 0.012;
+  const shades = new Map<number, ThreeNS.Color>(); // a colour per whole percent, made once
+  const shade = (pct: number) => {
+    const key = Math.round(pct);
+    let c = shades.get(key);
+    if (!c) shades.set(key, (c = new T.Color(loadColor(pal, key))));
+    return c;
+  };
   for (const w of WHEELS) {
     const side = (w.endsWith('l') ? 1 : -1) * CAR.track; // + left
     const along = w.startsWith('f') ? -CAR.front : -CAR.rear; // + ahead
@@ -124,7 +144,7 @@ function loadTrails(T: Three, d: RacingLine, lap: RacingLap, k: number, pal: Sce
       const half = (0.08 + loadShare(pct) * 0.3) / 2;
       const lat = sample(lap.lateral, ft) + side;
       const a = roadPoint(d, ft, lat + half, lift), b = roadPoint(d, ft, lat - half, lift);
-      const c = new T.Color(loadColor(pal, pct));
+      const c = shade(pct);
       if (prev) {
         pos.push(...prev.a, ...prev.b, ...a, ...prev.b, ...b, ...a);
         for (const cc of [prev.c, prev.c, c, prev.c, c, c]) col.push(cc.r, cc.g, cc.b);
@@ -141,19 +161,24 @@ function loadTrails(T: Three, d: RacingLine, lap: RacingLap, k: number, pal: Sce
 
 // a marker's shape: brake a cube, turn-in a cone, apex a ball, throttle a diamond
 function markerGeometries(T: Three) {
-  return {
+  const shapes = {
     brake: new T.BoxGeometry(0.55, 0.55, 0.55),
     turn_in: new T.ConeGeometry(0.4, 0.8, 4),
     apex: new T.SphereGeometry(0.34, 16, 12),
     throttle: new T.OctahedronGeometry(0.42),
   };
+  const edges = { brake: new T.EdgesGeometry(shapes.brake), turn_in: new T.EdgesGeometry(shapes.turn_in),
+    apex: new T.EdgesGeometry(shapes.apex), throttle: new T.EdgesGeometry(shapes.throttle) };
+  return { ...shapes, edges };
 }
 
 function markers(T: Three, d: RacingLine, lap: RacingLap, color: string, geo: ReturnType<typeof markerGeometries>,
   pal: ScenePalette) {
   const group = new T.Group();
-  const mat = new T.MeshLambertMaterial({ color: new T.Color(color) });
-  const outline = new T.LineBasicMaterial({ color: new T.Color(pal.ink) });
+  const wire = !!lap.theoretical; // a theoretical lap's markers: their outline only, in its colour
+  const mat = wire ? new T.MeshBasicMaterial({ color: new T.Color(color), transparent: true, opacity: 0.15,
+    depthWrite: false }) : new T.MeshLambertMaterial({ color: new T.Color(color) });
+  const outline = new T.LineBasicMaterial({ color: new T.Color(wire ? color : pal.ink) });
   for (const e of lap.events) {
     for (const kind of ['brake', 'turn_in', 'apex', 'throttle'] as const) {
       const m = kind === 'brake' ? e.brake_m : kind === 'turn_in' ? e.turn_in_m : kind === 'apex' ? e.apex_m : e.throttle_m;
@@ -163,7 +188,7 @@ function markers(T: Three, d: RacingLine, lap: RacingLap, color: string, geo: Re
       const mesh = new T.Mesh(geo[kind], mat);
       mesh.position.set(...p);
       mesh.userData.m = m;
-      const edges = new T.LineSegments(new T.EdgesGeometry(geo[kind]), outline);
+      const edges = new T.LineSegments(geo.edges[kind], outline);
       mesh.add(edges);
       group.add(mesh);
     }
@@ -194,6 +219,47 @@ function label(T: Three, text: string, pal: ScenePalette) {
   return sprite;
 }
 
+/** A theoretical car's name over it, in words: paper, a dashed border in its line's colour, ink; the same size on
+ * the screen from any camera, and each theoretical car's a row higher than the last, so two never cover each
+ * other. */
+function nameTag(T: Three, text: string, color: string, pal: ScenePalette, row: number) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d')!;
+  let size = 64;
+  const font = () => `${size}px ${Fonts.label}, "Archivo Narrow", Arial Narrow, sans-serif`;
+  ctx.font = font();
+  while (size > 30 && ctx.measureText(text).width > 960) {
+    size -= 4;
+    ctx.font = font();
+  }
+  const w = Math.min(1008, ctx.measureText(text).width + 48);
+  const x0 = (1024 - w) / 2;
+  ctx.fillStyle = pal.paper;
+  ctx.fillRect(x0, 12, w, 104);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 8;
+  ctx.setLineDash([22, 12]);
+  ctx.strokeRect(x0, 12, w, 104);
+  ctx.fillStyle = pal.ink;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 512, 66);
+  const tex = new T.CanvasTexture(canvas);
+  tex.colorSpace = T.SRGBColorSpace;
+  const sprite = new T.Sprite(new T.SpriteMaterial({ map: tex, depthTest: false, sizeAttenuation: false }));
+  sprite.scale.set(TAG_H * 8, TAG_H, 1); // the canvas is 8 times as wide as it is tall
+  sprite.center.set(0.5, -0.2 - row * 1.1);
+  sprite.position.set(0, 2.2, 0);
+  sprite.renderOrder = 30;
+  return sprite;
+}
+
+const TAG_H = 0.075; // a name tag's height, as a share of the view's height times about 1.07 (the 50° camera)
+
+type CarLook = 'solid' | 'ghost' | 'wire'; // the first lap, the other real laps, a theoretical lap
+
 type CarParts = {
   root: ThreeNS.Group; // placed and turned to the car's heading
   body: ThreeNS.Group; // leaning and pitching
@@ -207,28 +273,34 @@ type CarParts = {
   above: ThreeNS.Group; // the pads, the centre and the static cross: shown in the views from above
 };
 
-// The car points along -Z, its right is +X, up is +Y: a GT car in low polygons, body, cabin, wing and four wheels
-function car(T: Three, color: string, ghost: boolean, pal: ScenePalette): CarParts {
+// The car points along -Z, its right is +X, up is +Y: a GT car in low polygons, body, cabin, wing and four wheels.
+// A theoretical lap's car is a wire frame in its colour, barely filled, with its name over it.
+function car(T: Three, color: string, look: CarLook, pal: ScenePalette, name?: { text: string; row: number }): CarParts {
   const root = new T.Group();
   const body = new T.Group();
   body.rotation.order = 'YXZ';
   root.add(body);
-  const see = ghost ? { transparent: true, opacity: 0.42, depthWrite: false } : {};
+  const ghost = look !== 'solid';
+  const wire = look === 'wire';
+  const see = ghost ? { transparent: true, opacity: wire ? 0.1 : 0.42, depthWrite: false } : {};
   const paint = new T.MeshLambertMaterial({ color: new T.Color(color), ...see });
   const glass = new T.MeshLambertMaterial({ color: new T.Color(pal.scheme === 'dark' ? pal.paper : pal.ink), ...see });
+  const frame = new T.LineBasicMaterial({ color: new T.Color(color) });
   const add = (geo: ThreeNS.BufferGeometry, mat: ThreeNS.Material, x: number, y: number, z: number) => {
     const m = new T.Mesh(geo, mat);
     m.position.set(x, y, z);
     body.add(m);
+    if (wire) m.add(new T.LineSegments(new T.EdgesGeometry(geo), frame));
     return m;
   };
+  if (wire && name) root.add(nameTag(T, name.text, color, pal, name.row));
   add(new T.BoxGeometry(CAR.width, 0.52, CAR.length), paint, 0, 0.56, 0);
   add(new T.BoxGeometry(CAR.width * 0.98, 0.18, 1.1), paint, 0, 0.36, -CAR.length / 2 + 0.3); // the splitter
   add(new T.BoxGeometry(1.5, 0.48, 2.0), glass, 0, 1.06, 0.3); // the cabin
   add(new T.BoxGeometry(1.9, 0.06, 0.38), paint, 0, 1.32, CAR.length / 2 - 0.2); // the wing
   add(new T.BoxGeometry(0.06, 0.4, 0.2), paint, -0.6, 1.1, CAR.length / 2 - 0.2);
   add(new T.BoxGeometry(0.06, 0.4, 0.2), paint, 0.6, 1.1, CAR.length / 2 - 0.2);
-  if (!ghost) {
+  if (look === 'solid') {
     const edges = new T.LineSegments(new T.EdgesGeometry(new T.BoxGeometry(CAR.width, 0.52, CAR.length)),
       new T.LineBasicMaterial({ color: new T.Color(pal.ink) }));
     edges.position.set(0, 0.56, 0);
@@ -330,7 +402,7 @@ function build(T: Three, d: RacingLine, colors: string[], pal: ScenePalette): Bu
   const marks: ThreeNS.Object3D[] = [];
   scene.add(trails);
   d.laps.forEach((lap, k) => {
-    trails.add(loadTrails(T, d, lap, k, pal));
+    if (!lap.theoretical) trails.add(loadTrails(T, d, lap, k, pal)); // a theoretical lap's tyres: on its car only
     const color = colors[k % colors.length];
     scene.add(lapLine(T, d, lap, k, color));
     const mk = markers(T, d, lap, color, geo, pal);
@@ -343,7 +415,10 @@ function build(T: Three, d: RacingLine, colors: string[], pal: ScenePalette): Bu
     s.position.set(...roadPoint(d, indexOf(d, c.apex_m), 0, 5.5));
     scene.add(s);
   }
-  const cars = d.laps.map((_, k) => car(T, colors[k % colors.length], k > 0, pal));
+  const firstTheory = d.laps.findIndex((l) => l.theoretical);
+  const cars = d.laps.map((lap, k) => car(T, colors[k % colors.length],
+    lap.theoretical ? 'wire' : k > 0 ? 'ghost' : 'solid', pal,
+    lap.theoretical ? { text: lap.label, row: k - firstTheory } : undefined));
   // the ghosts drawn after the solid car, so it shows through them
   cars.forEach((c, k) => {
     c.root.renderOrder = k;
@@ -561,7 +636,8 @@ export function Scene3D({ data, colors, palette, playhead, camera, trails, reset
         last = now;
         const b = built.current;
         const { data: d, camera: mode } = live.current;
-        if (!b || !d.laps.length) return;
+        // new laps come in a frame or two before their scene is built: nothing moved until it is
+        if (!b || !d || !d.laps.length || b.cars.length !== d.laps.length) return;
         const { m, sync } = playhead.current;
         const places = placesAt(d, m, sync);
         b.trails.visible = live.current.trails;
@@ -617,7 +693,7 @@ export function Scene3D({ data, colors, palette, playhead, camera, trails, reset
   // the scene again when the laps or the scheme change
   useEffect(() => {
     const t = three.current;
-    if (!ready || !t) return;
+    if (!ready || !t || !data) return;
     built.current?.dispose();
     built.current = build(t.T, data, colors, palette);
     smooth.current = null;

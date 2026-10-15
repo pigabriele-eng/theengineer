@@ -11,7 +11,7 @@ export type Place = { path: string; name: string };
 export type EventRef = { id: number | string; name?: string | null };
 
 export const HOME: Place = { path: '/', name: 'the race weekends' };
-const TOOLS: Place = { path: '/tools', name: 'Tools' };
+const TOOLS: Place = { path: '/tools', name: 'Settings' };
 const DRIVERS: Place = { path: '/drivers', name: 'Drivers' };
 
 // the pages that belong to an event when they have one: a run, its report, technique check, quali prep, prep report,
@@ -41,7 +41,7 @@ export function parentOf(path: string, event?: EventRef | null): Place | null {
 
 const NAMES: Record<string, string> = {
   '/': HOME.name,
-  '/tools': 'Tools',
+  '/tools': 'Settings',
   '/drivers': 'Drivers',
   '/coaching': 'Coaching',
   '/setup': 'Setup',

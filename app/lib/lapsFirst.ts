@@ -1,23 +1,24 @@
-// The weekend page's Laps tab (Gabriele, 2026-10-07: "Compare laps, during the weekend, should be the standard
-// function that opens when clicking on the event"): which tab the page opens on, and the suggested comparisons in
-// words. Pure, so `npm test` checks it; the request is in lib/lapSuggestions.ts, the tab in
-// components/weekend/Laps.tsx.
+// The weekend page's tabs (Gabriele, 2026-10-15: "i want to simplify the app somewhat: Driving performance to identify
+// missing speed ... Stint analysis ... Quali analyisis ... Remove everything else for the moment"): which tab the page
+// opens on, and the suggested comparisons in words. Pure, so `npm test` checks it; the request is in
+// lib/lapSuggestions.ts.
 import type { SuggestedCorner, SuggestedLap, Suggestion } from './lapSuggestions';
-import type { Stage } from './weekendRuns';
 
-/** The weekend page's tabs: Laps, then the weekend's three stages. */
-export type WeekendTab = 'laps' | Stage;
+/** The weekend page's tabs: driving performance, stint analysis, quali analysis, and the runs themselves. */
+export type WeekendTab = 'driving' | 'stint' | 'quali' | 'runs';
 
-export const TABS: WeekendTab[] = ['laps', 'before', 'during', 'after'];
+export const TABS: WeekendTab[] = ['driving', 'stint', 'quali', 'runs'];
 
-/** The tab the page opens on when none is asked for, from the stage it would open on (lib/weekendRuns.ts
- * defaultStage): Laps while the weekend is on, so the first thing is the laps to compare; Before while there are no
- * runs and After once it is over, as before. */
-export const openingTab = (stage: Stage): WeekendTab => (stage === 'during' ? 'laps' : stage);
+// the tabs the page had before (Laps, Before, During, After): an address naming one opens on Driving performance
+const OLD_TABS = ['laps', 'before', 'during', 'after'];
 
-/** The tab the address asks for, if it is one. */
+/** The tab the page opens on when none is asked for: Driving performance once the event has a run, else its runs
+ * (where it says to upload them). */
+export const openingTab = (hasRuns: boolean): WeekendTab => (hasRuns ? 'driving' : 'runs');
+
+/** The tab the address asks for, if it is one (one of the old tabs: Driving performance). */
 export const askedTab = (asked: string | undefined): WeekendTab | null =>
-  TABS.includes(asked as WeekendTab) ? (asked as WeekendTab) : null;
+  (TABS.includes(asked as WeekendTab) ? (asked as WeekendTab) : OLD_TABS.includes(asked ?? '') ? 'driving' : null);
 
 const sec = (s: number) => `${s.toFixed(2)} s`;
 

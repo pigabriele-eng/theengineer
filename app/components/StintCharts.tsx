@@ -9,11 +9,12 @@ import Svg, { Circle, Line, Rect } from 'react-native-svg';
 import { Text, View } from '@/components/Themed';
 import { useColorScheme } from '@/components/useColorScheme';
 import { FadeRow, signed } from '@/lib/stint';
-import { byScheme, chartPlate, deltaColor, face, Fonts, phaseColor, themed, Type, useTheme } from '@/constants/Theme';
+import { MIN_SHIFT } from '@/lib/stintTab';
+import { byScheme, chartPlate, deltaColor, face, Fonts, phaseColor, TAP, themed, Type, useTheme } from '@/constants/Theme';
 
 const BALANCE = byScheme((c) => c.balance);
 export const useBalanceColors = () => BALANCE[useColorScheme() === 'dark' ? 'dark' : 'light'];
-export const MIN_SHIFT = 0.15; // ° of understeer angle: a smaller shift reads as holding (as the server's words)
+export { MIN_SHIFT }; // ° of understeer angle: a smaller shift reads as holding (lib/stintTab.ts, as the server's words)
 
 /** The colour of a balance shift: blue towards understeer, red towards oversteer, grey when it holds. */
 export function shiftColor(shift: number, pal: { under: string; over: string; neutral: string }) {
@@ -158,6 +159,8 @@ export function ChangeBar({ value, max, color, faded }: { value: number | null; 
   );
 }
 
+const NAMED_NORMAL = 300; // px of plot: wide enough to name the centre line between the two ends' words
+
 export type ShiftRow = { label: string; early: number; late: number; shift: number; strong?: boolean };
 
 /** The balance early and late in the stint, per corner: a dumbbell from the early laps (ring) to the late laps
@@ -189,7 +192,8 @@ export function BalanceDumbbell({ rows, early, late, onCorner }: { rows: ShiftRo
       </View>
       <View style={styles.dumbHead}>
         <Text style={styles.axisText}>← oversteer</Text>
-        <Text style={styles.axisText}>normal</Text>
+        {/* on a phone the three words don't fit over the plot: the centre line is the normal, as the scale says */}
+        {(width === 0 || width >= NAMED_NORMAL) && <Text style={styles.axisText}>normal</Text>}
         <Text style={styles.axisText}>understeer →</Text>
       </View>
       {rows.map((r, i) => {
@@ -223,7 +227,7 @@ export function BalanceDumbbell({ rows, early, late, onCorner }: { rows: ShiftRo
                 </Svg>
               )}
             </View>
-            <Text style={StyleSheet.flatten([styles.dumbValue, Math.abs(r.shift) < MIN_SHIFT && styles.dim])}>
+            <Text style={StyleSheet.flatten([styles.dumbValue, Math.abs(r.shift) < MIN_SHIFT && styles.held])}>
               {signed(r.shift)}°
             </Text>
           </Pressable>
@@ -255,12 +259,14 @@ const useStyles = themed((c) => ({
   rowNote: { fontFamily: Fonts.body, fontSize: 13, lineHeight: 18, color: c.textSecondary },
   strong: { fontFamily: face('body', 700) },
   strongLabel: { fontFamily: face('label', 700), color: c.text },
-  dim: { opacity: 0.5 },
+  // a shift that holds: in the caption grey (AA on the paper), not faded below it
+  held: { color: c.textMuted },
   changeBar: { flex: 1, minWidth: 40, backgroundColor: 'transparent' },
   dumbHead: { flexDirection: 'row', justifyContent: 'space-between', marginLeft: 76, marginRight: 58,
     backgroundColor: 'transparent' },
   axisText: { ...Type.label, fontSize: 13, color: c.textMuted },
-  dumbRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 30, borderBottomWidth: 1,
+  // a full tap target: a row picked shows its figures under the chart
+  dumbRow: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: TAP, borderBottomWidth: 1,
     borderColor: c.separator },
   dumbRowOn: { backgroundColor: c.surfaceRaised },
   dumbLabel: { ...Type.number, width: 68, fontSize: 13, color: c.textSecondary },

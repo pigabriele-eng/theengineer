@@ -182,6 +182,30 @@ def test_reduce_finds_runs_warm_up_work_and_bleed():
     assert [st["flying"] for st in s["stints"]] == [8]
 
 
+def test_reduce_keeps_each_tyre_from_cold_to_hot():
+    s, ch, _ = _reduced(QUALI_THEN_LONG, "Q1", fr_offset=4.0)
+    quali = s["runs"][0]
+    series = quali["series"]
+    assert series["step_s"] == tp.SERIES_S
+    n = len(series["t"]["FL"])
+    assert n == -(-round((quali["end_s"] - quali["start_s"]) * HZ) // round(tp.SERIES_S * HZ))
+    assert all(len(series[k][w]) == n for k in ("p", "t") for w in ("FL", "FR", "RL", "RR"))
+    fl = series["t"]["FL"]
+    # cold on leaving (the median of the first 15 s of the out-lap), hot at the end of the build: 12 + 12 °C from the
+    # warm-up laps, 15 + 15 + 10 + 3 flying
+    assert fl[0] == pytest.approx(AMBIENT, abs=3)
+    assert max(fl) == pytest.approx(AMBIENT + 24 + 43, abs=2)
+    assert series["t"]["FR"][0] == pytest.approx(fl[0] + 4.0, abs=0.1)
+    assert series["p"]["FL"][-1] > series["p"]["FL"][0] + 0.2  # the pressure rose with it
+    # each lap's start in minutes from leaving: the first crossing ends the out-lap
+    starts = [l["start_min"] for l in quali["laps"]]
+    assert starts == sorted(starts) and 0 < starts[0] < 2
+    # a sensor that isn't reporting gives None for its stretches
+    ch["tyre_t_rl"][:] = np.nan
+    assert set(tp._tyre_series(ch, 0.0, 30.0)["t"]["RL"]) == {None}
+    assert tp._tyre_series({"t": ch["t"]}, 0.0, 30.0)["p"]["FL"] is None
+
+
 def test_reduce_reads_the_line_and_axle_average():
     s, *_ = _reduced(QUALI_THEN_LONG, "Q1", fr_offset=4.0)
     first = s["runs"][0]["flying"][0]
@@ -304,6 +328,7 @@ def test_report_endpoint(client, monkeypatch):
     assert rep["fastest"]["best"]["label"] == "Q1 run 1"
     assert rep["advice"][0]["key"] == "plan"
     assert "axle_c" not in rep["sims"][0]
+    assert rep["sims"][0]["series"]["t"]["FL"][-1] > rep["sims"][0]["series"]["t"]["FL"][0]  # each tyre, cold to hot
     one = client.get(f"/report/tyre-prep?session={ids[1]}").json()
     assert [s["label"] for s in one["sims"]] == ["Q2"]
     assert client.get(f"/report/tyre-prep?event={ev['id']}").json() == rep  # from the cache: the same
@@ -342,7 +367,7 @@ def test_a_qualifying_session_named_q_peaks_on_its_first_flying_lap():
 
 
 def test_quali_session_names():
-    for name in ("Q", "Q2", "03_Q", "03_Q (2)", "Quali", "Qualifying 1", "QP"):
+    for name in ("Q", "Q2", "03_Q", "03_Q (2)", "Quali", "Qualifying 1", "QP", "PQ", "04_PQ"):
         assert tp.is_quali_session({"name": name}), name
     for name in ("R1", "04_R1", "FP1", "Long run", "L1", "Equal", "Torque"):
         assert not tp.is_quali_session({"name": name}), name

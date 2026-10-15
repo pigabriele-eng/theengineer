@@ -96,3 +96,27 @@ test('the racing line for laps picked on the weekend page: the first session and
   const p = racingLineParams([{ session_id: 7, lap: 12 }, { session_id: 8, lap: 3 }]);
   assert.deepEqual([parseLaps(p.laps), parseOthers(p.others)], [[12], [{ session: 8, lap: 3 }]]);
 });
+
+test('the theoretical laps: in the address, their own patterns, their colours and the lap they drive at a place', async () => {
+  const { encodeTheoreticals, holderAt, lineColors, parseTheoreticals, patternOf, PATTERNS, THEORY_PATTERNS } =
+    await import('./racingLineMath.ts');
+  const stint = { kind: 'stint', from: [{ code: 'T1', session_id: 3, lap: 5 }, { code: 'T6-T7', session_id: 3, lap: 12 }] };
+  const combined = { kind: 'combined', from: [{ code: 'T1', session_id: 3, lap: 5 }, { code: 'T6-T7', session_id: 4, lap: 2 }] };
+  const text = encodeTheoreticals([stint, combined]);
+  assert.equal(text, 'stint:T1=3.5,T6-T7=3.12|combined:T1=3.5,T6-T7=4.2');
+  assert.deepEqual(parseTheoreticals(text), [stint, combined]);
+  assert.deepEqual(parseTheoreticals('best:T1=3.5|stint:T1=3|'), []); // only the two theoreticals, whole
+  // never a real lap's pattern
+  const real = PATTERNS.map((p) => p.name);
+  for (const kind of ['stint', 'combined']) assert.ok(!real.includes(patternOf({ theoretical: kind }, 1).name));
+  assert.equal(patternOf({}, 1), PATTERNS[1]);
+  assert.equal(patternOn(THEORY_PATTERNS.stint, 7), false);
+  // colours: the real laps in turn, a stint theoretical its stint's, the combined one the ink
+  const laps = [{ session_id: 3 }, { session_id: 4 }, { session_id: 4, theoretical: 'stint' },
+    { session_id: 5, theoretical: 'stint' }, { session_id: null, theoretical: 'combined' }];
+  assert.deepEqual(lineColors(laps, ['a', 'b', 'c', 'd'], 'ink'), ['a', 'b', 'b', 'c', 'ink']);
+  const sections = [{ code: 'T1', start_m: 0, end_m: 500 }, { code: 'T6-T7', start_m: 500, end_m: 1000 }];
+  const lap = { from: [{ code: 'T1', lap: 5 }, { code: 'T6-T7', lap: 12 }] };
+  assert.equal(holderAt(lap, sections, 620).lap, 12);
+  assert.equal(holderAt({}, sections, 620), null);
+});

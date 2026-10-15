@@ -4,13 +4,31 @@
 // fetchTheoretical) for the laps compared. Only these two, on the comparisons, always named so; every report's best
 // and typical laps stay real laps.
 import type { LapTrace, TraceRole } from './compare.ts';
+import type { TheoreticalSpec } from './racingLineMath.ts';
 
 export const STINT = 'stint theoretical';
 export const COMBINED = 'combined theoretical';
 export const DASH = { stint: '7,4', combined: '2,3' }; // never solid, so never taken for a real lap
 
+/** What the lap holding a corner of a theoretical does differently from the real lap the theoretical is told from
+ * (server/app/analysis/lapcompare.py _CornerWords): what it gains there, the phase where most of it comes ("braking",
+ * "entry", "mid-corner", "exit", "full throttle"), the differences in the racing line page's words (`does`: "brakes
+ * 6 m later", "is 0.8 m nearer the inside at the apex") and what else differs (`also`: "brakes 9% harder"). */
+export type Tip = {
+  code: string;
+  from: [string, number];
+  versus: [string, number];
+  gain_s: number;
+  phase: string;
+  phase_s: number;
+  does: string[];
+  also: string[];
+};
+
 /** A theoretical lap: its time (the quickest real lap it starts from less what the sections gain on it), that gain,
- * that real lap, how many laps it is made from and the [run, lap] holding each section. */
+ * that real lap, how many laps it is made from, the [run, lap] holding each section and what it gains there on that
+ * real lap (`gains`, 0 where that lap holds it itself), and its tips: each corner it gains 0.02 s or more in, the
+ * biggest first (both missing from an answer made before they were added). */
 export type Theoretical = {
   time: number;
   gap_s: number;
@@ -19,6 +37,8 @@ export type Theoretical = {
   best_time: number;
   laps: number;
   from: [string, number][];
+  gains?: number[];
+  tips?: Tip[];
 };
 export type StintTheoretical = { run: string; session_id: number; session: string; driver: string | null }
   & ({ ready: false } | ({ ready: true } & Theoretical));
@@ -61,3 +81,17 @@ export function onGraph(answer: TheoreticalAnswer | null, keys: string[], distan
 /** A key added or taken off the graph. */
 export const flipKey = (keys: string[], key: string) =>
   (keys.includes(key) ? keys.filter((k) => k !== key) : [...keys, key]);
+
+/** The theoretical laps of this answer to drive in 3D beside the real laps (components/racingline/RacingLineView.tsx):
+ * each ready stint's and the combined one, or only those whose keys are given, with the real lap holding each
+ * section. */
+export function stitchSpecs(answer: TheoreticalAnswer | null, keys?: string[]): TheoreticalSpec[] {
+  if (!answer) return [];
+  const spec = (kind: TheoreticalSpec['kind'], from: [string, number][]): TheoreticalSpec => ({
+    kind, from: answer.sections.map((code, k) => ({ code, session_id: Number(from[k][0]), lap: from[k][1] })),
+  });
+  const out: { key: string; spec: TheoreticalSpec }[] = answer.stints.flatMap((s) => (s.ready
+    ? [{ key: stintKey(s.session_id), spec: spec('stint', s.from) }] : []));
+  if (answer.combined) out.push({ key: COMBINED_KEY, spec: spec('combined', answer.combined.from) });
+  return out.filter((o) => !keys || keys.includes(o.key)).map((o) => o.spec);
+}

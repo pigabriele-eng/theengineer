@@ -9,6 +9,12 @@ export type Sync = 'place' | 'time'; // same place: every car at the same metre;
 
 export const MAX_RL_LAPS = 4;
 
+/** A theoretical lap to drive beside the real laps (Gabriele, 2026-10-15: "quick 3d racing line comparison together
+ * with the theoreticals"): a stint theoretical or the combined theoretical, and the real lap holding each of its
+ * sections, as POST /compare/theoretical gives them (lib/theoretical.ts stitchSpecs). */
+export type TheoreticalSpec = { kind: 'stint' | 'combined'; from: { code: string; session_id: number; lap: number }[] };
+export const MAX_RL_THEORETICALS = 3;
+
 // ---------- the address ----------
 
 /** "7,12" -> [7, 12] (anything not a lap number left out). */
@@ -26,6 +32,30 @@ export function parseOthers(s: string | null | undefined): LapRef[] {
 }
 
 export const encodeOthers = (refs: LapRef[]) => refs.map((r) => `${r.session}:${r.lap}`).join(',');
+
+/** A theoretical lap as the server's `theoretical` reads it: "combined:T1=3.5,T2=4.2". */
+export const encodeTheoretical = (t: TheoreticalSpec) =>
+  `${t.kind}:${t.from.map((f) => `${f.code}=${f.session_id}.${f.lap}`).join(',')}`;
+
+/** The page address's `theo`: the theoretical laps, "|" between them. */
+export const encodeTheoreticals = (list: TheoreticalSpec[]) => list.map(encodeTheoretical).join('|');
+
+/** "stint:T1=3.5,T2=3.9|combined:..." -> the theoretical laps (anything not one left out). */
+export function parseTheoreticals(s: string | null | undefined): TheoreticalSpec[] {
+  if (!s) return [];
+  return s.split('|').flatMap((part): TheoreticalSpec[] => {
+    const at = part.indexOf(':');
+    const kind = part.slice(0, at);
+    if (at < 0 || (kind !== 'stint' && kind !== 'combined')) return [];
+    const from = part.slice(at + 1).split(',').map((x) => {
+      const [code, ref = ''] = x.split('=');
+      const [sid, lap] = ref.split('.').map(Number);
+      return { code: code.trim(), session_id: sid, lap };
+    });
+    return from.length && from.every((f) => f.code && Number.isInteger(f.session_id) && Number.isInteger(f.lap))
+      ? [{ kind, from }] : [];
+  }).slice(0, MAX_RL_THEORETICALS);
+}
 
 /** The racing line page's address for laps picked elsewhere (the During and Laps tabs: "Racing line, 3D"), the first
  * `max` of them: the first lap's session, its laps, the other sessions' laps as `others`; null with no lap. */
@@ -142,6 +172,31 @@ export function sectionAt<S extends { start_m: number; end_m: number }>(sections
   return sections.length ? sections[sections.length - 1] : null;
 }
 
+// ---------- theoretical laps ----------
+
+export const isTheoretical = (l: { theoretical?: string | null }) => !!l.theoretical;
+
+/** The real lap a theoretical lap is driving at metre m: the one holding the section there. */
+export function holderAt<H extends { code: string }>(lap: { from?: H[] | null }, sections: { code: string;
+  start_m: number; end_m: number }[], m: number): H | null {
+  const s = sectionAt(sections, m);
+  return (s && lap.from?.find((f) => f.code === s.code)) ?? null;
+}
+
+/** Each lap's colour: the real laps the palette's in turn, a stint theoretical its stint's first lap's (as on the
+ * comparison's graph), else the next free one, the combined theoretical the ink. */
+export function lineColors(laps: { session_id: number | null; theoretical?: string | null }[], palette: string[],
+  ink: string): string[] {
+  let next = 0;
+  const real = laps.map((l) => (l.theoretical ? null : palette[next++ % palette.length]));
+  return laps.map((l, k) => {
+    if (!l.theoretical) return real[k]!;
+    if (l.theoretical === 'combined') return ink;
+    const mine = laps.findIndex((x) => !x.theoretical && x.session_id === l.session_id);
+    return mine >= 0 ? real[mine]! : palette[next++ % palette.length];
+  });
+}
+
 // ---------- where a car is ----------
 
 export type Pose = {
@@ -189,9 +244,21 @@ export const PATTERNS: { name: string; on: number[] | null; svg?: string }[] = [
   { name: 'dash-dot', on: [7, 2.5, 1.6, 2.5], svg: '9,3,2,3' },
 ];
 
-/** Is a lap's line drawn at metre m (its pattern repeats along the lap)? */
-export function patternOn(k: number, m: number): boolean {
-  const on = PATTERNS[k % PATTERNS.length].on;
+// a theoretical lap is never drawn like a real one: a hollow line (two thin rails), dashed for a stint theoretical
+// and dotted for the combined one, as on the comparison's graph (lib/theoretical.ts DASH), and a wire car
+export const THEORY_PATTERNS: Record<'stint' | 'combined', { name: string; on: number[]; svg: string }> = {
+  stint: { name: 'hollow dashed', on: [6, 3], svg: '7,4' },
+  combined: { name: 'hollow dotted', on: [1.8, 2.2], svg: '2,3' },
+};
+
+/** A lap's pattern: by its place among the real laps, or its kind for a theoretical lap. */
+export function patternOf(lap: { theoretical?: 'stint' | 'combined' | null }, k: number) {
+  return lap.theoretical ? THEORY_PATTERNS[lap.theoretical] : PATTERNS[k % PATTERNS.length];
+}
+
+/** Is a lap's line drawn at metre m (its pattern repeats along the lap)? k: the lap's pattern, or its place. */
+export function patternOn(k: number | { on: number[] | null }, m: number): boolean {
+  const on = typeof k === 'number' ? PATTERNS[k % PATTERNS.length].on : k.on;
   if (!on) return true;
   const period = on.reduce((a, b) => a + b, 0);
   let x = ((m % period) + period) % period;

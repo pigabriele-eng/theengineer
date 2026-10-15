@@ -553,6 +553,33 @@ def _section_time(tr: dict[str, np.ndarray], step: int, sec: dict) -> float:
     return float(tr["t"][b] - tr["t"][a])
 
 
+def corner_parts(a: dict, e: dict, least_m: float = MIN_LATERAL_M) -> list[str]:
+    """What lap e does differently from lap a in one corner (their corner_events), in plain words, in the order it
+    happens: the brake point, the turn-in, the apex, the exit, the throttle and the slowest speed."""
+    sign = 1 if e["turn"] == "left" else -1  # + lateral toward the inside
+    parts = []
+
+    def later(key: str, verb: str, least: float):
+        if a[key] is not None and e[key] is not None and least <= abs(e[key] - a[key]) <= MAX_SHIFT_M:
+            d = e[key] - a[key]
+            parts.append(f"{verb} {abs(d):.0f} m {'later' if d > 0 else 'earlier'}")
+
+    later("brake_m", "brakes", 3)
+    later("turn_in_m", "turns in", 3)
+    da = (e["apex_lateral"] - a["apex_lateral"]) * sign
+    if abs(da) >= least_m:
+        parts.append(f"is {abs(da):.1f} m {'nearer the inside' if da > 0 else 'wider'} at the apex")
+    if a["exit_lateral"] is not None and e["exit_lateral"] is not None:
+        dx = (a["exit_lateral"] - e["exit_lateral"]) * sign  # + = further out on the exit
+        if abs(dx) >= least_m:
+            parts.append(f"uses {abs(dx):.1f} m {'more' if dx > 0 else 'less'} of the exit")
+    later("throttle_m", "picks up the throttle", 5)
+    dv = e["min_speed"] - a["min_speed"]
+    if abs(dv) >= 1:
+        parts.append(f"carries {abs(dv):.0f} km/h {'more' if dv > 0 else 'less'} at the slowest point")
+    return parts
+
+
 def differences(first: dict, other: dict, sections: list[dict], step: int, name: str,
                 least_m: float = MIN_LATERAL_M) -> list[dict]:
     """What the other lap does differently from the first lap, corner by corner, in plain words."""
@@ -562,32 +589,13 @@ def differences(first: dict, other: dict, sections: list[dict], step: int, name:
         a = ev0.get(e["code"])
         if a is None:
             continue
-        sign = 1 if e["turn"] == "left" else -1  # + lateral toward the inside
-        parts = []
-
-        def later(key: str, verb: str, least: float, a: dict = a, e: dict = e, parts: list = parts):
-            if a[key] is not None and e[key] is not None and least <= abs(e[key] - a[key]) <= MAX_SHIFT_M:
-                d = e[key] - a[key]
-                parts.append(f"{verb} {abs(d):.0f} m {'later' if d > 0 else 'earlier'}")
-
-        later("brake_m", "brakes", 3)
-        later("turn_in_m", "turns in", 3)
-        da = (e["apex_lateral"] - a["apex_lateral"]) * sign
-        if abs(da) >= least_m:
-            parts.append(f"is {abs(da):.1f} m {'nearer the inside' if da > 0 else 'wider'} at the apex")
-        if a["exit_lateral"] is not None and e["exit_lateral"] is not None:
-            dx = (a["exit_lateral"] - e["exit_lateral"]) * sign  # + = further out on the exit
-            if abs(dx) >= least_m:
-                parts.append(f"uses {abs(dx):.1f} m {'more' if dx > 0 else 'less'} of the exit")
-        later("throttle_m", "picks up the throttle", 5)
-        dv = e["min_speed"] - a["min_speed"]
-        if abs(dv) >= 1:
-            parts.append(f"carries {abs(dv):.0f} km/h {'more' if dv > 0 else 'less'} at the slowest point")
+        parts = corner_parts(a, e, least_m)
         sec = next((s for s in sections if s["code"] == e["code"]), None)
         dt = (_section_time(other["_trace"], step, sec) - _section_time(first["_trace"], step, sec)) if sec else None
         if not parts:
             continue
         words = f"{name} " + ", ".join(parts[:-1]) + (" and " if len(parts) > 1 else "") + parts[-1]
+        words = words[0].upper() + words[1:]  # "Stint theoretical · R1 brakes ...": a sentence
         if dt is not None and abs(dt) >= 0.01:
             words += f": {abs(dt):.2f} s {'slower' if dt > 0 else 'quicker'} through {e['code']}"
         out.append({"code": e["code"], "lap": other["key"], "words": words + ".",
@@ -727,11 +735,78 @@ def _accuracy_words(within: float | None, across: float | None, shifts: list[flo
     return " ".join(parts)
 
 
+# ---------- theoretical laps ----------
+# Gabriele, 2026-10-15: "quick 3d racing line comparison together with the theoreticals". The stint theoretical and
+# the combined theoretical (POST /compare/theoretical: the real lap holding each section) driven as cars of their own:
+# each section's line and car taken from the lap holding it, over that section's metres, the clock running on.
+
+BLEND_M = 30  # a theoretical lap's line eases from one lap's to the next over this at a section join
+THEORETICAL_LABELS = {"stint": "stint theoretical", "combined": "combined theoretical"}
+
+
+@dataclass
+class Stitch:
+    """A theoretical lap to draw: its kind ("stint" or "combined"), its label and, section by section in the order
+    of the comparison's sections, the code and the (source, lap number) holding it."""
+    kind: str
+    label: str
+    holders: list[tuple[str, Source, int]]
+
+
+def stitched(pieces: list[tuple[Source, LapLine]], sections: list[dict], step: int) -> dict[str, np.ndarray]:
+    """A theoretical lap's trace on the line's grid: each section from the lap holding it over that section's metres,
+    the clock running on from section to section; the brake in % of each log's own full pedal and the steering + to
+    the left, so laps of two logs meet; the line eased from one lap's to the next over BLEND_M at a join."""
+    n = len(pieces[0][1].s)
+    roles = [r for r in pieces[0][1].trace if all(r in ll.trace for _, ll in pieces)]
+    starts = [0, *(min(round(s["start_m"] / step), n - 1) for s in sections[1:])]
+    ends = [*starts[1:], n - 1]
+    out = {r: np.empty(n) for r in roles}
+    elapsed = 0.0
+    for (src, ll), a, b in zip(pieces, starts, ends, strict=True):
+        tr = ll.trace
+        sl = slice(a, b + 1)
+        for r in roles:
+            v = tr[r][sl]
+            if r == "t":
+                v = elapsed + v - tr["t"][a]
+            elif r == "brake":
+                v = np.clip(v / (src.brake_on / 0.04) * 100, 0, 100)
+            elif r == "steer":
+                v = v * src.steer_sign
+            out[r][sl] = v
+        elapsed += float(tr["t"][b] - tr["t"][a])
+    half = max(1, round(BLEND_M / 2 / step))
+    for k in range(1, len(pieces)):
+        if pieces[k - 1][1] is pieces[k][1]:
+            continue
+        prev, nxt = pieces[k - 1][1].trace["lateral"], pieces[k][1].trace["lateral"]
+        j = starts[k]
+        lo, hi = max(j - half, 0), min(j + half, n - 1)
+        w = np.linspace(0.0, 1.0, hi - lo + 1)
+        out["lateral"][lo:hi + 1] = (1 - w) * prev[lo:hi + 1] + w * nxt[lo:hi + 1]
+    return out
+
+
+def _holders_by_section(th: Stitch, sections: list[dict]) -> list[tuple[str, Source, int]] | None:
+    """The holder of each of the line's sections: by its code, else in order when the two lists are as long (the
+    comparison and the line may number a track without official corners each their own way); None when neither
+    fits."""
+    by_code = {code: (code, src, n) for code, src, n in th.holders}
+    if sections and all(s["code"] in by_code for s in sections):
+        return [by_code[s["code"]] for s in sections]
+    if sections and len(th.holders) == len(sections):
+        return list(th.holders)
+    return None
+
+
 def build(primary: Source, picks: list[tuple[Source, int]], sections: list[dict], corners: list[dict],
-          clockwise: bool, step: int = STEP_M) -> dict:
+          clockwise: bool, step: int = STEP_M, theoreticals: list[Stitch] | None = None) -> dict:
     """The racing line page's data: the road, every picked lap on it with its attitude and loads, the corner events
     and what differs, and how accurate it is. picks are (source, lap number); the first is what the others are
-    compared against."""
+    compared against. theoreticals: stint and combined theoretical laps stitched from the laps holding each section,
+    after the real laps, each marked with its kind and the lap holding each section."""
+    theoreticals = theoreticals or []
     ref = _quickest_clean(primary.data)
     if ref is None:
         raise ValueError("No clean lap in this session to draw the line from")
@@ -741,7 +816,7 @@ def build(primary: Source, picks: list[tuple[Source, int]], sections: list[dict]
         raise NoGpsError("The quickest lap has no GPS position, so the line can't be drawn")
     lat0, lon0 = float(np.median(primary.fixes.lat[m])), float(np.median(primary.fixes.lon[m]))
     prepared: set[int] = set()
-    for src in [primary, *(s for s, _ in picks)]:
+    for src in [primary, *(s for s, _ in picks), *(s for th in theoreticals for _, s, _ in th.holders)]:
         if id(src) not in prepared:
             prepare(src, lat0, lon0)
             prepared.add(id(src))
@@ -792,6 +867,32 @@ def build(primary: Source, picks: list[tuple[Source, int]], sections: list[dict]
                   "events": corner_events(ll.trace, step, places, src.brake_on)})
         d["_trace"] = ll.trace
         laps.append(d)
+    notes = []
+    for th in theoreticals:
+        holders = _holders_by_section(th, sections)
+        if holders is None:
+            notes.append(f"The {th.label} isn't drawn: its corners aren't numbered as this line's.")
+            continue
+        pieces = [(src, placed(src, n)) for _, src, n in holders]
+        missing = next(((src, n) for (src, ll), (_, _, n) in zip(pieces, holders, strict=True) if ll is None), None)
+        if missing is not None:
+            notes.append(f"The {th.label} isn't drawn: lap {missing[1]} of {missing[0].name} can't be placed on the "
+                         "line.")
+            continue
+        tr = stitched(pieces, sections, step)
+        total = float(tr["t"][-1])
+        ll = LapLine(Lap(0, 0.0, total, total, True), pieces[0][1].s, tr)
+        stint = pieces[0][0] if th.kind == "stint" else None
+        drivers = {src.driver for src, _ in pieces}
+        d = lap_dict(ll, f"stint:{stint.session_id}" if stint else "combined", th.label, 1.0, 100.0, line)
+        d.update({"session_id": stint.session_id if stint else None, "session_name": stint.name if stint else None,
+                  "driver": next(iter(drivers)) if len(drivers) == 1 else None, "theoretical": th.kind,
+                  "from": [{"code": s["code"], "session_id": src.session_id, "lap": n, "driver": src.driver,
+                            "label": f"{src.name} lap {n}"} for s, (_, src, n) in zip(sections, holders, strict=True)],
+                  # brake already in % of a full pedal (4 %, as brake_on), steering already + to the left
+                  "events": corner_events(tr, step, places, 4.0)})
+        d["_trace"] = tr
+        laps.append(d)
     diffs = []
     for d in laps[1:]:
         diffs += differences(laps[0], d, sections, step, d["label"], max(within or 0.0, MIN_LATERAL_M))
@@ -812,4 +913,5 @@ def build(primary: Source, picks: list[tuple[Source, int]], sections: list[dict]
                      "gps_delay_s": round(primary.lag_s, 2), "clean_laps": len(cleans)},
         "laps": laps,
         "differences": diffs,
+        "notes": notes,
     }
