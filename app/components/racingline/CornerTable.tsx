@@ -1,13 +1,14 @@
 // Corner by corner, from the answer's `events` and `differences`: for each section (its official numbers, as the server
 // gives them) every lap's brake point, turn-in, where it is at the apex, throttle point and slowest speed, the laps
 // after the first with how far each point is from the first lap's; then what differs, in the server's plain words.
-// A table on a wide screen; on a phone each lap is a line of words. Tapping a corner's name moves the 3D view there.
+// A table on a wide screen; on a phone each lap is a line of words. A theoretical lap says which real lap holds the
+// corner. Tapping a corner's name moves the 3D view there.
 import { Pressable, StyleSheet } from 'react-native';
 
 import { Text, View } from '@/components/Themed';
 import { LapKey } from '@/components/racingline/LapKey';
 import { Fonts, TAP, themed, Type } from '@/constants/Theme';
-import type { CornerEvents, RacingLine } from '@/lib/racingLine';
+import type { CornerEvents, RacingLap, RacingLine } from '@/lib/racingLine';
 import { LEAD_M, sideWords } from '@/lib/racingLineMath';
 
 const metres = (v: number | null | undefined) => (v == null ? '–' : `${Math.round(v).toLocaleString('en-GB')} m`);
@@ -42,6 +43,11 @@ export function CornerTable({ data, colors, wide, onSeek }: { data: RacingLine; 
   const styles = useStyles();
   const first = data.laps[0];
   const lapName = (key: string) => data.laps.find((l) => l.key === key)?.label ?? key;
+  // a theoretical lap's name with the real lap holding this corner
+  const nameIn = (l: RacingLap, code: string) => {
+    const h = l.from?.find((f) => f.code === code);
+    return h ? `${l.label} (${h.label}${h.driver ? `, ${h.driver}` : ''})` : l.label;
+  };
   return (
     <View style={styles.list}>
       {data.sections.map((s) => {
@@ -65,8 +71,8 @@ export function CornerTable({ data, colors, wide, onSeek }: { data: RacingLine; 
                   return (
                     <View key={l.key} style={styles.tr}>
                       <View style={StyleSheet.flatten([styles.lapCol, styles.lapCell])}>
-                        <LapKey k={k} color={colors[k % colors.length]} width={24} />
-                        <Text style={styles.td}>{l.label}</Text>
+                        <LapKey k={k} color={colors[k % colors.length]} width={24} theory={l.theoretical} />
+                        <Text style={StyleSheet.flatten([styles.td, styles.lapText])}>{nameIn(l, s.code)}</Text>
                       </View>
                       {COLS.map((col) => (
                         <Text key={col.key} style={StyleSheet.flatten([styles.td, styles.col])}>
@@ -83,8 +89,8 @@ export function CornerTable({ data, colors, wide, onSeek }: { data: RacingLine; 
                 return (
                   <View key={l.key} style={styles.phoneLap}>
                     <View style={styles.lapCell}>
-                      <LapKey k={k} color={colors[k % colors.length]} width={24} />
-                      <Text style={styles.lapName}>{l.label}</Text>
+                      <LapKey k={k} color={colors[k % colors.length]} width={24} theory={l.theoretical} />
+                      <Text style={StyleSheet.flatten([styles.lapName, styles.lapText])}>{nameIn(l, s.code)}</Text>
                     </View>
                     <Text style={styles.words}>
                       {COLS.map((col) => `${col.name}: ${cell(col.key, e, ref, k === 0)}`).join(' · ')}
@@ -120,6 +126,7 @@ const useStyles = themed((c) => ({
   td: { ...Type.number, fontSize: 16, color: c.text },
   lapCol: { width: 150 },
   lapCell: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  lapText: { flexShrink: 1 },
   col: { flex: 1, minWidth: 0 },
   phoneLap: { gap: 4 },
   lapName: { ...Type.label, fontSize: 14, color: c.text },

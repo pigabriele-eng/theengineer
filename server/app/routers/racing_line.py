@@ -4,7 +4,7 @@ import json
 import threading
 from collections import OrderedDict
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from app import heavy, models
@@ -19,6 +19,7 @@ from app.routers.trackmap import _main_file
 router = APIRouter()
 
 MAX_LAPS = 4
+MAX_THEORETICALS = 3  # the stints' and their combined theoretical laps, drawn beside the real laps
 CACHE_SIZE = 6  # about 150 KB each, compressed
 _cache: OrderedDict[tuple, bytes] = OrderedDict()
 _cache_lock = threading.Lock()
@@ -51,6 +52,35 @@ def _picks(laps: str | None, others: str | None, session_id: int) -> tuple[list[
     return own, rest
 
 
+Theoretical = tuple[str, tuple[tuple[str, int, int], ...]]  # kind, (section code, session id, lap) per section
+
+
+def _theoreticals(values: list[str] | None) -> list[Theoretical]:
+    """theoretical=<kind>:<code>=<session>.<lap>,...: a stint or combined theoretical lap (POST /compare/theoretical)
+    and the real lap holding each of its sections."""
+    out = []
+    for v in values or []:
+        kind, _, rest = v.partition(":")
+        if kind not in rl.THEORETICAL_LABELS:
+            raise HTTPException(400, f"A theoretical lap is stint or combined, not {kind or v}")
+        holders = []
+        for part in rest.split(","):
+            code, _, ref = part.partition("=")
+            sid, _, n = ref.partition(".")
+            try:
+                holders.append((code.strip(), int(sid), int(n)))
+            except ValueError:
+                raise HTTPException(400, f"Each section of a theoretical lap is code=session.lap, not {part}") from None
+        if not holders or any(not code for code, _, _ in holders):
+            raise HTTPException(400, f"A {rl.THEORETICAL_LABELS[kind]} needs the lap holding each section")
+        if kind == "stint" and len({sid for _, sid, _ in holders}) > 1:
+            raise HTTPException(400, "A stint theoretical is made of one stint's laps")
+        out.append((kind, tuple(holders)))
+    if len(out) > MAX_THEORETICALS:
+        raise HTTPException(400, f"Up to {MAX_THEORETICALS} theoretical laps at a time")
+    return out
+
+
 def _driver(s: models.RunSession) -> str | None:
     return s.driver.name if s.driver else None
 
@@ -72,7 +102,8 @@ def _source(db: Session, s: models.RunSession) -> tuple[rl.Source, models.Track 
     return rl.Source(s.id, s.name or f"Session {s.id}", data, fixes, _driver(s)), track
 
 
-def _key(sessions: list[models.RunSession], own: list[int] | None, rest: list[tuple[int, int]]) -> tuple:
+def _key(sessions: list[models.RunSession], own: list[int] | None, rest: list[tuple[int, int]],
+         theoreticals: list[Theoretical] = ()) -> tuple:
     parts = []
     for s in sessions:
         f = _main_file(s)
@@ -81,10 +112,11 @@ def _key(sessions: list[models.RunSession], own: list[int] | None, rest: list[tu
             tuple(sorted(_channels(s).items()))))
     track = sessions[0].event.track if sessions[0].event and sessions[0].event.track else None
     corners = tuple(official_corners(track) or ()) if track else ()
-    return tuple(parts), tuple(own or ()), tuple(rest), corners
+    return tuple(parts), tuple(own or ()), tuple(rest), corners, tuple(theoreticals)
 
 
-def _work(db: Session, s: models.RunSession, own: list[int] | None, rest: list[tuple[int, int]]) -> dict:
+def _work(db: Session, s: models.RunSession, own: list[int] | None, rest: list[tuple[int, int]],
+          theoreticals: list[Theoretical] = ()) -> dict:
     primary, track = _source(db, s)
     numbers = own if own is not None else rl.default_laps(primary.data)
     known = {l.number for l in primary.data.laps}
@@ -93,7 +125,8 @@ def _work(db: Session, s: models.RunSession, own: list[int] | None, rest: list[t
             raise HTTPException(404, f"No lap {n} in {primary.name}")
     picks: list[tuple[rl.Source, int]] = [(primary, n) for n in numbers]
     loaded: dict[int, rl.Source] = {s.id: primary}
-    for sid, n in rest:
+
+    def lap_of(sid: int, n: int) -> rl.Source:
         if sid not in loaded:
             other = db.get(models.RunSession, sid)
             if other is None:
@@ -104,10 +137,18 @@ def _work(db: Session, s: models.RunSession, own: list[int] | None, rest: list[t
         src = loaded[sid]
         if n not in {l.number for l in src.data.laps}:
             raise HTTPException(404, f"No lap {n} in {src.name}")
-        picks.append((src, n))
+        return src
+
+    for sid, n in rest:
+        picks.append((lap_of(sid, n), n))
+    stitches = []
+    for kind, holders in theoreticals:
+        parts = [(code, lap_of(sid, n), n) for code, sid, n in holders]
+        label = rl.THEORETICAL_LABELS[kind] + (f" · {parts[0][1].name}" if kind == "stint" else "")
+        stitches.append(rl.Stitch(kind, label, parts))
     try:
         m = track_map(primary.data, official_corners(track))
-        out = rl.build(primary, picks, m["sections"], m["corners"], m["clockwise"])
+        out = rl.build(primary, picks, m["sections"], m["corners"], m["clockwise"], theoreticals=stitches)
     except (NoLapError, MapNoGps, rl.NoGpsError, ValueError) as e:
         raise HTTPException(422, str(e)) from e
     return {"session_id": s.id, "session_name": primary.name, "event_id": s.event_id, **out}
@@ -115,26 +156,33 @@ def _work(db: Session, s: models.RunSession, own: list[int] | None, rest: list[t
 
 @router.get("/sessions/{session_id}/racing-line")
 def get_racing_line(session_id: int, request: Request, laps: str | None = None, others: str | None = None,
-                    db: Session = Depends(get_db)):
+                    theoretical: list[str] | None = Query(None), db: Session = Depends(get_db)):
     """The session's laps on one racing line, for the 3D lap: the road the laps used, each lap's place on it (metres
     left or right of the session's quickest clean lap, every 2 m), its speed, pedals, steering, attitude and tyre
     loads, where it braked, turned in and picked up the throttle in each corner, what differs from the first lap in
     words, and how accurate the line is. laps: this session's lap numbers (default its two quickest clean laps);
-    others: laps of the event's other sessions as session:lap. Up to 4 laps in all."""
+    others: laps of the event's other sessions as session:lap. Up to 4 laps in all.
+
+    theoretical (repeated, up to 3): a stint or combined theoretical lap of the event's laps as
+    kind:code=session.lap,... with the real lap holding each section (POST /compare/theoretical's sections and
+    "from"), drawn after the real laps: each section's line and car from the lap holding it, the clock running on.
+    Such a lap is marked "theoretical" with "from", the lap holding each section; one that can't be drawn is left out
+    and said in "notes"."""
     s = _get(db, session_id)
     own, rest = _picks(laps, others, session_id)
     if len(own or [None, None]) + len(rest) > MAX_LAPS:
         raise HTTPException(400, f"Up to {MAX_LAPS} laps at a time")
-    sessions = [s, *(o for sid in dict.fromkeys(sid for sid, _ in rest)
-                     if (o := db.get(models.RunSession, sid)) is not None)]
-    key = _key(sessions, own, rest)
+    theo = _theoreticals(theoretical)
+    sessions = [s, *(o for sid in dict.fromkeys([*(sid for sid, _ in rest), *(sid for _, h in theo for _, sid, _ in h)])
+                     if sid != s.id and (o := db.get(models.RunSession, sid)) is not None)]
+    key = _key(sessions, own, rest, theo)
     with _cache_lock:
         body = _cache.get(key)
         if body is not None:
             _cache.move_to_end(key)
     if body is None:
         with heavy.lock:
-            out = _work(db, s, own, rest)
+            out = _work(db, s, own, rest, theo)
         body = gzip.compress(json.dumps(out, separators=(",", ":")).encode(), 6)
         with _cache_lock:
             _cache[key] = body

@@ -13,20 +13,35 @@ import { a11yState } from '@/lib/a11yState';
 
 const EVEN_S = 0.005;
 
+const HEX = /^#[0-9a-f]{6}$/i;
+const lum = (h: string) => {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255)
+    .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const contrast = (a: string, b: string) => {
+  const [x, y] = [lum(a), lum(b)];
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+};
+
 /** Ink or white for text on a filled colour: whichever has more contrast with it. */
 export function onFill(fill: string): string {
-  const lum = (h: string) => {
-    const [r, g, b] = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16) / 255)
-      .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  };
-  if (!/^#[0-9a-f]{6}$/i.test(fill)) return INK.onLight;
-  const f = lum(fill);
-  const ratio = (t: string) => {
-    const l = lum(t);
-    return (Math.max(f, l) + 0.05) / (Math.min(f, l) + 0.05);
-  };
-  return ratio(INK.onLight) >= ratio(INK.onDark) ? INK.onLight : INK.onDark;
+  if (!HEX.test(fill)) return INK.onLight;
+  return contrast(fill, INK.onLight) >= contrast(fill, INK.onDark) ? INK.onLight : INK.onDark;
+}
+
+/** The fill a block's text reads on at AA (4.5:1): the colour itself, or nudged a little darker under white text (a
+ * little lighter under ink) until it does. The tyres' "at push temperature" green is 4.4:1 with white as it is. */
+export function readableFill(fill: string): string {
+  if (!HEX.test(fill)) return fill;
+  const ink = onFill(fill);
+  const rgb = [1, 3, 5].map((i) => parseInt(fill.slice(i, i + 2), 16));
+  let out = fill;
+  for (let k = 1; k <= 20 && contrast(out, ink) < 4.5; k++) {
+    const f = ink === INK.onDark ? 1 - 0.02 * k : 0.02 * k; // towards black under white text, towards white under ink
+    out = `#${rgb.map((c) => Math.round(ink === INK.onDark ? c * f : c + (255 - c) * f).toString(16).padStart(2, '0')).join('')}`;
+  }
+  return out;
 }
 
 /** A value printed in a flat square block of colour (a table cell's colour coding). */
@@ -34,7 +49,8 @@ export function ValueBlock({ value, fill, bold, under, style }: { value: string;
   under?: boolean; style?: ViewStyle }) {
   const styles = useStyles();
   return (
-    <View style={StyleSheet.flatten([styles.vblock, { backgroundColor: fill }, under && styles.vblockUnder, style])}>
+    <View style={StyleSheet.flatten([styles.vblock, { backgroundColor: readableFill(fill) }, under && styles.vblockUnder,
+      style])}>
       <Text style={StyleSheet.flatten([styles.vblockText, bold && styles.vblockBold, { color: onFill(fill) }])}
         numberOfLines={1}>{value}</Text>
     </View>

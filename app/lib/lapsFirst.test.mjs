@@ -1,4 +1,4 @@
-// The weekend page's Laps tab: which tab it opens on, and the suggestions in words. Run with `npm test`.
+// The weekend page's tabs: which one it opens on, and the suggestions in words. Run with `npm test`.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
@@ -14,12 +14,14 @@ const lap = (extra = {}) => ({
 const code = (d) => (d ? d.split(' ').at(-1).slice(0, 3).toUpperCase() : null);
 const time = (t) => t.toFixed(2);
 
-test('Laps while the weekend is on; Before and After as before; the address can ask for any tab', () => {
-  assert.equal(openingTab('during'), 'laps');
-  assert.equal(openingTab('after'), 'after');
-  assert.equal(openingTab('before'), 'before');
-  assert.equal(askedTab('laps'), 'laps');
-  assert.equal(askedTab('after'), 'after');
+test('Driving performance once there are runs, else the runs; old addresses open on Driving performance', () => {
+  assert.equal(openingTab(true), 'driving');
+  assert.equal(openingTab(false), 'runs');
+  assert.equal(askedTab('stint'), 'stint');
+  assert.equal(askedTab('quali'), 'quali');
+  assert.equal(askedTab('runs'), 'runs');
+  assert.equal(askedTab('during'), 'driving');
+  assert.equal(askedTab('after'), 'driving');
   assert.equal(askedTab('report'), null);
   assert.equal(askedTab(undefined), null);
 });

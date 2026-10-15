@@ -21,7 +21,7 @@ Per stint: trends through the flying laps (laps tagged safety car, FCY or traffi
 out-lap, in-lap, slow lap or outlier the user counts comes in, a pit lap never does),
 the lap time trend split into fuel burn and tyre fade, the tyre fade split by phase (the seconds a lap lost where
 the car brakes, turns in, corners, exits and accelerates, as the stint goes on), and the balance shift per corner
-from the stint's early laps to its late laps.
+from the stint's early laps to its late laps, and lap by lap.
 """
 from __future__ import annotations
 
@@ -890,7 +890,7 @@ def _stint_out(st: _Stint, sens: float, has_fuel: bool) -> dict:
         "last_lap": laps[-1].number, "start_s": round(laps[0].start, 1), "end_s": round(laps[-1].end, 1),
         "best": min(times) if times else None, "median": round(float(np.median(times)), 3) if times else None,
         "fitted_laps": len(fl), "fits": fits, "fuel": fuel, "laps": rows,
-        "groups": _group_laps(st), "sections": sections,
+        "groups": _group_laps(st), "sections": sections, "balance_laps": _balance_laps(st),
     }
 
 
@@ -900,6 +900,31 @@ def _group_laps(st: _Stint) -> dict | None:
         return None
     nums = [st.laps[i].number for i in st.fitted]
     return {"early": nums[g[0]], "late": nums[g[1]]}
+
+
+def _balance_laps(st: _Stint) -> dict | None:
+    """Per corner, the balance in each phase on every lap in the trend (the values the early and late groups of
+    _section_rows take their medians of), and its trend through the stint: how it moves lap by lap, corner by corner
+    (Gabriele, 2026-10-15: "balance shift throughout stint"). None without a balance (no steering or yaw rate)."""
+    bs = st.balance_sections
+    if not bs.size or not np.isfinite(bs).any():
+        return None
+    corners = []
+    for j, s in enumerate(st.log.sections):
+        if s.apex is None:
+            continue
+        row: dict = {"code": s.code}
+        for p, (_, name) in enumerate(BALANCE_PHASES):
+            col = bs[:, j, p]
+            if np.count_nonzero(np.isfinite(col)) < 2:
+                continue
+            t = trend(st.x, col)
+            row[name] = {"values": [_r(v, 2) for v in col],
+                         "trend": None if t is None else {k: t[k] for k in ("per_lap", "within", "change", "clear",
+                                                                            "laps")}}
+        if len(row) > 1:
+            corners.append(row)
+    return {"laps": [st.laps[i].number for i in st.fitted], "corners": corners}
 
 
 def _section_rows(st: _Stint) -> list[dict]:

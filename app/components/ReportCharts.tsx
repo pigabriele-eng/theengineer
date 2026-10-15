@@ -188,9 +188,10 @@ export function LineChart({ x, series, legend, height = 180, formatX, formatY, u
               <Line key={`m${m.label}`} x1={m.x} x2={m.x} y1={PAD.top + h} y2={PAD.top + h + 4} stroke={c.axis}
                 strokeWidth={1} />
             ))}
+            {/* a label at an end of the axis is kept inside the chart, not cut off at its edge */}
             {placed.map((m) => (
-              <SvgText key={`ml${m.label}`} x={m.x} y={PAD.top + h + 16} fontSize={12} fill={c.secondary}
-                textAnchor="middle" fontFamily={SANS}>
+              <SvgText key={`ml${m.label}`} x={Math.min(Math.max(m.x, m.label.length * 3.4), width - m.label.length * 3.4)}
+                y={PAD.top + h + 16} fontSize={12} fill={c.secondary} textAnchor="middle" fontFamily={SANS}>
                 {m.label}
               </SvgText>
             ))}
@@ -214,6 +215,10 @@ export function LineChart({ x, series, legend, height = 180, formatX, formatY, u
                 <Path key={s.key} d={path(s.values)} stroke={s.color} strokeWidth={s.width ?? 2} fill="none"
                   strokeLinejoin="round" strokeLinecap="round" />
               ))}
+              {/* a point with a gap either side has no line to show it: a dot */}
+              {series.filter((s) => !s.muted).flatMap((s) => lone(s.values, i0, i1).map((i) => (
+                <Circle key={`p${s.key}${i}`} cx={px(x[i])} cy={py(s.values[i]!)} r={2.5} fill={s.color} />
+              )))}
             </G>
             {inView && (
               <Line x1={px(x[cursor])} x2={px(x[cursor])} y1={PAD.top} y2={PAD.top + h} stroke={c.axis}
@@ -245,6 +250,14 @@ export function LineChart({ x, series, legend, height = 180, formatX, formatY, u
       </ZoomArea>
     </View>
   );
+}
+
+/** The points from i0 to i1 with no value either side of them. */
+function lone(vals: (number | null)[], i0: number, i1: number): number[] {
+  const has = (i: number) => i >= 0 && i < vals.length && vals[i] != null && Number.isFinite(vals[i]);
+  const out: number[] = [];
+  for (let i = i0; i <= i1; i++) if (has(i) && !has(i - 1) && !has(i + 1)) out.push(i);
+  return out;
 }
 
 /** About `count` round values between lo and hi. */

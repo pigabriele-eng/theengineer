@@ -10,6 +10,17 @@ export const WHEELS: Wheel[] = ['FL', 'FR', 'RL', 'RR'];
 type PerWheel = Record<Wheel, number | null>;
 export type TyreReadings = { p: PerWheel; t: PerWheel }; // TPMS bar and °C
 
+// Each tyre over a run from leaving the pits: one TPMS reading every step_s (the median of the stretch), null while
+// the sensor isn't reporting; a tyre whose sensor never reported is null.
+export type TyreSeries = {
+  step_s: number;
+  p: Record<Wheel, (number | null)[] | null>;
+  t: Record<Wheel, (number | null)[] | null>;
+};
+
+// A lap of a run: start_min is when it started, in minutes from leaving the pits (the out-lap ends at the first).
+export type RunLap = { n: number; time: number; clean: boolean; start_min?: number };
+
 // One flying lap of a quali-style run, with the TPMS axle averages at the line it started from.
 export type SimPoint = {
   sim: string;
@@ -53,6 +64,7 @@ export type Sim = Procedure & {
   brake_s: number | null;
   hard_stops: number | null;
   warm_gain_per_lap: { front_c: number | null; rear_c: number | null; front_bar: number | null; rear_bar: number | null };
+  leave: TyreReadings; // 30 to 40 s after leaving, once the sensors report
   first_front: number | null;
   first_rear: number | null;
   peak_from_exit: number | null; // laps from leaving the pits to the best one, warm-up laps included
@@ -61,10 +73,13 @@ export type Sim = Procedure & {
   peak_rear: number | null;
   peak_pf: number | null;
   peak_pr: number | null;
+  peak_tyres: TyreReadings; // each tyre's median over the best lap
   hold: { laps: number; after: number; last_lap: number; minutes: number };
   bleed: PerWheel | null; // pressure change over the stop after the run
   bleed_kind: 'bled' | 'changed' | 'none' | null;
   points: SimPoint[];
+  laps: RunLap[]; // every lap of the run, the warm-up and in-laps too
+  series?: TyreSeries | null; // missing from a report kept from before it was added
   first_ready_lap: number | null;
   peak_after_ready: number | null;
 };

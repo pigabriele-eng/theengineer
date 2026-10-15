@@ -117,7 +117,7 @@ function Body({ report }: { report: Report }) {
   );
 }
 
-function Recommendation({ text }: { text: string }) {
+export function Recommendation({ text }: { text: string }) {
   const styles = useStyles();
   const type = usePrepType();
   const wide = useWide();
@@ -130,7 +130,7 @@ function Recommendation({ text }: { text: string }) {
 }
 
 /** Pieces of advice, each its title in Archivo capitals beside its text. */
-function Paras({ list }: { list: (Advice | undefined)[] }) {
+export function Paras({ list }: { list: (Advice | undefined)[] }) {
   const styles = useStyles();
   const type = usePrepType();
   const wide = useWide();
@@ -256,7 +256,7 @@ const ROWS: Row[] = [
 const rowHeight = (r: Row) => (r.lines === 2 ? 44 : 32);
 const HEAD_H = 56;
 
-function BuildTable({ sims, fastest, holdS, push }: { sims: Sim[]; fastest: string | null; holdS: number; push: Push }) {
+export function BuildTable({ sims, fastest, holdS, push }: { sims: Sim[]; fastest: string | null; holdS: number; push: Push }) {
   const styles = useStyles();
   const type = usePrepType();
   const theme = useTheme();
@@ -304,7 +304,7 @@ function BuildTable({ sims, fastest, holdS, push }: { sims: Sim[]; fastest: stri
 }
 
 /** The key to the tyre temperature colours. */
-function TempKey({ style }: { style?: object }) {
+export function TempKey({ style }: { style?: object }) {
   const styles = useStyles();
   const theme = useTheme();
   return (
@@ -460,7 +460,7 @@ function PointsTable({ sims, push }: { sims: Sim[]; push: Push }) {
 
 // ---------------------------------------------------------------- tyre windows, laid out like the car
 
-function WindowGrid({ report }: { report: Report }) {
+export function WindowGrid({ report }: { report: Report }) {
   const styles = useStyles();
   const type = usePrepType();
   const theme = useTheme();
@@ -536,7 +536,9 @@ function LongRuns({ report }: { report: Report }) {
 
 // ---------------------------------------------------------------- how it is worked out
 
-function Method({ report }: { report: Report }) {
+/** How it is worked out, behind a link: `lines` in place of all of the report's (the Quali analysis leaves the long
+ * runs out). */
+export function Method({ report, lines }: { report: Report; lines?: string[] }) {
   const styles = useStyles();
   const type = usePrepType();
   const [open, setOpen] = useState(false);
@@ -549,7 +551,7 @@ function Method({ report }: { report: Report }) {
             From {plural(report.sessions.length, 'session')}
             {report.scope.event_name ? ` of ${report.scope.event_name}` : ''}.
           </Text>
-          {report.method.map((m) => <Text key={m} style={type.note}>{m}</Text>)}
+          {(lines ?? report.method).map((m) => <Text key={m} style={type.note}>{m}</Text>)}
           {report.skipped.map((s) => (
             <Text key={s.session_id} style={type.note}>Not read: {s.session}, {s.reason}.</Text>
           ))}

@@ -3,10 +3,6 @@
 // the phone app), and only when the app was opened on the list itself, so a link to another page (a report, say)
 // still opens that page.
 import { router, usePathname } from 'expo-router';
-import { useEffect } from 'react';
-import { Platform, useWindowDimensions } from 'react-native';
-
-import { WIDE } from '@/constants/Theme';
 
 import { todayIso, whenOf } from '@/lib/calendar';
 import { eventsApi, FolderSummary } from '@/lib/events';
@@ -20,27 +16,10 @@ let launch: 'list' | 'done' | null = null;
  * only it, not the whole app, re-renders on every move. Sign-in counts as the list: it goes there next. */
 export function NoteLaunch() {
   const pathname = usePathname();
-  const { width } = useWindowDimensions();
-  if (launch === null) {
-    launch = pathname === '/' || pathname === '/sign-in' ? 'list' : 'done';
-    phoneStart = launch === 'list' && onPhone(Platform.OS, width);
-  }
-  // On a phone the app opens on Debrief, ready to record (Gabriele, 2026-10-09: "On mobile, the app should land on
-  // this page"); once, when it was opened on the list (after signing in, when it gets there)
-  useEffect(() => {
-    if (!phoneStart || pathname !== '/') return;
-    phoneStart = false;
-    launch = 'done'; // the list doesn't go on to the current event: it wasn't the page opened
-    router.replace('/debrief');
-  }, [pathname]);
+  if (launch === null) launch = pathname === '/' || pathname === '/sign-in' ? 'list' : 'done';
+  // a phone opens as a computer does, on the event that's on (Gabriele, 2026-10-15: the app is simplified to the
+  // weekends' analysis, and Debrief is hidden; it opened on Debrief before)
   return null;
-}
-
-let phoneStart = false;
-
-/** Whether the app runs on a phone: the phone app, or a window narrower than the wide layout (a phone's browser). */
-export function onPhone(os: string, width: number): boolean {
-  return os === 'ios' || os === 'android' || width < WIDE;
 }
 
 /** The event to open, asked once the list has its events: the race weekend that's on, else the next one starting
