@@ -44,14 +44,17 @@ function useDriverColors(stints: Stint[]) {
   }, [stints, c]);
 }
 
-export function TheoreticalMap({ laps, runs, onCorner }: {
+export function TheoreticalMap({ laps, runs, onCorner, given }: {
   laps: LapRef[]; // the laps compared: each stint's fastest by default
   runs: SessionRun[]; // the session's stints, for their names and drivers
   onCorner?: (code: string, laps: LapRef[]) => void; // a corner tapped, with the real laps it involves
+  // the answer for these laps when the page has asked for it already (useTheoreticals): not asked for again
+  given?: { answer: TheoreticalAnswer | null; error: string | null };
 }) {
   const styles = useStyles();
   const t = useText();
-  const theo = useTheoreticals(laps, laps.length >= 2);
+  const own = useTheoreticals(laps, given == null && laps.length >= 2);
+  const theo = given ?? own;
   const answer = theo.answer;
   if (laps.length < 2) return <Note>Pick at least two laps, one from each stint, for the theoretical laps.</Note>;
   if (theo.error) return <ErrorLine>{`Can’t work out the theoretical laps: ${theo.error}`}</ErrorLine>;

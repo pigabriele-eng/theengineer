@@ -636,7 +636,8 @@ export function Scene3D({ data, colors, palette, playhead, camera, trails, reset
         last = now;
         const b = built.current;
         const { data: d, camera: mode } = live.current;
-        if (!b || !d || !d.laps.length) return;
+        // new laps come in a frame or two before their scene is built: nothing moved until it is
+        if (!b || !d || !d.laps.length || b.cars.length !== d.laps.length) return;
         const { m, sync } = playhead.current;
         const places = placesAt(d, m, sync);
         b.trails.visible = live.current.trails;
