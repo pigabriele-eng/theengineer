@@ -934,8 +934,8 @@ def _advice(r: dict) -> list[dict]:
         sets = ", ".join(f"{c['tyre']} {c['cold_bar']:.2f}" for c in cold["tyres"] if c["cold_bar"] is not None)
         out.append({"key": "cold", "title": "What to set cold",
                     "text": f"To land in the middle of the window, set {sets} bar cold: the pressure calculator's "
-                            f"answer from the cold-to-hot rise of {_plural(cold['runs_used'], 'logged run')}. Open "
-                            "the calculator to account for today's temperatures."})
+                            f"answer from the cold-to-hot rise of {_plural(cold['runs_used'], 'logged run')}, before "
+                            "correcting for today's air and track temperatures."})
     elif cold:
         out.append({"key": "cold", "title": "What to set cold",
                     "text": "No run in these logs ran long enough on one set for the pressures to settle (12 minutes "
