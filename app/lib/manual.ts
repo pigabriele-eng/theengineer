@@ -88,6 +88,8 @@ export const MANUAL: ManualPart[] = [
         what: 'Opens on every lap of the latest session. Pick another session, or Add runs from other sessions. Tap a lap to put it on the traces (up to 6) or take it off. A green flag names the corners where a lap holds the session’s best.' },
       { name: 'Best in each corner', where: ['the event', 'During', '02 Best in each corner'],
         what: 'The quickest pass of each corner in the session and which lap it was. Add puts it on the traces.' },
+      { name: 'A stint’s own best corners', where: ['the event', 'During', '02 Best in each corner', 'the stint’s name'],
+        what: 'With two or more stints: which laps of that stint were quicker than its fastest lap in each corner, and by how much. These are the laps its stint theoretical is made of.' },
       { name: 'Stint and combined theoretical', where: ['the event', 'During', 'Theoretical laps'],
         what: 'A stint theoretical for each stint and one combined theoretical, built from the best sections. Add to graph draws them dashed. They are not real laps.' },
       { name: 'Three things for next run', where: ['the event', 'During', 'Three things for next run'],
