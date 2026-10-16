@@ -26,6 +26,7 @@ import { RacingLineView } from '@/components/racingline/RacingLineView';
 import TheoreticalMap from '@/components/weekend/TheoreticalMap';
 import { TyreChoices, TyreTag, TyreTags, useTyreTags } from '@/components/TyreTag';
 import { SessionPicker } from '@/components/weekend/SessionPicker';
+import { useMapCorner } from '@/components/weekend/MapCorner';
 import { face, TAP, themed, Type } from '@/constants/Theme';
 import { CompareResult, compareLaps, encodePicks, formatLap } from '@/lib/compare';
 import { codeOf } from '@/lib/driverTag';
@@ -186,6 +187,7 @@ export default function SessionCompare({ no, eventId, folder }: { no: number; ev
   // session's)
   const [cornerOf, setCornerOf] = useState<{ key: string; code: string; laps: LapRef[] } | null>(null);
   const corner = cornerOf?.key === sessionKey ? cornerOf : null;
+  useMapCorner(corner?.code); // lit on the track map beside the page
   const lineLaps = corner ? corner.laps.slice(0, 4) : laps;
   const lineBox = useRef<Box>(null);
   const showCorner = (code: string, ls: LapRef[]) => {
