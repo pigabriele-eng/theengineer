@@ -8,7 +8,10 @@ import { createClient, isAuthError, isAuthRetryableFetchError, type Session } fr
 import { useEffect, useState } from 'react';
 import { AppState, Platform } from 'react-native';
 
-const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
+import { desktop } from './desktop';
+
+// The desktop app never signs in: its server runs on the same computer, for the person using it.
+const url = desktop ? undefined : process.env.EXPO_PUBLIC_SUPABASE_URL;
 const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
 // Whether this build asks people to sign in.

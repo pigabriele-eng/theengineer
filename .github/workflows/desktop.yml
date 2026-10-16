@@ -1,0 +1,110 @@
+name: Desktop app
+
+# Builds the desktop app (desktop/): the Windows installer (Gabriele's computer; a Mac build can be added back to the
+# matrix), holding the web build of app/ and the
+# analysis server packed as one program (PyInstaller), so nothing else needs installing. On main (and when run by hand:
+# Actions → Desktop app → Run workflow) the installers go on the release "Desktop app (latest)", whose page is where
+# they are downloaded from. On a pull request that changes desktop/ they are kept with the run, to try.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths: [desktop/**, .github/workflows/desktop.yml]
+  workflow_dispatch:
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write  # the release
+
+jobs:
+  build:
+    name: build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows, os: windows-latest, target: --win --x64, files: "desktop/release/*.exe" }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: the analysis server, as one program
+        shell: bash
+        working-directory: server
+        run: |
+          python -m pip install --upgrade pip
+          pip install . pyinstaller
+          pyinstaller --noconfirm --clean --onedir --name theengineer-server \
+            --distpath ../desktop/build/pyi --workpath ../desktop/build/pyi-work --specpath ../desktop/build \
+            --paths . --collect-submodules app --collect-submodules uvicorn \
+            --add-data "$(pwd -W 2>/dev/null || pwd)/app/results/certs${{ runner.os == 'Windows' && ';' || ':' }}app/results/certs" \
+            ../desktop/server_main.py
+
+      - name: the server starts and answers
+        shell: bash
+        run: |
+          data="$RUNNER_TEMP/data"
+          mkdir -p "$data"
+          export TE_PORT=8765 STORAGE_DIR="$data/files" DATABASE_URL="sqlite:///$(cd "$data" && pwd -W 2>/dev/null || pwd)/theengineer.db"
+          desktop/build/pyi/theengineer-server/theengineer-server > "$RUNNER_TEMP/server.log" 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8765/health; then echo; kill %1 || true; exit 0; fi
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/server.log"
+          exit 1
+
+      - name: the app's pages (no sign-in, no online server)
+        shell: bash
+        working-directory: app
+        run: |
+          npm ci
+          npx expo export --platform web --output-dir dist
+          node scripts/web-preload.mjs dist
+
+      - name: the installer
+        shell: bash
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"  # no paid signing certificate
+        run: |
+          npm ci
+          npx electron-builder ${{ matrix.target }} --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: The-Engineer-${{ matrix.name }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+
+  release:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+      - name: "the release: Desktop app (latest)"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          notes="The Engineer for your Windows computer, built from $GITHUB_REF_NAME at $GITHUB_SHA. Download the .exe below and open it."
+          if gh release view desktop-latest > /dev/null 2>&1; then
+            gh release edit desktop-latest --notes "$notes" --target "$GITHUB_SHA"
+            gh release upload desktop-latest installers/* --clobber
+          else
+            gh release create desktop-latest installers/* --title "Desktop app (latest)" --notes "$notes" --target "$GITHUB_SHA"
+          fi
