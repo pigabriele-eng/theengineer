@@ -1,9 +1,10 @@
-// The home page's events by year and championship, and what is open by default. Run with `npm test`.
+// The home page's tracks with their events, what an event is called, and the lines its events show. Run with `npm test`.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  byYear, carLine, champKey, driverLapsLine, driversLine, eventKey, finishesLine, monthSpan, openByDefault, OTHER, shortName, surname, yearKey,
+  byTrack, carLine, driverLapsLine, driversLine, eventLabel, finishesLine, shortName, surname, UNKNOWN, UNKNOWN_NAME,
+  yearSpan,
 } from './homeFolds.ts';
 
 const ev = (id, start, end, extra = {}) => ({
@@ -24,34 +25,54 @@ const folders = [
   ev(7, '2026-07-01', '2026-07-03', { series: 'ADAC GT4 Germany' }),
 ];
 
-test('events by year, newest first, no date last; championships by name, the rest last; rounds in date order', () => {
-  const years = byYear(folders);
-  assert.deepEqual(years.map((y) => y.key), ['2026', '2025', 'none']);
-  const [y26, y25, none] = years;
-  assert.equal(y26.events, 5);
-  assert.deepEqual([y26.start, y26.end], ['2026-04-10', '2026-10-11']);
-  assert.deepEqual(y26.championships.map((c) => c.name), ['ADAC GT4 Germany', 'GT4 European Series 2026', OTHER]);
-  assert.deepEqual(y26.championships[1].events.map((f) => f.id), [3, 2, 5]);
-  assert.deepEqual(y25.championships.map((c) => [c.name, c.other, c.events.length]), [[OTHER, true, 1]]);
-  assert.deepEqual(none.championships[0].events.map((f) => f.id), [6]);
-  assert.equal(none.year, null);
-  // the runs in no event have their own line, not a year
-  assert.ok(!years.some((y) => y.championships.some((c) => c.events.some((f) => f.id == null))));
+// where an event was, as the page works it out (its track, else its planned venue, else its name)
+const keyOf = { 'Hockenheim GP': 'hockenheim', Hockenheimring: 'hockenheim', Zandvoort: 'zandvoort', Monza: 'monza' };
+const at = (f) => (f.track && keyOf[f.track] ? { key: keyOf[f.track], name: f.track.replace(/ GP$|ring$/, '') } : null);
+
+test('events by track: the latest driven first, planned-only tracks after, unknown last; events newest first', () => {
+  const list = [
+    { ...ev(null, '2025-05-05', '2025-05-05'), key: 'none', name: 'Not in an event' },
+    ev(1, '2025-05-05', '2025-05-06', { track: 'Hockenheim GP' }),
+    ev(2, '2026-09-18', '2026-09-20', { ...gt4(5), track: 'Zandvoort', clean_laps: 40 }),
+    ev(3, '2026-04-10', '2026-04-12', { ...gt4(1), track: 'Hockenheimring', clean_laps: 30 }),
+    ev(4, '2026-02-03', '2026-02-03', { track: 'Hockenheim GP', clean_laps: 12 }),
+    ev(5, '2026-11-09', '2026-11-11', { track: 'Monza', sessions: 0, clean_laps: 0 }),
+    ev(6, null, null, { sessions: 0, clean_laps: 0 }),
+    ev(7, '2026-12-01', '2026-12-01', { track: 'Zandvoort', sessions: 0, clean_laps: 0 }),
+  ];
+  const tracks = byTrack(list, at);
+  assert.deepEqual(tracks.map((t) => t.key), ['zandvoort', 'hockenheim', 'monza', UNKNOWN]);
+  const [zan, hoc, mon, none] = tracks;
+  // a planned event later than the latest driven one comes first under its track, and doesn't move the track
+  assert.deepEqual(zan.events.map((f) => f.id), [7, 2]);
+  assert.deepEqual(hoc.events.map((f) => f.id), [3, 4, 1]); // two names, one circuit
+  assert.equal(hoc.name, 'Hockenheim');
+  assert.deepEqual([hoc.driven, hoc.cleanLaps, hoc.first, hoc.last], [3, 43, '2025-05-05', '2026-04-12']);
+  assert.deepEqual([mon.driven, mon.events.length], [0, 1]);
+  assert.deepEqual([none.name, none.events.map((f) => f.id)], [UNKNOWN_NAME, [6]]);
+  // the runs in no event have their own line, not a track
+  assert.ok(!tracks.some((t) => t.events.some((f) => f.id == null)));
 });
 
-test('open by default: this year and the lead event\'s year, every championship, the lead event', () => {
-  const years = byYear(folders);
-  const lead = folders.find((f) => f.id === 2);
-  const open = openByDefault(years, lead, 2026);
-  assert.ok(open.has('y:2026') && !open.has('y:2025') && !open.has('y:none'));
-  assert.ok(open.has(champKey(years[0], years[0].championships[1])));
-  assert.ok(open.has(eventKey(lead)) && !open.has('e:3'));
-  // only last year's test: its year opens, with it
-  const old = byYear([ev(1, '2025-05-05', '2025-05-06')]);
-  assert.deepEqual([...openByDefault(old, old[0].championships[0].events[0], 2026)].sort(),
-    ['c:2025:other', 'e:1', 'y:2025']);
-  // no lead at all: the newest year
-  assert.ok(openByDefault(old, null, 2026).has(yearKey(old[0])));
+test('an event is called by its championship and year, else Test and its month', () => {
+  assert.equal(eventLabel(ev(1, '2025-09-18', '2025-09-20', { season: { id: 1, name: 'GT4 European Series 2025', year: 2025, round: 5 } })),
+    'GT4 Euro 2025');
+  assert.equal(eventLabel(ev(1, '2026-07-01', '2026-07-03', { series: 'ADAC GT4 Germany' })), 'ADAC GT4 Germany 2026');
+  // the season's year, not the day's: a round that ran into the new year
+  assert.equal(eventLabel(ev(1, '2027-01-02', '2027-01-03', { season: { id: 1, name: 'Winter Series', year: 2026, round: 4 } })),
+    'Winter Series 2026');
+  assert.equal(eventLabel(ev(1, '2026-02-03', '2026-02-04')), 'Test February 2026');
+  // named a test, in a championship: still a test
+  assert.equal(eventLabel(ev(1, '2026-03-20', '2026-03-20', { series: 'ADAC GT4 Germany', name: 'ADAC Testtage Oschersleben' })),
+    'Test March 2026');
+  assert.equal(eventLabel(ev(1, null, null)), 'Test');
+  assert.equal(eventLabel(ev(1, null, null, { series: 'GT4 European Series' })), 'GT4 Euro');
+});
+
+test('the years a track\'s events span', () => {
+  assert.equal(yearSpan('2025-05-05', '2026-04-12'), '2025–2026');
+  assert.equal(yearSpan('2026-02-03', '2026-04-12'), '2026');
+  assert.equal(yearSpan(null, null), null);
 });
 
 test('a round\'s event reads without its championship\'s name under it', () => {
@@ -59,13 +80,6 @@ test('a round\'s event reads without its championship\'s name under it', () => {
   assert.equal(shortName(ev(1, null, null, { ...gt4(5), name: 'Zandvoort weekend' })), 'Zandvoort weekend');
   assert.equal(shortName(ev(1, null, null, { name: 'Monza test · GT4 European Series 2026' })),
     'Monza test · GT4 European Series 2026'); // in no championship: as it is
-});
-
-test('the months a year spans', () => {
-  assert.equal(monthSpan('2026-04-10', '2026-10-11'), 'Apr–Oct');
-  assert.equal(monthSpan('2025-05-05', '2025-05-06'), 'May');
-  assert.equal(monthSpan('2025-12-30', '2026-01-02'), 'Dec 2025–Jan 2026');
-  assert.equal(monthSpan(null, null), null);
 });
 
 test("an event's drivers by surname and its main car", () => {

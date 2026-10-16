@@ -2,6 +2,8 @@
 // the list; Back and the Weekend link still reach the list. Once per launch (a fresh load of the web app, a launch of
 // the phone app), and only when the app was opened on the list itself, so a link to another page (a report, say)
 // still opens that page.
+// Not used while the app opens on the list of tracks (Gabriele, 2026-10-16: "The app should open to a list of
+// tracks"): kept for when it is wanted back. Compare still asks currentEvent for the track it starts on.
 import { router, usePathname } from 'expo-router';
 
 import { todayIso, whenOf } from '@/lib/calendar';

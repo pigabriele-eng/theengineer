@@ -6,18 +6,18 @@ import { backFrom, backLabel, parentOf, step } from './backTo.ts';
 
 const up = (path, event) => parentOf(path, event)?.path ?? null;
 
-test('the race weekends are the top: no Back there', () => {
+test('the tracks are the top: no Back there', () => {
   assert.equal(parentOf('/'), null);
   assert.equal(parentOf(''), null);
   assert.equal(backFrom(['/event/3', '/'], '/', null, true), null);
 });
 
-test('an event goes up to the race weekends', () => {
+test('an event goes up to the tracks', () => {
   assert.equal(up('/event/3'), '/');
   assert.equal(up('/event/none'), '/'); // the runs in no event
 });
 
-test('a run goes up to its event, else the race weekends', () => {
+test('a run goes up to its event, else the tracks', () => {
   assert.deepEqual(parentOf('/session/12', { id: 3, name: 'Hockenheim test' }), { path: '/event/3', name: 'Hockenheim test' });
   assert.deepEqual(parentOf('/session/12', { id: 3 }), { path: '/event/3', name: 'the event' });
   assert.equal(up('/session/12'), '/');
@@ -25,14 +25,14 @@ test('a run goes up to its event, else the race weekends', () => {
   assert.equal(up('/session/12', { id: 'none' }), '/');
 });
 
-test("an event's reports and checks go up to the event they have, else the race weekends", () => {
+test("an event's reports and checks go up to the event they have, else the tracks", () => {
   for (const p of ['/report', '/technique', '/quali', '/prep', '/prediction', '/debrief/4']) {
     assert.equal(up(p, { id: '7' }), '/event/7', p);
     assert.equal(up(p), '/', p);
   }
 });
 
-test('compare and the top-level pages go up to the race weekends, even with an event', () => {
+test('compare and the top-level pages go up to the tracks, even with an event', () => {
   for (const p of ['/compare', '/drivers', '/coaching', '/setup', '/upload', '/debrief', '/tools']) {
     assert.equal(up(p, { id: 7 }), '/', p);
   }
@@ -64,15 +64,15 @@ test('the trail of visited pages: on top, the same again, one back', () => {
 });
 
 test("the masthead's Weekend, Upload, Debrief and Tools close what was opened over them, as the navigator does", () => {
-  // Weekend -> Drivers -> Tools: one page back from Tools is the race weekends, not Drivers
+  // Weekend -> Drivers -> Tools: one page back from Tools is the tracks, not Drivers
   assert.deepEqual(step(['/', '/drivers'], '/tools'), ['/', '/tools']);
   assert.deepEqual(step(['/', '/event/3', '/session/12'], '/upload'), ['/', '/upload']);
   assert.deepEqual(step(['/session/12'], '/'), ['/']);
-  // opened fresh on Tools: the race weekends are under it
+  // opened fresh on Tools: the tracks are under it
   assert.deepEqual(step([], '/tools'), ['/', '/tools']);
   assert.deepEqual(step(['/', '/tools', '/tools/pressures'], '/tools'), ['/', '/tools']);
   assert.deepEqual(backFrom(step(['/', '/drivers'], '/tools'), '/tools', null, true),
-    { to: 'history', place: { path: '/', name: 'the race weekends' } });
+    { to: 'history', place: { path: '/', name: 'the tracks' } });
 });
 
 test('with pages visited, Back is one page back, named when it can be', () => {
@@ -80,9 +80,9 @@ test('with pages visited, Back is one page back, named when it can be', () => {
   assert.deepEqual(backFrom(['/', '/event/3', '/session/12'], '/session/12', event, true),
     { to: 'history', place: { path: '/event/3', name: 'Hockenheim test' } });
   assert.deepEqual(backFrom(['/', '/event/3'], '/event/3', null, true),
-    { to: 'history', place: { path: '/', name: 'the race weekends' } });
+    { to: 'history', place: { path: '/', name: 'the tracks' } });
   assert.deepEqual(backFrom(['/', '/tools'], '/tools', null, true),
-    { to: 'history', place: { path: '/', name: 'the race weekends' } });
+    { to: 'history', place: { path: '/', name: 'the tracks' } });
   assert.deepEqual(backFrom(['/report', '/tools/stint'], '/tools/stint', null, true), { to: 'history', place: null });
 });
 

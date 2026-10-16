@@ -27,7 +27,7 @@ export {
 } from 'expo-router';
 
 export const unstable_settings = {
-  // A page loaded fresh keeps the race weekends under it (the masthead's Back still goes up to the page above it,
+  // A page loaded fresh keeps the tracks under it (the masthead's Back still goes up to the page above it,
   // components/Back.tsx).
   initialRouteName: '(tabs)',
 };

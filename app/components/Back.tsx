@@ -1,4 +1,4 @@
-// The masthead's Back, the one way back on every page but the race weekends (Gabriele, 2026-10-08): one page back when
+// The masthead's Back, the one way back on every page but the tracks (Gabriele, 2026-10-08): one page back when
 // pages were visited in the app, else up to the page above (lib/backTo.ts). The masthead keeps the trail of pages
 // visited in this load; a page that belongs to an event says which with useBackTo, so a run opened fresh from a link
 // still goes back to its event.
@@ -50,7 +50,7 @@ export function noteVisit(path: string) {
   trail = step(trail, path);
 }
 
-/** "‹ Back" in the label face, a full tap target; nothing on the race weekends. */
+/** "‹ Back" in the label face, a full tap target; nothing on the tracks. */
 export function BackLink({ path }: { path: string }) {
   const styles = useStyles();
   const router = useRouter();

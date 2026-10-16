@@ -41,12 +41,39 @@ export function plain(text: string | null | undefined) {
   return unescape(text ?? '').normalize('NFKD').replace(/\p{M}/gu, '').replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
-/** 'Circuit Paul Ricard' -> 'paul-ricard', 'N&uuml;rburgring' -> 'nurburgring', 'Hockenheim GP' -> 'hockenheim'. */
-export function venueKey(name: string | null | undefined): string | null {
+/** A word of the name, or the start of one for a long word ("Hockenheimring"): "spa" is not in "Spain". */
+const says = (low: string, word: string) =>
+  new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${word.length >= 6 ? '' : '\\b'}`).test(low);
+
+/** The key of a circuit the list knows by name, else null: 'Hockenheim GP' -> 'hockenheim', 'Monza test' -> 'monza',
+ * 'Spain test' -> null. */
+export function knownVenue(name: string | null | undefined): string | null {
   if (!name) return null;
   const low = plain(name).replace(/_/g, ' ');
   for (const [key, words] of Object.entries(ALIASES)) {
-    if (words.some((w) => low.includes(w))) return key;
+    if (words.some((w) => says(low, w))) return key;
   }
-  return low.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || null;
+  return null;
+}
+
+/** 'Circuit Paul Ricard' -> 'paul-ricard', 'N&uuml;rburgring' -> 'nurburgring', 'Hockenheim GP' -> 'hockenheim'. */
+export function venueKey(name: string | null | undefined): string | null {
+  if (!name) return null;
+  return knownVenue(name) ?? (plain(name).replace(/_/g, ' ').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || null);
+}
+
+// what the track list calls a circuit it knows (the app's own: the server has no need of it)
+const NAMES: Record<string, string> = {
+  'paul-ricard': 'Paul Ricard', spa: 'Spa-Francorchamps', nurburgring: 'Nürburgring', hockenheim: 'Hockenheim',
+  zandvoort: 'Zandvoort', monza: 'Monza', misano: 'Misano', barcelona: 'Barcelona', jeddah: 'Jeddah',
+  portimao: 'Portimão', imola: 'Imola', 'red-bull-ring': 'Red Bull Ring', valencia: 'Valencia',
+  'brands-hatch': 'Brands Hatch', silverstone: 'Silverstone', 'magny-cours': 'Magny-Cours', lausitzring: 'Lausitzring',
+  sachsenring: 'Sachsenring', oschersleben: 'Oschersleben', norisring: 'Norisring',
+};
+
+/** A track's name on the list: 'Hockenheimring Baden-Württemberg' -> 'Hockenheim', 'Circuit de Spa-Francorchamps' ->
+ * 'Spa-Francorchamps'; a circuit it doesn't know keeps the name it was given, tidied ('Salzburgring'). */
+export function trackName(name: string): string {
+  const key = knownVenue(name);
+  return (key && NAMES[key]) || unescape(name).replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
 }
