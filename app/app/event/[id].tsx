@@ -1,6 +1,6 @@
 import { Link, Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions } from 'react-native';
 
 import { DeleteEvent } from '@/components/DeleteEvent';
 import { DeleteRuns, deletedLine } from '@/components/DeleteRuns';
@@ -23,7 +23,9 @@ import {
   filledNote, localPick, PickerKind, RunChips, RunNameEditor, RunPicker, useEventDrivers, useGarage,
 } from '@/components/RunChips';
 import { Text, View } from '@/components/Themed';
+import { TrackMap } from '@/components/TrackMap';
 import { TyreChoices, TyreTag, TyreTags, useTyreTags } from '@/components/TyreTag';
+import { MapCorner } from '@/components/weekend/MapCorner';
 import QualiTab from '@/components/weekend/QualiTab';
 import SessionCompare from '@/components/weekend/SessionCompare';
 import StintTab from '@/components/weekend/StintTab';
@@ -47,6 +49,7 @@ type Run = FolderSession & { driver_id?: number | null; car_id?: number | null }
 type Panel = 'rename' | 'edit' | 'delete' | 'move' | 'delete runs';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const SIDE_MAP = 1000; // from this wide the track map has a column of its own beside the page; narrower, it's pinned on top
 
 /** One event as a race programme: its track on the photo with the event's facts under it, then four tabs (Gabriele,
  * 2026-10-15: "Driving performance to identify missing speed ... Stint analysis ... Quali analyisis ... Remove
@@ -60,7 +63,7 @@ export default function EventScreen() {
   const styles = useStyles();
   const wide = useWide();
   const gutter = useGutter();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const params = useLocalSearchParams<{ id: string; ticked?: string; stage?: string }>();
   const key = params.id === NO_EVENT ? NO_EVENT : String(Number(params.id));
   const router = useRouter();
@@ -73,6 +76,9 @@ export default function EventScreen() {
   const [panel, setPanel] = useState<Panel | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [mapCorner, setMapCorner] = useState<string | null>(null); // the corner a tab points at, lit on the track map
+  const [mapShown, setMapShown] = useState(true); // the map pinned on a phone
+  const [noMap, setNoMap] = useState<number | null>(null); // the event with no map to draw (no GPS...)
   // the run whose driver list is open, and what a pick did to other runs (said under the run picked)
   const [open, setOpen] = useState<{ id: number; what: PickerKind } | null>(null);
   const [runNote, setRunNote] = useState<{ id: number; text: string } | null>(null);
@@ -356,9 +362,40 @@ export default function EventScreen() {
         : stage === 'quali' ? <QualiTab no={1} eventId={eventId} folder={folder} />
           : runs;
 
+  // The track map, in view whatever the page shows (Gabriele, 2026-10-16: "Track map must be visible at all times"):
+  // a column of its own beside the page on a computer, pinned on top on a phone (one tap folds it). The event's
+  // fastest lap with the official corner numbers; the corner a tab points at (MapCorner) lit on it.
+  const showMap = eventId != null && (folder?.sessions ?? 0) > 0 && noMap !== eventId;
+  const side = width >= SIDE_MAP;
+  const sideWidth = Math.round(Math.min(420, Math.max(300, width * 0.26)));
+  const map = showMap ? (
+    <TrackMap key={`${eventId}:${folder?.sessions}:${folder?.best_lap_s}`} event={eventId!}
+      highlight={mapCorner ?? undefined} compact={!side} onNone={() => setNoMap(eventId)}
+      maxHeight={side ? Math.max(180, height - 200) : Math.max(110, Math.min(200, Math.round(height / 3) - 64))} />
+  ) : null;
+  // on the web the mouse wheel over the map column scrolls the page
+  const wheel = Platform.OS === 'web' ? {
+    onWheel: (e: { deltaY: number; deltaMode: number }) => (scroll.current as unknown as {
+      getScrollableNode?: () => { scrollBy?: (x: number, y: number) => void } | undefined;
+    } | null)?.getScrollableNode?.()?.scrollBy?.(0, e.deltaY * (e.deltaMode === 1 ? 16 : 1)),
+  } : {};
+
   return (
+    <MapCorner.Provider value={setMapCorner}>
     <View style={styles.screen} {...closesRows}>
       <Stack.Screen options={{ title, headerShown: false }} />
+      {map && !side && (
+        <View style={styles.pinned} {...noPrint}>
+          <View style={styles.pinnedBar}>
+            <Label small>Track map</Label>
+            <Text style={styles.pinnedNote} numberOfLines={1}>{mapShown ? mapCorner ?? folder?.track ?? '' : ''}</Text>
+            <TextLink small label={mapShown ? 'Hide map' : 'Show map'} onPress={() => setMapShown(!mapShown)} />
+          </View>
+          {/* hidden, not removed: showing it again doesn't ask the server again */}
+          <View style={mapShown ? undefined : styles.gone}>{map}</View>
+        </View>
+      )}
+      <View style={map && side ? styles.split : styles.whole}>
       <Page top={top} scrollRef={scroll}>
         {!folder && !error && <ActivityIndicator style={styles.loading} />}
         {error && (
@@ -382,6 +419,13 @@ export default function EventScreen() {
           ]} />
         )}
       </Page>
+      {map && side && (
+        <View {...wheel} {...noPrint} style={StyleSheet.flatten([styles.side, { width: sideWidth }])}>
+          {map}
+          <Text style={styles.sideNote}>A corner you tap on Driving, or read on Stint, lights up here.</Text>
+        </View>
+      )}
+      </View>
       {picks.length > 0 && (
         <View style={styles.bar}>
           <View style={StyleSheet.flatten([styles.barInner, { paddingHorizontal: gutter }])}>
@@ -393,6 +437,7 @@ export default function EventScreen() {
         </View>
       )}
     </View>
+    </MapCorner.Provider>
   );
 }
 
@@ -647,6 +692,15 @@ const RUN_PAD = { top: 10, bottom: 9 };
 
 const useStyles = themed((c) => ({
   screen: { flex: 1, backgroundColor: c.background },
+  whole: { flex: 1 },
+  // the track map: a column beside the page, or pinned on top on a phone
+  split: { flex: 1, flexDirection: 'row' },
+  side: { borderLeftWidth: 1, borderColor: c.rule, padding: 16, gap: 8, backgroundColor: c.background },
+  sideNote: { fontFamily: Type.dek.fontFamily, fontSize: 15, lineHeight: 21, color: c.textSecondary },
+  pinned: { borderBottomWidth: 1, borderColor: c.rule, paddingHorizontal: 16, paddingBottom: 6, backgroundColor: c.background },
+  pinnedBar: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: TAP, backgroundColor: 'transparent' },
+  pinnedNote: { ...Type.label, color: c.textSecondary, flex: 1, minWidth: 0 },
+  gone: { display: 'none' },
   loading: { marginTop: 32, alignSelf: 'flex-start' },
   errorBox: { marginTop: 20, gap: 12 },
 

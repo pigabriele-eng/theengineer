@@ -16,6 +16,7 @@ import { Fig, Section, TextLink, useWide } from '@/components/Programme';
 import { BalanceLaps, CornerShift } from '@/components/StintBalance';
 import { LapList, LapTimes, OnTag } from '@/components/StintLaps';
 import { Text, View } from '@/components/Themed';
+import { useMapCorner } from '@/components/weekend/MapCorner';
 import { codeOf } from '@/lib/driverTag';
 import { Folder, sessionsInOrder } from '@/lib/events';
 import { BalancePhase, clearLapTag, fetchStintLogs, fetchStintView, putLapTag, signed, Stint, StintView } from '@/lib/stint';
@@ -141,6 +142,7 @@ function Balance({ stint }: { stint: Stint }) {
   const top = (p: BalancePhase) => all.find((s) => s.phase === p)?.code ?? null;
   const [phase, setPhase] = useState<BalancePhase>(all[0]?.phase ?? 'entry');
   const [corner, setCorner] = useState<string | null>(all[0]?.code ?? null);
+  useMapCorner(corner); // the corner read, lit on the track map beside the page
   const turn = (p: BalancePhase) => {
     setPhase(p);
     setCorner(top(p));

@@ -80,6 +80,8 @@ export const MANUAL: ManualPart[] = [
     title: 'Driving performance',
     dek: 'Where the missing speed is: the stint and combined theoreticals, which lap of which driver made each corner, the 3D racing line and what the quickest corners did differently.',
     items: [
+      { name: 'Track map', where: ['the event', 'beside the page (on a phone, at the top)'],
+        what: 'The event’s fastest lap with the official corner numbers, in view on every tab while you scroll. A corner you tap on Driving, or read on Stint, lights up on it. Hover or tap a section for where it starts and ends. On a phone, Hide map folds it.' },
       { name: 'Pick the session', where: ['the event', 'Driving', '01', 'Session'],
         what: 'Opens on the latest session. Pick another session, or add stints from other sessions.' },
       { name: 'Stint and combined theoretical', where: ['the event', 'Driving', '01 Theoretical laps'],
