@@ -28,7 +28,7 @@ import QualiTab from '@/components/weekend/QualiTab';
 import SessionCompare from '@/components/weekend/SessionCompare';
 import StintTab from '@/components/weekend/StintTab';
 import { formatLap } from '@/lib/api';
-import { todayIso, When, whenOf } from '@/lib/calendar';
+import { eventLabel } from '@/lib/homeFolds';
 import { countryOfAny } from '@/lib/countries';
 import { DAY_GAP, dayColumns, MIN_EVENT_DAY } from '@/lib/dayColumns';
 import { RunsDeleted } from '@/lib/deleteRuns';
@@ -186,8 +186,8 @@ export default function EventScreen() {
 
   const top = folder ? (
     <View onLayout={(e) => (topH.current = e.nativeEvent.layout.height)}>
-      <Hero photo={isEvent ? photoFor(folder.track) : PHOTOS.dusk} tag={isEvent ? TAG[whenOf(folder, todayIso())] : 'Unfiled'}
-        rest="Weekend" restHref="/" title={headlineOf(folder, isEvent)} deck={deckOf(folder, isEvent)}
+      <Hero photo={isEvent ? photoFor(folder.track) : PHOTOS.dusk} tag={isEvent ? tagOf(folder) : 'Unfiled'}
+        rest="Tracks" restHref="/" title={headlineOf(folder, isEvent)} deck={deckOf(folder, isEvent)}
         // a lower photo than other pages: the weekend page is read for its answers, which start under it
         height={wide ? 320 : 290} badge={country ? <HeroCountry country={country} /> : undefined} />
       <Folio items={isEvent ? [
@@ -364,7 +364,7 @@ export default function EventScreen() {
         {error && (
           <View style={styles.errorBox}>
             <ErrorLine>{folder ? error : `Can’t open this event: ${error}`}</ErrorLine>
-            {!folder && <TextLink href="/" label="Weekend" arrow />}
+            {!folder && <TextLink href="/" label="Tracks" arrow />}
           </View>
         )}
         {stageBar}
@@ -376,7 +376,7 @@ export default function EventScreen() {
         {more}
         {folder && (
           <Colophon left={`The Engineer · ${isEvent ? 'Event' : 'Unfiled runs'}`} links={[
-            { label: 'Weekend', href: '/' },
+            { label: 'Tracks', href: '/' },
             { label: 'Seasons', href: '/seasons' },
             { label: 'Garage', href: '/garage' },
           ]} />
@@ -398,7 +398,6 @@ export default function EventScreen() {
 
 // ---------- words ----------
 
-const TAG: Record<When, string> = { current: 'Current event', past: 'Past event', upcoming: 'Next event' };
 const WORDS = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
 const inWords = (n: number) => WORDS[n] ?? String(n);
 const pad2 = (n: number) => String(n).padStart(2, '0');
@@ -411,12 +410,24 @@ function shortTrack(track: string | null) {
   return t.split(/\s*[,(]|\s+-\s+|-(?=[A-Z])/)[0];
 }
 
-/** What kind of event its runs make: a race weekend (qualifying or races), a practice, or a test. */
+/** What kind of event it is: a championship's (not named a test) is a race weekend, as the list of tracks calls it
+ * by the championship; else what its runs make: a race weekend (qualifying or races), a practice, or a test. */
 function kindOf(f: Folder): 'test' | 'practice' | 'weekend' {
+  if (inChampionship(f)) return 'weekend';
   const kinds = new Set(f.days.flatMap((d) => d.sessions.map((s) => s.kind)));
   if (kinds.has('race') || kinds.has('qualifying')) return 'weekend';
   if (kinds.size) return kinds.has('test') ? 'test' : 'practice';
   return f.series ? 'weekend' : 'test';
+}
+
+/** In a championship and not named a test: the list of tracks calls it by the championship (lib/homeFolds.ts). */
+const inChampionship = (f: Folder) => !!f.series?.trim() && !/\btest/i.test(f.name);
+
+/** The red tag on the photo: the championship and year, as the list of tracks calls the event ("GT4 Euro 2025"),
+ * else what kind of event it is; no Past, Current or Next (Gabriele, 2026-10-16). */
+function tagOf(f: Folder) {
+  if (inChampionship(f)) return eventLabel(f);
+  return { weekend: 'Race weekend', practice: 'Practice', test: 'Test' }[kindOf(f)];
 }
 
 /** The headline on the photo, as on the Sessions page: "Hockenheim test", "Zandvoort weekend"; else the event's name. */

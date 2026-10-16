@@ -162,7 +162,7 @@ export default function SeasonsScreen() {
           }} />
       ))}
       <Colophon left="The Engineer · Seasons" links={[
-        { label: 'Weekend', href: '/' },
+        { label: 'Tracks', href: '/' },
         { label: 'Garage', href: '/garage' },
         { label: 'Racing calendar', href: '/tools/calendar' },
       ]} />

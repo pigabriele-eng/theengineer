@@ -6,7 +6,6 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, TextStyle, useWin
 import { useBackTo } from '@/components/Back';
 import { LapCompare } from '@/components/LapCompare';
 import { Tick } from '@/components/Controls';
-import { SessionResults } from '@/components/OfficialSessionCard';
 import {
   B, Block, Colophon, Fig, Folio, Hero, Label, Page, Section, Swatch, TextLink, useGutter, useWide,
 } from '@/components/Programme';
@@ -206,10 +205,9 @@ export default function SessionScreen() {
     load();
   }, [load]);
   // what the page's parts ask for once the run is in, but don't need its answer for: asked for now, with the run
-  // (its official result, its setup sheet, the garage behind its chips, its track map and shape)
+  // (its setup sheet, the garage behind its chips, its track map and shape)
   useEffect(() => {
-    prefetch(`/results/runs/${sessionId}`, `/sessions/${sessionId}/setup`, '/garage', `/sessions/${sessionId}/map`,
-      `/sessions/${sessionId}/shape`);
+    prefetch(`/sessions/${sessionId}/setup`, '/garage', `/sessions/${sessionId}/map`, `/sessions/${sessionId}/shape`);
   }, [sessionId]);
 
   // the stint tool's view of the run's main log: each lap's kind (out, in, pit), its stint and its tyre readings
@@ -392,7 +390,8 @@ export default function SessionScreen() {
         )}
         {error && <Text style={styles.error}>{error}</Text>}
         <UntimedNote session={session} />
-        <SessionResults sessionId={sessionId} />
+        {/* no official results while the app is kept to the weekends' analysis (Gabriele, 2026-10-16: "Remove all live
+            results and prediction for the moment"): components/OfficialSessionCard.tsx keeps SessionResults */}
         {!ready && !stale && <ActivityIndicator style={styles.loading} />}
         {analysis?.numbering === 'detected' && analysis.corners.length > 0 && (
           <Text style={styles.note}>{DETECTED_CORNERS_NOTE}</Text>
