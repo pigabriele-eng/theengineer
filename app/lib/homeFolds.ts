@@ -1,14 +1,16 @@
-// The home page's list of events by year, then by championship, each level folded or open (app/(tabs)/index.tsx).
-// Pure, so it is tested in lib/homeFolds.test.mjs (npm test): no imports but types.
+// The home page's list of tracks, each with its events, folded or open (app/(tabs)/index.tsx), and the lines its
+// events show. Pure, so it is tested in lib/homeFolds.test.mjs (npm test): no imports but types.
 import type { FolderSummary } from './events';
 
-export const OTHER = 'Tests and other events'; // events in no season and no series
+/** A track's events (not the runs in no event), newest first. `key`: the venue key (lib/venues.ts venueKey), or
+ * UNKNOWN for events whose track isn't known yet. */
+export type Track = { key: string; name: string; events: FolderSummary[]; driven: number; cleanLaps: number;
+  first: string | null; last: string | null };
+/** Where an event was: its track's key and the name the list shows; null when nothing says. */
+export type TrackOf = (f: FolderSummary) => { key: string; name: string } | null;
 
-/** Events of one championship in one year: a season's (or a series' by name), else the tests and other events. */
-export type Championship = { key: string; name: string; other: boolean; events: FolderSummary[] };
-/** A year's events (by their first day; null: events with no date), by championship. */
-export type Year = { key: string; year: number | null; events: number; start: string | null; end: string | null;
-  championships: Championship[] };
+export const UNKNOWN = 'unknown';
+export const UNKNOWN_NAME = 'Track not known';
 
 const firstDay = (f: FolderSummary) => f.start ?? f.end;
 const lastDay = (f: FolderSummary) => f.end ?? f.start;
@@ -28,89 +30,73 @@ export function shortName(f: FolderSummary) {
     ? f.name.slice(0, -tail.length) : f.name;
 }
 
-/** Events (not the runs in no event) by year, newest first and "No date" last; in a year, the championships by name
- * with the tests and other events last; in a championship, the events in date order, as its rounds go. */
-export function byYear(folders: FolderSummary[]): Year[] {
-  const years = new Map<string, Map<string, Championship>>();
+/** Newest first: by first day, then last day, then the later made; events with no date last. */
+const newestFirst = (a: FolderSummary, b: FolderSummary) =>
+  cmp(firstDay(b) ?? '', firstDay(a) ?? '') || cmp(lastDay(b) ?? '', lastDay(a) ?? '') || ((b.id ?? 0) - (a.id ?? 0));
+
+/** Events (not the runs in no event) by track. The track driven at most recently first, then the tracks with only
+ * planned events (no runs yet), the newest first, and the events whose track isn't known last; under a track, its
+ * events newest first. Two names of one circuit ("Hockenheim GP", "Hockenheimring") are one track by its key. */
+export function byTrack(folders: FolderSummary[], trackOf: TrackOf): Track[] {
+  const tracks = new Map<string, Track>();
   for (const f of folders) {
     if (f.id == null) continue;
-    const y = yearOf(f);
-    const yk = y == null ? 'none' : String(y);
-    const name = championshipOf(f);
-    const ck = name ? name.toLowerCase() : 'other';
-    const champs = years.get(yk) ?? new Map<string, Championship>();
-    years.set(yk, champs);
-    const c = champs.get(ck) ?? { key: ck, name: name ?? OTHER, other: !name, events: [] };
-    champs.set(ck, c);
-    c.events.push(f);
+    const at = trackOf(f) ?? { key: UNKNOWN, name: UNKNOWN_NAME };
+    const t = tracks.get(at.key) ?? { key: at.key, name: at.name, events: [], driven: 0, cleanLaps: 0, first: null,
+      last: null };
+    tracks.set(at.key, t);
+    t.events.push(f);
+    if (f.sessions > 0) t.driven += 1;
+    t.cleanLaps += f.clean_laps;
   }
-  const day = (f: FolderSummary) => firstDay(f) ?? '9999';
-  const out: Year[] = [...years.entries()].map(([key, champs]) => {
-    const championships = [...champs.values()];
-    for (const c of championships) {
-      c.events.sort((a, b) => cmp(day(a), day(b)) || cmp(lastDay(a) ?? '', lastDay(b) ?? '') || (a.id! - b.id!));
-    }
-    championships.sort((a, b) => Number(a.other) - Number(b.other) || cmp(a.name.toLowerCase(), b.name.toLowerCase()));
-    const all = championships.flatMap((c) => c.events);
-    const starts = all.map(firstDay).filter((d): d is string => !!d).sort();
-    const ends = all.map(lastDay).filter((d): d is string => !!d).sort();
-    return { key, year: key === 'none' ? null : Number(key), events: all.length, start: starts[0] ?? null,
-      end: ends[ends.length - 1] ?? null, championships };
-  });
-  return out.sort((a, b) => (b.year ?? -Infinity) - (a.year ?? -Infinity));
+  const out = [...tracks.values()];
+  for (const t of out) {
+    t.events.sort(newestFirst);
+    const days = t.events.flatMap((f) => [firstDay(f), lastDay(f)]).filter((d): d is string => !!d).sort();
+    t.first = days[0] ?? null;
+    t.last = days[days.length - 1] ?? null;
+  }
+  // a track's latest driven day (else its latest planned one), for its place in the list
+  const latest = (t: Track) => t.events.filter((f) => f.sessions > 0).map(lastDay).filter(Boolean).sort().pop() ?? '';
+  return out.sort((a, b) => Number(a.key === UNKNOWN) - Number(b.key === UNKNOWN)
+    || Number(!a.driven) - Number(!b.driven)
+    || cmp(latest(b) || (b.last ?? ''), latest(a) || (a.last ?? ''))
+    || cmp(a.name.toLowerCase(), b.name.toLowerCase()));
 }
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
-// The keys folds are kept under: a year, a championship in a year, an event.
-export const yearKey = (y: Year) => `y:${y.key}`;
-export const champKey = (y: Year, c: Championship) => `c:${y.key}:${c.key}`;
-export const eventKey = (f: FolderSummary) => `e:${f.key}`;
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October',
+  'November', 'December'];
+// championships' long names, as the list says them short (Gabriele, 2026-10-16: "GT4 Euro 2025")
+const SHORT: [RegExp, string][] = [[/^GT4 European Series\b/i, 'GT4 Euro'], [/^GT4 Europe\b/i, 'GT4 Euro']];
 
-/** Open unless tapped shut: this year and the lead event's year (else the newest year), every championship (they
- * show only in an open year), and the lead event (on now, else the latest driven, else the next); the rest folded. */
-export function openByDefault(years: Year[], lead: FolderSummary | null, thisYear: number): Set<string> {
-  const open = new Set<string>();
-  const leadYear = lead ? yearOf(lead) : undefined;
-  for (const y of years) {
-    if (y.year != null && (y.year === thisYear || y.year === leadYear)) open.add(yearKey(y));
-    if (y.year == null && lead && leadYear === null) open.add(yearKey(y));
-    for (const c of y.championships) open.add(champKey(y, c));
+/** What an event is called under its track: its championship and year ("GT4 Euro 2025", "ADAC GT4 Germany 2026"),
+ * or "Test" and its month ("Test February 2026") for an event in no championship or one named a test. */
+export function eventLabel(f: FolderSummary): string {
+  const champ = championshipOf(f);
+  const day = firstDay(f);
+  if (!champ || /\btest/i.test(f.name)) {
+    return day ? `Test ${MONTH_NAMES[Number(day.slice(5, 7)) - 1]} ${day.slice(0, 4)}` : 'Test';
   }
-  if (!years.some((y) => open.has(yearKey(y))) && years.length) open.add(yearKey(years[0]));
-  if (lead) open.add(eventKey(lead));
-  return open;
+  let name = champ.replace(/\s*\b(19|20)\d{2}\b\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  for (const [long, short] of SHORT) name = name.replace(long, short);
+  const year = f.season?.year ?? yearOf(f);
+  return year ? `${name} ${year}` : name;
 }
 
-/** "May", "Apr–Sep": the months a year's events span. */
-export function monthSpan(start: string | null, end: string | null) {
-  if (!start || !end) return null;
-  const a = MONTHS[Number(start.slice(5, 7)) - 1];
-  const b = MONTHS[Number(end.slice(5, 7)) - 1];
-  if (start.slice(0, 4) !== end.slice(0, 4)) return `${a} ${start.slice(0, 4)}–${b} ${end.slice(0, 4)}`;
+/** "2026", "2025–2026": the years a track's events span. */
+export function yearSpan(first: string | null, last: string | null) {
+  if (!first || !last) return null;
+  const a = first.slice(0, 4);
+  const b = last.slice(0, 4);
   return a === b ? a : `${a}–${b}`;
 }
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-// What was folded or opened, remembered on this device the way the Seasons page keeps its folds: only what was
-// tapped, by key; the rest follows the default. No storage (a private window): the default, every visit.
-const FOLD_KEY = 'theengineer.home.folds';
+// The keys folds are kept under: a track, an event.
+export const trackKey = (t: Track) => `t:${t.key}`;
+export const eventKey = (f: FolderSummary) => `e:${f.key}`;
 export type Folds = Record<string, boolean>;
-export function readFolds(): Folds {
-  try {
-    const v = JSON.parse(globalThis.localStorage?.getItem(FOLD_KEY) ?? '{}');
-    return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
-  } catch {
-    return {};
-  }
-}
-export function saveFolds(f: Folds) {
-  try {
-    globalThis.localStorage?.setItem(FOLD_KEY, JSON.stringify(f));
-  } catch {
-    // not remembered, but still folded or opened for this visit
-  }
-}
 
 // ---------- who drove an event, in what ----------
 

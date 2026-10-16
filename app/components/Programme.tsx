@@ -47,12 +47,12 @@ const today = () => {
 };
 
 // The app's parts (Gabriele, 2026-10-15: "i want to simplify the app somewhat ... Remove everything else for the
-// moment"): the race weekends (each with Driving performance, Stint analysis and Quali analysis), uploading, and the
+// moment"): the tracks and their race weekends (each with Driving performance, Stint analysis and Quali analysis), uploading, and the
 // settings (the manual, the cars and seasons, appearance). Coaching, Drivers, Setup and Debrief are hidden: their pages
 // still open from an old link.
 type NavKey = 'weekend' | 'upload' | 'tools';
 const NAV: { key: NavKey; label: string; href: Href }[] = [
-  { key: 'weekend', label: 'Weekend', href: '/' },
+  { key: 'weekend', label: 'Tracks', href: '/' },
   { key: 'upload', label: 'Upload', href: '/upload' },
   { key: 'tools', label: 'Settings', href: '/tools' },
 ];
@@ -70,7 +70,7 @@ export function navOf(pathname: string): NavKey | null {
 }
 
 
-/** The paper masthead at the top of every page: Back (on every page but the race weekends, components/Back.tsx), the
+/** The paper masthead at the top of every page: Back (on every page but the tracks, components/Back.tsx), the
  * nameplate and today's date, the parts of the app as text links (the one you are in underlined in red) and the
  * Manual (app/manual.tsx), then a thick and a thin rule. On a phone the links take a row of their own under the
  * nameplate, and the Manual the date's place beside it. */

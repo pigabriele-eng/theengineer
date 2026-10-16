@@ -4,14 +4,14 @@
 
 export type ManualItem = {
   name: string; // what you'd look for: "Delete a run"
-  where: string[]; // the taps, in order: ['Weekend', 'the event', 'Laps', 'Delete next to the run']
+  where: string[]; // the taps, in order: ['Tracks', 'the track', 'the event', 'Delete next to the run']
   what: string; // what it does, in a sentence or two
   href?: string; // a page of its own to open straight away
 };
 
 export type ManualPart = {
   key: string;
-  title: string; // the part of the app: "Race weekends", "Debriefs"
+  title: string; // the part of the app: "Tracks", "Driving performance"
   dek: string; // what the part is for
   href?: string; // its page, when it has one of its own
   items: ManualItem[];
@@ -23,10 +23,10 @@ export const MANUAL: ManualPart[] = [
     title: 'On every page',
     dek: 'The bar at the top, Back and the moves that work on any list of runs.',
     items: [
-      { name: 'Go to a part of the app', where: ['Top of every page', 'Weekend, Upload or Settings'],
-        what: 'The links under the app’s name take you to each part; the one you are in is underlined in red. “The Engineer” takes you to the race weekends.' },
+      { name: 'Go to a part of the app', where: ['Top of every page', 'Tracks, Upload or Settings'],
+        what: 'The links under the app’s name take you to each part; the one you are in is underlined in red. “The Engineer” takes you to the list of tracks.' },
       { name: 'Go back', where: ['Top of every page', '‹ Back'],
-        what: 'One page back. Opened from a link, it goes up to the page above: a run to its event, everything else to the race weekends.' },
+        what: 'One page back. Opened from a link, it goes up to the page above: a run to its event, everything else to the list of tracks.' },
       { name: 'Open this manual', where: ['Top of every page', 'Manual'],
         what: 'Every function and where to find it. Type a word to find one. On a phone it is at the top right, beside the app’s name; it is also first in Settings.' },
       { name: 'Print or save a page as PDF', where: ['Event and run pages', 'Print / Save as PDF'],
@@ -40,36 +40,38 @@ export const MANUAL: ManualPart[] = [
       { name: 'Swipe or hold a run', where: ['Any list of runs', 'swipe the run left, or hold it'],
         what: 'On a phone or tablet, swipe a run left for Delete. Hold any run for Delete, Change driver, Rename and Tyres. Every one of these also has a button you can see.' },
       { name: 'What opens when you start the app', where: ['Starting the app'],
-        what: 'The event that is on now (from the day before it), or one starting within 14 days; else the list of race weekends.' },
+        what: 'The list of tracks, each folded to one line. Tap a track to see its events.' },
     ],
   },
   {
     key: 'weekends',
-    title: 'Race weekends',
-    dek: 'The list of events, by year and championship, each with its runs.',
+    title: 'Tracks',
+    dek: 'Every track you have driven or planned, the most recent first, each with its events and their runs.',
     href: '/',
     items: [
-      { name: 'Find an event', where: ['Weekend', 'Past, Current, Upcoming or All'],
-        what: 'Picks which events are listed. They are grouped by year, then by championship; tap a heading to fold it.' },
-      { name: 'Open an event', where: ['Weekend', 'tap the event'],
+      { name: 'Find an event', where: ['Tracks', 'tap the track'],
+        what: 'Shows the track’s events, newest first. Each is called by its championship and year (GT4 Euro 2025) or, outside a championship, as a test with its month (Test February 2026). Tap the track again to fold it.' },
+      { name: 'Open an event', where: ['Tracks', 'the track', 'tap the event'],
         what: 'Opens its weekend page: Driving, Stint, Quali and Runs.' },
-      { name: 'See an event’s runs in the list', where: ['Weekend', '▸ beside the event'],
-        what: 'Shows its runs day by day with each run’s best lap and its gap to the event’s best, then the event’s best lap, clean laps and track.' },
-      { name: 'Rename a run', where: ['Weekend', '▸ beside the event', 'Rename next to the run'],
+      { name: 'See an event’s runs in the list', where: ['Tracks', 'the track', '▸ beside the event'],
+        what: 'Shows its runs day by day with each run’s best lap and its gap to the event’s best, then the event’s best lap, clean laps, runs and track.' },
+      { name: 'Rename a run', where: ['Tracks', 'the track', '▸ beside the event', 'Rename next to the run'],
         what: 'Type a name or tap a quick one (FP1, Q1, Q3, R1 stint 1, R3 stint 2, Warm-up…). A name you type is kept. The weekend page’s Runs tab has the same Rename.' },
-      { name: 'Delete a run', where: ['Weekend', '▸ beside the event', 'Delete next to the run'],
+      { name: 'Delete a run', where: ['Tracks', 'the track', '▸ beside the event', 'Delete next to the run'],
         what: 'Asks once, then deletes the run and its logs. The weekend page’s Runs tab has the same Delete.' },
-      { name: 'Set who drove a run', where: ['Weekend', '▸ beside the event', 'the driver line under the run', 'Confirm, Change or Set'],
+      { name: 'Set who drove a run', where: ['Tracks', 'the track', '▸ beside the event', 'the driver line under the run', 'Confirm, Change or Set'],
         what: 'Confirm takes the driver the app recognised from the driving style. Change or Set opens the list of drivers; + New driver adds one.' },
-      { name: 'Set a run’s tyres', where: ['Weekend', '▸ beside the event', 'the tyres tag (New, Fresh, Used, Very used)'],
+      { name: 'Set a run’s tyres', where: ['Tracks', 'the track', '▸ beside the event', 'the tyres tag (New, Fresh, Used, Very used)'],
         what: 'Tap the tag, then the level. A guess ends with “?” until you pick. Fresh is under 10 laps, Used 10 or more, Very used 25 or more. Laps are compared only with laps on the same tyres.' },
-      { name: 'Plan an event', where: ['Weekend', '+ New event'],
-        what: 'Name, first and last day and venue. Logs recorded there on those days go into it when you upload them.' },
-      { name: 'Rename or delete an event from the list', where: ['Weekend', '▸ beside the event', 'Rename or Delete'],
-        what: 'The same as on the event’s page: Delete asks what to delete.' },
-      { name: 'Runs in no event', where: ['Weekend', 'Unfiled'],
+      { name: 'Plan an event', where: ['Tracks', '+ New event'],
+        what: 'Name, first and last day and venue. Its weekend page opens to upload into, and it is listed under its venue’s track. Logs recorded there on those days go into it when you upload them.' },
+      { name: 'Delete an event from the list', where: ['Tracks', 'the track', '▸ beside the event', 'Delete'],
+        what: 'The same as on the event’s page: Delete asks what to delete. Rename an event on its weekend page.' },
+      { name: 'Events whose track isn’t known', where: ['Tracks', 'Track not known'],
+        what: 'Events whose logs don’t say where they were driven and that were planned without a venue or a track in their name.' },
+      { name: 'Runs in no event', where: ['Tracks', 'Unfiled'],
         what: 'Runs that are in no event. Open it to tick runs and move them into an event, or delete them.' },
-      { name: 'Answer which season an upload belongs to', where: ['Weekend', '+ N questions about seasons'],
+      { name: 'Answer which season an upload belongs to', where: ['Tracks', '+ N questions about seasons'],
         what: 'Shows only when the app isn’t sure; one tap answers each question.' },
     ],
   },
@@ -149,7 +151,7 @@ export const MANUAL: ManualPart[] = [
     dek: 'One run’s page: its lap chart, every lap and the track.',
     items: [
       { name: 'Open a run', where: ['the event', 'Runs', 'tap a run’s best lap'],
-        what: 'Or tap the run on Weekend. The runs of the event are listed at the top to switch to another.' },
+        what: 'Or tap the run under its event in Tracks. The runs of the event are listed at the top to switch to another.' },
       { name: 'Lap chart', where: ['a run', '02 Lap chart'],
         what: 'Every lap with its type, time, gap, section times, hot tyre pressures and tyre temperatures. Best of this run and of the event are at the foot.' },
       { name: 'Change a lap’s type', where: ['a run', 'Lap chart', 'tap the lap’s type (Clean, Out, In…)'],

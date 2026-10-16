@@ -1,16 +1,15 @@
-import { Link, useFocusEffect, useNavigation, useRouter } from 'expo-router';
+import { Link, useFocusEffect, useRouter } from 'expo-router';
 import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, useWindowDimensions } from 'react-native';
 
 import { DeletedNotice, DeleteEventAction } from '@/components/DeleteEvent';
 import { useDriverGuess } from '@/components/DriverGuess';
-import { FilterBar, PlanForm, plannedLine, RemovePlanned } from '@/components/EventFilter';
+import { PlanForm, plannedLine, RemovePlanned } from '@/components/EventFilter';
 import { CountryTag } from '@/components/Flag';
-import { FoldHead, SubFoldHead } from '@/components/Fold';
+import { FoldHead } from '@/components/Fold';
 import {
   Colophon, Fig, Label, Page, SpecLine, Swatch, TextLink, useWide,
 } from '@/components/Programme';
-import { RenameEvent } from '@/components/RenameEvent';
 import { DriverTag } from '@/components/DriverTag';
 import { RunDriverLine } from '@/components/RunDriverLine';
 import { closesRows, RunLinks, RunPanel, SwipeRow, useRunActions } from '@/components/RunActions';
@@ -20,10 +19,8 @@ import { Said } from '@/components/Controls';
 import { SeasonMatchCount } from '@/components/SeasonMatch';
 import { Text, View } from '@/components/Themed';
 import { TyreChoices, TyreTag, useTyreTags } from '@/components/TyreTag';
-import { api, formatLap } from '@/lib/api';
-import {
-  CalendarState, calendarApi, countByWhen, defaultFilter, Filter, filtered, Plan, todayIso, When, whenOf,
-} from '@/lib/calendar';
+import { formatLap } from '@/lib/api';
+import { CalendarState, calendarApi, Plan, todayIso, whenOf } from '@/lib/calendar';
 import { Country, countryOfAny } from '@/lib/countries';
 import { DAY_GAP, dayColumns } from '@/lib/dayColumns';
 import { Garage, garageApi, RunFields } from '@/lib/garage';
@@ -32,31 +29,29 @@ import {
   dayLabel, eventsApi, Folder, FolderSession, FolderSummary, NO_EVENT,
 } from '@/lib/events';
 import {
-  byYear, carLine, Championship, champKey, driverLapsLine, eventKey, finishesLine, Folds, monthSpan, openByDefault, readFolds, saveFolds,
-  shortName, Year, yearKey, yearOf,
+  byTrack, carLine, driverLapsLine, eventKey, eventLabel, Folds, Track, TrackOf, trackKey, UNKNOWN, yearSpan,
 } from '@/lib/homeFolds';
-import { launchEvent } from '@/lib/openCurrent';
 import { weekendsOf } from '@/lib/weekendOpen';
 import { DriverTag as Tag, driverTag } from '@/lib/driverTag';
 import { driverState } from '@/lib/runDriver';
-import { fetchFinishes, Finishes } from '@/lib/finishes';
-import { fetchReport, Report } from '@/lib/report';
+import { knownVenue, trackName, venueKey } from '@/lib/venues';
 import { a11yState } from '@/lib/a11yState';
 import { face, Fonts, Space, TAP, themed, Type, useTheme } from '@/constants/Theme';
 
-// What the page knows about an event beyond the list: its runs by day, its report and the logger it was recorded on.
-type Detail = { folder?: Folder; report?: Report; logger?: string };
+// What the page knows about an event beyond the list: its runs by day.
+type Detail = { folder?: Folder };
 // a run as the event's folder gives it: with its driver's and car's ids
 type Run = FolderSession & { driver_id?: number | null; car_id?: number | null };
 
-/** Events as a race programme: the event on now (else the latest one driven, else the next) on the photo at the top
- * with its facts, then the index (Past, Current, Upcoming, All) and the events it picks by year, newest first, each
- * year by championship (a season's rounds; tests and other events last), each level folded or open with a tap. A
- * folded event is one line; open, it shows its runs by day (each with its best lap and the gap to the event's best)
- * beside the event's big figures, its links and its actions. This year, its championships and the lead event are
- * open to start with; what is tapped is remembered on the device. Sessions in no event have a line of their own,
- * so they get filed. Planned events (made here or from the racing calendar) wait under Upcoming until their data
- * comes in. Opened while an event is on, the app goes straight on to that event's page (lib/openCurrent.ts). */
+/** The tracks (Gabriele, 2026-10-16: "group per race track and within race tracks grouping have the events like GT4
+ * Euro 2025, test February 2026"; "The app should open to a list of tracks"): one heading per track, the one driven
+ * at most recently first, each with its country, how many events, the years and the clean laps, all folded to start
+ * with (open when there is only one). Open, a track lists its events newest first, each called by its championship
+ * and year, or as a test with its month: a tap on the event opens its weekend page, the mark beside it shows its runs
+ * here (each with its best lap and the gap to the event's best) beside the event's big figures, with Delete. What is
+ * opened stays open while the app is, not to its next start. Runs in no event have a line of their own, so they get
+ * filed; planned events (made here or from the racing calendar) wait under their track until their data comes in.
+ * No Past, Current and Upcoming, no race finishes and no going straight on to the event that is on (2026-10-16). */
 export default function SessionsScreen() {
   const styles = useStyles();
   const wide = useWide();
@@ -64,14 +59,11 @@ export default function SessionsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [making, setMaking] = useState(false);
   const [calendar, setCalendar] = useState<CalendarState | null>(null);
-  const [finishes, setFinishes] = useState<Finishes | null>(null); // our official race finishes, per event
-  const [filter, setFilter] = useState<Filter | null>(null); // null: what the list opens on
   const [details, setDetails] = useState<Record<string, Detail>>({});
   const [loads, setLoads] = useState(0); // counts the list's loads: the details are read again with it
-  const [folds, setFolds] = useState<Folds>(readFolds); // what was tapped folded or open on this device
+  const [folds, setFolds] = useState<Folds>({}); // what was tapped open or folded since the app started
   const read = useRef<Record<string, number>>({}); // the load each open event's runs were last read at
   const router = useRouter();
-  const navigation = useNavigation();
   const { garage, reload: reloadGarage } = useGarage(); // the drivers a run's driver list offers
 
   const loadNo = useRef(0); // the latest load: an older one's answers, coming in late, are dropped
@@ -88,8 +80,6 @@ export default function SessionsScreen() {
       (e) => latest() && setError((e as Error).message),
     );
     calendarApi.state().then((c) => latest() && setCalendar(c), () => {}); // the list works without it
-    // one call for the whole list; without it the rows simply have none
-    fetchFinishes().then((f) => latest() && setFinishes(f));
   }, []);
   useFocusEffect(load);
   // the calendar is being read in the background: look at it again shortly (only it), and read the list once it's done
@@ -105,45 +95,29 @@ export default function SessionsScreen() {
     wasSyncing.current = syncing;
   }, [syncing, load]);
 
-  // Opened on this list while an event is on: on to its page, once per launch (Back comes back here). Not when they've
-  // gone elsewhere or started making an event while the list was loading.
-  useEffect(() => {
-    if (!folders) return;
-    const ev = launchEvent(folders, todayIso());
-    if (ev && navigation.isFocused() && !making) router.push({ pathname: '/event/[id]', params: { id: ev.key } });
-  }, [folders, making, navigation, router]);
-
-  const today = todayIso();
-  const counts = countByWhen(folders ?? [], today);
-  const active = filter ?? defaultFilter(counts);
-  const shown = folders ? filtered(folders, active, today) : [];
-  const loose = shown.find((f) => f.id == null) ?? null; // the runs in no event: a line of their own, first
-  const years = byYear(shown);
-  const plans = new Map((calendar?.plans ?? []).map((p) => [p.event_id, p]));
-  // the event at the top of the page: on now, else the latest driven, else the next one
   const all = folders ?? [];
-  const lead = filtered(all, 'current', today).find((f) => f.id != null)
-    ?? filtered(all, 'past', today).find((f) => f.id != null && f.sessions > 0)
-    ?? filtered(all, 'upcoming', today).find((f) => f.id != null) ?? null;
-  // an event's country, from its track, else the venue it was planned at, else its name ("Monza test")
-  const countryOfEvent = (f: FolderSummary) => countryOfAny([f.track, f.id != null ? plans.get(f.id)?.venue : null, f.name]);
+  const loose = all.find((f) => f.id == null) ?? null; // the runs in no event: a line of their own, first
+  const plans = new Map((calendar?.plans ?? []).map((p) => [p.event_id, p]));
+  // where an event was: its track, else the venue it was planned at, else a track its name says ("Monza test")
+  const trackOf: TrackOf = (f) => {
+    const named = f.track ?? (f.id != null ? plans.get(f.id)?.venue : null);
+    const key = venueKey(named);
+    if (named && key) return { key, name: trackName(named) };
+    const known = knownVenue(f.name);
+    return known ? { key: known, name: trackName(f.name) } : null;
+  };
+  const tracks = byTrack(all, trackOf);
+  // a track's country, from its name, else its events' tracks and planned venues
+  const countryOf = (t: Track) => (t.key === UNKNOWN ? null
+    : countryOfAny([t.name, ...t.events.flatMap((f) => [f.track, f.id != null ? plans.get(f.id)?.venue : null])]));
 
-  // folded or open: what was tapped on this device, else the default
-  const defaults = openByDefault(years, lead, Number(today.slice(0, 4)));
-  const isOpen = (key: string) => folds[key] ?? defaults.has(key);
-  const setOpen = (keys: string[], open: boolean) =>
-    setFolds((f) => {
-      const next = { ...f, ...Object.fromEntries(keys.map((k) => [k, open])) };
-      saveFolds(next);
-      return next;
-    });
-  const toggle = (key: string) => setOpen([key], !isOpen(key));
+  // folded or open: what was tapped since the app started, else folded (a track open when it is the only one)
+  const isOpen = (key: string) => folds[key] ?? (tracks.length === 1 && key === trackKey(tracks[0]));
+  const toggle = (key: string) => setFolds((f) => ({ ...f, [key]: !isOpen(key) }));
 
-  // the runs of the events open on the page, read when they open and again with the list; the lead's always
-  const leadKey = lead && lead.sessions > 0 ? lead.key : null;
-  const opened = years.flatMap((y) => (!isOpen(yearKey(y)) ? [] : y.championships.flatMap((c) => (
-    !isOpen(champKey(y, c)) ? [] : c.events.filter((f) => f.sessions > 0 && isOpen(eventKey(f))).map((f) => f.key)))));
-  const wanted = [...new Set([...(leadKey ? [leadKey] : []), ...opened])].join(',');
+  // the runs of the events open on the page, read when they open and again with the list
+  const wanted = tracks.flatMap((t) => (!isOpen(trackKey(t)) ? []
+    : t.events.filter((f) => f.sessions > 0 && isOpen(eventKey(f))).map((f) => f.key))).join(',');
   useEffect(() => {
     for (const key of wanted ? wanted.split(',') : []) {
       if (read.current[key] === loads) continue;
@@ -151,32 +125,17 @@ export default function SessionsScreen() {
       eventsApi.folder(key).then((folder) => setDetails((d) => ({ ...d, [key]: { ...d[key], folder } })), () => {});
     }
   }, [wanted, loads]);
-  // the lead event's report and logger, read once per lead event
-  const leadBestSession = lead?.best_session_id ?? null;
-  useEffect(() => {
-    if (!leadKey) return;
-    const put = (d: Detail) => setDetails((all) => ({ ...all, [leadKey]: { ...all[leadKey], ...d } }));
-    fetchReport({ event: Number(leadKey) }).then((a) => {
-      if (a.report) put({ report: a.report });
-    }, () => {});
-    if (leadBestSession != null) {
-      api.session(leadBestSession).then((s) => {
-        const logger = s.files.find((f) => f.logger)?.logger;
-        if (logger) put({ logger });
-      }, () => {});
-    }
-  }, [leadKey, leadBestSession]);
-
-  const renamed = (key: string) => (name: string) => {
-    setFolders((list) => list?.map((x) => (x.key === key ? { ...x, name } : x)) ?? list);
-    load();
-  };
 
   // no big block for the latest event on top (Gabriele, 2026-10-07: "i don't need this information"): the list starts the page
   return (
     <Page {...closesRows}>
       <View style={wide ? styles.indexBar : styles.indexBarPhone}>
-        <FilterBar filter={active} counts={counts} onPick={setFilter} />
+        <View style={wide ? styles.heading : styles.headingPhone}>
+          <View style={wide ? styles.headWord : styles.headWordPhone}>
+            <Text accessibilityRole="header" style={wide ? styles.headText : styles.headTextPhone}>Tracks</Text>
+            {folders && <Text style={styles.headCount}>{tracks.length}</Text>}
+          </View>
+        </View>
         {/* uploads have a page of their own: one big drop box */}
         <Link href="/upload" asChild>
           <Pressable accessibilityRole="link" style={wide ? styles.upload : styles.uploadPhone}>
@@ -192,20 +151,15 @@ export default function SessionsScreen() {
             onMade={(ev) => {
               setMaking(false);
               load();
-              // on now: open it to upload into it; else show it where it is in the list, its year open
-              const when = whenOf(ev, today);
-              if (when === 'current') router.push({ pathname: '/event/[id]', params: { id: ev.key } });
-              else {
-                setFilter(when);
-                setOpen([`y:${yearOf(ev) ?? 'none'}`], true);
-              }
+              // on to its page, to upload into it
+              router.push({ pathname: '/event/[id]', params: { id: ev.key } });
             }} />
         </View>
       ) : (
         <View style={wide ? styles.toolsLine : styles.toolsLinePhone}>
           {/* only what concerns the whole list here, on one short line under the one big action (Upload), so the
-              first weekend shows on a phone without scrolling; comparing, tagging and the driver fingerprints are
-              in each event and under Tools (Gabriele, 2026-10-07: that row "is normally event specific") */}
+              first track shows on a phone without scrolling (Gabriele, 2026-10-07: that row "is normally event
+              specific") */}
           <TextLink onPress={() => setMaking(true)} label="+ New event" small />
           <TextLink href="/seasons" label="Seasons" arrow small />
           {/* the questions about which season an upload belongs to, when the app isn't sure (its own top margin
@@ -226,22 +180,18 @@ export default function SessionsScreen() {
           own. Or make an event first with + New event and upload into it.
         </Text>
       )}
-      {folders && folders.length > 0 && active !== 'all' && shown.length === 0 && (
-        <Text style={StyleSheet.flatten([styles.empty, styles.emptyList])}>{EMPTY[active]}</Text>
-      )}
       {loose && <LooseRuns f={loose} onChanged={load} />}
-      {years.map((y, i) => (
-        <YearFold key={y.key} no={i + 1} y={y} isOpen={isOpen} toggle={toggle} today={today}>
-          {(c) => c.events.map((f) => (
+      {tracks.map((t, i) => (
+        <TrackFold key={t.key} no={i + 1} t={t} open={isOpen(trackKey(t))} onToggle={() => toggle(trackKey(t))}
+          country={countryOf(t)}>
+          {t.events.map((f) => (
             <EventFold key={f.key} f={f} open={isOpen(eventKey(f))} onToggle={() => toggle(eventKey(f))}
-              country={countryOfEvent(f)} finishes={f.id != null ? finishesLine(finishes?.events[String(f.id)]) : null}
               detail={details[f.key]} plan={f.id != null ? plans.get(f.id) : undefined}
-              onChanged={load} onRenamed={renamed(f.key)}
-              garage={garage} onGarage={reloadGarage} />
+              onChanged={load} garage={garage} onGarage={reloadGarage} />
           ))}
-        </YearFold>
+        </TrackFold>
       ))}
-      <Colophon left="The Engineer · Weekend" links={[
+      <Colophon left="The Engineer · Tracks" links={[
         { label: 'Seasons', href: '/seasons' },
         { label: 'Garage', href: '/garage' },
       ]} />
@@ -249,45 +199,27 @@ export default function SessionsScreen() {
   );
 }
 
-const EMPTY: Record<When, string> = {
-  current: 'Nothing on today or tomorrow.',
-  upcoming: 'Nothing planned yet. Plan a test or a race weekend with + New event, or bring them in from your racing calendar.',
-  past: 'No past events yet.',
-};
+// ---------- a track ----------
 
-// ---------- a year, its championships ----------
-
-/** A year of events, folded or open: its heading (how many events and championships, the months they span), then
- * each championship, folded or open (how many events, how many still to come), with its events. */
-function YearFold({ no, y, isOpen, toggle, today, children }: {
+/** A track, folded or open: its heading (its number in the list, its name, its country's flag, how many events, the
+ * years they span and their clean laps), then, open, its events. */
+function TrackFold({ no, t, open, onToggle, country, children }: {
   no: number;
-  y: Year;
-  isOpen: (key: string) => boolean;
-  toggle: (key: string) => void;
-  today: string;
-  children: (c: Championship) => ReactNode;
+  t: Track;
+  open: boolean;
+  onToggle: () => void;
+  country: Country | null;
+  children: ReactNode;
 }) {
   const styles = useStyles();
   const wide = useWide();
-  const seasons = y.championships.filter((c) => !c.other).length;
-  const facts = [plural(y.events, 'event'), seasons ? plural(seasons, 'championship') : null, monthSpan(y.start, y.end)]
-    .filter(Boolean).join(' · ');
-  const open = isOpen(yearKey(y));
+  const facts = [plural(t.events.length, 'event'), yearSpan(t.first, t.last),
+    t.cleanLaps ? plural(t.cleanLaps, 'clean lap') : null].filter(Boolean).join(' · ');
   return (
-    <View style={wide ? styles.year : styles.yearPhone}>
-      <FoldHead no={no} title={y.year == null ? 'No date' : String(y.year)} facts={facts} open={open}
-        onToggle={() => toggle(yearKey(y))} what={y.year == null ? 'the events with no date' : String(y.year)} />
-      {open && y.championships.map((c) => {
-        const key = champKey(y, c);
-        const ahead = c.events.filter((f) => whenOf(f, today) === 'upcoming').length;
-        return (
-          <View key={c.key} style={wide ? styles.champ : styles.champPhone}>
-            <SubFoldHead title={c.name} open={isOpen(key)} onToggle={() => toggle(key)} what="the championship"
-              facts={[plural(c.events.length, 'event'), ahead ? `${ahead} to come` : null].filter(Boolean).join(' · ')} />
-            {isOpen(key) && children(c)}
-          </View>
-        );
-      })}
+    <View style={wide ? styles.track : styles.trackPhone}>
+      <FoldHead no={no} title={t.name} facts={facts} open={open} onToggle={onToggle} what={`the events at ${t.name}`}
+        extra={country ? <CountryTag country={country} /> : undefined} />
+      {open && <View style={styles.trackEvents}>{children}</View>}
     </View>
   );
 }
@@ -296,10 +228,9 @@ function YearFold({ no, y, isOpen, toggle, today, children }: {
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
-const metres = (m: number) => `${Math.round(m).toLocaleString('en-GB')} m`;
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
-/** "28–30 Aug", "31 Oct–2 Nov", "Tue 3 Nov": the year's heading above says the year. */
+/** "28–30 Aug", "31 Oct–2 Nov", "Tue 3 Nov": the event's name beside it says the year. */
 function shortDates(start: string | null, end: string | null) {
   const a = start ?? end;
   const b = end ?? start;
@@ -313,18 +244,15 @@ function shortDates(start: string | null, end: string | null) {
 
 // ---------- an event, folded or open ----------
 
-/** An event: one line (its days, name, round, track, runs and best lap, or what is planned) that folds and opens with
- * a tap; open, its runs and links (an event with data) and its actions: Rename, Delete (Remove when planned) and the
- * Prep report. Renaming takes the line's place. */
-function EventFold({ f, open, onToggle, detail, plan, onRenamed, onChanged, country, finishes, garage, onGarage }: {
+/** An event under its track: one line (its days, what it is, "GT4 Euro 2025" or "Test February 2026", its round,
+ * drivers, car, runs and best lap, or what is planned) that opens its weekend page, and a mark beside it that shows or
+ * folds its runs here, with Delete (Remove when planned). Renaming is on its weekend page, which carries its name. */
+function EventFold({ f, open, onToggle, detail, plan, onChanged, garage, onGarage }: {
   f: FolderSummary;
-  country: Country | null; // its flag and three letters before its name
-  finishes: string | null; // our race finishes: "R1 P5 · R2 P3"
   open: boolean;
   onToggle: () => void;
   detail?: Detail;
   plan?: Plan;
-  onRenamed: (name: string) => void;
   onChanged: () => void;
   garage: Garage | null;
   onGarage: () => void; // read the garage again (a driver made from a run's list)
@@ -332,13 +260,13 @@ function EventFold({ f, open, onToggle, detail, plan, onRenamed, onChanged, coun
   const styles = useStyles();
   const wide = useWide();
   const c = useTheme();
-  const [renaming, setRenaming] = useState(false);
   const id = f.id!;
   const planned = f.sessions === 0; // no data yet
   const past = whenOf(f, todayIso()) === 'past';
+  const label = eventLabel(f);
   const round = f.season?.round != null ? `Round ${f.season.round}` : null;
   const meta = planned ? [round, plannedLine(f, plan)].filter(Boolean).join(' · ')
-    : [round, finishes, f.track, driverLapsLine(f), carLine(f), plural(f.sessions, 'run'),
+    : [round, driverLapsLine(f), carLine(f), plural(f.sessions, 'run'),
       f.clean_laps ? plural(f.clean_laps, 'clean lap') : null]
       .filter(Boolean).join(' · ');
   const status = planned ? { text: past ? 'No data' : 'Planned', line: past ? c.textMuted : c.rule }
@@ -346,45 +274,29 @@ function EventFold({ f, open, onToggle, detail, plan, onRenamed, onChanged, coun
   const dates = shortDates(f.start, f.end) ?? 'Days not set';
   return (
     <View style={styles.item}>
-      {renaming ? (
-        <RenameEvent id={id} initial={f.name} onCancel={() => setRenaming(false)}
-          onSaved={(saved) => {
-            setRenaming(false);
-            onRenamed(saved.name);
-          }} />
-      ) : (
-        // the event's line is one tap into its weekend page; the mark beside it shows or folds its runs here
-        <View style={styles.itemHead}>
-          {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
-          <Link href={{ pathname: '/event/[id]', params: { id: f.key } }} asChild>
-            <Pressable accessibilityRole="link" accessibilityLabel={`${f.name}, ${dates}, ${meta}, ${status.text}`}
-              accessibilityHint="Opens the weekend" style={wide ? styles.itemLine : styles.itemLinePhone}>
-              <Text style={wide ? styles.itemDate : styles.itemDatePhone}>{dates}</Text>
-              <View style={styles.itemWhat}>
-                {country ? (
-                  <View style={wide ? styles.nameLine : styles.nameLinePhone}>
-                    <CountryTag country={country} />
-                    <Text style={StyleSheet.flatten([wide ? styles.itemName : styles.itemNamePhone, styles.nameShrink])}>
-                      {shortName(f)} →
-                    </Text>
-                  </View>
-                ) : <Text style={wide ? styles.itemName : styles.itemNamePhone}>{shortName(f)} →</Text>}
-                <Text style={styles.itemMeta}>{meta}</Text>
-              </View>
-              <Text style={StyleSheet.flatten([styles.status, { borderColor: status.line }])}>{status.text}</Text>
-            </Pressable>
-          </Link>
-          <Pressable onPress={onToggle} accessibilityRole="button" {...a11yState({ expanded: open })}
-            accessibilityLabel={`${open ? 'Fold' : 'Show'} the runs of ${f.name}`} style={styles.foldButton}>
-            <Text style={wide ? styles.itemMark : styles.itemMarkPhone}>{open ? '▾' : '▸'}</Text>
+      {/* the event's line is one tap into its weekend page; the mark beside it shows or folds its runs here */}
+      <View style={styles.itemHead}>
+        {/* Link asChild hands its child's style to a web anchor, which can't take a style array: one object */}
+        <Link href={{ pathname: '/event/[id]', params: { id: f.key } }} asChild>
+          <Pressable accessibilityRole="link" accessibilityLabel={`${label}, ${dates}, ${meta}, ${status.text}`}
+            accessibilityHint={`Opens the weekend, ${f.name}`} style={wide ? styles.itemLine : styles.itemLinePhone}>
+            <Text style={wide ? styles.itemDate : styles.itemDatePhone}>{dates}</Text>
+            <View style={styles.itemWhat}>
+              <Text style={wide ? styles.itemName : styles.itemNamePhone}>{label} →</Text>
+              <Text style={styles.itemMeta}>{meta}</Text>
+            </View>
+            <Text style={StyleSheet.flatten([styles.status, { borderColor: status.line }])}>{status.text}</Text>
           </Pressable>
-        </View>
-      )}
-      {open && !renaming && (
+        </Link>
+        <Pressable onPress={onToggle} accessibilityRole="button" {...a11yState({ expanded: open })}
+          accessibilityLabel={`${open ? 'Fold' : 'Show'} the runs of ${label}, ${dates}`} style={styles.foldButton}>
+          <Text style={wide ? styles.itemMark : styles.itemMarkPhone}>{open ? '▾' : '▸'}</Text>
+        </Pressable>
+      </View>
+      {open && (
         <View style={styles.itemBody}>
           {planned ? null : <Feature f={f} detail={detail} garage={garage} onGarage={onGarage} onChanged={onChanged} />}
           <View style={styles.itemActions}>
-            <TextLink onPress={() => setRenaming(true)} label="Rename" small />
             {planned ? <RemovePlanned f={f} plan={plan} onRemoved={onChanged} />
               : <DeleteEventAction id={id} name={f.name} onDeleted={onChanged} />}
           </View>
@@ -423,8 +335,7 @@ function LooseRuns({ f, onChanged }: { f: FolderSummary; onChanged: () => void }
 
 /** An event open on the page: its links, its runs by day (each with its best lap: a purple block for the event's
  * best, else a red bar for the gap to it, and its driver, or who the driving style says, with Change, and its tyres,
- * a tap to change them), and beside them the best lap, clean laps, typical lap (the median clean lap of the lead
- * event's report; runs for the others) and the event's facts. */
+ * a tap to change them), and beside them the best lap, clean laps, runs and the event's facts. */
 function Feature({ f, detail, garage, onGarage, onChanged }: {
   f: FolderSummary;
   detail?: Detail;
@@ -436,7 +347,6 @@ function Feature({ f, detail, garage, onGarage, onChanged }: {
   const wide = useWide();
   const c = useTheme();
   const folder = detail?.folder;
-  const report = detail?.report;
   const best = f.best_lap_s;
   const id = f.id!;
   // a driver picked here shows at once, until the event's runs are read again after it was saved
@@ -563,16 +473,12 @@ function Feature({ f, detail, garage, onGarage, onChanged }: {
         <View style={full ? styles.pairUnder : styles.pair}>
           <View style={styles.pairLeft}><Fig label="Clean laps" value={String(f.clean_laps)} size={64} /></View>
           <View style={styles.pairRight}>
-            {report
-              ? <Fig label="Typical lap" value={formatLap(report.headline.typical)} size={64} />
-              : <Fig label="Runs" value={String(f.sessions)} size={64} />}
+            <Fig label="Runs" value={String(f.sessions)} size={64} />
           </View>
         </View>
         <View style={full ? styles.specsUnder : styles.specs}>
-          {f.track && <SpecLine label="Track" value={report ? `${f.track} · ${metres(report.length_m)}` : f.track} />}
+          {f.track && <SpecLine label="Track" value={f.track} />}
           {drivers.length > 0 && <SpecLine label={drivers.length === 1 ? 'Driver' : 'Drivers'} value={drivers.join(' / ')} />}
-          {report && <SpecLine label="Laps analysed" value={`${report.laps_analysed} of ${plural(report.runs_analysed, 'run')}`} />}
-          {detail?.logger && <SpecLine label="Logger" value={detail.logger} />}
         </View>
       </View>
     </View>
@@ -667,10 +573,18 @@ const RUN_NO_W = 30; // a run's number, before its name
 const RUN_PAD = { top: 9, bottom: 8 }; // a run row's padding above and below its line: its swipe fills it
 
 const useStyles = themed((c) => ({
-  // the index: the filter's words and the upload block
+  // the index: "Tracks" with how many, underlined in red as the page's one heading, and the upload block
   indexBar: { flexDirection: 'row', alignItems: 'stretch', justifyContent: 'space-between', borderBottomWidth: 1,
     borderColor: c.rule, gap: 20 },
   indexBarPhone: { flexDirection: 'column', borderBottomWidth: 1, borderColor: c.rule },
+  heading: { flexDirection: 'row', alignItems: 'flex-end', paddingTop: 18, paddingBottom: 12 },
+  headingPhone: { flexDirection: 'row', alignItems: 'flex-end', paddingTop: 14, paddingBottom: 10 },
+  headWord: { flexDirection: 'row', alignItems: 'flex-start', paddingBottom: 6, borderBottomWidth: 6, borderColor: c.mark },
+  headWordPhone: { flexDirection: 'row', alignItems: 'flex-start', paddingBottom: 6, borderBottomWidth: 5,
+    borderColor: c.mark },
+  headText: { fontFamily: Fonts.display, fontSize: 30, lineHeight: 32, textTransform: 'uppercase', color: c.text },
+  headTextPhone: { fontFamily: Fonts.display, fontSize: 24, lineHeight: 26, textTransform: 'uppercase', color: c.text },
+  headCount: { fontFamily: Type.label.fontFamily, fontSize: 13, lineHeight: 14, marginLeft: 3, color: c.text },
   upload: { justifyContent: 'center', backgroundColor: c.rule, paddingVertical: 14, paddingHorizontal: 22, minWidth: 300 },
   uploadPhone: { justifyContent: 'center', backgroundColor: c.rule, paddingVertical: 14, paddingHorizontal: 16 },
   uploadBig: { fontFamily: Fonts.display, fontSize: 28, lineHeight: 30, textTransform: 'uppercase', color: c.background },
@@ -685,13 +599,10 @@ const useStyles = themed((c) => ({
   loading: { marginTop: 24, alignSelf: 'flex-start' },
   empty: { fontFamily: Type.dek.fontFamily, fontSize: 17, lineHeight: 24, color: c.textSecondary, marginTop: 4 },
 
-  emptyList: { marginTop: 18 },
-
-  // a year, its championships
-  year: { marginTop: 40 },
-  yearPhone: { marginTop: 30 },
-  champ: { marginTop: 22 },
-  champPhone: { marginTop: 18 },
+  // a track, its events
+  track: { marginTop: 34 },
+  trackPhone: { marginTop: 26 },
+  trackEvents: { marginTop: 10 },
 
   // one line per event, folded or open
   item: { borderBottomWidth: 1, borderColor: c.rule, paddingTop: 14, paddingBottom: 13 },
@@ -701,10 +612,6 @@ const useStyles = themed((c) => ({
   itemDate: { fontFamily: Fonts.display, fontSize: 34, lineHeight: 34, textTransform: 'uppercase', width: DATE_W, color: c.text },
   itemDatePhone: { ...Type.label, fontSize: 15, letterSpacing: 1.8, color: c.text },
   itemWhat: { flex: 1, minWidth: 0 },
-  // the flag and three letters before the name
-  nameLine: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-  nameLinePhone: { flexDirection: 'row', alignItems: 'center', gap: 11 },
-  nameShrink: { flexShrink: 1 },
   itemName: { fontFamily: Fonts.display, fontSize: 30, lineHeight: 32, textTransform: 'uppercase', color: c.text },
   itemNamePhone: { fontFamily: Fonts.display, fontSize: 26, lineHeight: 28, textTransform: 'uppercase', color: c.text },
   itemMeta: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 22, color: c.textSecondary, marginTop: 4 },
