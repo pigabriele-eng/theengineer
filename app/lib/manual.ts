@@ -181,13 +181,15 @@ export const MANUAL: ManualPart[] = [
   {
     key: 'settings',
     title: 'Settings',
-    dek: 'The manual, the cars and seasons, and how the app looks.',
+    dek: 'The manual, the cars and seasons, the download of your data, and how the app looks.',
     href: '/tools',
     items: [
       { name: 'Cars, drivers and teams', where: ['Settings', 'Cars, drivers and teams'], href: '/garage',
         what: 'Cars with their number, model and loggers; drivers, teams, vehicles, and tyres with their P-Book pressures.' },
       { name: 'Seasons', where: ['Settings', 'Seasons'], href: '/seasons',
         what: 'Each championship season: our entry, its rounds as planned events and their entry lists. The official timetable names each run. Update from the series’ site brings in changes.' },
+      { name: 'Download your data', where: ['Settings', 'Your data', 'Download everything'],
+        what: 'One zip of every log you uploaded, as uploaded, with the debrief recordings and the names, drivers and tyres you set. One event at a time downloads a single event; files the storage can’t give today are listed in MISSING.txt.' },
       { name: 'Light or dark', where: ['Settings', 'Appearance', 'System, Light or Dark'],
         what: 'How the app looks. System follows the phone or computer.' },
     ],

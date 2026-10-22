@@ -30,6 +30,7 @@ import urllib.parse
 import uuid
 import zlib
 from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 from datetime import UTC, datetime
 from functools import cache
 from pathlib import Path
@@ -72,6 +73,9 @@ class Storage(Protocol):
     def local_path(self, key: str) -> Path:
         """A local file with the contents stored under the key. FileNotFoundError when there is none."""
 
+    def open_chunks(self, key: str):
+        """A context manager giving the plain contents a piece at a time, without keeping a copy."""
+
     def delete(self, key: str) -> None:
         """Remove the file stored under the key; nothing happens when there is none."""
 
@@ -87,6 +91,15 @@ def _chunks(path: Path) -> Iterator[bytes]:
     with path.open("rb") as f:
         while chunk := f.read(CHUNK_BYTES):
             yield chunk
+
+
+def _inflate(chunks: Iterator[bytes]) -> Iterator[bytes]:
+    d = zlib.decompressobj(wbits=31)
+    for chunk in chunks:
+        if out := d.decompress(chunk):
+            yield out
+    if out := d.flush():
+        yield out
 
 
 class LocalStorage:
@@ -114,6 +127,10 @@ class LocalStorage:
             if p.is_file():
                 return p
         raise FileNotFoundError(f"Stored file {key} not found")
+
+    @contextmanager
+    def open_chunks(self, key: str) -> Iterator[Iterator[bytes]]:
+        yield _chunks(self.local_path(key))
 
     def delete(self, key: str) -> None:
         """Only inside the storage folder, also for an older row's full path."""
@@ -235,6 +252,26 @@ class RemoteStorage:
                 d = zlib.decompressobj(wbits=31)
                 return self._write_cache(key, (d.decompress(chunk) for chunk in r.iter_bytes()), d)
             return self._write_cache(key, r.iter_bytes())
+
+    @contextmanager
+    def open_chunks(self, key: str) -> Iterator[Iterator[bytes]]:
+        """The plain file a piece at a time, read through without a cached copy (the export of everything,
+        routers/export.py, would otherwise push every other copy out of the cache). Raises on open, before any byte,
+        when the file can't be read."""
+        p = self.cache_dir / key
+        if p.is_file():
+            yield _chunks(p)
+            return
+        with self._get(self._object(key)) as r:
+            if r.status_code >= 400:
+                r.read()
+                if r.status_code == 404 or "not found" in r.text.lower():
+                    raise FileNotFoundError(f"Stored file {key} not found")
+                raise self._fail("read the file", r)
+            if self._object(key) == key:
+                yield r.iter_bytes(CHUNK_BYTES)
+                return
+            yield _inflate(r.iter_bytes(CHUNK_BYTES))
 
     def delete(self, key: str) -> None:
         self._remove(self._object(key))
@@ -551,6 +588,24 @@ class TwoStorages:
             logging.getLogger(__name__).warning("Read %s from %s: %s", key, self.old.service, e)
             return path
 
+    @contextmanager
+    def open_chunks(self, key: str) -> Iterator[Iterator[bytes]]:
+        """As local_path: from `new`, else from `old`."""
+        with ExitStack() as stack:
+            if self.new is None:
+                yield stack.enter_context(self.old.open_chunks(key))
+                return
+            try:
+                chunks = stack.enter_context(self.new.open_chunks(key))
+            except FileNotFoundError:
+                chunks = stack.enter_context(self.old.open_chunks(key))
+            except (StorageError, httpx.HTTPError) as e:
+                try:
+                    chunks = stack.enter_context(self.old.open_chunks(key))
+                except FileNotFoundError:
+                    raise e from None
+            yield chunks
+
     def delete(self, key: str) -> None:
         if self.new is not None:
             self.new.delete(key)
@@ -600,6 +655,11 @@ def save_file(path: Path, suffix: str) -> str:
 
 def local_path(key: str) -> Path:
     return backend().local_path(key)
+
+
+def open_chunks(key: str):
+    """A context manager giving the stored file's plain bytes a piece at a time, without keeping a copy."""
+    return backend().open_chunks(key)
 
 
 def delete(key: str) -> None:

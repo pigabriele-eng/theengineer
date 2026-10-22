@@ -315,11 +315,27 @@ export const api = {
       headers: { 'Content-Type': 'application/json' } }),
   processDebrief: (id: number, language?: DebriefLanguage) =>
     request<Debrief>(`/debriefs/${id}/process${language ? `?language=${language}` : ''}`, { method: 'POST' }),
+  // Everything uploaded, for the download before the online version is switched off: what each event holds, and
+  // the zip's address (opened by the browser, so the token goes in the query string)
+  exportEvents: () => request<ExportSummary>('/export/events'),
+  exportUrl: async (eventId?: number) => {
+    const token = await accessToken();
+    const q = [eventId != null ? `event_id=${eventId}` : '', token ? `access_token=${encodeURIComponent(token)}` : '']
+      .filter(Boolean).join('&');
+    return `${API_URL}/export/everything.zip${q ? `?${q}` : ''}`;
+  },
   // An audio player can't send headers, so when signed in the token goes in the query string.
   debriefAudioUrl: async (id: number) => {
     const token = await accessToken();
     return `${API_URL}/debriefs/${id}/audio${token ? `?access_token=${encodeURIComponent(token)}` : ''}`;
   },
+};
+
+export type ExportSummary = {
+  events: { id: number; name: string; track: string | null; date: string | null; runs: number; files: number;
+    mb: number }[];
+  files: number;
+  mb: number;
 };
 
 export const formatLap = (s: number | null | undefined) => {

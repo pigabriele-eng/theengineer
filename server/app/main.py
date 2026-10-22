@@ -21,7 +21,7 @@ from app.routers import stint as stint_tool
 from app.routers import stint_compare
 from app.routers import track_grip, trackshape
 from app.routers import racing_line
-from app.routers import desktop, report_drivers
+from app.routers import desktop, export, report_drivers
 from app.routers import driver_style, habits
 from app.routers import event_debriefs
 from app.routers import setup_chat
@@ -114,6 +114,8 @@ app.include_router(session_sections.router, dependencies=signed_in)
 app.include_router(report_drivers.router, dependencies=signed_in)
 app.include_router(desktop.router, dependencies=signed_in)
 app.include_router(debriefs.media_router, dependencies=[Depends(require_user_or_query_token)])
+app.include_router(export.router, dependencies=signed_in)
+app.include_router(export.media_router, dependencies=[Depends(require_user_or_query_token)])
 
 
 # Postgres checks what SQLite lets through: links to records that don't exist and text longer than its column.
