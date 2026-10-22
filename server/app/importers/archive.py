@@ -21,7 +21,7 @@ from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import IO
 
-LOGS = (".ld", ".csv", ".txt")  # .csv and .txt: logger exports
+LOGS = (".ld", ".csv", ".txt", ".vbo")  # .csv and .txt: logger exports; .vbo: VBOX
 LDX = ".ldx"  # beacons for the .ld log of the same name
 ZIP = ".zip"
 ACCEPTED = (*LOGS, LDX, ZIP)

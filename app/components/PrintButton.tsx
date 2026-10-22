@@ -1,7 +1,9 @@
 // "Print / Save as PDF": a text link in a page's head that opens the browser's print dialog (lib/print.ts), where the
 // page can be printed or saved as a PDF named `title`. In the app added to an iPhone's home screen, where Safari has no
 // print dialog, it makes the PDF itself and hands it to the phone's share sheet (lib/pdf.web.ts), with a note at the
-// foot of the screen while it works and if it fails. Left off the printed page itself; nothing on iOS and Android.
+// foot of the screen while it works and if it fails. In the desktop app it reads "Save PDF for phone" and saves the page
+// as a PDF in the folder that syncs to the phone (lib/desktop.ts). Left off the printed page itself; nothing on iOS
+// and Android.
 import { useId } from 'react';
 import { ActivityIndicator, Modal, Pressable, StyleSheet, ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,7 +11,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TextLink } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { Space, TAP, themed, Type, useTheme } from '@/constants/Theme';
-import { closePdf, makePdf, PdfState, pdfInstead, sharePdf, usePdfState } from '@/lib/pdf';
+import { closePdf, makePdf, pdfForPhone, PdfState, pdfInstead, sharePdf, showSavedPdf, usePdfState } from '@/lib/pdf';
 import { canPrint, noPrint, printPage } from '@/lib/print';
 
 export default function PrintButton({ title, style }: {
@@ -22,7 +24,7 @@ export default function PrintButton({ title, style }: {
   const name = fileName(title);
   return (
     <View style={style} {...noPrint}>
-      <TextLink label="Print / Save as PDF" small
+      <TextLink label={pdfForPhone ? 'Save PDF for phone' : 'Print / Save as PDF'} small
         onPress={() => (pdfInstead ? makePdf(name, owner) : printPage(name))} />
       {pdf.step !== 'idle' && pdf.owner === owner ? <PdfNote state={pdf} /> : null}
     </View>
@@ -40,6 +42,7 @@ function PdfNote({ state }: { state: Exclude<PdfState, { step: 'idle' }> }) {
   const insets = useSafeAreaInsets();
   const words = state.step === 'making' ? 'Making the PDF…'
     : state.step === 'ready' ? 'The PDF is ready.'
+      : state.step === 'saved' ? `Saved for your phone: ${state.name}`
       : `The PDF couldn't be made. ${state.message.replace(/[.?]?$/, (end) => end || '.')} Try again, or print the page from a computer.`;
   return (
     <Modal transparent visible animationType="none" onRequestClose={closePdf}>
@@ -53,6 +56,7 @@ function PdfNote({ state }: { state: Exclude<PdfState, { step: 'idle' }> }) {
           {state.step !== 'making' ? (
             <View style={styles.actions}>
               {state.step === 'ready' ? <NoteAction label="Share the PDF" onPress={sharePdf} /> : null}
+              {state.step === 'saved' ? <NoteAction label="Show in folder" onPress={showSavedPdf} /> : null}
               <NoteAction label="Close" onPress={closePdf} />
             </View>
           ) : null}

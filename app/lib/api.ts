@@ -1,11 +1,13 @@
 // Client for the The Engineer server (see /server). Set EXPO_PUBLIC_API_URL to point at a deployed server.
 import { accessToken, authEnabled, signOut } from './auth';
+import { desktop } from './desktop';
 import { counted } from './loadLast';
 import type { LiveSegment } from './liveSpeech';
 export type { LiveSegment } from './liveSpeech';
 
 // Render passes the server's bare host name (theengineer-api.onrender.com), so add https:// when there's no scheme.
-const baseUrl = (process.env.EXPO_PUBLIC_API_URL ?? '').trim() || 'http://localhost:8000';
+// In the desktop app, the server it runs on the same computer.
+const baseUrl = desktop?.apiUrl || (process.env.EXPO_PUBLIC_API_URL ?? '').trim() || 'http://localhost:8000';
 export const API_URL = (/^https?:\/\//i.test(baseUrl) ? baseUrl : `https://${baseUrl}`).replace(/\/+$/, '');
 
 // Every call to the server goes through here. It adds the signed-in user's token, and a 401 (the session is gone)

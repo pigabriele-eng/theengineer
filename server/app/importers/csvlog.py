@@ -102,6 +102,7 @@ class CsvLog(LdFile):
     layout: str = ""  # the export layout it was read as
     beacons: list[float] = field(default_factory=list)  # line crossings (s) the export lists, for lap timing
     time_offset: float = 0.0  # the export's own time at the first sample
+    video: dict | None = None  # a VBOX Video unit's video files: {"prefix", "ext"} (importers/vbox.py)
 
 
 def read_log(path: str | Path) -> LdFile:
@@ -288,6 +289,10 @@ def read_csv_log(source: bytes | str | Path) -> CsvLog:
         raise ExportFormatError("This is a native MoTeC .ld log, not a CSV export")
     text = _decode(raw)
     del raw, source  # each form of the file is let go once the next is made: bytes, text, lines
+    from app.importers import vbox
+
+    if vbox.is_vbox(text):
+        return vbox.read_vbox(text)
     lines = text.splitlines()
     del text
     first = next((l for l in lines if l.strip()), "")
