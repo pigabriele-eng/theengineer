@@ -1,0 +1,24 @@
+{
+  "name": "theengineer-desktop-ui",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "description": "The desktop app's screens: library, session board, corner view, coaching day",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.23",
+    "@types/react-dom": "18.3.7",
+    "@vitejs/plugin-react": "4.5.2",
+    "typescript": "5.8.3",
+    "vite": "6.3.5",
+    "vitest": "3.2.4"
+  }
+}

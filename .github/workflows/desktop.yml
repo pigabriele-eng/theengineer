@@ -1,7 +1,7 @@
 name: Desktop app
 
 # Builds the desktop app (desktop/): the Windows installer (Gabriele's computer; a Mac build can be added back to the
-# matrix), holding the web build of app/ and the
+# matrix), holding the desktop screens (desktop/ui), the older web build of app/ (Stint and Quali) and the
 # analysis server packed as one program (PyInstaller), so nothing else needs installing. On main (and when run by hand:
 # Actions → Desktop app → Run workflow) the installers go on the release "Desktop app (latest)", whose page is where
 # they are downloaded from. On a pull request that changes desktop/ they are kept with the run, to try.
@@ -9,7 +9,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    paths: [desktop/**, .github/workflows/desktop.yml]
+    paths: [desktop/**, server/**, .github/workflows/desktop.yml]
   workflow_dispatch:
 
 concurrency:
@@ -64,7 +64,15 @@ jobs:
           cat "$RUNNER_TEMP/server.log"
           exit 1
 
-      - name: the app's pages (no sign-in, no online server)
+      - name: the desktop app's screens (desktop/ui)
+        shell: bash
+        working-directory: desktop/ui
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+      - name: the older screens, for Stint and Quali (no sign-in, no online server)
         shell: bash
         working-directory: app
         run: |

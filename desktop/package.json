@@ -1,7 +1,7 @@
 {
   "name": "theengineer-desktop",
   "productName": "The Engineer",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "The Engineer on a computer, offline: the app, the analysis and the data in one folder",
   "repository": "github:pigabriele-eng/theengineer",
   "main": "main.js",
@@ -20,6 +20,10 @@
       "package.json"
     ],
     "extraResources": [
+      {
+        "from": "ui/dist",
+        "to": "ui"
+      },
       {
         "from": "../app/dist",
         "to": "web"

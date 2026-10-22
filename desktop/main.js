@@ -1,5 +1,7 @@
-// The Engineer on a computer, with no internet: this window shows the same app as the web (app/, built for the web),
-// and the same analysis server (server/) runs beside it on this computer only. Everything it keeps (the database,
+// The Engineer on a computer, with no internet: this window shows the desktop app's screens (desktop/ui: library,
+// session board, corner view with the onboards), and the analysis server (server/) runs beside it on this computer
+// only. The older screens (app/, built for the web) still open in a window of their own for Stint and Quali until they
+// move to the new screens. Everything it keeps (the database,
 // the logs, what it works out) lives in one data folder the driver picks; nothing goes to Render, Supabase or
 // Backblaze. "Save PDF for phone" on a page writes the page as a PDF into a second folder: one that syncs to the phone
 // (iCloud Drive, OneDrive, Google Drive) puts the reports on it with no server in between.
@@ -217,13 +219,15 @@ const TYPES = {
   '.webp': 'image/webp', '.map': 'application/json', '.txt': 'text/plain; charset=utf-8',
 };
 
-const webFolder = () => (app.isPackaged ? path.join(process.resourcesPath, 'web') : path.resolve(__dirname, '..', 'app', 'dist'));
+const uiFolder = () => (app.isPackaged ? path.join(process.resourcesPath, 'ui') : path.resolve(__dirname, 'ui', 'dist'));
+const classicFolder = () => (app.isPackaged ? path.join(process.resourcesPath, 'web')
+  : path.resolve(__dirname, '..', 'app', 'dist'));
+let classicUrl = null;
 
-// Every address that isn't a file is the app's one page, which shows the page the address names (as Render does).
-async function startWeb() {
-  const root = webFolder();
+// Every address that isn't a file is the pages' one page, which shows the page the address names (as Render does).
+async function serveFolder(root, build) {
   if (!fs.existsSync(path.join(root, 'index.html'))) {
-    throw new Error(`The app’s pages are missing (${root}). In development, build them first: cd app && npx expo export --platform web`);
+    throw new Error(`The app’s pages are missing (${root}). In development, build them first: ${build}`);
   }
   const port = await freePort();
   const web = http.createServer((req, res) => {
@@ -238,8 +242,106 @@ async function startWeb() {
     fs.createReadStream(file).pipe(res);
   });
   await new Promise((resolve) => web.listen(port, '127.0.0.1', resolve));
-  webUrl = `http://127.0.0.1:${port}`;
+  return `http://127.0.0.1:${port}`;
 }
+
+async function startWeb() {
+  webUrl = await serveFolder(uiFolder(), 'cd desktop/ui && npm run build');
+}
+
+// ---------- the older screens (Stint, Quali), in a window of their own ----------
+
+ipcMain.handle('te:open-classic', async (_e, where) => {
+  if (!classicUrl) {
+    try {
+      classicUrl = await serveFolder(classicFolder(), 'cd app && npx expo export --platform web');
+    } catch (e) {
+      dialog.showErrorBox(APP_NAME, String(e?.message ?? e));
+      return;
+    }
+  }
+  const w = new BrowserWindow({
+    width: 1300, height: 860, title: `${APP_NAME} · older screens`, backgroundColor: '#F2EEE3',
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true },
+  });
+  w.webContents.setWindowOpenHandler(({ url }) => {
+    if (!url.startsWith(classicUrl)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  await w.loadURL(`${classicUrl}${typeof where === 'string' && where.startsWith('/') ? where : '/'}`);
+});
+
+// ---------- logs and videos from the computer's folders ----------
+
+const LOG_TYPES = ['ld', 'ldx', 'csv', 'txt', 'vbo', 'zip'];
+const VIDEO_TYPES = ['mp4', 'mov', 'm4v'];
+
+ipcMain.handle('te:pick-folders', async (event) => {
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  const got = await dialog.showOpenDialog(owner, {
+    title: 'Import logs and videos',
+    buttonLabel: 'Import',
+    properties: ['openDirectory', 'multiSelections'],
+  });
+  return got.canceled ? [] : got.filePaths;
+});
+
+ipcMain.handle('te:pick-video', async (event) => {
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  const got = await dialog.showOpenDialog(owner, {
+    title: 'Add an onboard video',
+    buttonLabel: 'Add video',
+    properties: ['openFile'],
+    filters: [{ name: 'Videos', extensions: VIDEO_TYPES }],
+  });
+  return got.canceled ? null : got.filePaths[0] ?? null;
+});
+
+// The watched folder (the SD card's copy, a synced folder the team drops logs in): files that arrive in it, once
+// they stop growing, are handed to the page, which imports them where they are. The folders they are in are sent,
+// so a log and the videos beside it come in together; logs imported before are skipped by the server.
+let watcher = null;
+let waiting = new Set();
+let settleTimer = null;
+const SETTLE_MS = 15000; // a card copy takes a while: wait until nothing has changed for this long
+
+function watchFolder(dir) {
+  watcher?.close();
+  watcher = null;
+  if (!dir || !fs.existsSync(dir)) return;
+  try {
+    watcher = fs.watch(dir, { recursive: true }, (_kind, name) => {
+      if (!name) return;
+      const ext = path.extname(String(name)).slice(1).toLowerCase();
+      if (!LOG_TYPES.includes(ext) && !VIDEO_TYPES.includes(ext)) return;
+      waiting.add(path.dirname(path.join(dir, String(name))));
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(() => {
+        const folders = [...waiting].filter((f) => fs.existsSync(f));
+        waiting = new Set();
+        if (folders.length && win) win.webContents.send('te:new-files', folders);
+      }, SETTLE_MS);
+    });
+  } catch (e) {
+    console.error('Could not watch', dir, e);
+  }
+}
+
+ipcMain.handle('te:watch-folder', () => settings.watchFolder ?? null);
+ipcMain.handle('te:set-watch-folder', async (event) => {
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  const got = await dialog.showOpenDialog(owner, {
+    title: 'Folder to watch for new logs and videos',
+    buttonLabel: 'Watch this folder',
+    defaultPath: settings.watchFolder ?? app.getPath('documents'),
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (got.canceled || !got.filePaths[0]) return settings.watchFolder ?? null;
+  settings = { ...settings, watchFolder: got.filePaths[0] };
+  writeSettings(settings);
+  watchFolder(settings.watchFolder);
+  return settings.watchFolder;
+});
 
 // ---------- the window ----------
 
@@ -254,7 +356,7 @@ function createWindow() {
   win = new BrowserWindow({
     width: 1400,
     height: 900,
-    minWidth: 760, // the computer layout (the app's phone layout starts below 760 px)
+    minWidth: 1100, // the library, the board and the map side by side
     title: APP_NAME,
     backgroundColor: '#F2EEE3',
     webPreferences: {
@@ -429,6 +531,7 @@ if (!app.requestSingleInstanceLock()) {
     }
     buildMenu();
     await openApp();
+    watchFolder(settings.watchFolder);
   });
 
   app.on('activate', () => {

@@ -64,7 +64,7 @@ def start_import(files: list[UploadFile], event_id: int | None = Form(None), db:
     names = [_upload_name(f.filename, i) for i, f in enumerate(files)]
     if not any(archive.suffix(n) in archive.ACCEPTED for n in names):
         raise HTTPException(415, "Nothing to import: upload MoTeC .ld logs (with their .ldx), CSV exports "
-                                 "(.csv, .txt) or a .zip of them")
+                                 "(.csv, .txt), VBOX files (.vbo) or a .zip of them")
     folder = Path(tempfile.mkdtemp(prefix="theengineer-import-"))
     try:
         uploads, total, zips = [], 0, 0

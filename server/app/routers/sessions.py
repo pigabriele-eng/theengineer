@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlalchemy import event, func, select
 from sqlalchemy.orm import Session
 
-from app import garage, heavy, models, page_cache, schemas, storage
+from app import garage, heavy, local_files, models, page_cache, schemas, storage
 from app.analysis.emptyrun import NoLaps, judge
 from app.analysis.laps import (LAP_PICKS, PICK_MATCH_S, CornerSpec, LapTiming, SessionData, analyze, compare_laps,
                                load_session, time_laps)
@@ -25,8 +25,8 @@ router = APIRouter(prefix="/sessions")
 log = logging.getLogger(__name__)
 
 # .csv and .txt are logger exports (MoTeC i2, AiM Race Studio, Pi Toolbox); the logger is read from the file
-SUPPORTED = {".ld": "motec", ".ldx": "motec", ".csv": "csv", ".txt": "csv"}
-LOG_FILES = (".ld", ".csv", ".txt")  # logs themselves; a .ldx only adds beacons to its .ld
+SUPPORTED = {".ld": "motec", ".ldx": "motec", ".csv": "csv", ".txt": "csv", ".vbo": "vbox"}
+LOG_FILES = (".ld", ".csv", ".txt", ".vbo")  # logs themselves; a .ldx only adds beacons to its .ld
 
 
 def _get(db: Session, session_id: int) -> models.RunSession:
@@ -141,7 +141,8 @@ def upload_file(session_id: int, file: UploadFile, db: Session = Depends(get_db)
         ext = Path(name).suffix.lower()
         if ext not in SUPPORTED:
             raise HTTPException(415, f"Unsupported file type '{ext}'. Supported now: MoTeC .ld and .ldx, "
-                                     "and CSV exports from MoTeC i2, AiM Race Studio and Pi Toolbox (.csv, .txt)")
+                                     "CSV exports from MoTeC i2, AiM Race Studio and Pi Toolbox (.csv, .txt) "
+                                     "and VBOX files (.vbo)")
         # a plain def (run in a worker thread), so parsing a big log doesn't stall other requests
         if ext == ".ldx":
             return _attach_ldx(db, s, name, file.file.read())
@@ -225,6 +226,10 @@ def add_log(db: Session, s: models.RunSession, path: Path, name: str,
     if isinstance(ld, CsvLog):
         logger = ld.logger
         meta.update({"format": "csv", "layout": ld.layout, "driver": ld.driver, "vehicle": ld.vehicle})
+        if ld.video:
+            meta["video"] = ld.video
+    if local_files.is_local(path):  # read from the computer's own folder (the desktop app): where it is
+        meta["source_path"] = str(Path(path).resolve())
     if beacons:
         meta["beacons"] = beacons
     if verdict is not None:

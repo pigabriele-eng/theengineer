@@ -38,7 +38,7 @@ from xml.etree import ElementTree
 
 import httpx
 
-COMPRESSED_SUFFIXES = (".ld", ".ldx", ".csv", ".txt")  # logs compress well; audio is compressed already
+COMPRESSED_SUFFIXES = (".ld", ".ldx", ".csv", ".txt", ".vbo")  # logs compress well; audio is compressed already
 LOG_SUFFIXES = COMPRESSED_SUFFIXES  # uploaded logs (stopped first when storage is nearly full)
 COMPRESS_LEVEL = 4  # close to the smallest size for a fraction of the time of level 9
 # downloaded copies kept on the server's disk (STORAGE_CACHE_GB): on a disk of its own (STORAGE_DIR on a mounted disk)
