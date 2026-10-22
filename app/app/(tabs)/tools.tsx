@@ -1,10 +1,12 @@
 import { Href, Link } from 'expo-router';
-import { Pressable, StyleSheet } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Linking, Platform, Pressable, StyleSheet } from 'react-native';
 
 import { AppearancePicker } from '@/components/AppearancePicker';
 import { Colophon, Page, Section, TextLink, useWide } from '@/components/Programme';
 import { Text, View } from '@/components/Themed';
 import { Opening } from '@/components/ToolForm';
+import { api, ExportSummary } from '@/lib/api';
 import { authEnabled, signOut, useAuthSession } from '@/lib/auth';
 import { Fonts, themed, Type } from '@/constants/Theme';
 
@@ -51,7 +53,7 @@ export default function ToolsScreen() {
   return (
     <Page>
       <Opening title="Settings"
-        dek="The manual, where the cars, drivers and seasons are kept, and how the app looks." />
+        dek="The manual, where the cars, drivers and seasons are kept, the download of your data, and how the app looks." />
       {GROUPS.map((g, i) => (
         <Section key={g.name} no={i + 1} title={g.name} dek={g.dek}>
           <View>
@@ -59,8 +61,9 @@ export default function ToolsScreen() {
           </View>
         </Section>
       ))}
-      <AppearancePicker no={GROUPS.length + 1} />
-      {authEnabled && <Account no={GROUPS.length + 2} />}
+      <YourData no={GROUPS.length + 1} />
+      <AppearancePicker no={GROUPS.length + 2} />
+      {authEnabled && <Account no={GROUPS.length + 3} />}
       <Colophon left="The Engineer · Settings" links={[
         { label: 'Tracks', href: '/' },
         { label: 'Garage', href: '/garage' },
@@ -84,6 +87,58 @@ function ToolLine({ tool, first }: { tool: Tool; first: boolean }) {
         <Text style={wide ? styles.arrow : styles.arrowPhone}>Open →</Text>
       </Pressable>
     </Link>
+  );
+}
+
+const size = (mb: number) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.max(1, Math.round(mb))} MB`);
+
+async function download(eventId?: number) {
+  const url = await api.exportUrl(eventId);
+  if (Platform.OS === 'web') window.open(url, '_blank');
+  else Linking.openURL(url);
+}
+
+/** Everything uploaded, as one zip (Gabriele, 2026-10-22: "create a link for me to download ALL data i uploaded to
+ * The Engineer to date"): the logs as uploaded, the debrief recordings, and what was set in the app; or one event's,
+ * for the days Backblaze's free download limit stops a big download half way (MISSING.txt in the zip says so). */
+function YourData({ no }: { no: number }) {
+  const styles = useStyles();
+  const [summary, setSummary] = useState<ExportSummary | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    api.exportEvents().then(setSummary).catch((e) => setError(String(e.message ?? e)));
+  }, []);
+  return (
+    <Section no={no} title="Your data"
+      dek="Download every log you uploaded, as uploaded, with the debrief recordings and the names, drivers and tyres you set.">
+      <View style={styles.account}>
+        <View style={styles.accountWho}>
+          <Text style={styles.signedIn}>Everything</Text>
+          <Text style={styles.email}>
+            {error ?? (summary ? `${summary.files} files · about ${size(summary.mb)}` : 'Counting the files…')}
+          </Text>
+        </View>
+        <TextLink onPress={() => download()} label="Download everything" red />
+      </View>
+      <Text style={styles.dataNote}>
+        One zip, folders by track, event and run. Unzip it and press Import folder in the desktop app. If a file
+        can't be read today (Backblaze's free daily download limit), the zip lists it in MISSING.txt: download that
+        event again after 2 am.
+      </Text>
+      {summary && summary.events.length > 0 && (
+        <TextLink onPress={() => setOpen(!open)} label={open ? 'Hide the events' : 'One event at a time'} small />
+      )}
+      {open && summary?.events.map((e) => (
+        <View key={e.id} style={styles.dataRow}>
+          <View style={styles.accountWho}>
+            <Text style={styles.dataName}>{e.track ? `${e.track} · ${e.name}` : e.name}</Text>
+            <Text style={styles.dataNote}>{e.runs} {e.runs === 1 ? 'run' : 'runs'} · {size(e.mb)}</Text>
+          </View>
+          <TextLink onPress={() => download(e.id)} label="Download" small />
+        </View>
+      ))}
+    </Section>
   );
 }
 
@@ -122,4 +177,8 @@ const useStyles = themed((c) => ({
   accountWho: { flexShrink: 1 },
   signedIn: { ...Type.label, color: c.textSecondary },
   email: { fontFamily: Fonts.label, fontSize: 18, color: c.text, marginTop: 4 },
+  dataNote: { fontFamily: Fonts.body, fontSize: 16, lineHeight: 22, color: c.textSecondary, marginVertical: 10 },
+  dataRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+    borderBottomWidth: 1, borderColor: c.rule, paddingVertical: 8 },
+  dataName: { fontFamily: Fonts.label, fontSize: 17, color: c.text },
 }));
